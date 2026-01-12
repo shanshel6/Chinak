@@ -2058,6 +2058,7 @@ const generateWeeklyReport = async () => {
   const totalSales = weeklyOrders.reduce((sum, o) => sum + o.total, 0);
   const orderCount = weeklyOrders.length;
 
+  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
   return `
     <div style="font-family: Arial, sans-serif; direction: rtl; text-align: right;">
       <h2 style="color: #4f46e5;">تقرير الأداء الأسبوعي للمتجر</h2>
@@ -2067,7 +2068,7 @@ const generateWeeklyReport = async () => {
         <p><strong>عدد الطلبات المكتملة:</strong> ${orderCount}</p>
         <p><strong>متوسط قيمة الطلب:</strong> ${orderCount > 0 ? (totalSales / orderCount).toLocaleString() : 0} ج.م</p>
       </div>
-      <p>يمكنك عرض المزيد من التفاصيل من خلال <a href="http://localhost:5173/admin" style="color: #4f46e5; text-decoration: none;">لوحة تحكم المشرف</a>.</p>
+      <p>يمكنك عرض المزيد من التفاصيل من خلال <a href="${frontendUrl}/admin" style="color: #4f46e5; text-decoration: none;">لوحة تحكم المشرف</a>.</p>
     </div>
   `;
 };
