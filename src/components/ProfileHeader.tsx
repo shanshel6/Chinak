@@ -9,6 +9,7 @@ interface ProfileHeaderProps {
   setEditName: (name: string) => void;
   editPhone: string;
   editAvatar: string;
+  setEditAvatar: (avatar: string) => void;
   error: string | null;
   updateLoading: boolean;
   handleUpdateProfile: () => void;
@@ -24,6 +25,7 @@ const ProfileHeader: React.FC<ProfileHeaderProps> = ({
   setEditName,
   editPhone,
   editAvatar,
+  setEditAvatar,
   error,
   updateLoading,
   handleUpdateProfile,

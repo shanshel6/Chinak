@@ -521,21 +521,19 @@ export async function loginWithEmail(email: string, password: string) {
 }
 
 export async function forgotPassword(email: string) {
-  const { data, error } = await supabase.auth.resetPasswordForEmail(email, {
-    redirectTo: `${window.location.origin}/reset-password`
+  const { error } = await supabase.auth.resetPasswordForEmail(email, {
+    redirectTo: `${window.location.origin}/reset-password`,
   });
-
   if (error) throw error;
-  return { message: 'تم إرسال رابط إعادة تعيين كلمة المرور إلى بريدك الإلكتروني' };
+  return true;
 }
 
 export async function resetPassword(password: string) {
-  const { data, error } = await supabase.auth.updateUser({
+  const { error } = await supabase.auth.updateUser({
     password: password
   });
-
   if (error) throw error;
-  return { message: 'تم تحديث كلمة المرور بنجاح' };
+  return true;
 }
 
 export async function verifyEmailOTP(email: string, token: string, type: 'signup' | 'recovery' = 'signup') {
@@ -719,7 +717,7 @@ export async function createProduct(productData: any) {
   });
 }
 
-export async function updateProduct(id: number | string, productData: any) {
+export async function updateProduct(id: number | string, productData: any, token?: string | null) {
   // If it's a local draft (ID starts with local-)
   if (typeof id === 'string' && id.startsWith('local-')) {
     // If user changed status to PUBLISHED, create on server and delete local
@@ -728,6 +726,7 @@ export async function updateProduct(id: number | string, productData: any) {
       const result = await request('/products', {
         method: 'POST',
         body: JSON.stringify(rest),
+        token
       });
       localProductService.deleteDraft(id);
       return result;
@@ -740,6 +739,7 @@ export async function updateProduct(id: number | string, productData: any) {
   return request(`/products/${id}`, {
     method: 'PUT',
     body: JSON.stringify(productData),
+    token
   });
 }
 
@@ -955,24 +955,27 @@ export async function fetchAbandonedCarts() {
   return request('/admin/reports/abandoned-carts');
 }
 
-export async function updateOrderStatus(id: number | string, status: string) {
+export async function updateOrderStatus(id: number | string, status: string, token?: string | null) {
   return request(`/admin/orders/${id}/status`, {
     method: 'PUT',
     body: JSON.stringify({ status }),
+    token
   });
 }
 
-export async function updateOrderNote(id: number | string, note: string) {
+export async function updateOrderNote(id: number | string, note: string, token?: string | null) {
   return request(`/admin/orders/${id}/note`, {
     method: 'PUT',
     body: JSON.stringify({ note }),
+    token
   });
 }
 
-export async function updateOrderInternationalFee(id: number | string, fee: number) {
+export async function updateOrderInternationalFee(id: number | string, fee: number, token?: string | null) {
   return request(`/admin/orders/${id}/international-fee`, {
     method: 'PUT',
     body: JSON.stringify({ fee }),
+    token
   });
 }
 

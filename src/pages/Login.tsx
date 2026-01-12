@@ -136,6 +136,7 @@ const Login: React.FC = () => {
       }
 
       const response = await signupWithEmail(normalizedEmail, password, fullName);
+      console.log('Signup successful:', response);
       showToast('تم إرسال كود التحقق إلى بريدك الإلكتروني', 'success');
       setStep('email-otp');
     } else if (step === 'email-otp') {
@@ -145,7 +146,11 @@ const Login: React.FC = () => {
       }
 
       const response = await verifyEmailOTP(normalizedEmail, otpCode);
-      setAuth(response.token, response.user);
+      if (response.token && response.user) {
+        setAuth(response.token, response.user);
+      } else {
+        throw new Error('بيانات الدخول غير مكتملة');
+      }
       showToast('تم إنشاء الحساب وتفعيله بنجاح', 'success');
       navigate('/');
     } else if (step === 'forgot-password') {
@@ -154,6 +159,7 @@ const Login: React.FC = () => {
         return;
       }
       const response = await forgotPassword(normalizedEmail);
+      console.log('Forgot password response:', response);
       showToast('تم إرسال كود إعادة التعيين إلى بريدك الإلكتروني', 'success');
       setStep('reset-password');
     } else if (step === 'reset-password') {
@@ -532,7 +538,7 @@ const Login: React.FC = () => {
                       onClick={async () => {
                         try {
                           setLoading(true);
-                          await resendEmailOTP(normalizedEmail);
+                          await resendEmailOTP(email.toLowerCase().trim());
                           showToast('تم إعادة إرسال كود التحقق بنجاح', 'success');
                         } catch (err: any) {
                           showToast(err.message || 'فشل إعادة إرسال الكود', 'error');

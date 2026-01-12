@@ -4,7 +4,7 @@ interface MaintenanceState {
   isServerDown: boolean;
   lastError: string | null;
   lastUrl: string | null;
-  setServerDown: (isDown: boolean, error?: string, url?: string) => void;
+  setServerDown: (isDown: boolean, error?: string | null, url?: string | null) => void;
   clearError: () => void;
 }
 

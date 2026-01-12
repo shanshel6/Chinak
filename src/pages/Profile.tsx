@@ -1,8 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
-  User, 
-  Camera, 
   ShoppingBag, 
   Ticket, 
   MapPin, 
@@ -171,6 +169,7 @@ const Profile: React.FC = () => {
             setEditName={setEditName}
             editPhone={editPhone}
             editAvatar={editAvatar}
+            setEditAvatar={setEditAvatar}
             error={error}
             updateLoading={updateLoading}
             handleUpdateProfile={handleUpdateProfile}

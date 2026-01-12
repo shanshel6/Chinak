@@ -1,9 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Users, 
   Package, 
   ShoppingCart, 
-  BarChart3, 
   Search, 
   Plus, 
   Filter,
@@ -11,9 +10,6 @@ import {
   ChevronRight,
   ChevronLeft,
   TrendingUp,
-  TrendingDown,
-  DollarSign,
-  AlertCircle,
   CheckCircle2,
   Clock,
   ArrowLeft,
@@ -23,10 +19,9 @@ import {
   Edit2,
   Trash2,
   Settings,
-  Upload,
   X
 } from 'lucide-react';
-import { useNavigate, useLocation, Routes, Route } from 'react-router-dom';
+import { useLocation, Routes, Route } from 'react-router-dom';
 import { 
   fetchAdminStats, 
   fetchAdminUsers, 
@@ -56,7 +51,6 @@ import ProductCard from '../components/admin/ProductCard';
 import ProductEditor from './ProductEditor';
 
 const AdminDashboard: React.FC = () => {
-  const navigate = useNavigate();
   const location = useLocation();
   const showToast = useToastStore((state) => state.showToast);
   
@@ -274,8 +268,7 @@ const AdminDashboard: React.FC = () => {
       await updateProductPrice({
           productId: item.productId || item.product?.id,
           variantId: item.variantId || item.variant?.id,
-          orderItemId: item.id,
-          price: newPrice
+          newPrice: newPrice
       }, token);
       showToast('تم تحديث سعر المنتج بنجاح', 'success');
       setEditingPriceId(null);
@@ -453,7 +446,7 @@ const AdminDashboard: React.FC = () => {
           
           // Filter out any server products that might have the same ID as a draft (shouldn't happen with local- prefix)
           const draftIds = new Set(filteredDrafts.map(d => d.id));
-          const uniqueServerProducts = allProducts.filter(p => !draftIds.has(p.id));
+          const uniqueServerProducts = allProducts.filter((p: any) => !draftIds.has(p.id));
           
           allProducts = [...filteredDrafts, ...uniqueServerProducts];
         }
@@ -509,7 +502,7 @@ const AdminDashboard: React.FC = () => {
     }
   };
 
-  const checkPermission = (permission: string) => true;
+  const checkPermission = (_permission: string) => true;
 
   const renderPagination = () => {
     if (totalPages <= 1) return null;
@@ -770,7 +763,7 @@ const AdminDashboard: React.FC = () => {
             product={product} 
             isSelected={selectedProducts.includes(product.id)}
             onToggleSelection={(id) => {
-              setSelectedProducts(prev => 
+              setSelectedProducts((prev: string[]) => 
                 prev.includes(id) ? prev.filter(p => p !== id) : [...prev, id]
               );
             }}

@@ -88,7 +88,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
       o.id === optionId ? { ...o, name: tempName.trim() } : o
     );
     if (onUpdateOptions) {
-      onUpdateOptions(product.id, newOptions);
+      onUpdateOptions(product.id, newOptions, product.variants || []);
     }
     setEditingName(null);
   };
@@ -116,7 +116,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
     );
 
     if (onUpdateOptions) {
-      onUpdateOptions(product.id, newOptions);
+      onUpdateOptions(product.id, newOptions, product.variants || []);
     }
     setEditingValue(null);
   };

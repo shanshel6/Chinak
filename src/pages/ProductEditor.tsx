@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  ArrowRight, 
   Save, 
   Plus, 
   X, 
@@ -15,8 +14,7 @@ import {
   Star,
   Layers,
   Layout,
-  Info,
-  Package
+  Info
 } from 'lucide-react';
 import { 
   fetchProductById, 
@@ -153,7 +151,7 @@ const ProductEditor: React.FC<ProductEditorProps> = ({ productId, onClose, onSuc
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     const { name, value, type } = e.target as HTMLInputElement;
     const val = type === 'checkbox' ? (e.target as HTMLInputElement).checked : value;
-    setFormData(prev => ({ ...prev, [name]: val }));
+    setFormData((prev: any) => ({ ...prev, [name]: val }));
   };
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>, type: 'main' | 'gallery' | 'detail') => {
@@ -165,11 +163,11 @@ const ProductEditor: React.FC<ProductEditorProps> = ({ productId, onClose, onSuc
       const base64 = reader.result as string;
       
       if (type === 'main') {
-        setFormData(prev => ({ ...prev, image: base64 }));
+        setFormData((prev: any) => ({ ...prev, image: base64 }));
       } else if (type === 'gallery') {
-        setFormData(prev => ({ ...prev, images: [...prev.images, { url: base64, type: 'GALLERY', order: prev.images.length }] }));
+        setFormData((prev: any) => ({ ...prev, images: [...prev.images, { url: base64, type: 'GALLERY', order: prev.images.length }] }));
       } else if (type === 'detail') {
-        setFormData(prev => ({ ...prev, detailImages: [...prev.detailImages, { url: base64, type: 'DETAIL', order: prev.detailImages.length }] }));
+        setFormData((prev: any) => ({ ...prev, detailImages: [...prev.detailImages, { url: base64, type: 'DETAIL', order: prev.detailImages.length }] }));
       }
     };
     reader.readAsDataURL(file);
@@ -200,7 +198,7 @@ const ProductEditor: React.FC<ProductEditorProps> = ({ productId, onClose, onSuc
 
       if (formData.status === 'DRAFT') {
         // Save locally only
-        const savedLocal = localProductService.saveDraft({
+        localProductService.saveDraft({
           ...productData,
           id: isEdit && String(productId).startsWith('local-') ? String(productId) : undefined,
           isLocal: true
@@ -441,7 +439,7 @@ const ProductEditor: React.FC<ProductEditorProps> = ({ productId, onClose, onSuc
                 <div className="flex gap-4">
                   <button
                     type="button"
-                    onClick={() => setFormData(prev => ({ ...prev, status: 'PUBLISHED' }))}
+                    onClick={() => setFormData((prev: any) => ({ ...prev, status: 'PUBLISHED' }))}
                     className={`flex-1 py-4 rounded-2xl font-bold transition-all border-2 ${
                       formData.status === 'PUBLISHED'
                         ? 'bg-primary/10 border-primary text-primary shadow-sm'
@@ -452,7 +450,7 @@ const ProductEditor: React.FC<ProductEditorProps> = ({ productId, onClose, onSuc
                   </button>
                   <button
                     type="button"
-                    onClick={() => setFormData(prev => ({ ...prev, status: 'DRAFT' }))}
+                    onClick={() => setFormData((prev: any) => ({ ...prev, status: 'DRAFT' }))}
                     className={`flex-1 py-4 rounded-2xl font-bold transition-all border-2 ${
                       formData.status === 'DRAFT'
                         ? 'bg-amber-500/10 border-amber-500 text-amber-600 shadow-sm'
@@ -485,7 +483,7 @@ const ProductEditor: React.FC<ProductEditorProps> = ({ productId, onClose, onSuc
                     <>
                       <img src={formData.image} className="w-full h-full object-cover" alt="Main" />
                       <button 
-                        onClick={() => setFormData(prev => ({ ...prev, image: '' }))}
+                        onClick={() => setFormData((prev: any) => ({ ...prev, image: '' }))}
                         className="absolute top-2 right-2 p-2 bg-rose-500 text-white rounded-xl opacity-0 group-hover:opacity-100 transition-opacity shadow-lg"
                       >
                         <Trash2 size={16} />
@@ -521,7 +519,7 @@ const ProductEditor: React.FC<ProductEditorProps> = ({ productId, onClose, onSuc
                   <div key={idx} className="aspect-square rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-800 overflow-hidden relative group">
                     <img src={img.url} className="w-full h-full object-cover" alt={`Gallery ${idx}`} />
                     <button 
-                      onClick={() => setFormData(prev => ({ 
+                      onClick={() => setFormData((prev: any) => ({ 
                         ...prev, 
                         images: prev.images.filter((_: any, i: number) => i !== idx) 
                       }))}
@@ -558,9 +556,9 @@ const ProductEditor: React.FC<ProductEditorProps> = ({ productId, onClose, onSuc
                   <p className="text-sm text-slate-500">إضافة خيارات مثل اللون، المقاس، الخ.</p>
                 </div>
                 <button 
-                  onClick={() => setOptions(prev => [...prev, { id: Math.random().toString(36).substr(2, 9), name: '', values: [] }])}
-                  className="flex items-center gap-2 px-4 py-2 bg-primary/10 text-primary rounded-xl text-sm font-bold hover:bg-primary/20 transition-all w-full md:w-auto justify-center"
-                >
+                    onClick={() => setOptions((prev: ProductOption[]) => [...prev, { id: Math.random().toString(36).substr(2, 9), name: '', values: [] }])}
+                    className="flex items-center gap-2 px-4 py-2 bg-primary/10 text-primary rounded-xl text-sm font-bold hover:bg-primary/20 transition-all w-full md:w-auto justify-center"
+                  >
                   <Plus size={18} />
                   إضافة خيار
                 </button>
@@ -584,10 +582,10 @@ const ProductEditor: React.FC<ProductEditorProps> = ({ productId, onClose, onSuc
                       <button 
                         onClick={() => {
                           const optionToRemove = options[optIdx];
-                          setOptions(prev => prev.filter((_, i) => i !== optIdx));
+                          setOptions((prev: ProductOption[]) => prev.filter((_, i) => i !== optIdx));
                           
                           // Update variants by removing the option dimension
-                          setVariants(prev => {
+                          setVariants((prev: ProductVariant[]) => {
                             const processed: any[] = [];
                             const seen = new Set();
                             prev.forEach(v => {
@@ -618,9 +616,9 @@ const ProductEditor: React.FC<ProductEditorProps> = ({ productId, onClose, onSuc
                               const removedValue = opt.values[valIdx];
                               newOptions[optIdx].values = opt.values.filter((_, i) => i !== valIdx);
                               setOptions(newOptions);
-
+  
                               // Automatically update variants
-                              setVariants(prev => {
+                              setVariants((prev: ProductVariant[]) => {
                                 // If this was the last value, remove the option dimension
                                 if (newOptions[optIdx].values.length === 0) {
                                   const processed: any[] = [];
@@ -776,7 +774,7 @@ const ProductEditor: React.FC<ProductEditorProps> = ({ productId, onClose, onSuc
                             </td>
                             <td className="px-6 py-4">
                               <button 
-                                onClick={() => setVariants(prev => prev.filter((_, i) => i !== idx))}
+                                onClick={() => setVariants((prev: ProductVariant[]) => prev.filter((_, i) => i !== idx))}
                                 className="text-rose-500 hover:scale-110 transition-transform"
                               >
                                 <X size={16} />
@@ -853,7 +851,7 @@ const ProductEditor: React.FC<ProductEditorProps> = ({ productId, onClose, onSuc
                       <img src={img.url} className="w-full object-cover" alt="" />
                       <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                         <button 
-                          onClick={() => setFormData(prev => ({ 
+                          onClick={() => setFormData((prev: any) => ({ 
                             ...prev, 
                             detailImages: prev.detailImages.filter((_: any, i: number) => i !== idx) 
                           }))}

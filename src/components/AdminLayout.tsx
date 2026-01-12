@@ -8,7 +8,6 @@ import {
   Settings, 
   Ticket,
   LogOut,
-  ChevronLeft,
   Search,
   Bell,
   User

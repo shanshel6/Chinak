@@ -31,7 +31,7 @@ const BottomNav: React.FC<BottomNavProps> = ({ className = '' }) => {
       <div className="flex items-center justify-between">
         {navItems.map((item) => {
           const active = isActive(item.path);
-          const isDisabled = 'disabled' in item && item.disabled;
+          const isDisabled = 'disabled' in item ? (item as any).disabled : false;
           const Icon = item.icon;
           
           if (item.id === 'cart') {
