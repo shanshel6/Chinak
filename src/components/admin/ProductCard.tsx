@@ -122,12 +122,15 @@ const ProductCard: React.FC<ProductCardProps> = ({
   };
 
   const handleRemoveOptionValue = (optionId: string, valueToRemove: string) => {
-    const option = product.options.find((o: any) => o.id === optionId);
+    // Find the option by ID or fallback to matching by name if ID is missing (legacy)
+    const option = product.options.find((o: any) => 
+      (optionId && o.id === optionId) || (!o.id && !optionId)
+    );
     if (!option) return;
 
     const optionName = option.name;
     
-    // Ensure all options have parsed values before mapping
+    // Ensure all options have parsed values and consistent IDs for mapping
     const parsedOptions = product.options.map((o: any) => {
       let vals = o.values;
       if (typeof vals === 'string') {
@@ -136,7 +139,9 @@ const ProductCard: React.FC<ProductCardProps> = ({
       return { ...o, values: Array.isArray(vals) ? vals : [] };
     });
 
-    const targetOption = parsedOptions.find((o: any) => o.id === optionId);
+    const targetOption = parsedOptions.find((o: any) => 
+      (optionId && o.id === optionId) || (!o.id && !optionId)
+    );
     if (!targetOption) return;
 
     const newValues = targetOption.values.filter((v: any) => 
@@ -148,17 +153,28 @@ const ProductCard: React.FC<ProductCardProps> = ({
       return;
     }
 
-    const newOptions = parsedOptions.map((o: any) => 
-      o.id === optionId ? { ...o, values: newValues } : o
-    );
+    const newOptions = parsedOptions.map((o: any) => {
+      // If we're targeting this option, update its values
+      const isTarget = (optionId && o.id === optionId) || (!o.id && !optionId && o.name === optionName);
+      return isTarget ? { ...o, values: newValues } : o
+    });
 
-    const currentVariants = product.variants || [];
+    // Ensure variants are parsed if they are strings
+    let currentVariants = product.variants || [];
+    if (typeof currentVariants === 'string') {
+      try { currentVariants = JSON.parse(currentVariants); } catch { currentVariants = []; }
+    }
+    
     const newVariants = currentVariants.filter((v: any) => {
       let combination = v.combination;
       if (typeof combination === 'string') {
         try { combination = JSON.parse(combination); } catch { combination = {}; }
       }
-      const val = combination[optionName];
+      
+      // Find the value in combination using a more robust match for the key
+      const comboKey = Object.keys(combination).find(k => k.trim() === optionName.trim());
+      const val = comboKey ? combination[comboKey] : null;
+      
       const valString = typeof val === 'object' ? (val.value || val.name || JSON.stringify(val)) : String(val);
       return valString !== valueToRemove;
     });
@@ -169,7 +185,10 @@ const ProductCard: React.FC<ProductCardProps> = ({
   };
 
   const handleRemoveOption = (optionId: string) => {
-    const option = product.options.find((o: any) => o.id === optionId);
+    // Find the option by ID or fallback to matching by name if ID is missing (legacy)
+    const option = product.options.find((o: any) => 
+      (optionId && o.id === optionId) || (!o.id && !optionId)
+    );
     if (!option) return;
     if (!window.confirm(`هل أنت متأكد من حذف خيار "${option.name}" بالكامل؟`)) return;
     
@@ -184,9 +203,16 @@ const ProductCard: React.FC<ProductCardProps> = ({
       return { ...o, values: Array.isArray(vals) ? vals : [] };
     });
 
-    const newOptions = parsedOptions.filter((o: any) => o.id !== optionId);
+    const newOptions = parsedOptions.filter((o: any) => 
+      (optionId && o.id !== optionId) || (!optionId && o.name !== optionName)
+    );
     
-    const currentVariants = product.variants || [];
+    // Ensure variants are parsed if they are strings
+    let currentVariants = product.variants || [];
+    if (typeof currentVariants === 'string') {
+      try { currentVariants = JSON.parse(currentVariants); } catch { currentVariants = []; }
+    }
+    
     const processedVariants: any[] = [];
     const seenCombinations = new Set();
 
@@ -197,11 +223,15 @@ const ProductCard: React.FC<ProductCardProps> = ({
       }
       
       const newCombination = { ...combination };
-      delete newCombination[optionName];
+      // Robustly find and delete the key
+      const comboKey = Object.keys(newCombination).find(k => k.trim() === optionName.trim());
+      if (comboKey) {
+        delete newCombination[comboKey];
+      }
       
-      const comboKey = JSON.stringify(newCombination);
-      if (!seenCombinations.has(comboKey)) {
-        seenCombinations.add(comboKey);
+      const comboKeyStr = JSON.stringify(newCombination);
+      if (!seenCombinations.has(comboKeyStr)) {
+        seenCombinations.add(comboKeyStr);
         processedVariants.push({
           ...v,
           combination: newCombination

@@ -131,6 +131,15 @@ const AdminDashboard: React.FC = () => {
 
       const token = getAuthToken();
       const result = await bulkImportProducts(productsToImport, token);
+      
+      // Save returned drafts to local storage
+      if (result.drafts && result.drafts.length > 0) {
+        result.drafts.forEach((draft: any) => {
+          // Use the ID from backend, it's already unique enough now
+          localProductService.saveDraft(draft);
+        });
+      }
+
       let message = `تم استيراد ${result.imported} منتج كمسودات.`;
       if (result.skipped > 0) message += ` تم تخطي ${result.skipped} منتج موجود مسبقاً.`;
       if (result.failed > 0) message += ` فشل استيراد ${result.failed} منتج.`;
@@ -151,8 +160,16 @@ const AdminDashboard: React.FC = () => {
     try {
       const token = getAuthToken();
       await updateProduct(id, data, token);
+      
+      // Update local state immediately
+      setProducts(prev => prev.map(p => 
+        (p.id || p.productId) === id ? { ...p, ...data } : p
+      ));
+      
       showToast('تم تحديث المنتج بنجاح', 'success');
-      loadData(currentPage, true);
+      if (!String(id).startsWith('local-')) {
+        loadData(currentPage, true);
+      }
     } catch (error) {
       showToast('فشل تحديث المنتج', 'error');
     }
@@ -162,8 +179,19 @@ const AdminDashboard: React.FC = () => {
     try {
       const token = getAuthToken();
       await saveProductOptions(id, newOptions, newVariants, token);
+      
+      // Update local state immediately for instant feedback
+      setProducts(prev => prev.map(p => 
+        (p.id || p.productId) === id 
+          ? { ...p, options: newOptions, variants: newVariants } 
+          : p
+      ));
+      
       showToast('تم تحديث خيارات المنتج بنجاح', 'success');
-      loadData(currentPage, true);
+      // Still loadData to ensure sync with any backend changes if it's a server product
+      if (!String(id).startsWith('local-')) {
+        loadData(currentPage, true);
+      }
     } catch (error) {
       console.error('Failed to update options:', error);
       showToast('فشل تحديث خيارات المنتج', 'error');
@@ -171,12 +199,23 @@ const AdminDashboard: React.FC = () => {
   };
 
   const handleDeleteProduct = async (id: number | string) => {
-     if (!window.confirm('هل أنت متأكد من حذف هذا المنتج؟')) return;
+     const isDraft = String(id).startsWith('local-');
+     if (!isDraft && !window.confirm('هل أنت متأكد من حذف هذا المنتج؟')) return;
+     
      try {
-       const token = getAuthToken();
-       await deleteProduct(id, token);
-       showToast('تم حذف المنتج بنجاح', 'success');
-       loadData(currentPage, true);
+       if (isDraft) {
+         localProductService.deleteDraft(String(id));
+         // Update state immediately for instant feedback
+         setProducts(prev => prev.filter(p => (p.id || p.productId) !== id));
+         setTotalItems(prev => prev - 1);
+         showToast('تم حذف المسودة بنجاح', 'success');
+         // No need to loadData() for local drafts if we update state directly
+       } else {
+         const token = getAuthToken();
+         await deleteProduct(id, token);
+         showToast('تم حذف المنتج بنجاح', 'success');
+         loadData(currentPage, true);
+       }
      } catch (error) {
        showToast('فشل حذف المنتج', 'error');
      }
@@ -184,12 +223,21 @@ const AdminDashboard: React.FC = () => {
 
   const handleBulkDelete = async () => {
     if (selectedProducts.length === 0) return;
-    if (!window.confirm(`هل أنت متأكد من حذف ${selectedProducts.length} منتجات؟`)) return;
+    
+    // Only confirm for server products, drafts are deleted right away
+    const serverProducts = selectedProducts.filter(id => !String(id).startsWith('local-'));
+    
+    if (serverProducts.length > 0 && !window.confirm(`هل أنت متأكد من حذف ${serverProducts.length} منتجات؟`)) return;
     
     try {
       const token = getAuthToken();
       console.log('[AdminDashboard] Bulk deleting products:', selectedProducts);
       await bulkDeleteProducts(selectedProducts, token);
+      
+      // Update state immediately for instant feedback
+      setProducts(prev => prev.filter(p => !selectedProducts.includes(p.id || p.productId)));
+      setTotalItems(prev => prev - selectedProducts.length);
+      
       showToast('تم حذف المنتجات بنجاح', 'success');
       setSelectedProducts([]);
       loadData(currentPage, true);
@@ -393,13 +441,21 @@ const AdminDashboard: React.FC = () => {
         const data = await fetchAdminProducts(page, limit, searchTerm, token);
         let allProducts = data.products || [];
         
-        // Add local drafts if we are on the first page and no search or searching for draft
+        // Add local drafts if we are on the first page
         if (page === 1) {
           const drafts = localProductService.getAllDrafts();
           const filteredDrafts = searchTerm 
-            ? drafts.filter(d => d.name.toLowerCase().includes(searchTerm.toLowerCase()))
+            ? drafts.filter(d => 
+                d.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                (d.chineseName && d.chineseName.toLowerCase().includes(searchTerm.toLowerCase()))
+              )
             : drafts;
-          allProducts = [...filteredDrafts, ...allProducts];
+          
+          // Filter out any server products that might have the same ID as a draft (shouldn't happen with local- prefix)
+          const draftIds = new Set(filteredDrafts.map(d => d.id));
+          const uniqueServerProducts = allProducts.filter(p => !draftIds.has(p.id));
+          
+          allProducts = [...filteredDrafts, ...uniqueServerProducts];
         }
 
         setProducts(allProducts);
@@ -629,6 +685,12 @@ const AdminDashboard: React.FC = () => {
               <textarea
                 value={importText}
                 onChange={(e) => setImportText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    handlePasteImport();
+                  }
+                }}
                 placeholder='{"products": [...] }'
                 className="w-full h-64 bg-slate-50 dark:bg-slate-800 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-2xl p-4 text-left font-mono text-sm focus:ring-2 focus:ring-primary/20 outline-none transition-all resize-none"
               />

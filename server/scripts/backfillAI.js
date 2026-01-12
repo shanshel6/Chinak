@@ -20,15 +20,13 @@ async function backfillAI() {
     process.exit(1);
   }
 
-  const products = await prisma.product.findMany({
-    select: {
-      id: true,
-      name: true,
-      aiMetadata: true
-    }
-  });
+  // Use raw query to find products without embeddings or without aiMetadata
+  const productsToProcess = await prisma.$queryRaw`
+    SELECT id, name, "aiMetadata" 
+    FROM "Product" 
+    WHERE "aiMetadata" IS NULL OR embedding IS NULL
+  `;
 
-  const productsToProcess = products.filter(p => !p.aiMetadata);
   console.log(`Found ${productsToProcess.length} products to process.`);
 
   for (const product of productsToProcess) {

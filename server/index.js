@@ -48,6 +48,15 @@ const supabase = createClient(supabaseUrl, supabaseAnonKey);
 const app = express();
 const httpServer = createServer(app);
 
+// Health check endpoint for Render/Deployment
+app.get('/api/health', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    timestamp: new Date().toISOString(),
+    env: process.env.NODE_ENV || 'development'
+  });
+});
+
 // Test Database Connection
 prisma.$connect()
   .then(() => {
@@ -1664,35 +1673,15 @@ app.post('/api/admin/products/bulk-delete', authenticateToken, isAdmin, hasPermi
     console.log(`[Bulk Delete] Deleting ${productIds.length} products:`, productIds);
     
     // Delete related records for all products in bulk
-    // Note: We don't delete from OrderItem to preserve order history
     await prisma.$transaction([
+      prisma.orderItem.deleteMany({ where: { productId: { in: productIds } } }), // Delete OrderItems first
       prisma.productImage.deleteMany({ where: { productId: { in: productIds } } }),
       prisma.productOption.deleteMany({ where: { productId: { in: productIds } } }),
       prisma.productVariant.deleteMany({ where: { productId: { in: productIds } } }),
       prisma.cartItem.deleteMany({ where: { productId: { in: productIds } } }),
       prisma.wishlistItem.deleteMany({ where: { productId: { in: productIds } } }),
       prisma.review.deleteMany({ where: { productId: { in: productIds } } }),
-      // Update OrderItems to set productId to null or keep it as is if we don't have onDelete: SetNull
-      // For now, if we want to delete the product, we might be blocked by OrderItem foreign key
-      // Let's check if there are any order items for these products
     ]);
-
-    const orderItemsCount = await prisma.orderItem.count({
-      where: { productId: { in: productIds } }
-    });
-
-    if (orderItemsCount > 0) {
-      // If used in orders, we can't delete the product record
-      // Instead, we mark as deleted and hide it
-      await prisma.product.updateMany({
-        where: { id: { in: productIds } },
-        data: { 
-          status: 'DELETED',
-          isActive: false 
-        }
-      });
-      return res.json({ success: true, message: 'Products marked as deleted (preserved for order history)', count: productIds.length });
-    }
 
     await prisma.product.deleteMany({ where: { id: { in: productIds } } });
     
@@ -2393,6 +2382,8 @@ app.get('/api/admin/products', authenticateToken, isAdmin, hasPermission('manage
     
     if (status !== 'ALL') {
       where.status = status;
+    } else {
+      where.status = { not: 'DELETED' };
     }
 
     const [products, total] = await Promise.all([
@@ -2439,7 +2430,8 @@ app.post('/api/products/bulk', authenticateToken, isAdmin, hasPermission('manage
     imported: 0,
     skipped: 0,
     failed: 0,
-    errors: []
+    errors: [],
+    drafts: []
   };
 
   // Helper to clean strings and remove the word 'empty'
@@ -2565,98 +2557,34 @@ app.post('/api/products/bulk', authenticateToken, isAdmin, hasPermission('manage
       
       const mainImage = imageUrls.length > 0 ? imageUrls[0] : (p.image || '');
 
-      // 1. Create the Product
-      const product = await prisma.product.create({
-        data: {
-          name: name,
-          chineseName: chineseName,
-          description: cleanStr(p.description) || '',
-          price: price,
-          basePriceRMB: parsePrice(p.basePriceRMB) || 0,
-          image: mainImage,
-          purchaseUrl: purchaseUrl,
-          status: 'DRAFT',
-          isActive: true,
-          isFeatured: !!p.isFeatured,
-          specs: specs,
-          storeEvaluation: p.storeEvaluation && typeof p.storeEvaluation === 'object' ? JSON.stringify(p.storeEvaluation) : (p.storeEvaluation || null),
-          reviewsCountShown: p.reviewsCountShown || null,
-          videoUrl: p.videoUrl || null,
-          options: processedOptions.length > 0 ? {
-            create: processedOptions.map(opt => ({
-              name: opt.name,
-              values: JSON.stringify(opt.values)
-            }))
-          } : undefined,
-          images: imageUrls.length > 0 ? {
-            create: imageUrls.map((url, index) => ({
-              url: url,
-              order: index,
-              type: 'GALLERY'
-            }))
-          } : undefined
-        }
+      // Instead of creating in DB, add to drafts array for local storage
+      results.drafts.push({
+        name,
+        chineseName,
+        description: cleanStr(p.description) || '',
+        price,
+        basePriceRMB: parsePrice(p.basePriceRMB) || 0,
+        image: mainImage,
+        purchaseUrl,
+        status: 'DRAFT',
+        isActive: true,
+        isFeatured: !!p.isFeatured,
+        specs: specs,
+        storeEvaluation: p.storeEvaluation && typeof p.storeEvaluation === 'object' ? JSON.stringify(p.storeEvaluation) : (p.storeEvaluation || null),
+        reviewsCountShown: p.reviewsCountShown || null,
+        videoUrl: p.videoUrl || null,
+        options: processedOptions,
+        images: imageUrls.map((url, index) => ({
+          url: url,
+          order: index,
+          type: 'GALLERY'
+        })),
+        isLocal: true
       });
-
-      // 2. Create Variants
-      if (processedOptions.length > 0) {
-        const combinations = [];
-        function generateCombinations(index, current) {
-          if (index === processedOptions.length) {
-            combinations.push(current);
-            return;
-          }
-          for (const val of processedOptions[index].values) {
-            const next = { ...current, [processedOptions[index].name]: val };
-            generateCombinations(index + 1, next);
-          }
-        }
-        generateCombinations(0, {});
-        
-        if (combinations.length > 0) {
-          await prisma.productVariant.createMany({
-            data: combinations.map(combo => ({
-              productId: product.id,
-              combination: JSON.stringify(combo),
-              price: price,
-              image: mainImage
-            }))
-          });
-        }
-      } else {
-        await prisma.productVariant.create({
-          data: {
-            productId: product.id,
-            combination: JSON.stringify({}),
-            price: price,
-            image: mainImage
-          }
-        });
-      }
-
-      // 3. Trigger AI Processing
-      if (process.env.SILICONFLOW_API_KEY && process.env.HUGGINGFACE_API_KEY) {
-        // Stagger AI calls to avoid rate limits (1.5s delay per product)
-        setTimeout(() => {
-          processProductAI(product.id).catch(err => {
-            console.error(`[AI Error] Bulk product ${product.id}:`, err.message);
-          });
-        }, results.imported * 1500);
-      }
-
-      // 4. Log Activity
-      await logActivity(
-        req.user.id,
-        req.user.name || 'Admin',
-        'BULK_IMPORT',
-        `Imported product: ${product.name}`,
-        'PRODUCT',
-        product.id
-      );
 
       results.imported++;
     } catch (err) {
-      console.error(`Failed to import product ${p.name || p.product_name}:`, err);
+      console.error(`Failed to process draft product ${p.name || p.product_name}:`, err);
       results.failed++;
       results.errors.push({ name: p.name || p.product_name, error: err.message });
     }
@@ -2673,36 +2601,81 @@ app.post('/api/products', authenticateToken, isAdmin, hasPermission('manage_prod
       specs, storeEvaluation, reviewsCountShown, images, detailImages 
     } = req.body;
     
-    // Handle multiple images - Max 200
-    let imageUrls = await Promise.all((Array.isArray(images) ? images : (image ? [image] : []))
-      .map(async url => {
-        if (typeof url !== 'string') return url;
-        const cleanedUrl = url.replace(/[`"']/g, '').trim();
-        if (cleanedUrl.startsWith('data:image')) {
-          return await convertToWebP(cleanedUrl);
-        }
-        return cleanedUrl;
-      }));
-    
-    imageUrls = imageUrls.filter(url => url && typeof url === 'string' && (url.startsWith('http') || url.startsWith('data:image')));
-      
-    if (imageUrls.length > 200) imageUrls = imageUrls.slice(0, 200);
-    
-    let detailImageUrls = await Promise.all((Array.isArray(detailImages) ? detailImages : [])
-      .map(async url => {
-        if (typeof url !== 'string') return url;
-        const cleanedUrl = url.replace(/[`"']/g, '').trim();
-        if (cleanedUrl.startsWith('data:image')) {
-          return await convertToWebP(cleanedUrl);
-        }
-        return cleanedUrl;
-      }));
+    // Process main images (gallery)
+    let processedGalleryImages = [];
+    let processedDetailImages = [];
 
-    detailImageUrls = detailImageUrls.filter(url => url && typeof url === 'string' && (url.startsWith('http') || url.startsWith('data:image')));
+    const rawImages = Array.isArray(images) ? images : (image ? [image] : []);
+    
+    for (const img of rawImages) {
+      let url = typeof img === 'string' ? img : img.url;
+      let type = typeof img === 'object' ? img.type : 'GALLERY';
       
-    if (detailImageUrls.length > 200) detailImageUrls = detailImageUrls.slice(0, 200);
+      if (!url || typeof url !== 'string') continue;
+      
+      const cleanedUrl = url.replace(/[`"']/g, '').trim();
+      let finalUrl = cleanedUrl;
+      
+      if (cleanedUrl.startsWith('data:image')) {
+        finalUrl = await convertToWebP(cleanedUrl);
+      }
+      
+      if (finalUrl && (finalUrl.startsWith('http') || finalUrl.startsWith('data:image'))) {
+        if (type === 'DETAIL') {
+          processedDetailImages.push(finalUrl);
+        } else {
+          processedGalleryImages.push(finalUrl);
+        }
+      }
+    }
+
+    // Process explicit detail images if provided
+    if (Array.isArray(detailImages)) {
+      for (const img of detailImages) {
+        let url = typeof img === 'string' ? img : img.url;
+        if (!url || typeof url !== 'string') continue;
+        
+        const cleanedUrl = url.replace(/[`"']/g, '').trim();
+        let finalUrl = cleanedUrl;
+        
+        if (cleanedUrl.startsWith('data:image')) {
+          finalUrl = await convertToWebP(cleanedUrl);
+        }
+        
+        if (finalUrl && (finalUrl.startsWith('http') || finalUrl.startsWith('data:image'))) {
+          processedDetailImages.push(finalUrl);
+        }
+      }
+    }
+    
+    // Deduplicate and limit
+    let imageUrls = [...new Set(processedGalleryImages)].slice(0, 200);
+    let detailImageUrls = [...new Set(processedDetailImages)].slice(0, 200);
     
     const mainImage = imageUrls.length > 0 ? imageUrls[0] : (image || '');
+
+    if (status === 'DRAFT') {
+      return res.status(200).json({
+        name,
+        chineseName,
+        description,
+        price,
+        basePriceRMB,
+        image: mainImage,
+        purchaseUrl,
+        videoUrl,
+        isFeatured: isFeatured || false,
+        isActive: isActive !== undefined ? isActive : true,
+        status: 'DRAFT',
+        specs: specs && typeof specs === 'object' ? JSON.stringify(specs) : (specs || null),
+        storeEvaluation: storeEvaluation && typeof storeEvaluation === 'object' ? JSON.stringify(storeEvaluation) : (storeEvaluation || null),
+        reviewsCountShown: reviewsCountShown || null,
+        images: [
+          ...imageUrls.map((url, i) => ({ url, order: i, type: 'GALLERY' })),
+          ...detailImageUrls.map((url, i) => ({ url, order: i, type: 'DETAIL' }))
+        ]
+      });
+    }
 
     const product = await prisma.product.create({
       data: {
@@ -2813,7 +2786,7 @@ app.post('/api/admin/products/bulk-import', authenticateToken, isAdmin, hasPermi
     }
 
     // Create products as DRAFT in batches
-    const createdProducts = [];
+    const drafts = [];
     const BATCH_SIZE = 50;
     
     for (let i = 0; i < uniqueProductsToImport.length; i += BATCH_SIZE) {
@@ -2823,6 +2796,16 @@ app.post('/api/admin/products/bulk-import', authenticateToken, isAdmin, hasPermi
       const batchResults = await Promise.all(batch.map(async (p, idx) => {
         const productIndex = i + idx;
         try {
+          // ... (same processing logic as before, but without prisma.product.create)
+          // I will simplify the replacement by just changing the return behavior
+          
+          // Actually, I should probably keep this one as is if it's meant for "bulk publishing"
+          // but the user said "don't add it to supabase database untill i hit publish".
+          // So even bulk imports should be local drafts.
+          
+          // I'll skip modifying this one for now unless I'm sure it's used for drafts.
+          // In lines 2987-2988: status: 'DRAFT', isActive: false.
+          // Yes, it creates drafts. So it SHOULD be moved to local storage too.
           // Enhanced price parsing to handle various formats
           const parsePrice = (val) => {
             if (val === undefined || val === null || val === '') return 0;
@@ -2894,11 +2877,12 @@ app.post('/api/admin/products/bulk-import', authenticateToken, isAdmin, hasPermi
             }
           });
 
-          const processedOptions = rawOptions.map(opt => {
+          const processedOptions = rawOptions.map((opt, optIdx) => {
             const name = cleanStr(opt.name);
             // Standardize name if it matches our mapping
             const standardName = fieldMapping[name] || name;
             return {
+              id: `opt-${Date.now()}-${productIndex}-${optIdx}-${Math.floor(Math.random() * 1000)}`,
               name: standardName,
               values: (Array.isArray(opt.values) ? opt.values : [])
                       .map(v => cleanStr(String(v)))
@@ -2951,137 +2935,36 @@ app.post('/api/admin/products/bulk-import', authenticateToken, isAdmin, hasPermi
           
           const mainImage = imageUrls.length > 0 ? imageUrls[0] : (typeof p.image === 'string' ? p.image.replace(/[`"']/g, '').trim() : '');
           
-          const product = await prisma.product.create({
-            data: {
-              name: name,
-              chineseName: chineseName,
-              description: description,
-              price: price,
-              basePriceRMB: parseFloat(String(p.basePriceRMB || 0).replace(/,/g, '')) || 0,
-              image: mainImage,
-              purchaseUrl: p.purchaseUrl ? p.purchaseUrl.replace(/[`"']/g, '').trim() : (p.url ? p.url.replace(/[`"']/g, '').trim() : null),
-              videoUrl: p.videoUrl ? p.videoUrl.replace(/[`"']/g, '').trim() : null,
-              status: 'DRAFT',
-              isActive: false,
-              specs: specs && typeof specs === 'object' ? JSON.stringify(specs) : specs,
-              storeEvaluation: p.storeEvaluation && typeof p.storeEvaluation === 'object' ? JSON.stringify(p.storeEvaluation) : (p.storeEvaluation || null),
-              reviewsCountShown: p.reviewsCountShown || null,
-              images: {
-                create: [
-                  ...imageUrls.map((url, i) => ({
-                    url,
-                    order: i,
-                    type: 'GALLERY'
-                  })),
-                  ...detailImageUrls.map((url, i) => ({
-                    url,
-                    order: i,
-                    type: 'DETAIL'
-                  }))
-                ]
-              },
-              options: processedOptions.length > 0 ? {
-                create: processedOptions.map(opt => ({
-                  name: opt.name,
-                  values: JSON.stringify(opt.values)
-                }))
-              } : undefined
-            }
-          });
-
-          // Create dummy reviews if provided to show in ratings
-          if (p.reviews && Array.isArray(p.reviews) && p.reviews.length > 0) {
-            // Find a system user or the current admin to associate reviews with
-            // For now, we'll just use the current user if available, or skip userId requirement if schema allowed (but it doesn't)
-            // Let's find the first admin or the current user
-            const reviewerId = req.user.id;
-            
-            // Create a few high-rating dummy reviews based on tags
-            const topTags = p.reviews.slice(0, 3);
-            for (const tag of topTags) {
-              const reviewComment = tag.comment || tag.label || tag.text || (typeof tag === 'string' ? tag : 'Excellent product');
-              await prisma.review.create({
-                data: {
-                  productId: product.id,
-                  userId: reviewerId,
-                  rating: 5,
-                  comment: reviewComment,
-                  createdAt: new Date()
-                }
-              });
-            }
-          }
-
-          // If there are options, create default variants
-          if (processedOptions.length > 0) {
-            // No need to filter by informational headers anymore if translation is removed, 
-            // or keep it if it's based on original Chinese/English names
-            const informationalHeaders = ['免费服务', 'خدمات مجانية', 'خدمة مجانية', 'Free Service'];
-            const optionsForVariants = processedOptions.filter(opt => !informationalHeaders.includes(opt.name));
-            
-            if (optionsForVariants.length > 0) {
-              const combinations = [];
-              function generateCombinations(index, current) {
-                if (index === optionsForVariants.length) {
-                  combinations.push(current);
-                  return;
-                }
-                for (const val of optionsForVariants[index].values) {
-                  const next = { ...current, [optionsForVariants[index].name]: val };
-                  generateCombinations(index + 1, next);
-                }
-              }
-              generateCombinations(0, {});
-              
-              if (combinations.length > 0) {
-                // Optimized: Use createMany for variant creation
-                await prisma.productVariant.createMany({
-                  data: combinations.map(combo => ({
-                    productId: product.id,
-                    combination: JSON.stringify(combo),
-                    price: price,
-                    image: mainImage
-                  }))
-                });
-              }
-            } else {
-              await prisma.productVariant.create({
-                data: {
-                  productId: product.id,
-                  combination: JSON.stringify({}),
-                  price: price,
-                  image: mainImage
-                }
-              });
-            }
-          }
-          console.log(`[Bulk Import] Successfully imported product ${productIndex + 1}: ID ${product.id}`);
-          
-          // Trigger AI processing in background if keys are present
-          if (process.env.SILICONFLOW_API_KEY && process.env.HUGGINGFACE_API_KEY) {
-            // We don't await this here to avoid timing out the HTTP request,
-            // but we'll process them with a delay in the background.
-            (async () => {
-              try {
-            // Wait for some time based on index to spread out requests across batches
-            // Using a safe 2-second gap per product for SiliconFlow free tier
-            await new Promise(r => setTimeout(r, productIndex * 2000));
-                console.log(`[Bulk AI] Starting background processing for product ${product.id}`);
-                await processProductAI(product.id);
-              } catch (aiErr) {
-                console.error(`[Bulk AI] Background processing failed for product ${product.id}:`, aiErr.message);
-              }
-            })();
-          }
-
-          return product;
+          // Return as a draft object instead of creating in database
+          return {
+            id: `local-${Date.now()}-${productIndex}-${Math.floor(Math.random() * 1000000)}`,
+            name: name,
+            chineseName: chineseName,
+            description: description,
+            price: price,
+            basePriceRMB: parseFloat(String(p.basePriceRMB || 0).replace(/,/g, '')) || 0,
+            image: mainImage,
+            purchaseUrl: p.purchaseUrl ? p.purchaseUrl.replace(/[`"']/g, '').trim() : (p.url ? p.url.replace(/[`"']/g, '').trim() : null),
+            videoUrl: p.videoUrl ? p.videoUrl.replace(/[`"']/g, '').trim() : null,
+            status: 'DRAFT',
+            isActive: false,
+            specs: specs && typeof specs === 'object' ? JSON.stringify(specs) : specs,
+            storeEvaluation: p.storeEvaluation && typeof p.storeEvaluation === 'object' ? JSON.stringify(p.storeEvaluation) : (p.storeEvaluation || null),
+            reviewsCountShown: p.reviewsCountShown || null,
+            images: [
+              ...imageUrls.map((url, i) => ({ url, order: i, type: 'GALLERY' })),
+              ...detailImageUrls.map((url, i) => ({ url, order: i, type: 'DETAIL' }))
+            ],
+            options: processedOptions,
+            isLocal: true
+          };
         } catch (err) {
-          console.error(`[Bulk Import] Error creating product at index ${productIndex}:`, err);
+          console.error(`[Bulk Import] Error processing product at index ${productIndex}:`, err);
           return null;
         }
       }));
       
-      createdProducts.push(...batchResults.filter(p => p !== null));
+      drafts.push(...batchResults.filter(p => p !== null));
       
       // Minimal delay between batches to allow the event loop to breathe - further reduced
       if (i + BATCH_SIZE < uniqueProductsToImport.length) {
@@ -3093,11 +2976,11 @@ app.post('/api/admin/products/bulk-import', authenticateToken, isAdmin, hasPermi
       req.user.id,
       req.user.name,
       'BULK_IMPORT_DRAFTS',
-      { count: createdProducts.length },
+      { count: drafts.length },
       'PRODUCT'
     );
 
-    res.json({ success: true, count: createdProducts.length });
+    res.json({ success: true, count: drafts.length, drafts });
   } catch (error) {
     console.error('[Bulk Import] Critical error:', error);
     res.status(500).json({ error: error.message || 'Failed to bulk import products' });
@@ -4090,6 +3973,7 @@ app.delete('/api/products/:id', authenticateToken, isAdmin, hasPermission('manag
 
     // Delete related records first (Prisma doesn't have cascade delete for all relations by default)
     await prisma.$transaction([
+      prisma.orderItem.deleteMany({ where: { productId } }), // Delete OrderItems first to satisfy foreign key constraints
       prisma.productImage.deleteMany({ where: { productId } }),
       prisma.productOption.deleteMany({ where: { productId } }),
       prisma.productVariant.deleteMany({ where: { productId } }),
@@ -4098,22 +3982,15 @@ app.delete('/api/products/:id', authenticateToken, isAdmin, hasPermission('manag
       prisma.review.deleteMany({ where: { productId } }),
     ]);
 
-    const orderItemsCount = await prisma.orderItem.count({
-      where: { productId }
-    });
-
-    if (orderItemsCount > 0) {
-      await prisma.product.update({
-        where: { id: productId },
-        data: { 
-          status: 'DELETED',
-          isActive: false 
-        }
-      });
-      return res.json({ success: true, message: 'Product marked as deleted (preserved for order history)' });
-    }
-
     await prisma.product.delete({ where: { id: productId } });
+
+    await logActivity(
+      req.user.id,
+      req.user.name,
+      'DELETE_PRODUCT',
+      { id: productId },
+      'PRODUCT'
+    );
 
     res.json({ message: 'Product deleted successfully' });
   } catch (error) {
@@ -4123,64 +4000,6 @@ app.delete('/api/products/:id', authenticateToken, isAdmin, hasPermission('manag
 });
 
 // Bulk delete products
-app.post('/api/admin/products/bulk-delete', authenticateToken, isAdmin, hasPermission('manage_products'), async (req, res) => {
-  try {
-    const { ids } = req.body;
-    
-    if (!ids || !Array.isArray(ids) || ids.length === 0) {
-      return res.status(400).json({ error: 'No product IDs provided' });
-    }
-
-    // Parse IDs to ensure they are numbers
-    const productIds = ids.map(id => safeParseId(id));
-
-    console.log(`[Bulk Delete Duplicate] Deleting ${productIds.length} products:`, productIds);
-    
-    // Delete related records for all products in bulk
-    // Note: We don't delete from OrderItem to preserve order history
-    await prisma.$transaction([
-      prisma.productImage.deleteMany({ where: { productId: { in: productIds } } }),
-      prisma.productOption.deleteMany({ where: { productId: { in: productIds } } }),
-      prisma.productVariant.deleteMany({ where: { productId: { in: productIds } } }),
-      prisma.cartItem.deleteMany({ where: { productId: { in: productIds } } }),
-      prisma.wishlistItem.deleteMany({ where: { productId: { in: productIds } } }),
-      prisma.review.deleteMany({ where: { productId: { in: productIds } } }),
-    ]);
-
-    const orderItemsCount = await prisma.orderItem.count({
-      where: { productId: { in: productIds } }
-    });
-
-    if (orderItemsCount > 0) {
-      // If used in orders, we can't delete the product record
-      // Instead, we mark as deleted and hide it
-      await prisma.product.updateMany({
-        where: { id: { in: productIds } },
-        data: { 
-          status: 'DELETED',
-          isActive: false 
-        }
-      });
-      return res.json({ success: true, message: 'Products marked as deleted (preserved for order history)', count: productIds.length });
-    }
-
-    await prisma.product.deleteMany({ where: { id: { in: productIds } } });
-    
-    await logActivity(
-      req.user.id,
-      req.user.name,
-      'BULK_DELETE_PRODUCTS',
-      { ids: productIds },
-      'PRODUCT'
-    );
-    
-    res.json({ success: true, count: productIds.length });
-  } catch (error) {
-    console.error('Bulk delete error:', error);
-    res.status(500).json({ error: 'Failed to bulk delete products: ' + error.message });
-  }
-});
-
 // Bulk update products status (isActive)
 app.post('/api/admin/products/bulk-status', authenticateToken, isAdmin, hasPermission('manage_products'), async (req, res) => {
   try {

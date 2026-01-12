@@ -24,6 +24,7 @@ import {
   createProduct, 
   saveProductOptions 
 } from '../services/api';
+import { localProductService } from '../services/localProductService';
 import { useToastStore } from '../store/useToastStore';
 import { useAuthStore } from '../store/useAuthStore';
 
@@ -93,7 +94,14 @@ const ProductEditor: React.FC<ProductEditorProps> = ({ productId, onClose, onSuc
 
     try {
       setLoading(true);
-      const product = await fetchProductById(productId);
+      
+      let product;
+      if (String(productId).startsWith('local-')) {
+        product = localProductService.getDraftById(String(productId));
+      } else {
+        product = await fetchProductById(productId);
+      }
+      
       console.log('Loaded product data:', product);
       
       if (!product || product.error) {
@@ -178,26 +186,48 @@ const ProductEditor: React.FC<ProductEditorProps> = ({ productId, onClose, onSuc
       
       const productData = {
         ...formData,
-        price: parseFloat(formData.price),
+        price: parseFloat(formData.price) || 0,
         basePriceRMB: formData.basePriceRMB ? parseFloat(formData.basePriceRMB) : null,
         reviewsCountShown: parseInt(formData.reviewsCountShown) || 0,
         images: [
           ...formData.images.map((img: any, idx: number) => ({ ...img, type: 'GALLERY', order: idx })),
           ...formData.detailImages.map((img: any, idx: number) => ({ ...img, type: 'DETAIL', order: idx }))
-        ]
+        ],
+        options,
+        variants,
+        updatedAt: new Date().toISOString()
       };
 
-      let result;
-      if (isEdit) {
-        result = await updateProduct(productId!, productData);
-      } else {
-        result = await createProduct(productData);
+      if (formData.status === 'DRAFT') {
+        // Save locally only
+        const savedLocal = localProductService.saveDraft({
+          ...productData,
+          id: isEdit && String(productId).startsWith('local-') ? String(productId) : undefined,
+          isLocal: true
+        });
+        showToast('تم حفظ المسودة محلياً', 'success');
+        if (onSuccess) onSuccess();
+        onClose();
+        return;
       }
 
-      // If it was a local draft being published, or a new product (local or server),
-      // we need to use the ID from the result.
-      const newProductId = result.id || (isEdit ? productId! : result.id);
-      await saveProductOptions(newProductId, options, variants, token);
+      // If it's being published (status === 'PUBLISHED')
+      let result;
+      if (isEdit && !String(productId).startsWith('local-')) {
+        result = await updateProduct(productId!, productData);
+      } else {
+        // Create new product on server (could be from a local draft or completely new)
+        result = await createProduct(productData);
+        // If it was a local draft, delete it after successful publish
+        if (isEdit && String(productId).startsWith('local-')) {
+          localProductService.deleteDraft(String(productId));
+        }
+      }
+
+      const newProductId = result.id;
+      if (options.length > 0 || variants.length > 0) {
+        await saveProductOptions(newProductId, options, variants, token);
+      }
 
       showToast(isEdit ? 'تم تحديث المنتج بنجاح' : 'تم إضافة المنتج بنجاح', 'success');
       if (onSuccess) onSuccess();

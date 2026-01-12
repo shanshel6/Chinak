@@ -59,9 +59,6 @@ export const getBaseDomain = () => {
       // If we are on a dev domain (like ngrok) and no port is specified, 
       // it means we are likely using a proxy that handles the port.
       if (!port || port === '80' || port === '443') {
-        // SPECIAL CASE: If we are on ngrok, we might be calling a local backend
-        // This only works if accessed from the SAME machine.
-        // For external access, ngrok must be proxying both or have another tunnel.
         return `${protocol}//${hostname}`;
       }
       
@@ -69,7 +66,8 @@ export const getBaseDomain = () => {
       return `${protocol}//${hostname}:5000`;
     }
 
-    return 'https://your-api-domain.com';
+    // Use environment variable if available, otherwise default to production URL
+    return import.meta.env.VITE_API_URL || 'https://your-api-domain.onrender.com';
   })();
 
   if (import.meta.env.DEV) {

@@ -7,10 +7,15 @@ import { ProxyAgent, setGlobalDispatcher } from 'undici';
 import prisma from '../prismaClient.js';
 
 // Setup the proxy dispatcher globally for undici (used by native fetch in Node 18+)
-// SiliconFlow is based in China and usually doesn't need a proxy, 
-// but we keep it available for Hugging Face embeddings.
-const agent = new ProxyAgent('http://127.0.0.1:7890');
-setGlobalDispatcher(agent);
+// Only use proxy in local development if explicitly requested via environment variable
+if (process.env.USE_AI_PROXY === 'true' || (process.env.NODE_ENV !== 'production' && !process.env.RENDER)) {
+  const proxyUrl = process.env.AI_PROXY_URL || 'http://127.0.0.1:7890';
+  console.log(`[AI Debug] Using proxy for AI services: ${proxyUrl}`);
+  const agent = new ProxyAgent(proxyUrl);
+  setGlobalDispatcher(agent);
+} else {
+  console.log('[AI Debug] Connecting to AI services directly (no proxy)');
+}
 
 // Initialize clients lazily
 let hf = null;
@@ -84,14 +89,20 @@ export async function processProductAI(productId) {
     const content = `Title: ${product.name}\nDescription: ${product.description || ''}\nSpecs: ${product.specs || ''}\nMain Image URL: ${product.image || ''}`;
     
     // 1. Extract Tags and Synonyms using SiliconFlow (DeepSeek-V3)
-    const prompt = `You are an AI specialized in e-commerce product analysis. 
-    Describe the product features from this URL: ${product.image || 'No image available'}.
-    Extract 'Invisible Tags' (Style, Occasion, Material, Audience) and generate search synonyms for the following product. 
-    Return ONLY a valid JSON object with 'extracted_tags' (array of strings) and 'synonyms' (array of strings). 
-    Do not include markdown formatting or extra text.
+    const prompt = `You are an AI specialized in e-commerce product analysis for the Middle Eastern market, specifically Iraq. 
+    Analyze the product details and image to extract 'Invisible Tags' and search synonyms.
     
     Product Details:
-    ${content}`;
+    Title: ${product.name}
+    Description: ${product.description || ''}
+    Specs: ${product.specs || ''}
+    
+    Return ONLY a valid JSON object with:
+    1. 'extracted_tags': Array of strings representing style (e.g., modern, classic), occasion (e.g., wedding, office), material (e.g., silk, cotton), and target audience (e.g., kids, professionals).
+    2. 'synonyms': Array of strings representing how users might search for this in Arabic, English, and Iraqi dialect (e.g., if it's a 'refrigerator', include 'ثلاجة', 'مبردة', 'براد').
+    3. 'category_suggestion': A string suggesting the best category for this product.
+
+    Do not include markdown formatting or extra text.`;
 
     console.log(`[AI Debug] Calling SiliconFlow for product ${productId}...`);
     

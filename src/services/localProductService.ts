@@ -30,7 +30,46 @@ export const localProductService = {
     const stored = localStorage.getItem(LOCAL_DRAFTS_KEY);
     if (!stored) return [];
     try {
-      return JSON.parse(stored);
+      const drafts = JSON.parse(stored);
+      // Fix duplicated IDs and ensure uniqueness
+      const seenIds = new Set();
+      let hasChanged = false;
+      const fixedDrafts = drafts.map((d: any, index: number) => {
+        let draftChanged = false;
+        const newDraft = { ...d };
+
+        // Fix duplicated or missing IDs
+        if (!newDraft.id || typeof newDraft.id !== 'string' || seenIds.has(newDraft.id)) {
+          hasChanged = true;
+          draftChanged = true;
+          newDraft.id = `local-${Date.now()}-${index}-${Math.floor(Math.random() * 1000000)}`;
+        }
+        seenIds.add(newDraft.id);
+
+        // Fix missing IDs for options
+        if (newDraft.options && Array.isArray(newDraft.options)) {
+          newDraft.options = newDraft.options.map((opt: any, optIdx: number) => {
+            if (!opt.id) {
+              hasChanged = true;
+              draftChanged = true;
+              return { 
+                ...opt, 
+                id: `opt-${Date.now()}-${index}-${optIdx}-${Math.floor(Math.random() * 1000)}` 
+              };
+            }
+            return opt;
+          });
+        }
+
+        return draftChanged ? newDraft : d;
+      });
+
+      if (hasChanged) {
+        console.log('[LocalProductService] Fixed duplicate or missing IDs in drafts');
+        localStorage.setItem(LOCAL_DRAFTS_KEY, JSON.stringify(fixedDrafts));
+        return fixedDrafts;
+      }
+      return drafts;
     } catch (e) {
       console.error('Failed to parse local drafts:', e);
       return [];
@@ -58,20 +97,8 @@ export const localProductService = {
       } else {
         // ID provided but not found, create new
         updatedProduct = {
-          ...product,
-          id: `local-${Date.now()}`,
-          createdAt: now,
-          updatedAt: now,
-          status: 'DRAFT',
-          isLocal: true
-        } as LocalProduct;
-        drafts.push(updatedProduct);
-      }
-    } else {
-      // Create new
-      updatedProduct = {
         ...product,
-        id: `local-${Date.now()}`,
+        id: `local-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
         createdAt: now,
         updatedAt: now,
         status: 'DRAFT',
@@ -79,6 +106,18 @@ export const localProductService = {
       } as LocalProduct;
       drafts.push(updatedProduct);
     }
+  } else {
+    // Create new
+    updatedProduct = {
+      ...product,
+      id: `local-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      createdAt: now,
+      updatedAt: now,
+      status: 'DRAFT',
+      isLocal: true
+    } as LocalProduct;
+    drafts.push(updatedProduct);
+  }
 
     localStorage.setItem(LOCAL_DRAFTS_KEY, JSON.stringify(drafts));
     return updatedProduct;
