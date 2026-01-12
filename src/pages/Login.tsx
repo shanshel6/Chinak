@@ -1,0 +1,612 @@
+import React, { useState } from 'react';
+import { useNavigate, Link } from 'react-router-dom';
+import { Phone, User as UserIcon, ArrowLeft, Mail, Lock, Home } from 'lucide-react';
+import { sendWhatsAppOTP, checkUser, checkEmail, loginWithEmail, signupWithEmail, verifyEmailOTP, forgotPassword, resetPassword, resendEmailOTP } from '../services/api';
+import { useAuthStore } from '../store/useAuthStore';
+import { useToastStore } from '../store/useToastStore';
+import { KeyRound } from 'lucide-react';
+
+import Logo from '../components/Logo';
+
+const Login: React.FC = () => {
+  const navigate = useNavigate();
+  const setAuth = useAuthStore((state) => state.setAuth);
+  const showToast = useToastStore((state) => state.showToast);
+  
+  const [method, setMethod] = useState<'phone' | 'email'>('phone');
+  const [countryCode, setCountryCode] = useState('+964');
+  const [phoneNumber, setPhoneNumber] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [fullName, setFullName] = useState('');
+  const [otpCode, setOtpCode] = useState('');
+  const [step, setStep] = useState<'phone' | 'name' | 'email' | 'signup-name' | 'email-otp' | 'forgot-password' | 'reset-password'>('phone');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const countries = [
+    { code: '+964', name: 'العراق', flag: '🇮🇶' },
+    { code: '+966', name: 'السعودية', flag: '🇸🇦' },
+    { code: '+971', name: 'الإمارات', flag: '🇦🇪' },
+    { code: '+965', name: 'الكويت', flag: '🇰🇼' },
+    { code: '+974', name: 'قطر', flag: '🇶🇦' },
+    { code: '+973', name: 'البحرين', flag: '🇧🇭' },
+    { code: '+968', name: 'عمان', flag: '🇴🇲' },
+    { code: '+962', name: 'الأردن', flag: '🇯🇴' },
+    { code: '+90', name: 'تركيا', flag: '🇹🇷' },
+    { code: '+86', name: 'الصين', flag: '🇨🇳' },
+  ];
+
+  const fullPhone = `${countryCode}${phoneNumber}`;
+
+  const normalizePhone = (phone: string) => {
+    if (!phone) return '';
+    // Remove all non-numeric characters
+    let clean = phone.replace(/\D/g, '');
+    
+    // Handle Iraq numbers (+964 or 07...)
+    if (clean.startsWith('0')) {
+      clean = '964' + clean.substring(1);
+    } else if (clean.startsWith('9640')) {
+      clean = '964' + clean.substring(4);
+    } else if (!clean.startsWith('964') && clean.length === 10 && (clean.startsWith('77') || clean.startsWith('78') || clean.startsWith('75') || clean.startsWith('79'))) {
+      // If it's a 10 digit number starting with a mobile prefix, assume it's Iraq
+      clean = '964' + clean;
+    }
+    
+    return clean;
+  };
+
+  const checkUserExists = async (phone: string) => {
+    try {
+      const { exists } = await checkUser(phone);
+      return exists;
+    } catch (err) {
+      console.error('Error checking user:', err);
+      return false;
+    }
+  };
+
+  const handlePhoneSubmit = async () => {
+    const normalizedPhone = normalizePhone(fullPhone);
+
+    if (step === 'phone') {
+      if (!phoneNumber) {
+        setError('يرجى إدخال رقم الهاتف');
+        return;
+      }
+
+      const exists = await checkUserExists(normalizedPhone);
+      if (!exists) {
+        setStep('name');
+        return;
+      }
+
+      // User exists, send OTP
+      await sendWhatsAppOTP(normalizedPhone);
+      showToast('تم إرسال كود التحقق إلى واتساب الخاص بك', 'success');
+      navigate('/verify-otp', { state: { phone: normalizedPhone, type: 'login' } });
+    } else if (step === 'name') {
+      if (fullName.length < 3) {
+        setError('يرجى إدخال الاسم الكامل');
+        return;
+      }
+
+      await sendWhatsAppOTP(normalizedPhone, fullName);
+      showToast('تم إرسال كود التحقق إلى واتساب الخاص بك', 'success');
+      navigate('/verify-otp', { state: { phone: normalizedPhone, fullName, type: 'signup' } });
+    }
+  };
+
+  const handleEmailSubmit = async () => {
+    const normalizedEmail = email.toLowerCase().trim();
+
+    if (step === 'email') {
+      if (!email || !email.includes('@')) {
+        setError('يرجى إدخال بريد إلكتروني صالح');
+        return;
+      }
+      if (!password) {
+        setError('يرجى إدخال كلمة المرور');
+        return;
+      }
+
+      try {
+        // Try login directly first - this covers users in Supabase but not in Prisma
+        const response = await loginWithEmail(normalizedEmail, password);
+        setAuth(response.token, response.user);
+        showToast('تم تسجيل الدخول بنجاح', 'success');
+        navigate('/');
+      } catch (err: any) {
+        // If login fails, check if user exists to determine next step
+        const { exists } = await checkEmail(normalizedEmail);
+        if (!exists) {
+          // User doesn't exist in Prisma OR Supabase (checkEmail should ideally check both but we fallback to signup)
+          setStep('signup-name');
+        } else {
+          // User exists but login failed (wrong password etc)
+          throw err;
+        }
+      }
+    } else if (step === 'signup-name') {
+      if (!fullName || fullName.length < 3) {
+        setError('يرجى إدخال الاسم الكامل');
+        return;
+      }
+
+      const response = await signupWithEmail(normalizedEmail, password, fullName);
+      showToast('تم إرسال كود التحقق إلى بريدك الإلكتروني', 'success');
+      setStep('email-otp');
+    } else if (step === 'email-otp') {
+      if (!otpCode || otpCode.length < 6) {
+        setError('يرجى إدخال كود التحقق');
+        return;
+      }
+
+      const response = await verifyEmailOTP(normalizedEmail, otpCode);
+      setAuth(response.token, response.user);
+      showToast('تم إنشاء الحساب وتفعيله بنجاح', 'success');
+      navigate('/');
+    } else if (step === 'forgot-password') {
+      if (!email || !email.includes('@')) {
+        setError('يرجى إدخال بريد إلكتروني صالح');
+        return;
+      }
+      const response = await forgotPassword(normalizedEmail);
+      showToast('تم إرسال كود إعادة التعيين إلى بريدك الإلكتروني', 'success');
+      setStep('reset-password');
+    } else if (step === 'reset-password') {
+      if (!otpCode || otpCode.length < 6) {
+        setError('يرجى إدخال كود التحقق');
+        return;
+      }
+      if (!newPassword || newPassword.length < 6) {
+        setError('يجب أن تكون كلمة المرور 6 أحرف على الأقل');
+        return;
+      }
+      
+      // First verify the recovery OTP to authenticate the user
+      await verifyEmailOTP(normalizedEmail, otpCode, 'recovery');
+      
+      // Now that we're authenticated via recovery token, we can update the password
+      await resetPassword(newPassword);
+      
+      showToast('تم تغيير كلمة المرور بنجاح. يمكنك الآن تسجيل الدخول.', 'success');
+      setStep('email');
+      setOtpCode('');
+      setPassword('');
+    }
+  };
+
+  const handleContinue = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+
+    try {
+      if (method === 'phone') {
+        await handlePhoneSubmit();
+      } else {
+        await handleEmailSubmit();
+      }
+    } catch (err: any) {
+      const errorMessage = err.message || 'فشل العملية. يرجى المحاولة مرة أخرى.';
+      setError(errorMessage);
+      showToast(errorMessage, 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const toggleMethod = () => {
+    if (method === 'phone') {
+      setMethod('email');
+      setStep('email');
+    } else {
+      setMethod('phone');
+      setStep('phone');
+    }
+    setError('');
+  };
+
+
+  return (
+    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden max-w-md mx-auto bg-background-light dark:bg-background-dark shadow-2xl font-display text-slate-900 dark:text-white antialiased selection:bg-primary/30 rtl" dir="rtl">
+      {/* Home Navigation Icon */}
+        <div className="absolute top-6 left-6 z-10">
+          <button 
+            onClick={() => navigate('/')}
+            className="p-2.5 rounded-full bg-white/80 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-800 transition-all active:scale-90 shadow-sm"
+            aria-label="Go to home"
+          >
+            <Home size={20} />
+          </button>
+        </div>
+
+        {/* Header Section */}
+        <div className="flex flex-col items-center pt-12 pb-6 px-6">
+          {/* Logo */}
+          <Logo size="lg" className="mb-6" />
+          {/* Headline */}
+          <h1 className="text-slate-900 dark:text-white text-3xl font-bold tracking-tight text-center leading-tight mb-2">
+            {step === 'phone' ? 'تسجيل الدخول' : 
+             step === 'name' ? 'أهلاً بك في شيناك' :
+             step === 'email' ? 'تسجيل الدخول بالبريد' :
+             step === 'signup-name' ? 'إنشاء حساب جديد' :
+             step === 'forgot-password' ? 'نسيت كلمة المرور' :
+             step === 'reset-password' ? 'تعيين كلمة المرور' :
+             'تأكيد البريد الإلكتروني'}
+          </h1>
+          {/* Subtitle */}
+          <p className="text-slate-500 dark:text-slate-400 text-base font-normal text-center max-w-[80%]">
+            {step === 'phone' ? 'أدخل رقم الواتساب الخاص بك للمتابعة' : 
+             step === 'name' ? 'يرجى إدخال اسمك لإكمال عملية التسجيل' :
+             step === 'email' ? 'أدخل بريدك الإلكتروني وكلمة المرور' :
+             step === 'signup-name' ? 'يرجى إدخال اسمك لإكمال التسجيل' :
+             step === 'forgot-password' ? 'أدخل بريدك الإلكتروني للحصول على كود التحقق' :
+             step === 'reset-password' ? 'أدخل الكود المرسل وكلمة المرور الجديدة' :
+             `أدخل الكود المرسل إلى ${email}`}
+          </p>
+        </div>
+
+        {/* Form Section */}
+        <form onSubmit={handleContinue} className="flex-1 px-6 flex flex-col gap-5">
+          {error && (
+            <div className="bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 p-3 rounded-xl text-sm text-right border border-red-100 dark:border-red-800">
+              {error}
+            </div>
+          )}
+
+          {method === 'phone' ? (
+            <>
+              {step === 'phone' ? (
+                <div className="flex flex-col gap-2">
+                  <label className="text-slate-900 dark:text-slate-200 text-sm font-medium pr-1 text-right">
+                    رقم الواتساب
+                  </label>
+                  <div className="flex w-full items-stretch gap-2">
+                    <div className="relative w-32 shrink-0">
+                      <select
+                        className="w-full bg-surface-light dark:bg-surface-dark border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-3.5 text-base text-slate-900 dark:text-white appearance-none focus:outline-none focus:border-primary dark:focus:border-primary transition-colors text-right"
+                        value={countryCode}
+                        onChange={(e) => setCountryCode(e.target.value)}
+                        dir="ltr"
+                      >
+                        {countries.map((c) => (
+                          <option key={c.code} value={c.code}>
+                            {c.flag} {c.code}
+                          </option>
+                        ))}
+                      </select>
+                      <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none text-slate-400">
+                        <Phone size={16} />
+                      </div>
+                    </div>
+                    <div className="flex-1">
+                      <input 
+                        id="phone"
+                        className="w-full bg-surface-light dark:bg-surface-dark border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3.5 text-base text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:border-primary dark:focus:border-primary transition-colors text-right" 
+                        placeholder="770 000 0000" 
+                        type="tel"
+                        required
+                        value={phoneNumber}
+                        onChange={(e) => setPhoneNumber(e.target.value.replace(/\D/g, ''))}
+                        dir="ltr"
+                      />
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-slate-400 text-right mt-1 px-1">
+                    * سيتم إرسال كود التحقق إلى هذا الرقم عبر واتساب
+                  </p>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-2 animate-in fade-in slide-in-from-right-4 duration-300">
+                  <div className="flex items-center justify-between mb-1">
+                    <button 
+                      type="button" 
+                      onClick={() => setStep('phone')}
+                      className="text-xs text-primary hover:underline flex items-center gap-1"
+                    >
+                      <ArrowLeft size={12} />
+                      تغيير الرقم
+                    </button>
+                    <label className="text-slate-900 dark:text-slate-200 text-sm font-medium pr-1 text-right">
+                      الاسم الكامل
+                    </label>
+                  </div>
+                  <div className="flex w-full items-stretch rounded-xl shadow-sm transition-all focus-within:ring-2 focus-within:ring-primary focus-within:ring-opacity-50">
+                    <div className="flex items-center justify-center px-4 bg-surface-light dark:bg-surface-dark border border-slate-200 dark:border-slate-700 border-l-0 rounded-r-xl text-slate-400">
+                      <UserIcon size={22} />
+                    </div>
+                    <input 
+                      className="flex-1 bg-surface-light dark:bg-surface-dark border border-slate-200 dark:border-slate-700 border-r-0 rounded-l-xl px-4 py-3.5 text-base text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:border-slate-300 dark:focus:border-slate-600 focus:ring-0 text-right" 
+                      placeholder="أدخل اسمك هنا" 
+                      type="text"
+                      required
+                      value={fullName}
+                      onChange={(e) => setFullName(e.target.value)}
+                    />
+                  </div>
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              {step === 'email' && (
+                <div className="flex flex-col gap-4 animate-in fade-in slide-in-from-left-4 duration-300">
+                  <div className="flex flex-col gap-2">
+                    <label className="text-slate-900 dark:text-slate-200 text-sm font-medium pr-1 text-right">
+                      البريد الإلكتروني
+                    </label>
+                    <div className="flex w-full items-stretch rounded-xl shadow-sm transition-all focus-within:ring-2 focus-within:ring-primary focus-within:ring-opacity-50">
+                      <div className="flex items-center justify-center px-4 bg-surface-light dark:bg-surface-dark border border-slate-200 dark:border-slate-700 border-l-0 rounded-r-xl text-slate-400">
+                        <Mail size={22} />
+                      </div>
+                      <input 
+                        className="flex-1 bg-surface-light dark:bg-surface-dark border border-slate-200 dark:border-slate-700 border-r-0 rounded-l-xl px-4 py-3.5 text-base text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-0 text-left" 
+                        placeholder="example@mail.com" 
+                        type="email"
+                        required
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        dir="ltr"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-2">
+                    <label className="text-slate-900 dark:text-slate-200 text-sm font-medium pr-1 text-right">
+                      كلمة المرور
+                    </label>
+                    <div className="flex w-full items-stretch rounded-xl shadow-sm transition-all focus-within:ring-2 focus-within:ring-primary focus-within:ring-opacity-50">
+                      <div className="flex items-center justify-center px-4 bg-surface-light dark:bg-surface-dark border border-slate-200 dark:border-slate-700 border-l-0 rounded-r-xl text-slate-400">
+                        <Lock size={22} />
+                      </div>
+                      <input 
+                        className="flex-1 bg-surface-light dark:bg-surface-dark border border-slate-200 dark:border-slate-700 border-r-0 rounded-l-xl px-4 py-3.5 text-base text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-0 text-left" 
+                        placeholder="••••••••" 
+                        type="password"
+                        required
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        dir="ltr"
+                      />
+                    </div>
+                  </div>
+                  
+                  <div className="flex justify-start">
+                    <button 
+                      type="button" 
+                      onClick={() => setStep('forgot-password')}
+                      className="text-xs text-primary hover:underline font-medium"
+                    >
+                      نسيت كلمة المرور؟
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {step === 'forgot-password' && (
+                <div className="flex flex-col gap-4 animate-in fade-in slide-in-from-right-4 duration-300">
+                  <div className="flex items-center justify-between mb-1">
+                    <button 
+                      type="button" 
+                      onClick={() => setStep('email')}
+                      className="text-xs text-primary hover:underline flex items-center gap-1"
+                    >
+                      <ArrowLeft size={12} />
+                      الرجوع لتسجيل الدخول
+                    </button>
+                  </div>
+                  
+                  <div className="flex flex-col gap-2">
+                    <label className="text-slate-900 dark:text-slate-200 text-sm font-medium pr-1 text-right">
+                      البريد الإلكتروني
+                    </label>
+                    <div className="flex w-full items-stretch rounded-xl shadow-sm transition-all focus-within:ring-2 focus-within:ring-primary focus-within:ring-opacity-50">
+                      <div className="flex items-center justify-center px-4 bg-surface-light dark:bg-surface-dark border border-slate-200 dark:border-slate-700 border-l-0 rounded-r-xl text-slate-400">
+                        <Mail size={22} />
+                      </div>
+                      <input 
+                        className="flex-1 bg-surface-light dark:bg-surface-dark border border-slate-200 dark:border-slate-700 border-r-0 rounded-l-xl px-4 py-3.5 text-base text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-0 text-left" 
+                        placeholder="example@mail.com" 
+                        type="email"
+                        required
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        dir="ltr"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {step === 'reset-password' && (
+                <div className="flex flex-col gap-4 animate-in fade-in slide-in-from-right-4 duration-300">
+                  <div className="flex items-center justify-between mb-1">
+                    <button 
+                      type="button" 
+                      onClick={() => setStep('forgot-password')}
+                      className="text-xs text-primary hover:underline flex items-center gap-1"
+                    >
+                      <ArrowLeft size={12} />
+                      تغيير البريد الإلكتروني
+                    </button>
+                  </div>
+                  
+                  <div className="flex flex-col gap-2">
+                    <label className="text-slate-900 dark:text-slate-200 text-sm font-medium pr-1 text-right">
+                      كود التحقق
+                    </label>
+                    <input 
+                      className="w-full bg-surface-light dark:bg-surface-dark border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3.5 text-2xl font-bold tracking-[1rem] text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:border-primary text-center" 
+                      placeholder="000000" 
+                      type="text"
+                      maxLength={6}
+                      required
+                      value={otpCode}
+                      onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ''))}
+                      dir="ltr"
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-2">
+                    <label className="text-slate-900 dark:text-slate-200 text-sm font-medium pr-1 text-right">
+                      كلمة المرور الجديدة
+                    </label>
+                    <div className="flex w-full items-stretch rounded-xl shadow-sm transition-all focus-within:ring-2 focus-within:ring-primary focus-within:ring-opacity-50">
+                      <div className="flex items-center justify-center px-4 bg-surface-light dark:bg-surface-dark border border-slate-200 dark:border-slate-700 border-l-0 rounded-r-xl text-slate-400">
+                        <KeyRound size={22} />
+                      </div>
+                      <input 
+                        className="flex-1 bg-surface-light dark:bg-surface-dark border border-slate-200 dark:border-slate-700 border-r-0 rounded-l-xl px-4 py-3.5 text-base text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-0 text-left" 
+                        placeholder="••••••••" 
+                        type="password"
+                        required
+                        value={newPassword}
+                        onChange={(e) => setNewPassword(e.target.value)}
+                        dir="ltr"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {step === 'signup-name' && (
+                <div className="flex flex-col gap-4 animate-in fade-in slide-in-from-right-4 duration-300">
+                  <div className="flex items-center justify-between mb-1">
+                    <button 
+                      type="button" 
+                      onClick={() => setStep('email')}
+                      className="text-xs text-primary hover:underline flex items-center gap-1"
+                    >
+                      <ArrowLeft size={12} />
+                      الرجوع
+                    </button>
+                    <span className="text-xs text-slate-500">حساب جديد</span>
+                  </div>
+                  
+                  <div className="flex flex-col gap-2">
+                    <label className="text-slate-900 dark:text-slate-200 text-sm font-medium pr-1 text-right">
+                      الاسم الكامل
+                    </label>
+                    <div className="flex w-full items-stretch rounded-xl shadow-sm">
+                      <div className="flex items-center justify-center px-4 bg-surface-light dark:bg-surface-dark border border-slate-200 dark:border-slate-700 border-l-0 rounded-r-xl text-slate-400">
+                        <UserIcon size={22} />
+                      </div>
+                      <input 
+                        className="flex-1 bg-surface-light dark:bg-surface-dark border border-slate-200 dark:border-slate-700 border-r-0 rounded-l-xl px-4 py-3.5 text-base text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none text-right" 
+                        placeholder="أدخل اسمك هنا" 
+                        type="text"
+                        required
+                        value={fullName}
+                        onChange={(e) => setFullName(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {step === 'email-otp' && (
+                <div className="flex flex-col gap-4 animate-in fade-in slide-in-from-right-4 duration-300">
+                  <div className="flex flex-col gap-2">
+                    <label className="text-slate-900 dark:text-slate-200 text-sm font-medium pr-1 text-right">
+                      كود التحقق
+                    </label>
+                    <input 
+                      className="w-full bg-surface-light dark:bg-surface-dark border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3.5 text-2xl font-bold tracking-[1rem] text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:border-primary text-center" 
+                      placeholder="000000" 
+                      type="text"
+                      maxLength={6}
+                      required
+                      value={otpCode}
+                      onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ''))}
+                      dir="ltr"
+                    />
+                  </div>
+                  
+                  <div className="flex justify-center">
+                    <button 
+                      type="button" 
+                      onClick={async () => {
+                        try {
+                          setLoading(true);
+                          await resendEmailOTP(normalizedEmail);
+                          showToast('تم إعادة إرسال كود التحقق بنجاح', 'success');
+                        } catch (err: any) {
+                          showToast(err.message || 'فشل إعادة إرسال الكود', 'error');
+                        } finally {
+                          setLoading(false);
+                        }
+                      }}
+                      disabled={loading}
+                      className="text-xs text-primary hover:underline font-medium"
+                    >
+                      إعادة إرسال الكود
+                    </button>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+
+          {/* Primary Action */}
+          <div className="mt-6 flex flex-col gap-4">
+            <p className="text-[11px] text-slate-500 dark:text-slate-400 text-center px-4 leading-relaxed">
+              بمتابعتك، أنت توافق على{' '}
+              <Link to="/terms-of-service" className="text-primary hover:underline font-medium">شروط الخدمة</Link>
+              {' '}و{' '}
+              <Link to="/privacy-policy" className="text-primary hover:underline font-medium">سياسة الخصوصية</Link>
+              {' '}الخاصة بنا.
+            </p>
+
+            <button 
+              type="submit"
+              disabled={loading}
+              className="w-full bg-primary hover:bg-blue-600 disabled:bg-slate-300 dark:disabled:bg-slate-700 text-white font-bold text-lg py-3.5 rounded-xl shadow-lg shadow-blue-500/30 transition-all active:scale-[0.98] flex items-center justify-center gap-2"
+            >
+              {loading ? (
+                <span className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
+              ) : (
+                (method === 'phone' ? (step === 'phone' ? 'متابعة' : 'تأكيد وإرسال الكود') : 
+                 (step === 'email' ? 'متابعة' : 
+                  step === 'signup-name' ? 'إنشاء حساب' : 
+                  step === 'forgot-password' ? 'إرسال كود التحقق' :
+                  step === 'reset-password' ? 'تعيين كلمة المرور' :
+                  'تأكيد الحساب'))
+              )}
+            </button>
+          </div>
+
+          {/* Secondary Action - Toggle Method */}
+          <div className="flex flex-col gap-3">
+            <button 
+              type="button"
+              onClick={toggleMethod}
+              className="w-full flex items-center justify-center gap-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 p-3.5 shadow-sm hover:bg-slate-50 dark:hover:bg-slate-800 transition-all active:scale-95"
+            >
+              {method === 'phone' ? (
+                <>
+                  <Mail size={18} />
+                  <span className="text-sm font-medium">المتابعة عبر البريد الإلكتروني</span>
+                </>
+              ) : (
+                <>
+                  <Phone size={18} />
+                  <span className="text-sm font-medium">المتابعة عبر واتساب</span>
+                </>
+              )}
+            </button>
+          </div>
+
+        </form>
+
+        {/* Footer */}
+        <div className="py-8 flex flex-col justify-center items-center gap-2 text-base pb-10">
+        </div>
+      </div>
+  );
+};
+
+export default Login;

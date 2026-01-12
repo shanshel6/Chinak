@@ -1,0 +1,1484 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { 
+  Users, 
+  Package, 
+  ShoppingCart, 
+  BarChart3, 
+  Search, 
+  Plus, 
+  Filter,
+  MoreVertical,
+  ChevronRight,
+  ChevronLeft,
+  TrendingUp,
+  TrendingDown,
+  DollarSign,
+  AlertCircle,
+  CheckCircle2,
+  Clock,
+  ArrowLeft,
+  Download,
+  Calendar,
+  Eye,
+  Edit2,
+  Trash2,
+  Settings,
+  Upload,
+  X
+} from 'lucide-react';
+import { useNavigate, useLocation, Routes, Route } from 'react-router-dom';
+import { 
+  fetchAdminStats, 
+  fetchAdminUsers, 
+  fetchAdminProducts, 
+  fetchAdminOrders,
+  fetchAdminOrderDetails,
+  fetchAdminCoupons,
+  createCoupon,
+  updateCoupon,
+  deleteCoupon,
+  updateUserRole,
+  bulkImportProducts,
+  updateProduct,
+  saveProductOptions,
+  deleteProduct,
+  bulkDeleteProducts,
+  bulkPublishProducts,
+  updateOrderStatus,
+  updateOrderInternationalFee,
+  updateProductPrice
+} from '../services/api';
+import { localProductService } from '../services/localProductService';
+import { useToastStore } from '../store/useToastStore';
+import { useAuthStore } from '../store/useAuthStore';
+import StatsCards from '../components/admin/StatsCards';
+import ProductCard from '../components/admin/ProductCard';
+import ProductEditor from './ProductEditor';
+
+const AdminDashboard: React.FC = () => {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const showToast = useToastStore((state) => state.showToast);
+  
+  const [loading, setLoading] = useState(true);
+  const [stats, setStats] = useState<any>(null);
+  const [users, setUsers] = useState<any[]>([]);
+  const [products, setProducts] = useState<any[]>([]);
+  const [orders, setOrders] = useState<any[]>([]);
+  const [coupons, setCoupons] = useState<any[]>([]);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [selectedProducts, setSelectedProducts] = useState<any[]>([]);
+  const [isImporting, setIsImporting] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [showCouponModal, setShowCouponModal] = useState(false);
+  const [selectedCoupon, setSelectedCoupon] = useState<any>(null);
+  const [couponFormData, setCouponFormData] = useState({
+    code: '',
+    discountType: 'PERCENTAGE',
+    discountValue: '',
+    minOrderAmount: '',
+    maxDiscount: '',
+    endDate: '',
+    usageLimit: '',
+    isPublic: true
+  });
+  const [selectedOrder, setSelectedOrder] = useState<any>(null);
+  const [showOrderModal, setShowOrderModal] = useState(false);
+  const [modalLoading, setModalLoading] = useState(false);
+  const [importText, setImportText] = useState('');
+  const [editingPriceId, setEditingPriceId] = useState<number | string | null>(null);
+  const [tempPrice, setTempPrice] = useState('');
+  const [showProductEditor, setShowProductEditor] = useState(false);
+  const [editingProductId, setEditingProductId] = useState<number | string | null>(null);
+  
+  // Pagination State
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalItems, setTotalItems] = useState(0);
+  const ITEMS_PER_PAGE = 20;
+  const PRODUCTS_PER_PAGE = 21;
+
+  const getLimit = () => activeTab === 'products' ? PRODUCTS_PER_PAGE : ITEMS_PER_PAGE;
+
+  const getAuthToken = () => {
+    let token = useAuthStore.getState().token;
+    if (!token) {
+      token = localStorage.getItem('auth_token');
+    }
+    return token;
+  };
+
+  // Determine active tab from path
+  const activeTab = location.pathname === '/admin' ? 'stats' : location.pathname.split('/').pop() || 'stats';
+
+  useEffect(() => {
+    setCurrentPage(1); // Reset page when tab changes
+    loadData(1);
+  }, [activeTab]);
+
+  const handlePasteImport = async () => {
+    if (!importText.trim()) return;
+
+    setIsImporting(true);
+    try {
+      const data = JSON.parse(importText);
+      const productsToImport = data.products || (Array.isArray(data) ? data : []);
+      
+      if (productsToImport.length === 0) {
+        showToast('لا توجد منتجات للاستيراد', 'error');
+        return;
+      }
+
+      const token = getAuthToken();
+      const result = await bulkImportProducts(productsToImport, token);
+      let message = `تم استيراد ${result.imported} منتج كمسودات.`;
+      if (result.skipped > 0) message += ` تم تخطي ${result.skipped} منتج موجود مسبقاً.`;
+      if (result.failed > 0) message += ` فشل استيراد ${result.failed} منتج.`;
+      
+      showToast(message, result.failed === 0 ? 'success' : 'warning');
+      setShowImportModal(false);
+      setImportText('');
+      loadData();
+    } catch (error) {
+      console.error('Bulk import error:', error);
+      showToast('فشل استيراد المنتجات - تأكد من صحة تنسيق JSON', 'error');
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
+  const handleUpdateProduct = async (id: number | string, data: any) => {
+    try {
+      const token = getAuthToken();
+      await updateProduct(id, data, token);
+      showToast('تم تحديث المنتج بنجاح', 'success');
+      loadData(currentPage, true);
+    } catch (error) {
+      showToast('فشل تحديث المنتج', 'error');
+    }
+  };
+
+  const handleUpdateOptions = async (id: number | string, newOptions: any[], newVariants: any[]) => {
+    try {
+      const token = getAuthToken();
+      await saveProductOptions(id, newOptions, newVariants, token);
+      showToast('تم تحديث خيارات المنتج بنجاح', 'success');
+      loadData(currentPage, true);
+    } catch (error) {
+      console.error('Failed to update options:', error);
+      showToast('فشل تحديث خيارات المنتج', 'error');
+    }
+  };
+
+  const handleDeleteProduct = async (id: number | string) => {
+     if (!window.confirm('هل أنت متأكد من حذف هذا المنتج؟')) return;
+     try {
+       const token = getAuthToken();
+       await deleteProduct(id, token);
+       showToast('تم حذف المنتج بنجاح', 'success');
+       loadData(currentPage, true);
+     } catch (error) {
+       showToast('فشل حذف المنتج', 'error');
+     }
+   };
+
+  const handleBulkDelete = async () => {
+    if (selectedProducts.length === 0) return;
+    if (!window.confirm(`هل أنت متأكد من حذف ${selectedProducts.length} منتجات؟`)) return;
+    
+    try {
+      const token = getAuthToken();
+      console.log('[AdminDashboard] Bulk deleting products:', selectedProducts);
+      await bulkDeleteProducts(selectedProducts, token);
+      showToast('تم حذف المنتجات بنجاح', 'success');
+      setSelectedProducts([]);
+      loadData(currentPage, true);
+    } catch (error: any) {
+      console.error('[AdminDashboard] Bulk delete error:', error);
+      showToast(`فشل حذف المنتجات: ${error.message || 'خطأ غير معروف'}`, 'error');
+    }
+  };
+
+  const handleBulkPublish = async () => {
+    if (selectedProducts.length === 0) return;
+    if (!window.confirm(`هل أنت متأكد من نشر ${selectedProducts.length} منتجات؟`)) return;
+    
+    try {
+      const token = getAuthToken();
+      await bulkPublishProducts(selectedProducts, token);
+      showToast('تم نشر المنتجات بنجاح', 'success');
+      setSelectedProducts([]);
+      loadData(currentPage, true);
+    } catch (error) {
+      showToast('فشل نشر المنتجات المختارة', 'error');
+    }
+  };
+
+  const handlePriceUpdate = async (item: any) => {
+    const newPrice = parseFloat(tempPrice);
+    if (isNaN(newPrice)) {
+      showToast('يرجى إدخال مبلغ صحيح', 'error');
+      return;
+    }
+
+    try {
+      const token = getAuthToken();
+      await updateProductPrice({
+          productId: item.productId || item.product?.id,
+          variantId: item.variantId || item.variant?.id,
+          orderItemId: item.id,
+          price: newPrice
+      }, token);
+      showToast('تم تحديث سعر المنتج بنجاح', 'success');
+      setEditingPriceId(null);
+      
+      // Update local state for immediate feedback
+      if (selectedOrder) {
+        const updatedItems = selectedOrder.items.map((i: any) => 
+          i.id === item.id ? { ...i, price: newPrice } : i
+        );
+        setSelectedOrder({ ...selectedOrder, items: updatedItems });
+      }
+      loadData(currentPage, true);
+    } catch (error) {
+      console.error('Price update error:', error);
+      showToast('فشل تحديث السعر', 'error');
+    }
+  };
+
+  const handleSaveCoupon = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const token = getAuthToken();
+      if (selectedCoupon) {
+        await updateCoupon(selectedCoupon.id, couponFormData, token);
+        showToast('تم تحديث الخصم بنجاح', 'success');
+      } else {
+        await createCoupon(couponFormData, token);
+        showToast('تم إنشاء الخصم بنجاح', 'success');
+      }
+      setShowCouponModal(false);
+      loadData(currentPage, true);
+    } catch (error) {
+      showToast('فشل حفظ الخصم', 'error');
+    }
+  };
+
+  const handleDeleteCoupon = async (id: number | string) => {
+    if (!window.confirm('هل أنت متأكد من حذف هذا الخصم؟')) return;
+    try {
+      const token = getAuthToken();
+      await deleteCoupon(id, token);
+      showToast('تم حذف الخصم بنجاح', 'success');
+      loadData(currentPage, true);
+    } catch (error) {
+      showToast('فشل حذف الخصم', 'error');
+    }
+  };
+
+  const openCouponModal = (coupon: any = null) => {
+    if (coupon) {
+      setSelectedCoupon(coupon);
+      setCouponFormData({
+        code: coupon.code,
+        discountType: coupon.discountType,
+        discountValue: coupon.discountValue.toString(),
+        minOrderAmount: coupon.minOrderAmount.toString(),
+        maxDiscount: coupon.maxDiscount?.toString() || '',
+        endDate: new Date(coupon.endDate).toISOString().split('T')[0],
+        usageLimit: coupon.usageLimit?.toString() || '',
+        isPublic: coupon.isPublic
+      });
+    } else {
+      setSelectedCoupon(null);
+      setCouponFormData({
+        code: '',
+        discountType: 'PERCENTAGE',
+        discountValue: '',
+        minOrderAmount: '',
+        maxDiscount: '',
+        endDate: '',
+        usageLimit: '',
+        isPublic: true
+      });
+    }
+    setShowCouponModal(true);
+  };
+
+  const handleUpdateOrderStatus = async (orderId: number | string, status: string) => {
+    try {
+      const token = getAuthToken();
+      await updateOrderStatus(orderId, status, token);
+      showToast('تم تحديث حالة الطلب بنجاح', 'success');
+      loadData(currentPage, true);
+    } catch (error) {
+      showToast('فشل تحديث حالة الطلب', 'error');
+    }
+  };
+
+  const handleUpdateInternationalFee = async (orderId: number | string, fee: string) => {
+    const numericFee = parseFloat(fee);
+    if (isNaN(numericFee)) {
+      showToast('يرجى إدخال مبلغ صحيح', 'error');
+      return;
+    }
+
+    try {
+      const token = getAuthToken();
+      const updatedOrder = await updateOrderInternationalFee(orderId, numericFee, token);
+      
+      if (updatedOrder.status !== selectedOrder?.status && updatedOrder.status === 'AWAITING_PAYMENT') {
+        showToast('تم تحديث رسوم الشحن وتغيير حالة الطلب إلى بانتظار الدفع', 'success');
+      } else {
+        showToast('تم تحديث رسوم الشحن بنجاح', 'success');
+      }
+      
+      // Update local state for immediate feedback
+      if (selectedOrder && selectedOrder.id === orderId) {
+        setSelectedOrder(updatedOrder);
+      }
+      
+      setOrders(prevOrders => prevOrders.map(order => 
+        order.id === orderId ? updatedOrder : order
+      ));
+      
+      loadData(currentPage, true);
+    } catch (error) {
+      showToast('فشل تحديث رسوم الشحن', 'error');
+    }
+  };
+
+  const loadData = async (page = currentPage, silent = false) => {
+    if (!silent) setLoading(true);
+    const limit = getLimit();
+    
+    // Get token from store or localStorage
+    let token = useAuthStore.getState().token;
+    if (!token) {
+      token = localStorage.getItem('auth_token');
+    }
+    
+    console.log('[AdminDashboard] Loading data...', { 
+      activeTab, 
+      page, 
+      limit, 
+      hasToken: !!token,
+      tokenLength: token?.length || 0
+    });
+
+    if (!token) {
+      console.warn('[AdminDashboard] No auth token found!');
+      // Give it one more try after a short delay, maybe it's a race condition
+      await new Promise(resolve => setTimeout(resolve, 500));
+      token = useAuthStore.getState().token || localStorage.getItem('auth_token');
+      
+      if (!token) {
+        showToast('يرجى تسجيل الدخول للوصول إلى لوحة التحكم', 'error');
+        setLoading(false);
+        return;
+      }
+    }
+
+    try {
+      if (activeTab === 'stats') {
+        const data = await fetchAdminStats(token);
+        console.log('[AdminDashboard] Stats loaded successfully');
+        setStats(data);
+      } else if (activeTab === 'users') {
+        const data = await fetchAdminUsers(page, limit, searchTerm, token);
+        setUsers(data.users || []);
+        setTotalPages(data.totalPages || 1);
+        setTotalItems(data.total || 0);
+      } else if (activeTab === 'products') {
+        const data = await fetchAdminProducts(page, limit, searchTerm, token);
+        let allProducts = data.products || [];
+        
+        // Add local drafts if we are on the first page and no search or searching for draft
+        if (page === 1) {
+          const drafts = localProductService.getAllDrafts();
+          const filteredDrafts = searchTerm 
+            ? drafts.filter(d => d.name.toLowerCase().includes(searchTerm.toLowerCase()))
+            : drafts;
+          allProducts = [...filteredDrafts, ...allProducts];
+        }
+
+        setProducts(allProducts);
+        const localDraftsCount = localProductService.getAllDrafts().length;
+        const total = (data.total || 0) + localDraftsCount;
+        setTotalItems(total);
+        setTotalPages(Math.ceil(total / limit));
+      } else if (activeTab === 'orders') {
+        const data = await fetchAdminOrders({ 
+          page, 
+          limit: limit,
+          search: searchTerm 
+        }, token);
+        setOrders(data.orders || []);
+        setTotalPages(data.totalPages || 1);
+        setTotalItems(data.total || 0);
+      } else if (activeTab === 'coupons') {
+        const data = await fetchAdminCoupons(token);
+        setCoupons(data || []);
+        setTotalPages(1);
+        setTotalItems(data.length || 0);
+      }
+    } catch (error: any) {
+      console.error('[AdminDashboard] Error loading admin data:', error);
+      const errorMsg = error.message || 'فشل تحميل البيانات';
+      showToast(`${errorMsg} (تحقق من الاتصال بالسيرفر)`, 'error');
+      
+      // If it's an auth error, maybe redirect?
+      if (error.message?.includes('401') || error.message?.includes('Authentication')) {
+        console.warn('[AdminDashboard] Auth error detected, checking session...');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handlePageChange = (newPage: number) => {
+    setCurrentPage(newPage);
+    loadData(newPage);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleRoleUpdate = async (userId: string, newRole: string) => {
+    try {
+      const token = getAuthToken();
+      await updateUserRole(userId, newRole, token);
+      showToast('تم تحديث الرتبة بنجاح', 'success');
+      loadData(currentPage, true);
+    } catch (error) {
+      showToast('فشل تحديث الرتبة', 'error');
+    }
+  };
+
+  const checkPermission = (permission: string) => true;
+
+  const renderPagination = () => {
+    if (totalPages <= 1) return null;
+    const limit = getLimit();
+
+    return (
+      <div className="flex items-center justify-between px-6 py-4 bg-white dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800">
+        <div className="text-sm text-slate-500 font-medium">
+          عرض <span className="font-bold text-slate-900 dark:text-white">{(currentPage - 1) * limit + 1}</span> إلى <span className="font-bold text-slate-900 dark:text-white">{Math.min(currentPage * limit, totalItems)}</span> من <span className="font-bold text-slate-900 dark:text-white">{totalItems}</span> نتيجة
+        </div>
+        <div className="flex gap-2">
+          <button
+            onClick={() => handlePageChange(currentPage - 1)}
+            disabled={currentPage === 1}
+            className="p-2 rounded-xl border border-slate-200 dark:border-slate-700 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-slate-50 dark:hover:bg-slate-800 transition-all"
+          >
+            <ChevronRight size={20} />
+          </button>
+          
+          {[...Array(totalPages)].map((_, i) => {
+            const pageNum = i + 1;
+            // Simple pagination logic: show first, last, and current +/- 2
+            if (
+              pageNum === 1 || 
+              pageNum === totalPages || 
+              (pageNum >= currentPage - 1 && pageNum <= currentPage + 1)
+            ) {
+              return (
+                <button
+                  key={pageNum}
+                  onClick={() => handlePageChange(pageNum)}
+                  className={`w-10 h-10 rounded-xl font-bold text-sm transition-all ${
+                    currentPage === pageNum 
+                      ? 'bg-primary text-white shadow-lg shadow-primary/25' 
+                      : 'hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400'
+                  }`}
+                >
+                  {pageNum}
+                </button>
+              );
+            } else if (
+              pageNum === currentPage - 2 || 
+              pageNum === currentPage + 2
+            ) {
+              return <span key={pageNum} className="flex items-center justify-center w-8 text-slate-400">...</span>;
+            }
+            return null;
+          })}
+
+          <button
+            onClick={() => handlePageChange(currentPage + 1)}
+            disabled={currentPage === totalPages}
+            className="p-2 rounded-xl border border-slate-200 dark:border-slate-700 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-slate-50 dark:hover:bg-slate-800 transition-all"
+          >
+            <ChevronLeft size={20} />
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  const renderStats = () => (
+    <div className="space-y-8 animate-in fade-in duration-500">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-2xl font-black text-slate-900 dark:text-white">نظرة عامة</h2>
+          <p className="text-slate-500 text-sm mt-1">متابعة أداء المتجر والإحصائيات الحالية</p>
+        </div>
+        <div className="flex gap-3">
+          <button className="flex items-center gap-2 px-4 py-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-sm font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-50 transition-all">
+            <Calendar size={18} />
+            آخر 30 يوم
+          </button>
+          <button className="flex items-center gap-2 px-4 py-2.5 bg-primary text-white rounded-xl text-sm font-bold shadow-lg shadow-primary/25 hover:scale-105 transition-all">
+            <Download size={18} />
+            تصدير التقرير
+          </button>
+        </div>
+      </div>
+
+      <StatsCards stats={stats} />
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div className="lg:col-span-2 bg-white dark:bg-slate-900 rounded-3xl p-8 border border-slate-100 dark:border-slate-800">
+          <div className="flex items-center justify-between mb-8">
+            <h3 className="text-lg font-black">تحليل المبيعات</h3>
+            <div className="flex gap-2">
+              <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-500 bg-emerald-500/10 px-2 py-1 rounded-lg">
+                <TrendingUp size={12} />
+                +12%
+              </span>
+            </div>
+          </div>
+          <div className="h-64 flex items-center justify-center text-slate-400 font-medium bg-slate-50 dark:bg-slate-800/50 rounded-2xl border-2 border-dashed border-slate-200 dark:border-slate-700">
+            [رسم بياني للمبيعات سيتم دمجه لاحقاً]
+          </div>
+        </div>
+
+        <div className="bg-white dark:bg-slate-900 rounded-3xl p-8 border border-slate-100 dark:border-slate-800">
+          <h3 className="text-lg font-black mb-6">أهم التصنيفات</h3>
+          <div className="space-y-6">
+            {[
+              { label: 'إلكترونيات', value: 45, color: 'bg-blue-500' },
+              { label: 'ملابس', value: 30, color: 'bg-purple-500' },
+              { label: 'أحذية', value: 15, color: 'bg-amber-500' },
+              { label: 'أخرى', value: 10, color: 'bg-slate-400' },
+            ].map((cat, i) => (
+              <div key={i} className="space-y-2">
+                <div className="flex justify-between text-sm font-bold">
+                  <span>{cat.label}</span>
+                  <span>{cat.value}%</span>
+                </div>
+                <div className="h-2 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+                  <div className={`h-full ${cat.color}`} style={{ width: `${cat.value}%` }}></div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderProducts = () => (
+    <div className="space-y-6 animate-in fade-in duration-500">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-2xl font-black text-slate-900 dark:text-white">المنتجات</h2>
+          <p className="text-slate-500 text-sm mt-1">إدارة المخزون والأسعار والخصومات</p>
+        </div>
+        <div className="flex gap-3">
+          <button 
+            onClick={() => setShowImportModal(true)}
+            disabled={isImporting}
+            className="flex items-center gap-2 px-6 py-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl text-sm font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-50 transition-all disabled:opacity-50"
+          >
+            {isImporting ? (
+              <div className="w-5 h-5 border-2 border-slate-300 border-t-slate-600 rounded-full animate-spin"></div>
+            ) : (
+              <Plus size={20} />
+            )}
+            استيراد بالجملة
+          </button>
+          <button 
+            onClick={() => {
+              setEditingProductId(null);
+              setShowProductEditor(true);
+            }}
+            className="flex items-center gap-2 px-6 py-3 bg-primary text-white rounded-2xl text-sm font-bold shadow-lg shadow-primary/25 hover:scale-105 transition-all"
+          >
+            <Plus size={20} />
+            إضافة منتج جديد
+          </button>
+        </div>
+      </div>
+
+      {showImportModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-300">
+          <div className="bg-white dark:bg-slate-900 w-full max-w-2xl rounded-3xl shadow-2xl border border-slate-100 dark:border-slate-800 overflow-hidden animate-in zoom-in-95 duration-300">
+            <div className="p-6 border-b border-slate-50 dark:border-slate-800 flex items-center justify-between">
+              <div>
+                <h3 className="text-xl font-black text-slate-900 dark:text-white">استيراد المنتجات بالجملة</h3>
+                <p className="text-sm text-slate-500 mt-1">قم بلصق بيانات JSON للمنتجات هنا</p>
+              </div>
+              <button 
+                onClick={() => setShowImportModal(false)}
+                className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div className="p-6">
+              <textarea
+                value={importText}
+                onChange={(e) => setImportText(e.target.value)}
+                placeholder='{"products": [...] }'
+                className="w-full h-64 bg-slate-50 dark:bg-slate-800 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-2xl p-4 text-left font-mono text-sm focus:ring-2 focus:ring-primary/20 outline-none transition-all resize-none"
+              />
+              <div className="flex gap-3 mt-6">
+                <button
+                  onClick={handlePasteImport}
+                  disabled={isImporting || !importText.trim()}
+                  className="flex-1 bg-primary text-white py-4 rounded-2xl font-bold shadow-lg shadow-primary/25 hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-50 disabled:scale-100"
+                >
+                  {isImporting ? 'جاري الاستيراد...' : 'بدء الاستيراد'}
+                </button>
+                <button
+                  onClick={() => setShowImportModal(false)}
+                  className="px-8 py-4 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 rounded-2xl font-bold hover:bg-slate-200 transition-all"
+                >
+                  إلغاء
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="flex gap-4">
+        <div className="flex items-center gap-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl px-4 py-3.5">
+          <input 
+            type="checkbox" 
+            checked={products.length > 0 && selectedProducts.length === products.length}
+            onChange={(e) => {
+              if (e.target.checked) {
+                setSelectedProducts(products.map(p => p.id));
+              } else {
+                setSelectedProducts([]);
+              }
+            }}
+            className="w-5 h-5 rounded border-slate-300 text-primary focus:ring-primary"
+          />
+          <span className="text-sm font-bold text-slate-500">الكل</span>
+        </div>
+        
+        <button 
+          onClick={() => {
+            const drafts = products.filter(p => p.status === 'DRAFT').map(p => p.id);
+            setSelectedProducts(drafts);
+          }}
+          className="px-4 py-3.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl text-sm font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-50 transition-all"
+        >
+          تحديد المسودات فقط
+        </button>
+
+        <div className="relative flex-1">
+          <Search className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
+          <input 
+            type="text"
+            placeholder="ابحث عن منتج بالاسم أو الكود..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && loadData(1)}
+            className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl py-3.5 pr-12 pl-4 text-sm focus:ring-2 focus:ring-primary/20 transition-all"
+          />
+        </div>
+        <button 
+          onClick={() => loadData(1)}
+          className="px-6 py-3.5 bg-primary text-white rounded-2xl text-sm font-bold shadow-lg shadow-primary/25 hover:scale-105 transition-all"
+        >
+          بحث
+        </button>
+        <button className="px-5 py-3.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl text-slate-600 dark:text-slate-400 hover:bg-slate-50 transition-all">
+          <Filter size={20} />
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-6">
+        {products.map((product) => (
+          <ProductCard 
+            key={product.id} 
+            product={product} 
+            isSelected={selectedProducts.includes(product.id)}
+            onToggleSelection={(id) => {
+              setSelectedProducts(prev => 
+                prev.includes(id) ? prev.filter(p => p !== id) : [...prev, id]
+              );
+            }}
+            onUpdateStatus={handleUpdateProduct}
+            onUpdateOptions={handleUpdateOptions}
+            onEdit={(product) => {
+              setEditingProductId(product.id);
+              setShowProductEditor(true);
+            }} 
+            onDelete={handleDeleteProduct} 
+            onImportReviews={() => {}}
+            onAddPictures={() => {}}
+            checkPermission={checkPermission}
+          />
+        ))}
+      </div>
+
+      <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-100 dark:border-slate-800 overflow-hidden shadow-sm">
+        {renderPagination()}
+      </div>
+
+      {/* Floating Bulk Actions Bar */}
+      {selectedProducts.length > 0 && (
+        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[90] animate-in slide-in-from-bottom-10 duration-300">
+          <div className="bg-slate-900 text-white px-6 py-4 rounded-3xl shadow-2xl flex items-center gap-8 border border-slate-800">
+            <div className="flex items-center gap-3 border-l border-slate-700 pl-8">
+              <span className="w-8 h-8 bg-primary rounded-full flex items-center justify-center text-sm font-black">
+                {selectedProducts.length}
+              </span>
+              <span className="text-sm font-bold">منتجات مختارة</span>
+            </div>
+            
+            <div className="flex items-center gap-4">
+              <button 
+                onClick={() => setSelectedProducts([])}
+                className="text-sm font-bold text-slate-400 hover:text-white transition-colors"
+              >
+                إلغاء التحديد
+              </button>
+              
+              <button 
+                onClick={handleBulkPublish}
+                className="flex items-center gap-2 px-6 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-sm font-bold transition-all shadow-lg shadow-emerald-500/20"
+              >
+                <CheckCircle2 size={18} />
+                نشر المحدد
+              </button>
+
+              <button 
+                onClick={handleBulkDelete}
+                className="flex items-center gap-2 px-6 py-2.5 bg-rose-500 hover:bg-rose-600 text-white rounded-xl text-sm font-bold transition-all shadow-lg shadow-rose-500/20"
+              >
+                <Trash2 size={18} />
+                حذف المحدد
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
+  const renderCoupons = () => (
+    <div className="space-y-6 animate-in fade-in duration-500">
+      <div className="flex flex-col md:flex-row gap-4 items-center justify-between">
+        <h2 className="text-2xl font-black text-slate-900 dark:text-white">إدارة الخصومات والكوبونات</h2>
+        <button 
+          onClick={() => openCouponModal()}
+          className="flex items-center gap-2 px-6 py-3.5 bg-primary text-white rounded-2xl text-sm font-bold shadow-lg shadow-primary/25 hover:scale-105 transition-all"
+        >
+          <Plus size={20} />
+          إضافة كوبون جديد
+        </button>
+      </div>
+
+      <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-100 dark:border-slate-800 overflow-hidden shadow-sm">
+        <div className="overflow-x-auto">
+          <table className="w-full text-right">
+            <thead className="bg-slate-50 dark:bg-slate-800/50 text-slate-500 text-[10px] font-black uppercase tracking-wider">
+              <tr>
+                <th className="px-6 py-4">الكود</th>
+                <th className="px-6 py-4">النوع</th>
+                <th className="px-6 py-4">القيمة</th>
+                <th className="px-6 py-4">الحد الأدنى للطلب</th>
+                <th className="px-6 py-4">النوع (عام/خاص)</th>
+                <th className="px-6 py-4">الاستخدام</th>
+                <th className="px-6 py-4">تاريخ الانتهاء</th>
+                <th className="px-6 py-4">الحالة</th>
+                <th className="px-6 py-4">الإجراءات</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-50 dark:divide-slate-800">
+              {coupons.map((coupon) => (
+                <tr key={coupon.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
+                  <td className="px-6 py-4">
+                    <span className="font-black text-slate-900 dark:text-white bg-slate-100 dark:bg-slate-800 px-3 py-1 rounded-lg">
+                      {coupon.code}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 text-sm font-bold">
+                    {coupon.discountType === 'PERCENTAGE' ? 'نسبة مئوية' : 'مبلغ ثابت'}
+                  </td>
+                  <td className="px-6 py-4 text-sm font-black text-primary">
+                    {coupon.discountValue} {coupon.discountType === 'PERCENTAGE' ? '%' : 'د.ع'}
+                  </td>
+                  <td className="px-6 py-4 text-sm font-bold">
+                    {coupon.minOrderAmount.toLocaleString()} د.ع
+                  </td>
+                  <td className="px-6 py-4">
+                    <span className={`px-3 py-1 rounded-full text-[10px] font-black ${coupon.isPublic ? 'bg-blue-100 text-blue-600' : 'bg-purple-100 text-purple-600'}`}>
+                      {coupon.isPublic ? 'عام (مرة لكل مستخدم)' : 'خاص (مرة واحدة)'}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 text-sm">
+                    <span className="font-bold text-slate-900 dark:text-white">{coupon.usageCount}</span>
+                    {coupon.usageLimit && <span className="text-slate-400"> / {coupon.usageLimit}</span>}
+                  </td>
+                  <td className="px-6 py-4 text-sm font-medium text-slate-500">
+                    {new Date(coupon.endDate).toLocaleDateString('ar-IQ')}
+                  </td>
+                  <td className="px-6 py-4">
+                    <span className={`px-3 py-1 rounded-full text-[10px] font-black ${coupon.isActive ? 'bg-emerald-100 text-emerald-600' : 'bg-rose-100 text-rose-600'}`}>
+                      {coupon.isActive ? 'نشط' : 'متوقف'}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4">
+                    <div className="flex items-center gap-2">
+                      <button 
+                        onClick={() => openCouponModal(coupon)}
+                        className="p-2 text-slate-400 hover:text-primary hover:bg-primary/10 rounded-xl transition-all"
+                      >
+                        <Edit2 size={18} />
+                      </button>
+                      <button 
+                        onClick={() => handleDeleteCoupon(coupon.id)}
+                        className="p-2 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all"
+                      >
+                        <Trash2 size={18} />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {showCouponModal && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-300">
+          <div className="bg-white dark:bg-slate-900 w-full max-w-md rounded-3xl shadow-2xl border border-slate-100 dark:border-slate-800 overflow-hidden animate-in zoom-in-95 duration-300">
+            <div className="p-6 border-b border-slate-50 dark:border-slate-800 flex items-center justify-between">
+              <h3 className="text-xl font-black text-slate-900 dark:text-white">
+                {selectedCoupon ? 'تعديل كوبون' : 'إضافة كوبون جديد'}
+              </h3>
+              <button onClick={() => setShowCouponModal(false)} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl">
+                <X size={20} />
+              </button>
+            </div>
+            <form onSubmit={handleSaveCoupon} className="p-6 space-y-4">
+              <div>
+                <label className="block text-xs font-black text-slate-500 mb-2 uppercase">كود الكوبون</label>
+                <input 
+                  type="text"
+                  required
+                  value={couponFormData.code}
+                  onChange={(e) => setCouponFormData({...couponFormData, code: e.target.value.toUpperCase()})}
+                  className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-primary/20 outline-none"
+                  placeholder="مثال: SAVE20"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-black text-slate-500 mb-2 uppercase">نوع الخصم</label>
+                  <select 
+                    value={couponFormData.discountType}
+                    onChange={(e) => setCouponFormData({...couponFormData, discountType: e.target.value})}
+                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-primary/20 outline-none"
+                  >
+                    <option value="PERCENTAGE">نسبة مئوية</option>
+                    <option value="FIXED">مبلغ ثابت</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-black text-slate-500 mb-2 uppercase">القيمة</label>
+                  <input 
+                    type="number"
+                    required
+                    value={couponFormData.discountValue}
+                    onChange={(e) => setCouponFormData({...couponFormData, discountValue: e.target.value})}
+                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-primary/20 outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-black text-slate-500 mb-2 uppercase">الحد الأدنى للطلب</label>
+                  <input 
+                    type="number"
+                    required
+                    value={couponFormData.minOrderAmount}
+                    onChange={(e) => setCouponFormData({...couponFormData, minOrderAmount: e.target.value})}
+                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-primary/20 outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-black text-slate-500 mb-2 uppercase">تاريخ الانتهاء</label>
+                  <input 
+                    type="date"
+                    required
+                    value={couponFormData.endDate}
+                    onChange={(e) => setCouponFormData({...couponFormData, endDate: e.target.value})}
+                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-primary/20 outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-black text-slate-500 mb-2 uppercase">النوع</label>
+                  <select 
+                    value={couponFormData.isPublic ? 'true' : 'false'}
+                    onChange={(e) => setCouponFormData({...couponFormData, isPublic: e.target.value === 'true'})}
+                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-primary/20 outline-none"
+                  >
+                    <option value="true">عام (لكل مستخدم مرة)</option>
+                    <option value="false">خاص (مرة واحدة فقط)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-black text-slate-500 mb-2 uppercase">حد الاستخدام</label>
+                  <input 
+                    type="number"
+                    value={couponFormData.usageLimit}
+                    onChange={(e) => setCouponFormData({...couponFormData, usageLimit: e.target.value})}
+                    placeholder="اختياري"
+                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-primary/20 outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="pt-4 flex gap-3">
+                <button 
+                  type="button"
+                  onClick={() => setShowCouponModal(false)}
+                  className="flex-1 py-3.5 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 rounded-2xl font-bold hover:bg-slate-200 transition-all"
+                >
+                  إلغاء
+                </button>
+                <button 
+                  type="submit"
+                  className="flex-1 py-3.5 bg-primary text-white rounded-2xl font-bold shadow-lg shadow-primary/25 hover:scale-105 transition-all"
+                >
+                  {selectedCoupon ? 'تحديث' : 'إنشاء'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
+  const renderUsers = () => (
+    <div className="space-y-6 animate-in fade-in duration-500">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-2xl font-black text-slate-900 dark:text-white">المستخدمين</h2>
+          <p className="text-slate-500 text-sm mt-1">إدارة صلاحيات المستخدمين والبيانات الشخصية</p>
+        </div>
+      </div>
+
+      <div className="flex gap-4">
+        <div className="relative flex-1">
+          <Search className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+          <input 
+            type="text"
+            placeholder="ابحث بالاسم، الهاتف، أو البريد..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && loadData(1)}
+            className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl py-3.5 pr-11 pl-4 text-sm focus:ring-2 focus:ring-primary/20 transition-all"
+          />
+        </div>
+        <button 
+          onClick={() => loadData(1)}
+          className="px-6 py-3.5 bg-primary text-white rounded-2xl text-sm font-bold shadow-lg shadow-primary/25 hover:scale-105 transition-all"
+        >
+          بحث
+        </button>
+      </div>
+
+      <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-100 dark:border-slate-800 overflow-hidden shadow-sm">
+        <table className="w-full text-right">
+          <thead>
+            <tr className="bg-slate-50 dark:bg-slate-800/50 text-slate-500 text-xs font-black uppercase tracking-wider">
+              <th className="px-6 py-4">المستخدم</th>
+              <th className="px-6 py-4">معلومات الاتصال</th>
+              <th className="px-6 py-4 text-center">الرتبة</th>
+              <th className="px-6 py-4">تاريخ الانضمام</th>
+              <th className="px-6 py-4 text-center">الإجراءات</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-50 dark:divide-slate-800">
+            {users.map((u) => (
+              <tr key={u.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+                <td className="px-6 py-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary font-bold">
+                      {u.name?.[0] || 'U'}
+                    </div>
+                    <div>
+                      <p className="text-sm font-bold text-slate-900 dark:text-white">{u.name || 'مستخدم جديد'}</p>
+                      <p className="text-[10px] text-slate-400 font-medium">ID: #{u.id}</p>
+                    </div>
+                  </div>
+                </td>
+                <td className="px-6 py-4">
+                  <p className="text-sm text-slate-600 dark:text-slate-400 font-medium">{u.email || 'لا يوجد بريد'}</p>
+                  <p className="text-xs text-slate-400 mt-0.5" dir="ltr">{u.phone || '-'}</p>
+                </td>
+                <td className="px-6 py-4 text-center">
+                  <button 
+                    onClick={() => handleRoleUpdate(u.id, u.role === 'ADMIN' ? 'USER' : 'ADMIN')}
+                    className={`px-4 py-1.5 rounded-full text-[10px] font-black transition-all ${
+                      u.role === 'ADMIN' 
+                      ? 'bg-primary text-white shadow-lg shadow-primary/20' 
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-500 hover:bg-slate-200'
+                    }`}
+                  >
+                    {u.role}
+                  </button>
+                </td>
+                <td className="px-6 py-4">
+                  <span className="text-sm text-slate-500 font-medium">{u.createdAt ? new Date(u.createdAt).toLocaleDateString('ar-IQ') : '-'}</span>
+                </td>
+                <td className="px-6 py-4 text-center">
+                  <button className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg text-slate-400 hover:text-primary transition-all">
+                    <MoreVertical size={18} />
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {renderPagination()}
+      </div>
+    </div>
+  );
+
+  const getStatusConfig = (status: string) => {
+    switch (status) {
+      case 'PENDING':
+        return { label: 'قيد المراجعة', class: 'bg-slate-100 text-slate-600' };
+      case 'AWAITING_PAYMENT':
+        return { label: 'بانتظار الدفع', class: 'bg-amber-100 text-amber-600' };
+      case 'PREPARING':
+        return { label: 'قيد التجهيز', class: 'bg-indigo-100 text-indigo-600' };
+      case 'SHIPPED':
+        return { label: 'تم الشحن', class: 'bg-blue-100 text-blue-600' };
+      case 'ARRIVED_IRAQ':
+        return { label: 'وصل إلى العراق', class: 'bg-cyan-100 text-cyan-600' };
+      case 'DELIVERED':
+        return { label: 'تم التسليم بنجاح', class: 'bg-emerald-100 text-emerald-600' };
+      case 'CANCELLED':
+        return { label: 'ملغي', class: 'bg-rose-100 text-rose-600' };
+      default:
+        return { label: status, class: 'bg-slate-100 text-slate-600' };
+    }
+  };
+
+  const renderOrderDetailsModal = () => {
+    if (!selectedOrder) return null;
+
+    return (
+      <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-300">
+        <div className="bg-white dark:bg-slate-900 w-full max-w-4xl max-h-[90vh] rounded-3xl shadow-2xl border border-slate-100 dark:border-slate-800 overflow-hidden animate-in zoom-in-95 duration-300 flex flex-col">
+          {/* Modal Header */}
+          <div className="p-6 border-b border-slate-50 dark:border-slate-800 flex items-center justify-between shrink-0">
+            <div>
+              <div className="flex items-center gap-3">
+                <h3 className="text-xl font-black text-slate-900 dark:text-white">تفاصيل الطلب #{selectedOrder.id}</h3>
+                <span className={`px-3 py-1 rounded-full text-[10px] font-black ${getStatusConfig(selectedOrder.status).class}`}>
+                  {getStatusConfig(selectedOrder.status).label}
+                </span>
+              </div>
+              <p className="text-sm text-slate-500 mt-1">
+                تم الطلب في {new Date(selectedOrder.createdAt).toLocaleString('ar-IQ')}
+              </p>
+            </div>
+            <button 
+              onClick={() => setShowOrderModal(false)}
+              className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors"
+            >
+              <X size={20} />
+            </button>
+          </div>
+
+          {/* Modal Body */}
+          <div className="p-6 overflow-y-auto space-y-8 min-h-[400px]">
+            {modalLoading ? (
+              <div className="flex flex-col items-center justify-center py-20 gap-4">
+                <div className="w-10 h-10 border-4 border-primary/20 border-t-primary rounded-full animate-spin"></div>
+                <p className="text-slate-500 font-bold">جاري تحميل تفاصيل الطلب...</p>
+              </div>
+            ) : (
+              <>
+                {/* Customer & Shipping Info */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-5 border border-slate-100 dark:border-slate-800">
+                <h4 className="font-black text-sm mb-4 flex items-center gap-2">
+                  <Users size={16} className="text-primary" />
+                  معلومات العميل
+                </h4>
+                <div className="space-y-2 text-sm">
+                  <p><span className="text-slate-500">الاسم:</span> <span className="font-bold">{selectedOrder.user?.name || 'مستخدم'}</span></p>
+                  <p><span className="text-slate-500">الهاتف:</span> <span className="font-bold">{selectedOrder.address?.phone || '-'}</span></p>
+                  <p><span className="text-slate-500">البريد:</span> <span className="font-bold">{selectedOrder.user?.email || '-'}</span></p>
+                </div>
+              </div>
+
+              <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-5 border border-slate-100 dark:border-slate-800">
+                <h4 className="font-black text-sm mb-4 flex items-center gap-2">
+                  <Package size={16} className="text-primary" />
+                  عنوان الشحن
+                </h4>
+                <div className="space-y-2 text-sm">
+                  <p><span className="text-slate-500">المدينة:</span> <span className="font-bold">{selectedOrder.address?.city || '-'}</span></p>
+                  <p><span className="text-slate-500">الشارع:</span> <span className="font-bold">{selectedOrder.address?.street || '-'}</span></p>
+                  <p><span className="text-slate-500">البناية/الطابق:</span> <span className="font-bold">{selectedOrder.address?.buildingNo || '-'}{selectedOrder.address?.floorNo ? ` / ${selectedOrder.address.floorNo}` : ''}</span></p>
+                </div>
+              </div>
+            </div>
+
+            {/* Order Items */}
+            <div>
+              <h4 className="font-black text-sm mb-4 flex items-center gap-2">
+                <ShoppingCart size={16} className="text-primary" />
+                المنتجات المطلوبة ({selectedOrder.items?.length || 0})
+              </h4>
+              <div className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-right text-sm">
+                    <thead className="bg-slate-50 dark:bg-slate-800/50 text-slate-500 text-[10px] font-black uppercase">
+                      <tr>
+                        <th className="px-4 py-3">المنتج</th>
+                        <th className="px-4 py-3 text-center">الكمية</th>
+                        <th className="px-4 py-3">السعر</th>
+                        <th className="px-4 py-3">الإجمالي</th>
+                        <th className="px-4 py-3 text-center">الرابط</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50 dark:divide-slate-800">
+                      {selectedOrder.items?.map((item: any) => (
+                        <tr key={item.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
+                          <td className="px-4 py-4">
+                            <div className="flex items-center gap-3">
+                              <img 
+                                src={item.product?.image} 
+                                alt={item.product?.name} 
+                                className="w-12 h-12 rounded-lg object-cover bg-slate-100"
+                              />
+                              <div>
+                                <p className="font-bold line-clamp-1">{item.product?.name}</p>
+                                {item.variant && (
+                                  <p className="text-[10px] text-slate-500 mt-0.5">
+                                    {item.variant.combination}
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-4 py-4 text-center font-bold">
+                            {item.quantity}
+                          </td>
+                          <td 
+                            className="px-4 py-4 font-bold text-slate-600 dark:text-slate-400 cursor-pointer hover:text-primary transition-colors select-none"
+                            onDoubleClick={() => {
+                              setEditingPriceId(item.id);
+                              setTempPrice(item.price.toString());
+                            }}
+                            title="انقر مرتين لتعديل السعر"
+                          >
+                            {editingPriceId === item.id ? (
+                              <input
+                                autoFocus
+                                type="number"
+                                value={tempPrice}
+                                onChange={(e) => setTempPrice(e.target.value)}
+                                onBlur={() => handlePriceUpdate(item)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') handlePriceUpdate(item);
+                                  if (e.key === 'Escape') setEditingPriceId(null);
+                                }}
+                                className="w-24 px-2 py-1 bg-white dark:bg-slate-800 border-2 border-primary rounded-lg outline-none text-center text-sm"
+                                onClick={(e) => e.stopPropagation()}
+                              />
+                            ) : (
+                              <span>{item.price.toLocaleString()} د.ع</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-4 font-bold text-primary">
+                            {(item.price * item.quantity).toLocaleString()} د.ع
+                          </td>
+                          <td className="px-4 py-4 text-center">
+                            {item.product?.purchaseUrl ? (
+                              <a 
+                                href={item.product.purchaseUrl} 
+                                target="_blank" 
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center justify-center p-2 bg-blue-50 dark:bg-blue-900/20 text-blue-500 rounded-lg hover:scale-110 transition-all"
+                                title="رابط شراء المنتج"
+                              >
+                                <ArrowLeft size={16} className="rotate-[135deg]" />
+                              </a>
+                            ) : (
+                              <span className="text-slate-300 text-[10px]">لا يوجد رابط</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            {/* Order Summary */}
+            <div className="flex justify-end">
+              <div className="w-full md:w-80 space-y-3">
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-500">المجموع الفرعي:</span>
+                  <span className="font-bold">{(selectedOrder.total - (selectedOrder.internationalShippingFee || 0)).toLocaleString()} د.ع</span>
+                </div>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-slate-500">رسوم الشحن الدولي:</span>
+                  <div className="flex items-center gap-2">
+                    <input 
+                      type="number"
+                      defaultValue={selectedOrder.internationalShippingFee || ''}
+                      placeholder="0"
+                      onBlur={(e) => {
+                        const val = e.target.value === '' ? 0 : parseFloat(e.target.value);
+                        if (val !== (selectedOrder.internationalShippingFee || 0)) {
+                          handleUpdateInternationalFee(selectedOrder.id, val.toString());
+                        }
+                      }}
+                      className="w-28 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs font-bold text-blue-600 focus:ring-1 focus:ring-primary/50 outline-none transition-all text-left"
+                    />
+                    <span className="text-[10px] font-bold text-slate-400">د.ع</span>
+                  </div>
+                </div>
+                <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex justify-between">
+                  <span className="font-black">الإجمالي الكلي:</span>
+                  <span className="font-black text-lg text-primary">{selectedOrder.total.toLocaleString()} د.ع</span>
+                </div>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* Modal Footer */}
+          <div className="p-6 border-t border-slate-50 dark:border-slate-800 shrink-0 flex gap-3">
+            <button
+              onClick={() => setShowOrderModal(false)}
+              className="flex-1 py-4 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 rounded-2xl font-bold hover:bg-slate-200 transition-all"
+            >
+              إغلاق
+            </button>
+            <button
+              onClick={() => {
+                window.print();
+              }}
+              className="px-8 py-4 bg-primary/10 text-primary rounded-2xl font-bold hover:bg-primary/20 transition-all flex items-center gap-2"
+            >
+              <Download size={20} />
+              طباعة
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderOrders = () => (
+    <div className="space-y-6 animate-in fade-in duration-500">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-2xl font-black text-slate-900 dark:text-white">الطلبات</h2>
+          <p className="text-slate-500 text-sm mt-1">متابعة حالة الطلبات والشحن والمدفوعات</p>
+        </div>
+      </div>
+
+      <div className="flex gap-4">
+        <div className="relative flex-1">
+          <Search className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
+          <input 
+            type="text"
+            placeholder="ابحث برقم الطلب، اسم العميل، أو الهاتف..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && loadData(1)}
+            className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl py-3.5 pr-12 pl-4 text-sm focus:ring-2 focus:ring-primary/20 transition-all"
+          />
+        </div>
+        <button 
+          onClick={() => loadData(1)}
+          className="px-6 py-3.5 bg-primary text-white rounded-2xl text-sm font-bold shadow-lg shadow-primary/25 hover:scale-105 transition-all"
+        >
+          بحث
+        </button>
+      </div>
+
+      <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-100 dark:border-slate-800 overflow-hidden shadow-sm">
+        <table className="w-full text-right">
+          <thead>
+            <tr className="bg-slate-50 dark:bg-slate-800/50 text-slate-500 text-xs font-black uppercase tracking-wider">
+              <th className="px-6 py-4">رقم الطلب</th>
+              <th className="px-6 py-4">العميل</th>
+              <th className="px-6 py-4">التاريخ</th>
+              <th className="px-6 py-4">المبلغ الإجمالي</th>
+              <th className="px-6 py-4">رسوم الشحن (د.ع)</th>
+              <th className="px-6 py-4 text-center">الحالة</th>
+              <th className="px-6 py-4 text-center">الإجراءات</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-50 dark:divide-slate-800">
+            {orders.map((order) => (
+              <tr key={order.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+                <td className="px-6 py-4 font-black text-sm text-slate-900 dark:text-white">
+                  #{order.id}
+                </td>
+                <td className="px-6 py-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-xs font-bold">
+                      {order.user?.name?.[0] || 'U'}
+                    </div>
+                    <div>
+                      <p className="text-sm font-bold">{order.user?.name || 'مستخدم'}</p>
+                      <p className="text-[10px] text-slate-400">{order.address?.phone || '-'}</p>
+                    </div>
+                  </div>
+                </td>
+                <td className="px-6 py-4">
+                  <div className="flex items-center gap-2 text-sm text-slate-500">
+                    <Clock size={14} />
+                    <span>{new Date(order.createdAt).toLocaleDateString('ar-IQ')}</span>
+                  </div>
+                </td>
+                <td className="px-6 py-4 font-black text-primary">
+                  {(order.total || 0).toLocaleString()} د.ع
+                </td>
+                <td className="px-6 py-4">
+                  <div className="flex items-center gap-2">
+                    <input 
+                      type="number"
+                      defaultValue={order.internationalShippingFee || ''}
+                      placeholder="0"
+                      onBlur={(e) => {
+                        const val = e.target.value === '' ? 0 : parseFloat(e.target.value);
+                        if (val !== (order.internationalShippingFee || 0)) {
+                          handleUpdateInternationalFee(order.id, val.toString());
+                        }
+                      }}
+                      className="w-24 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs font-bold focus:ring-1 focus:ring-primary/50 outline-none transition-all"
+                    />
+                  </div>
+                </td>
+                <td className="px-6 py-4 text-center">
+                  <select 
+                    value={order.status}
+                    onChange={(e) => handleUpdateOrderStatus(order.id, e.target.value)}
+                    className={`px-3 py-1.5 rounded-full text-[10px] font-black border-none focus:ring-2 focus:ring-primary/20 cursor-pointer transition-all ${getStatusConfig(order.status).class}`}
+                  >
+                    <option value="PENDING">قيد المراجعة</option>
+                    <option value="AWAITING_PAYMENT">بانتظار الدفع</option>
+                    <option value="PREPARING">قيد التجهيز</option>
+                    <option value="SHIPPED">تم الشحن</option>
+                    <option value="ARRIVED_IRAQ">وصل إلى العراق</option>
+                    <option value="DELIVERED">تم التسليم بنجاح</option>
+                    <option value="CANCELLED">ملغي</option>
+                  </select>
+                </td>
+                <td className="px-6 py-4 text-center">
+                  <div className="flex items-center justify-center gap-2">
+                    <button 
+                      onClick={async () => {
+                        try {
+                          setModalLoading(true);
+                          setSelectedOrder(order);
+                          setShowOrderModal(true);
+                          const token = getAuthToken();
+                          const fullOrder = await fetchAdminOrderDetails(order.id, token);
+                          setSelectedOrder(fullOrder);
+                        } catch (error) {
+                          showToast('فشل تحميل تفاصيل الطلب', 'error');
+                        } finally {
+                          setModalLoading(false);
+                        }
+                      }}
+                      className="p-2 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg text-blue-500 transition-all" 
+                      title="عرض التفاصيل"
+                    >
+                      <Eye size={18} />
+                    </button>
+                    <button className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg text-slate-400 transition-all">
+                      <MoreVertical size={18} />
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {orders.length === 0 && (
+          <div className="py-20 text-center">
+            <ShoppingCart className="mx-auto mb-4 text-slate-200" size={48} />
+            <h3 className="text-lg font-black text-slate-400">لا توجد طلبات حالياً</h3>
+          </div>
+        )}
+        {renderPagination()}
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="max-w-[1600px] mx-auto">
+      {loading ? (
+        <div className="flex flex-col items-center justify-center py-32 gap-6">
+          <div className="w-12 h-12 border-4 border-primary/20 border-t-primary rounded-full animate-spin"></div>
+          <div className="text-center">
+            <p className="text-lg font-black text-slate-900 dark:text-white">جاري تحضير البيانات</p>
+            <p className="text-sm text-slate-500 mt-1 animate-pulse">يرجى الانتظار قليلاً...</p>
+          </div>
+        </div>
+      ) : (
+        <Routes>
+          <Route index element={renderStats()} />
+          <Route path="products" element={renderProducts()} />
+          <Route path="users" element={renderUsers()} />
+          <Route path="orders" element={renderOrders()} />
+          <Route path="coupons" element={renderCoupons()} />
+          <Route path="settings" element={
+            <div className="p-12 text-center bg-white dark:bg-slate-900 rounded-3xl border border-dashed border-slate-200 dark:border-slate-800">
+              <Settings className="mx-auto mb-4 text-slate-300" size={48} />
+              <h3 className="text-xl font-black mb-2">إعدادات النظام</h3>
+              <p className="text-slate-500">قريباً... ستتمكن من التحكم في إعدادات المتجر من هنا</p>
+            </div>
+          } />
+        </Routes>
+      )}
+      {showOrderModal && renderOrderDetailsModal()}
+      {showProductEditor && (
+        <ProductEditor 
+          productId={editingProductId}
+          onClose={() => {
+            setShowProductEditor(false);
+            setEditingProductId(null);
+          }}
+          onSuccess={() => {
+            // Refresh products list after edit/create
+            loadData(currentPage, true);
+          }}
+        />
+      )}
+    </div>
+  );
+};
+
+export default AdminDashboard;

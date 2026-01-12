@@ -1,0 +1,587 @@
+import React, { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
+import { 
+  Check, 
+  Star, 
+  FileEdit, 
+  Link, 
+  Laptop, 
+  Package, 
+  X, 
+  Upload, 
+  Eye, 
+  EyeOff, 
+  MessageSquareQuote, 
+  Camera, 
+  Edit3, 
+  Trash2 
+} from 'lucide-react';
+import ProductImageCarousel from './ProductImageCarousel';
+
+interface ProductCardProps {
+  product: any;
+  isSelected: boolean;
+  onToggleSelection: (productId: any) => void;
+  onUpdateStatus: (productId: any, data: any) => void;
+  onUpdateOptions?: (productId: any, options: any[], variants: any[]) => void;
+  onEdit: (product: any) => void;
+  onDelete: (productId: any) => void;
+  onImportReviews: (product: any) => void;
+  onAddPictures: (product: any) => void;
+  checkPermission: (permission: string) => boolean;
+}
+
+const ProductCard: React.FC<ProductCardProps> = ({
+  product,
+  isSelected,
+  onToggleSelection,
+  onUpdateStatus,
+  onUpdateOptions,
+  onEdit,
+  onDelete,
+  onImportReviews,
+  onAddPictures,
+  checkPermission
+}) => {
+  const { t } = useTranslation();
+  const [isEditingPrice, setIsEditingPrice] = useState(false);
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [tempPrice, setTempPrice] = useState(product.price.toString());
+  const [tempProductName, setTempProductName] = useState(product.name);
+  const [editingOptionId, setEditingOptionId] = useState<string | null>(null);
+  const [editingValue, setEditingValue] = useState<{ optionId: string, index: number } | null>(null);
+  const [editingName, setEditingName] = useState<string | null>(null);
+  const [tempValue, setTempValue] = useState('');
+  const [tempName, setTempName] = useState('');
+
+  const variants = product.variants || [];
+  const variantPrices = variants.map((v: any) => v.price).filter((p: any) => p > 0);
+  const minPrice = variantPrices.length > 0 ? Math.min(...variantPrices) : product.price;
+  const maxPrice = variantPrices.length > 0 ? Math.max(...variantPrices) : product.price;
+  const hasPriceRange = minPrice !== maxPrice;
+
+  useEffect(() => {
+    setTempPrice(product.price.toString());
+  }, [product.price]);
+
+  const handlePriceSubmit = () => {
+    const newPrice = parseFloat(tempPrice);
+    if (!isNaN(newPrice) && newPrice !== product.price) {
+      onUpdateStatus(product.id, { price: newPrice });
+    }
+    setIsEditingPrice(false);
+  };
+
+  const handleNameSubmitInline = () => {
+    if (tempProductName.trim() && tempProductName !== product.name) {
+      onUpdateStatus(product.id, { name: tempProductName.trim() });
+    }
+    setIsEditingName(false);
+  };
+
+  const handleNameSubmit = (optionId: string) => {
+    if (!tempName.trim()) {
+      setEditingName(null);
+      return;
+    }
+    const newOptions = product.options.map((o: any) => 
+      o.id === optionId ? { ...o, name: tempName.trim() } : o
+    );
+    if (onUpdateOptions) {
+      onUpdateOptions(product.id, newOptions);
+    }
+    setEditingName(null);
+  };
+
+  const handleValueSubmit = (optionId: string, index: number) => {
+    if (!tempValue.trim()) {
+      setEditingValue(null);
+      return;
+    }
+    const option = product.options.find((o: any) => o.id === optionId);
+    if (!option) return;
+
+    let values = [];
+    try {
+      values = typeof option.values === 'string' ? JSON.parse(option.values) : option.values;
+    } catch {
+      values = [];
+    }
+
+    const newValues = [...values];
+    newValues[index] = tempValue.trim();
+
+    const newOptions = product.options.map((o: any) => 
+      o.id === optionId ? { ...o, values: newValues } : o
+    );
+
+    if (onUpdateOptions) {
+      onUpdateOptions(product.id, newOptions);
+    }
+    setEditingValue(null);
+  };
+
+  const handleRemoveOptionValue = (optionId: string, valueToRemove: string) => {
+    const option = product.options.find((o: any) => o.id === optionId);
+    if (!option) return;
+
+    const optionName = option.name;
+    
+    // Ensure all options have parsed values before mapping
+    const parsedOptions = product.options.map((o: any) => {
+      let vals = o.values;
+      if (typeof vals === 'string') {
+        try { vals = JSON.parse(vals); } catch { vals = []; }
+      }
+      return { ...o, values: Array.isArray(vals) ? vals : [] };
+    });
+
+    const targetOption = parsedOptions.find((o: any) => o.id === optionId);
+    if (!targetOption) return;
+
+    const newValues = targetOption.values.filter((v: any) => 
+      (typeof v === 'object' ? v.value : v) !== valueToRemove
+    );
+    
+    if (newValues.length === 0) {
+      handleRemoveOption(optionId);
+      return;
+    }
+
+    const newOptions = parsedOptions.map((o: any) => 
+      o.id === optionId ? { ...o, values: newValues } : o
+    );
+
+    const currentVariants = product.variants || [];
+    const newVariants = currentVariants.filter((v: any) => {
+      let combination = v.combination;
+      if (typeof combination === 'string') {
+        try { combination = JSON.parse(combination); } catch { combination = {}; }
+      }
+      const val = combination[optionName];
+      const valString = typeof val === 'object' ? (val.value || val.name || JSON.stringify(val)) : String(val);
+      return valString !== valueToRemove;
+    });
+
+    if (onUpdateOptions) {
+      onUpdateOptions(product.id, newOptions, newVariants);
+    }
+  };
+
+  const handleRemoveOption = (optionId: string) => {
+    const option = product.options.find((o: any) => o.id === optionId);
+    if (!option) return;
+    if (!window.confirm(`هل أنت متأكد من حذف خيار "${option.name}" بالكامل؟`)) return;
+    
+    const optionName = option.name;
+    
+    // Ensure all options have parsed values
+    const parsedOptions = product.options.map((o: any) => {
+      let vals = o.values;
+      if (typeof vals === 'string') {
+        try { vals = JSON.parse(vals); } catch { vals = []; }
+      }
+      return { ...o, values: Array.isArray(vals) ? vals : [] };
+    });
+
+    const newOptions = parsedOptions.filter((o: any) => o.id !== optionId);
+    
+    const currentVariants = product.variants || [];
+    const processedVariants: any[] = [];
+    const seenCombinations = new Set();
+
+    currentVariants.forEach((v: any) => {
+      let combination = v.combination;
+      if (typeof combination === 'string') {
+        try { combination = JSON.parse(combination); } catch { combination = {}; }
+      }
+      
+      const newCombination = { ...combination };
+      delete newCombination[optionName];
+      
+      const comboKey = JSON.stringify(newCombination);
+      if (!seenCombinations.has(comboKey)) {
+        seenCombinations.add(comboKey);
+        processedVariants.push({
+          ...v,
+          combination: newCombination
+        });
+      }
+    });
+
+    if (onUpdateOptions) {
+      onUpdateOptions(product.id, newOptions, processedVariants);
+    }
+  };
+
+  const handleAddOptionValue = (optionId: string, newValue: string) => {
+    if (!newValue.trim()) return;
+    
+    // Ensure all options have parsed values
+    const parsedOptions = product.options.map((o: any) => {
+      let vals = o.values;
+      if (typeof vals === 'string') {
+        try { vals = JSON.parse(vals); } catch { vals = []; }
+      }
+      return { ...o, values: Array.isArray(vals) ? vals : [] };
+    });
+
+    const targetOption = parsedOptions.find((o: any) => o.id === optionId);
+    if (!targetOption) return;
+
+    if (!targetOption.values.includes(newValue.trim())) {
+      const newValues = [...targetOption.values, newValue.trim()];
+      const newOptions = parsedOptions.map((o: any) => 
+        o.id === optionId ? { ...o, values: newValues } : o
+      );
+      if (onUpdateOptions) {
+        onUpdateOptions(product.id, newOptions, product.variants || []);
+      }
+    }
+  };
+
+  return (
+    <div className={`bg-white dark:bg-slate-800 rounded-2xl shadow-sm border transition-all overflow-hidden group relative ${
+      !product.isActive && product.status !== 'DRAFT'
+        ? 'opacity-60 grayscale border-slate-200 dark:border-slate-700' 
+        : 'border-slate-100 dark:border-slate-700/50'
+    } ${isSelected ? 'ring-2 ring-primary border-primary/20 bg-primary/5' : ''}`}>
+      
+      {/* Selection Checkbox */}
+      <div className={`absolute top-4 right-4 z-10 transition-opacity ${
+        isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+      }`}>
+        <button 
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleSelection(product.id);
+          }}
+          className={`w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all ${
+            isSelected
+              ? 'bg-primary border-primary text-white'
+              : 'bg-white border-slate-200 text-transparent'
+          }`}
+        >
+          <Check size={16} />
+        </button>
+      </div>
+
+      <div className="p-4 flex gap-4 flex-row-reverse">
+        <ProductImageCarousel 
+          images={[...(product.images || []), ...(product.detailImages || [])]} 
+          mainImage={product.image} 
+          isActive={product.isActive || product.status === 'DRAFT'} 
+        />
+        <div className="absolute top-1 right-1 flex flex-col gap-1 z-20">
+          {product.isFeatured && (
+            <div className="bg-amber-500 text-white text-[8px] font-bold px-1.5 py-0.5 rounded-full shadow-lg flex items-center gap-0.5">
+              <Star size={10} fill="currentColor" />
+              {t('dashboard.products.badges.featured')}
+            </div>
+          )}
+          {product.status === 'DRAFT' && (
+            <div className="bg-amber-600 text-white text-[8px] font-bold px-2 py-0.5 rounded-full shadow-lg flex items-center gap-1">
+              <FileEdit size={10} />
+              DRAFT
+            </div>
+          )}
+        </div>
+        <div className="flex-1 min-w-0 text-right">
+          <div className="flex items-start justify-between gap-2 mb-1 flex-row-reverse">
+            <div className="flex-1 flex flex-col items-end">
+              {isEditingName && product.status === 'DRAFT' ? (
+                <input
+                  type="text"
+                  value={tempProductName}
+                  onChange={(e) => setTempProductName(e.target.value)}
+                  onBlur={handleNameSubmitInline}
+                  onKeyDown={(e) => e.key === 'Enter' && handleNameSubmitInline()}
+                  autoFocus
+                  className="w-full px-2 py-1 text-sm font-bold text-right bg-white dark:bg-slate-700 border border-primary rounded-lg focus:ring-2 focus:ring-primary/20 outline-none"
+                />
+              ) : (
+                <h4 
+                  className={`text-sm font-bold text-slate-900 dark:text-white truncate w-full text-right ${product.status === 'DRAFT' ? 'cursor-pointer hover:text-primary transition-colors' : ''}`}
+                  onDoubleClick={() => product.status === 'DRAFT' && setIsEditingName(true)}
+                  title={product.status === 'DRAFT' ? 'نقر مزدوج لتعديل الاسم' : ''}
+                >
+                  {product.name}
+                </h4>
+              )}
+              {product.chineseName && (
+                <span className="text-[10px] text-slate-400 font-bold font-sans">{product.chineseName}</span>
+              )}
+              {product.purchaseUrl && (
+                <div className="flex justify-end mt-1">
+                  <a 
+                    href={product.purchaseUrl} 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1 text-[10px] text-primary hover:underline font-sans"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <Link size={14} />
+                    الرابط الأصلي
+                  </a>
+                </div>
+              )}
+            </div>
+            <div className="flex gap-1">
+              {product.isLocal && (
+                <span className="text-[9px] font-black bg-purple-100 text-purple-600 dark:bg-purple-500/20 dark:text-purple-400 px-1.5 py-0.5 rounded flex items-center gap-1">
+                  <Laptop size={10} />
+                  مسودة محلية
+                </span>
+              )}
+              {product.status === 'DRAFT' && !product.isLocal && (
+                <span className="text-[9px] font-black bg-amber-100 text-amber-600 dark:bg-amber-500/20 dark:text-amber-400 px-1.5 py-0.5 rounded">{t('dashboard.products.badges.draft')}</span>
+              )}
+              {!product.isActive && (
+                <span className="text-[9px] font-black bg-slate-200 dark:bg-slate-700 text-slate-500 px-1.5 py-0.5 rounded">{t('dashboard.products.badges.inactive')}</span>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400 mb-2 flex-row-reverse">
+            <Package size={14} />
+            <span className="truncate">#{product.id}</span>
+          </div>
+          <div className="flex items-center justify-between flex-row-reverse mb-2">
+            <div className="flex flex-col items-end">
+              {isEditingPrice && (product.status === 'DRAFT' || product.isLocal) ? (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-slate-400">{t('common.iqd')}</span>
+                  <input
+                    type="number"
+                    value={tempPrice}
+                    onChange={(e) => setTempPrice(e.target.value)}
+                    onBlur={handlePriceSubmit}
+                    onKeyDown={(e) => e.key === 'Enter' && handlePriceSubmit()}
+                    className="w-24 px-2 py-1 text-sm font-bold text-right bg-white dark:bg-slate-700 border border-primary rounded-lg focus:ring-2 focus:ring-primary/20 outline-none"
+                  />
+                </div>
+              ) : (
+                <div 
+                  className={`text-right ${(product.status === 'DRAFT' || product.isLocal) ? 'cursor-pointer hover:bg-primary/5 px-1 rounded transition-colors' : ''}`}
+                  onDoubleClick={() => (product.status === 'DRAFT' || product.isLocal) && setIsEditingPrice(true)}
+                  title={(product.status === 'DRAFT' || product.isLocal) ? 'نقر مزدوج للتعديل' : ''}
+                >
+                  <p className="text-sm font-bold text-primary">
+                    {hasPriceRange ? (
+                      `${minPrice.toLocaleString()} - ${maxPrice.toLocaleString()} ${t('common.iqd')}`
+                    ) : (
+                      `${product.price.toLocaleString()} ${t('common.iqd')}`
+                    )}
+                  </p>
+                  {hasPriceRange && (
+                    <p className="text-[9px] text-slate-400 font-bold">يختلف حسب المتغير</p>
+                  )}
+                </div>
+              )}
+              {product.basePriceRMB > 0 && (
+                <p className="text-[10px] text-slate-400 font-bold font-sans">{product.basePriceRMB.toLocaleString()} RMB</p>
+              )}
+            </div>
+          </div>
+
+          {/* Product Options Display */}
+          {product.options && product.options.length > 0 && (
+            <div className="flex flex-wrap gap-1 mt-2 justify-end">
+              {product.options.map((opt: any) => {
+                let values = [];
+                try {
+                  values = typeof opt.values === 'string' ? JSON.parse(opt.values) : opt.values;
+                } catch {
+                  values = [];
+                }
+                const isEditing = editingOptionId === opt.id;
+
+                return (
+                  <div key={opt.id} className="flex flex-col items-end gap-1.5 mb-1">
+                    {editingName === opt.id ? (
+                      <input
+                        type="text"
+                        value={tempName}
+                        onChange={(e) => setTempName(e.target.value)}
+                        onBlur={() => handleNameSubmit(opt.id)}
+                        onKeyDown={(e) => e.key === 'Enter' && handleNameSubmit(opt.id)}
+                        className="w-20 px-1 py-0.5 text-[10px] font-bold text-right bg-white dark:bg-slate-700 border border-primary rounded-md outline-none"
+                      />
+                    ) : (
+                      <div className="flex items-center gap-1 group/opt">
+                        {product.status === 'DRAFT' && (
+                          <button
+                            onClick={() => handleRemoveOption(opt.id)}
+                            className="w-4 h-4 rounded-full bg-rose-500/10 text-rose-500 flex items-center justify-center opacity-0 group-hover/opt:opacity-100 transition-opacity hover:bg-rose-500 hover:text-white"
+                            title="حذف الخيار بالكامل"
+                          >
+                            <X size={10} />
+                          </button>
+                        )}
+                        <span 
+                          className={`text-[11px] font-bold text-slate-500 dark:text-slate-400 ${product.status === 'DRAFT' ? 'cursor-pointer hover:text-primary' : ''}`}
+                          onDoubleClick={() => {
+                            if (product.status === 'DRAFT') {
+                              setEditingName(opt.id);
+                              setTempName(opt.name);
+                            }
+                          }}
+                        >
+                          {opt.name}:
+                        </span>
+                      </div>
+                    )}
+                    <div className="flex flex-wrap gap-1.5 justify-end">
+                      {values.map((v: any, idx: number) => {
+                        const isEditingVal = editingValue?.optionId === opt.id && editingValue?.index === idx;
+                        const valString = typeof v === 'object' ? (v.value || v.name || JSON.stringify(v)) : String(v);
+                        
+                        return isEditingVal ? (
+                          <input
+                            key={idx}
+                            type="text"
+                            value={tempValue}
+                            onChange={(e) => setTempValue(e.target.value)}
+                            onBlur={() => handleValueSubmit(opt.id, idx)}
+                            onKeyDown={(e) => e.key === 'Enter' && handleValueSubmit(opt.id, idx)}
+                            className="w-16 px-1 py-0.5 text-[9px] font-bold text-right bg-white dark:bg-slate-700 border border-primary rounded-md outline-none"
+                          />
+                        ) : (
+                          <span 
+                            key={idx} 
+                            onDoubleClick={() => {
+                              if (product.status === 'DRAFT') {
+                                setEditingValue({ optionId: opt.id, index: idx });
+                                setTempValue(valString);
+                              }
+                            }}
+                            className="group/val relative text-[10px] font-bold bg-slate-100 dark:bg-slate-700 px-2 py-0.5 rounded-lg text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-600/50 flex items-center gap-1 cursor-pointer hover:border-primary/50 transition-colors"
+                          >
+                            {valString}
+                            {product.status === 'DRAFT' && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleRemoveOptionValue(opt.id, valString);
+                                }}
+                                className="w-3.5 h-3.5 rounded-full bg-rose-500 text-white flex items-center justify-center opacity-0 group-hover/val:opacity-100 transition-opacity"
+                              >
+                                <X size={10} />
+                              </button>
+                            )}
+                          </span>
+                        );
+                      })}
+                      {product.status === 'DRAFT' && (
+                        isEditing ? (
+                          <input
+                            type="text"
+                            placeholder="+ إضافة"
+                            onBlur={() => setEditingOptionId(null)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                handleAddOptionValue(opt.id, e.currentTarget.value);
+                                e.currentTarget.value = '';
+                              } else if (e.key === 'Escape') {
+                                setEditingOptionId(null);
+                              }
+                            }}
+                            className="w-20 px-2 py-0.5 text-[10px] font-bold bg-white dark:bg-slate-700 border border-primary rounded-lg focus:ring-2 focus:ring-primary/20 outline-none"
+                          />
+                        ) : (
+                          <button
+                            onClick={() => setEditingOptionId(opt.id)}
+                            className="text-[10px] font-bold text-primary bg-primary/5 hover:bg-primary/10 px-2 py-0.5 rounded-lg border border-primary/20 transition-colors"
+                          >
+                            + إضافة
+                          </button>
+                        )
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="px-4 py-3 bg-slate-50 dark:bg-slate-900/50 border-t border-slate-100 dark:border-slate-700/50 flex justify-between items-center flex-row-reverse">
+        <div className="flex gap-2 flex-row-reverse">
+          {checkPermission('manage_products') && (
+            <>
+              {product.status === 'DRAFT' ? (
+                <button
+                  onClick={() => onUpdateStatus(product.id, { isActive: true, status: 'PUBLISHED' })}
+                  className="px-3 py-1.5 bg-emerald-500 text-white text-[10px] font-bold rounded-xl hover:bg-emerald-600 transition-colors flex items-center gap-1 shadow-sm"
+                  title="نشر المنتج"
+                >
+                  <Upload size={16} />
+                  نشر
+                </button>
+              ) : (
+                <button
+                  onClick={() => onUpdateStatus(product.id, { isActive: !product.isActive })}
+                  className={`p-2 rounded-xl transition-colors ${
+                    product.isActive 
+                      ? 'text-slate-400 hover:bg-slate-200' 
+                      : 'text-emerald-500 hover:bg-emerald-500/10'
+                  }`}
+                  title={product.isActive ? t('dashboard.products.tooltips.deactivate') : t('dashboard.products.tooltips.activate')}
+                >
+                  {product.isActive ? <EyeOff size={20} /> : <Eye size={20} />}
+                </button>
+              )}
+              <button
+                onClick={() => onUpdateStatus(product.id, { isFeatured: !product.isFeatured })}
+                className={`p-2 rounded-xl transition-colors ${
+                  product.isFeatured 
+                    ? 'text-amber-500 hover:bg-amber-500/10' 
+                    : 'text-slate-400 hover:bg-slate-200'
+                }`}
+                title={product.isFeatured ? t('dashboard.products.tooltips.unfeature') : t('dashboard.products.tooltips.feature')}
+              >
+                <Star size={20} fill={product.isFeatured ? "currentColor" : "none"} />
+              </button>
+              <button
+                onClick={() => onImportReviews(product)}
+                className="p-2 text-emerald-500 hover:bg-emerald-500/10 rounded-xl transition-colors"
+                title="رفع التقييمات"
+              >
+                <MessageSquareQuote size={20} />
+              </button>
+              <button
+                onClick={() => onAddPictures(product)}
+                className="p-2 text-emerald-500 hover:bg-emerald-500/10 rounded-xl transition-colors flex items-center gap-1"
+                title="إضافة صور المنتج"
+              >
+                <Camera size={20} />
+                <span className="text-[10px] font-bold">صور</span>
+              </button>
+              <button
+                onClick={() => onEdit(product)}
+                className="p-2 text-primary hover:bg-primary/10 rounded-xl transition-colors"
+                title={t('dashboard.products.tooltips.edit')}
+              >
+                <Edit3 size={20} />
+              </button>
+              <button
+                onClick={() => onDelete(product.id)}
+                className="p-2 text-rose-500 hover:bg-rose-500/10 rounded-xl transition-colors"
+                title={t('dashboard.products.tooltips.delete')}
+              >
+                <Trash2 size={20} />
+              </button>
+            </>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] font-black text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-lg">
+            #{product.id}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default ProductCard;

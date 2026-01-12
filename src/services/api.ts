@@ -1,0 +1,1221 @@
+import { supabase } from './supabase';
+import { useMaintenanceStore } from '../store/useMaintenanceStore';
+import { localProductService } from './localProductService';
+
+export const getBaseDomain = () => {
+  // Allow override via environment variable
+  const envApiUrl = import.meta.env.VITE_API_URL;
+  if (envApiUrl) return envApiUrl;
+
+  const hostname = window.location.hostname;
+  const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1';
+  const isIP = /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(hostname);
+  const isDevDomain = hostname.includes('ngrok') || 
+                     hostname.includes('local') || 
+                     hostname.includes('tunnel') || 
+                     hostname.includes('trycloudflare') ||
+                     hostname.includes('localto.net');
+  
+  const domain = (() => {
+    // Check if we are running in a native environment (Capacitor)
+    const isCapacitor = (window as any).Capacitor?.isNative || 
+                       /Capacitor/i.test(navigator.userAgent) ||
+                       window.location.protocol === 'capacitor:';
+    
+    // If we are in a native app (Capacitor), we need a specific IP or a production URL
+    if (isCapacitor) {
+      // In development for Capacitor, use the machine's IP
+      if (import.meta.env.DEV) {
+        // Try to detect the IP from the script source
+        const scriptTags = document.getElementsByTagName('script');
+        for (let i = 0; i < scriptTags.length; i++) {
+          const src = scriptTags[i].src;
+          if (src && src.includes('://') && !src.includes('localhost') && !src.includes('127.0.0.1')) {
+            const url = new URL(src);
+            return `${url.protocol}//${url.hostname}:5000`;
+          }
+        }
+        // If we are on an IP already, use it
+        if (isIP) {
+          return `http://${hostname}:5000`;
+        }
+        return `http://192.168.2.200:5000`; // Default fallback
+      }
+      return 'https://your-api-domain.com';
+    }
+
+    if (isLocalhost || isIP) {
+      // Use HTTP for localhost/IP by default unless specifically on HTTPS
+      // Most local dev servers for port 5000 are HTTP
+      const protocol = (hostname === 'localhost' || hostname === '127.0.0.1') ? 'http:' : window.location.protocol;
+      const url = `${protocol}//${hostname}:5000`;
+      return url;
+    }
+
+    if (isDevDomain) {
+      const protocol = window.location.protocol;
+      const port = window.location.port;
+      
+      // If we are on a dev domain (like ngrok) and no port is specified, 
+      // it means we are likely using a proxy that handles the port.
+      if (!port || port === '80' || port === '443') {
+        // SPECIAL CASE: If we are on ngrok, we might be calling a local backend
+        // This only works if accessed from the SAME machine.
+        // For external access, ngrok must be proxying both or have another tunnel.
+        return `${protocol}//${hostname}`;
+      }
+      
+      // If we are on a dev domain with a port (like localhost:5173), use 5000
+      return `${protocol}//${hostname}:5000`;
+    }
+
+    return 'https://your-api-domain.com';
+  })();
+
+  if (import.meta.env.DEV) {
+    console.log(`[API Domain] Detected: ${domain} (hostname: ${hostname}, protocol: ${window.location.protocol})`);
+  }
+  return domain;
+};
+
+const API_BASE_URL = `${getBaseDomain()}/api`;
+
+// Simple in-memory cache
+const cache = new Map<string, { data: any; timestamp: number }>();
+
+// Persistent Cache Implementation
+const CACHE_PREFIX = 'app_cache_';
+const CACHE_TTL = 30 * 60 * 1000; // 30 minutes cache (increased for persistence)
+
+const persistentCache = {
+  get: (key: string) => {
+    try {
+      // 1. Check in-memory first for speed
+      const cached = cache.get(key);
+      if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+        return cached.data;
+      }
+
+      // 2. Check localStorage if not in memory
+      const stored = localStorage.getItem(CACHE_PREFIX + key);
+      if (stored) {
+        const { data, timestamp } = JSON.parse(stored);
+        if (Date.now() - timestamp < CACHE_TTL) {
+          // Re-populate in-memory cache
+          cache.set(key, { data, timestamp });
+          return data;
+        } else {
+          localStorage.removeItem(CACHE_PREFIX + key);
+        }
+      }
+    } catch (e) {
+      console.warn('Cache retrieval error:', e);
+    }
+    return null;
+  },
+  set: (key: string, data: any) => {
+    try {
+      const timestamp = Date.now();
+      // Update memory
+      cache.set(key, { data, timestamp });
+      
+      // Update localStorage (only for safe GET requests)
+      // Limit: don't store objects larger than ~100KB in localStorage
+      const serialized = JSON.stringify({ data, timestamp });
+      if (serialized.length > 100000) {
+        return;
+      }
+
+      // Proactive Cleanup: if we have more than 30 cached items, remove the oldest one
+      const cacheKeys = Object.keys(localStorage).filter(k => k.startsWith(CACHE_PREFIX));
+      if (cacheKeys.length > 30) {
+        // Remove the first few keys to make space
+        cacheKeys.slice(0, 5).forEach(k => localStorage.removeItem(k));
+      }
+
+      localStorage.setItem(CACHE_PREFIX + key, serialized);
+    } catch (e: any) {
+      // If quota exceeded, clear all non-essential data
+      if (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED' || e.code === 22) {
+        console.warn('LocalStorage quota exceeded! Performing emergency cleanup...');
+        
+        // 1. Clear ALL app_cache_ keys
+        Object.keys(localStorage).forEach(k => {
+          if (k.startsWith(CACHE_PREFIX)) {
+            localStorage.removeItem(k);
+          }
+        });
+
+        // 2. Clear other non-critical persisted state if still needed
+        // (Zustand persist keys often look like 'checkout-storage', 'settings-storage', etc.)
+        const nonCriticalKeys = ['checkout-storage', 'recent_searches', 'sb-puxjtecjxfjldwxiwzrk-auth-token-code-verifier'];
+        nonCriticalKeys.forEach(k => localStorage.removeItem(k));
+        
+        // Try again after clearing
+        try {
+          const serialized = JSON.stringify({ data: data, timestamp: Date.now() });
+          if (serialized.length < 50000) {
+            localStorage.setItem(CACHE_PREFIX + key, serialized);
+          }
+        } catch (retryError) {
+          // If it still fails, just give up on localStorage for this item
+        }
+      } else {
+        console.warn('Cache storage error:', e);
+      }
+    }
+  },
+  delete: (key: string) => {
+    cache.delete(key);
+    localStorage.removeItem(CACHE_PREFIX + key);
+  },
+  clear: () => {
+    cache.clear();
+    Object.keys(localStorage).forEach(key => {
+      if (key.startsWith(CACHE_PREFIX)) {
+        localStorage.removeItem(key);
+      }
+    });
+  },
+  // Add this new method for startup maintenance
+  maintenance: () => {
+    try {
+      const keys = Object.keys(localStorage);
+      const cacheKeys = keys.filter(k => k.startsWith(CACHE_PREFIX));
+      
+      // Aggressive cleanup: if we have any cache keys and it's startup, clear them if they are more than 15
+      // This ensures we always have space for login tokens
+      if (cacheKeys.length > 15) {
+        cacheKeys.forEach(k => localStorage.removeItem(k));
+        console.log('Startup Maintenance: Cleared cache to ensure space for auth.');
+        return;
+      }
+
+      // 1. Clear expired items
+      cacheKeys.forEach(key => {
+        try {
+          const stored = localStorage.getItem(key);
+          if (stored) {
+            const parsed = JSON.parse(stored);
+            if (Date.now() - (parsed.timestamp || 0) > CACHE_TTL) {
+              localStorage.removeItem(key);
+            }
+          }
+        } catch (e) {
+          localStorage.removeItem(key); // Remove corrupted entries
+        }
+      });
+    } catch (e) {
+      console.error('Cache maintenance error:', e);
+    }
+  },
+  invalidatePattern: (pattern: string) => {
+    for (const key of cache.keys()) {
+      if (key.includes(pattern)) {
+        cache.delete(key);
+        localStorage.removeItem(CACHE_PREFIX + key);
+      }
+    }
+    // Also check localStorage keys directly
+    Object.keys(localStorage).forEach(key => {
+      if (key.startsWith(CACHE_PREFIX) && key.includes(pattern)) {
+        localStorage.removeItem(key);
+      }
+    });
+  },
+  // New helper to find a single product in any cached list
+  findProductInLists: (productId: string | number) => {
+    try {
+      // Search in-memory cache first
+      for (const [key, value] of cache.entries()) {
+        if (key.includes('/products') && Array.isArray(value.data)) {
+          const found = value.data.find(p => String(p.id) === String(productId));
+          if (found) return found;
+        }
+        // Also check if the data is an object with a products array
+        if (key.includes('/products') && value.data?.products && Array.isArray(value.data.products)) {
+          const found = value.data.products.find((p: any) => String(p.id) === String(productId));
+          if (found) return found;
+        }
+      }
+
+      // Search localStorage
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key?.startsWith(CACHE_PREFIX) && key.includes('/products')) {
+          const stored = localStorage.getItem(key);
+          if (stored) {
+            const { data } = JSON.parse(stored);
+            const products = Array.isArray(data) ? data : (data?.products || []);
+            const found = products.find((p: any) => String(p.id) === String(productId));
+            if (found) return found;
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Error searching global cache:', e);
+    }
+    return null;
+  }
+};
+
+export const findProductInGlobalCache = persistentCache.findProductInLists;
+export const performCacheMaintenance = persistentCache.maintenance;
+
+// Run maintenance immediately on load to prevent QuotaExceededError
+performCacheMaintenance();
+
+export function getAuthHeaders() {
+  const token = localStorage.getItem('auth_token');
+  return token ? { 'Authorization': `Bearer ${token}` } : {};
+}
+
+// Base fetch wrapper with caching and retry logic
+export async function request(endpoint: string, options: any = {}, retries = 2) {
+  const isGet = !options.method || options.method === 'GET';
+  const skipCache = options.skipCache || false;
+  const cacheKey = endpoint;
+  const skipMaintenanceTrigger = options.skipMaintenanceTrigger || false;
+
+  // Check cache for GET requests
+  if (isGet && !skipCache) {
+    const cachedData = persistentCache.get(cacheKey);
+    if (cachedData) {
+      return cachedData;
+    }
+  }
+
+  const executeRequest = async (attempt: number): Promise<any> => {
+    // Priority: 1. options.token, 2. localStorage
+    let token = options.token || localStorage.getItem('auth_token');
+    
+    // For admin routes, if token is missing, try to wait a bit or check store
+    if (!token && endpoint.startsWith('/admin')) {
+      console.warn(`[API] Admin request to ${endpoint} without token. Attempt ${attempt}`);
+    }
+
+    const headers: Record<string, string> = {
+      'Accept': 'application/json',
+      'Content-Type': 'application/json',
+      ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+    };
+
+    if (options.headers) {
+      Object.assign(headers, options.headers);
+    }
+
+    const fullUrl = `${API_BASE_URL}${endpoint}`;
+    
+    try {
+      if (import.meta.env.DEV) {
+        console.log(`[API Request] ${options.method || 'GET'} ${fullUrl}`, {
+          hasAuth: !!headers['Authorization'],
+          tokenPrefix: token ? `${token.substring(0, 10)}...` : 'none',
+          attempt
+        });
+      }
+      const response = await fetch(fullUrl, {
+        ...options,
+        headers,
+      });
+
+      // If we got any response from the server, it's not down
+      if (useMaintenanceStore.getState().isServerDown) {
+        console.log('[API] Server is back online!');
+        useMaintenanceStore.getState().setServerDown(false);
+      }
+
+      const text = await response.text();
+      let data: any = {};
+      
+      const contentType = response.headers.get('content-type');
+      if (contentType && contentType.includes('application/json')) {
+        try {
+          data = text ? JSON.parse(text) : {};
+        } catch (e) {
+          console.error('Failed to parse JSON response:', e);
+        }
+      }
+
+      if (!response.ok) {
+        // If it's a 401 or 403, don't retry, just throw
+        if (response.status === 401 || response.status === 403) {
+          throw new Error(data.error || data.message || `Unauthorized (${response.status})`);
+        }
+
+        // Only retry on certain status codes (e.g., 500, 502, 503, 504) or if it's a first load issue
+        if (attempt < retries && (response.status >= 500 || response.status === 404)) {
+          const delay = Math.pow(2, attempt) * 1000;
+          await new Promise(resolve => setTimeout(resolve, delay));
+          return executeRequest(attempt + 1);
+        }
+
+        if (data && data.error) throw new Error(data.error);
+        if (text.trim().startsWith('<!DOCTYPE') || text.trim().startsWith('<html')) {
+          throw new Error(`Server Error (${response.status}): The server returned an HTML error page.`);
+        }
+        throw new Error(text || `Request failed with status ${response.status}`);
+      }
+
+      if (isGet) {
+        persistentCache.set(cacheKey, data);
+      } else {
+        if (endpoint.includes('/products')) persistentCache.invalidatePattern('/products');
+        if (endpoint.includes('/addresses')) persistentCache.invalidatePattern('/addresses');
+        if (endpoint.includes('/cart')) persistentCache.invalidatePattern('/cart');
+        if (endpoint.includes('/orders')) {
+          persistentCache.invalidatePattern('/cart');
+          persistentCache.invalidatePattern('/orders');
+        }
+        if (endpoint.includes('/auth/me')) persistentCache.invalidatePattern('/auth/me');
+      }
+
+      return data;
+    } catch (error: any) {
+      // Check if it's a network error
+      const isNetworkError = 
+        error.name === 'TypeError' || 
+        error.message.includes('NetworkError') || 
+        error.message.includes('Failed to fetch') ||
+        error.message.includes('Load failed');
+
+      if (attempt < retries && isNetworkError) {
+        const delay = Math.pow(2, attempt) * 1000;
+        console.warn(`[API Network Error] Retrying ${endpoint} in ${delay}ms... (Attempt ${attempt + 1})`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        return executeRequest(attempt + 1);
+      }
+
+      if (isNetworkError) {
+        console.error(`[API Network Error Details]
+          Method: ${options.method || 'GET'}
+          URL: ${fullUrl}
+          Error: ${error.message}
+        `);
+        if (!skipMaintenanceTrigger) {
+          useMaintenanceStore.getState().setServerDown(true, error.message, fullUrl);
+        }
+        throw new Error('Network Error: Could not connect to the server.');
+      }
+      throw error;
+    }
+  };
+
+  return executeRequest(0);
+}
+
+export function clearCache() {
+  persistentCache.clear();
+}
+
+// Authentication functions using our server
+export async function fetchMe() {
+  try {
+    const user = await request('/auth/me', { skipMaintenanceTrigger: true });
+    if (user && !user.name) {
+      // If server returned user but no name, try to get it from Supabase
+      const { data: { user: sbUser } } = await supabase.auth.getUser();
+      if (sbUser?.user_metadata?.full_name) {
+        user.name = sbUser.user_metadata.full_name;
+      } else if (sbUser?.email) {
+        user.name = sbUser.email.split('@')[0];
+      }
+    }
+    return user;
+  } catch (err) {
+    // If our server fails, try Supabase as fallback
+    const { data: { user }, error } = await supabase.auth.getUser();
+    if (error || !user) return null;
+    return {
+      id: user.id,
+      phone: user.phone || '',
+      email: user.email,
+      name: user.user_metadata?.full_name || user.email?.split('@')[0] || 'User',
+      role: 'USER',
+    };
+  }
+}
+
+export async function checkUser(phone: string) {
+  return request(`/auth/check-user/${encodeURIComponent(phone)}`);
+}
+
+export async function checkEmail(email: string) {
+  return request(`/auth/check-email/${encodeURIComponent(email)}`);
+}
+
+export async function signupWithEmail(email: string, password: string, name: string) {
+  // Use Supabase Auth for signup
+  const { data, error } = await supabase.auth.signUp({
+    email,
+    password,
+    options: {
+      data: {
+        full_name: name
+      }
+    }
+  });
+
+  if (error) throw error;
+
+  // After Supabase signup, we also sync with our backend to ensure Prisma record exists
+  // But wait until email is verified for full access.
+  // We call syncUser to create the initial record.
+  try {
+    await request('/auth/sync-supabase-user', {
+      method: 'POST',
+      body: JSON.stringify({
+        email,
+        name,
+        supabaseId: data.user?.id
+      })
+    });
+  } catch (e) {
+    console.warn('Backend sync failed (optional):', e);
+  }
+
+  return { 
+    user: data.user, 
+    session: data.session,
+    message: 'تم إرسال رابط التحقق إلى بريدك الإلكتروني' 
+  };
+}
+
+export async function loginWithEmail(email: string, password: string) {
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email,
+    password
+  });
+
+  if (error) throw error;
+
+  // Sync with backend to get full user data (role, etc.)
+  let serverResponse = null;
+  try {
+    serverResponse = await request('/auth/sync-supabase-user', {
+      method: 'POST',
+      body: JSON.stringify({
+        email,
+        name: data.user?.user_metadata?.full_name,
+        supabaseId: data.user?.id
+      })
+    });
+  } catch (e) {
+    console.warn('Login sync failed:', e);
+  }
+
+  if (data.session?.access_token) {
+    localStorage.setItem('auth_token', data.session.access_token);
+  }
+
+  return {
+    token: data.session?.access_token,
+    user: serverResponse?.user ? {
+      ...serverResponse.user,
+      id: data.user?.id || serverResponse.user.id
+    } : {
+      id: data.user?.id,
+      email: data.user?.email,
+      name: data.user?.user_metadata?.full_name || data.user?.email?.split('@')[0],
+      role: 'USER'
+    }
+  };
+}
+
+export async function forgotPassword(email: string) {
+  const { data, error } = await supabase.auth.resetPasswordForEmail(email, {
+    redirectTo: `${window.location.origin}/reset-password`
+  });
+
+  if (error) throw error;
+  return { message: 'تم إرسال رابط إعادة تعيين كلمة المرور إلى بريدك الإلكتروني' };
+}
+
+export async function resetPassword(password: string) {
+  const { data, error } = await supabase.auth.updateUser({
+    password: password
+  });
+
+  if (error) throw error;
+  return { message: 'تم تحديث كلمة المرور بنجاح' };
+}
+
+export async function verifyEmailOTP(email: string, token: string, type: 'signup' | 'recovery' = 'signup') {
+  const { data, error } = await supabase.auth.verifyOtp({
+    email,
+    token,
+    type
+  });
+
+  if (error) throw error;
+
+  if (data.session?.access_token) {
+    localStorage.setItem('auth_token', data.session.access_token);
+  }
+
+  // Final sync after OTP verification to get full user data
+  let serverUser = null;
+  try {
+    serverUser = await request('/auth/sync-supabase-user', {
+      method: 'POST',
+      body: JSON.stringify({
+        email,
+        name: data.user?.user_metadata?.full_name,
+        supabaseId: data.user?.id
+      })
+    });
+  } catch (e) {
+    console.warn('Email OTP verification sync failed:', e);
+  }
+
+  return {
+    token: data.session?.access_token,
+    user: serverUser?.user ? {
+      ...serverUser.user,
+      id: data.user?.id || serverUser.user.id
+    } : {
+      id: data.user?.id,
+      email: data.user?.email,
+      name: data.user?.user_metadata?.full_name || data.user?.email?.split('@')[0],
+      role: 'USER'
+    }
+  };
+}
+
+export async function resendEmailOTP(email: string) {
+  const { error } = await supabase.auth.resend({
+    type: 'signup',
+    email
+  });
+
+  if (error) throw error;
+  return { message: 'تم إعادة إرسال كود التحقق بنجاح' };
+}
+
+export async function sendWhatsAppOTP(phone: string, name?: string) {
+  return request('/auth/send-otp', {
+    method: 'POST',
+    body: JSON.stringify({ phone, name }),
+  });
+}
+
+export async function verifyWhatsAppOTP(phone: string, code: string, fullName?: string) {
+  return request('/auth/verify-otp', {
+    method: 'POST',
+    body: JSON.stringify({ phone, code, fullName }),
+  });
+}
+
+export async function updateProfile(userData: { name: string; avatar?: string }) {
+  // Update on our server
+  const serverUpdate = await request('/auth/me', {
+    method: 'PUT',
+    body: JSON.stringify(userData),
+  });
+
+  // Also update on Supabase for consistency if user is logged into Supabase
+  try {
+    await supabase.auth.updateUser({
+      data: {
+        full_name: userData.name,
+        avatar_url: userData.avatar
+      }
+    });
+  } catch (e) {
+    console.warn('Supabase profile update failed (optional):', e);
+  }
+
+  return serverUpdate;
+}
+
+export async function deleteAccount() {
+  const response = await request('/auth/me', {
+    method: 'DELETE',
+  });
+  
+  // Also sign out from Supabase
+  await supabase.auth.signOut();
+  
+  // Clear local storage
+  localStorage.removeItem('auth_token');
+  
+  return response;
+}
+
+export async function verifyOTP(data: { phone: string; otp: string; type?: 'signup' | 'sms' }) {
+  const { data: result, error } = await (supabase.auth as any).verifyOtp({
+    phone: data.phone,
+    token: data.otp,
+    type: data.type || 'sms',
+  });
+  if (error) throw error;
+  if (result.session) {
+    localStorage.setItem('auth_token', result.session.access_token);
+  }
+  return result;
+}
+
+export async function resendOTP(data: { phone: string; type?: 'signup' | 'sms' }) {
+  const { data: result, error } = await (supabase.auth as any).resend({
+    type: data.type || 'sms',
+    phone: data.phone,
+  });
+  if (error) throw error;
+  return result;
+}
+
+export function logout() {
+  localStorage.removeItem('auth_token');
+  supabase.auth.signOut();
+}
+
+export async function fetchProducts(page = 1, limit = 20, search = '', maxPrice?: number) {
+  let url = `/products?page=${page}&limit=${limit}&search=${encodeURIComponent(search)}`;
+  if (maxPrice !== undefined) {
+    url += `&maxPrice=${maxPrice}`;
+  }
+  return request(url);
+}
+
+export async function fetchAdminProducts(page = 1, limit = 20, search = '', token?: string | null) {
+  const queryParams = new URLSearchParams({
+    page: page.toString(),
+    limit: limit.toString(),
+    search
+  });
+  
+  const response = await request(`/admin/products?${queryParams.toString()}`, { token });
+  
+  // If we are on the first page, we could potentially inject local drafts here too, 
+  // but we are already doing it in the component. Let's keep it consistent.
+  return response;
+}
+
+export async function checkProductExistence() {
+  return request('/admin/products/check-existence');
+}
+
+export async function fetchProductById(id: number | string) {
+  if (typeof id === 'string' && id.startsWith('local-')) {
+    const draft = localProductService.getDraftById(id);
+    if (draft) return draft;
+    throw new Error('Local draft not found');
+  }
+  return request(`/products/${id}`, { skipCache: true });
+}
+
+export async function searchProducts(query: string) {
+  return request(`/search?q=${encodeURIComponent(query)}`);
+}
+
+// Admin: Products
+export async function createProduct(productData: any) {
+  // If status is DRAFT, save locally instead of server
+  if (productData.status === 'DRAFT') {
+    return localProductService.saveDraft(productData);
+  }
+
+  return request('/products', {
+    method: 'POST',
+    body: JSON.stringify(productData),
+  });
+}
+
+export async function updateProduct(id: number | string, productData: any) {
+  // If it's a local draft (ID starts with local-)
+  if (typeof id === 'string' && id.startsWith('local-')) {
+    // If user changed status to PUBLISHED, create on server and delete local
+    if (productData.status === 'PUBLISHED') {
+      const { id: _, ...rest } = productData; // Remove local ID
+      const result = await request('/products', {
+        method: 'POST',
+        body: JSON.stringify(rest),
+      });
+      localProductService.deleteDraft(id);
+      return result;
+    }
+    
+    // Otherwise just update locally
+    return localProductService.saveDraft({ ...productData, id });
+  }
+
+  return request(`/products/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(productData),
+  });
+}
+
+export async function deleteProduct(id: number | string, token?: string | null) {
+  if (typeof id === 'string' && id.startsWith('local-')) {
+    localProductService.deleteDraft(id);
+    return { success: true };
+  }
+
+  return request(`/products/${id}`, { method: 'DELETE', token });
+}
+
+// Admin: Orders
+export async function fetchAdminOrders(filters?: {
+  status?: string;
+  startDate?: string;
+  endDate?: string;
+  minPrice?: number;
+  maxPrice?: number;
+  province?: string;
+  search?: string;
+  page?: number;
+  limit?: number;
+}, token?: string | null) {
+  const queryParams = new URLSearchParams();
+  if (filters) {
+    Object.entries(filters).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== '') {
+        queryParams.append(key, value.toString());
+      }
+    });
+  }
+  return request(`/admin/orders?${queryParams.toString()}`, { token });
+}
+
+export async function fetchAdminOrderDetails(orderId: string | number, token?: string | null) {
+  return request(`/admin/orders/${orderId}`, { token });
+}
+
+// Admin: Stats
+export async function fetchAdminStats(token?: string | null) {
+  return request('/admin/stats', { token });
+}
+
+// Admin: Users
+export async function fetchAdminUsers(page = 1, limit = 20, search = '', token?: string | null) {
+  const queryParams = new URLSearchParams({
+    page: page.toString(),
+    limit: limit.toString(),
+    search
+  });
+  return request(`/admin/users?${queryParams.toString()}`, { token });
+}
+
+export async function updateUserRole(userId: string | number, role: string, token?: string | null) {
+  return request(`/admin/users/${userId}/role`, {
+    method: 'PUT',
+    body: JSON.stringify({ role }),
+    token
+  });
+}
+
+// Admin: Coupons/Discounts
+export async function fetchAdminCoupons(token?: string | null) {
+  return request('/admin/coupons', { token });
+}
+
+export async function createCoupon(couponData: any, token?: string | null) {
+  return request('/admin/coupons', {
+    method: 'POST',
+    body: JSON.stringify(couponData),
+    token
+  });
+}
+
+export async function updateCoupon(id: number | string, couponData: any, token?: string | null) {
+  return request(`/admin/coupons/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(couponData),
+    token
+  });
+}
+
+export async function deleteCoupon(id: number | string, token?: string | null) {
+  return request(`/admin/coupons/${id}`, {
+    method: 'DELETE',
+    token
+  });
+}
+
+export async function updateUserPermissions(userId: string | number, permissions: string[], token?: string | null) {
+  return request(`/admin/users/${userId}/permissions`, {
+    method: 'PUT',
+    body: JSON.stringify({ permissions }),
+    token
+  });
+}
+
+// Admin: Reports
+export async function fetchReportSummary(period: string = 'monthly') {
+  return request(`/admin/reports/summary?period=${period}`);
+}
+
+export async function sendTestReport() {
+  return request('/admin/reports/send-test', { method: 'POST' });
+}
+
+// User: Coupons
+export async function validateCoupon(code: string, orderAmount: number) {
+  return request('/coupons/validate', {
+    method: 'POST',
+    body: JSON.stringify({ code, orderAmount }),
+  });
+}
+
+export async function fetchCoupons() {
+  return request('/coupons', { skipMaintenanceTrigger: true });
+}
+
+// --- Review functions ---
+export async function fetchProductReviews(productId: number | string) {
+  return request(`/products/${productId}/reviews`);
+}
+
+export async function addProductReview(productId: number | string, rating: number, comment: string, images?: string[]) {
+  return request(`/products/${productId}/reviews`, {
+    method: 'POST',
+    body: JSON.stringify({ rating, comment, images })
+  });
+}
+
+export async function checkProductPurchase(productId: number | string) {
+  try {
+    return await request(`/products/${productId}/check-purchase`, { skipMaintenanceTrigger: true });
+  } catch (err) {
+    return { purchased: false };
+  }
+}
+
+// Admin: Banners
+export async function fetchBanners() {
+  return request('/banners');
+}
+
+export async function createBanner(bannerData: any) {
+  return request('/admin/banners', {
+    method: 'POST',
+    body: JSON.stringify(bannerData),
+  });
+}
+
+export async function updateBanner(id: number | string, bannerData: any) {
+  return request(`/admin/banners/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(bannerData),
+  });
+}
+
+export async function deleteBanner(id: number | string) {
+  return request(`/admin/banners/${id}`, { method: 'DELETE' });
+}
+
+// Admin: Settings
+export async function fetchSettings() {
+  return request('/settings');
+}
+
+export async function updateSettings(settingsData: any) {
+  return request('/admin/settings', {
+    method: 'PUT',
+    body: JSON.stringify(settingsData),
+  });
+}
+
+// Admin: User Details
+export async function fetchUserDetails(id: string | number) {
+  return request(`/admin/users/${id}`);
+}
+
+// Admin: Activity Logs
+export async function fetchActivityLogs() {
+  return request('/admin/activity-logs');
+}
+
+// Admin: Notifications
+export async function fetchAdminNotifications(token?: string | null) {
+  return request('/admin/notifications', { token });
+}
+
+// User Notifications
+export async function fetchUserNotifications() {
+  return request('/notifications');
+}
+
+export async function markUserNotificationAsRead(id: number | string) {
+  return request(`/notifications/${id}/read`, { method: 'PUT' });
+}
+
+export async function markAllUserNotificationsAsRead() {
+  return request('/notifications/read-all', { method: 'PUT' });
+}
+
+export async function deleteUserNotification(id: number | string) {
+  return request(`/notifications/${id}`, { method: 'DELETE' });
+}
+
+export async function clearAllUserNotifications() {
+  return request('/notifications', { method: 'DELETE' });
+}
+
+// Admin: Abandoned Carts
+export async function fetchAbandonedCarts() {
+  return request('/admin/reports/abandoned-carts');
+}
+
+export async function updateOrderStatus(id: number | string, status: string) {
+  return request(`/admin/orders/${id}/status`, {
+    method: 'PUT',
+    body: JSON.stringify({ status }),
+  });
+}
+
+export async function updateOrderNote(id: number | string, note: string) {
+  return request(`/admin/orders/${id}/note`, {
+    method: 'PUT',
+    body: JSON.stringify({ note }),
+  });
+}
+
+export async function updateOrderInternationalFee(id: number | string, fee: number) {
+  return request(`/admin/orders/${id}/international-fee`, {
+    method: 'PUT',
+    body: JSON.stringify({ fee }),
+  });
+}
+
+export async function updateProductPrice(data: { productId: number; variantId?: number | null; newPrice: number }, token?: string | null) {
+  return request('/admin/products/update-price', {
+    method: 'PUT',
+    body: JSON.stringify(data),
+    token
+  });
+}
+
+export async function fetchAdminReviews(token?: string | null) {
+  return request('/admin/reviews', { token });
+}
+
+export async function deleteReview(id: number | string, token?: string | null) {
+  return request(`/admin/reviews/${id}`, { method: 'DELETE', token });
+}
+
+// Addresses
+export async function fetchAddresses() {
+  return request('/addresses', { skipMaintenanceTrigger: true });
+}
+
+export async function fetchAddressById(id: number | string) {
+  return request(`/addresses/${id}`);
+}
+
+export async function createAddress(addressData: any) {
+  return request('/addresses', {
+    method: 'POST',
+    body: JSON.stringify(addressData),
+  });
+}
+
+export async function updateAddress(id: number | string, addressData: any) {
+  return request(`/addresses/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(addressData),
+  });
+}
+
+export async function deleteAddress(id: number | string) {
+  return request(`/addresses/${id}`, { method: 'DELETE' });
+}
+
+export async function markNotificationAsRead(id: number | string) {
+  return request(`/admin/notifications/${id}/read`, { method: 'PUT' });
+}
+
+export async function markAllNotificationsAsRead(token?: string | null) {
+  return request('/admin/notifications/read-all', { method: 'PUT', token });
+}
+
+// Admin: Bulk Actions
+export async function bulkUpdateProductStatus(ids: (number | string)[], isActive: boolean, token?: string | null) {
+  return request('/admin/products/bulk-status', {
+    method: 'POST',
+    body: JSON.stringify({ ids, isActive }),
+    token
+  });
+}
+
+export async function bulkDeleteProducts(ids: (number | string)[], token?: string | null) {
+  const localIds = ids.filter(id => typeof id === 'string' && id.startsWith('local-')) as string[];
+  const serverIds = ids.filter(id => !(typeof id === 'string' && id.startsWith('local-')));
+
+  if (localIds.length > 0) {
+    localIds.forEach(id => localProductService.deleteDraft(id));
+  }
+
+  if (serverIds.length === 0) return { success: true };
+
+  return request('/admin/products/bulk-delete', {
+    method: 'POST',
+    body: JSON.stringify({ ids: serverIds }),
+    token
+  });
+}
+
+export async function bulkUpdateOrderStatus(ids: (number | string)[], status: string, token?: string | null) {
+  return request('/admin/orders/bulk-status', {
+    method: 'POST',
+    body: JSON.stringify({ ids, status }),
+    token
+  });
+}
+
+// Admin: Safe Import Workflow
+export async function bulkImportProducts(products: any[], token?: string | null) {
+  return request('/products/bulk', {
+    method: 'POST',
+    body: JSON.stringify({ products }),
+    token
+  });
+}
+
+export async function bulkImportReviews(reviews: any[], token?: string | null) {
+  return request('/admin/products/bulk-import-reviews', {
+    method: 'POST',
+    body: JSON.stringify({ reviews }),
+    token
+  });
+}
+
+export async function saveProductOptions(productId: number | string, options: any[], variants: any[], token?: string | null) {
+  if (typeof productId === 'string' && productId.startsWith('local-')) {
+    const draft = localProductService.getDraftById(productId);
+    if (draft) {
+      localProductService.saveDraft({
+        ...draft,
+        options,
+        variants
+      });
+      return { success: true };
+    }
+  }
+
+  return request(`/admin/products/${productId}/options`, {
+    method: 'PUT',
+    body: JSON.stringify({ options, variants }),
+    token
+  });
+}
+
+export async function bulkPublishProducts(ids: (number | string)[], token?: string | null) {
+  const localIds = ids.filter(id => typeof id === 'string' && id.startsWith('local-')) as string[];
+  const serverIds = ids.filter(id => !(typeof id === 'string' && id.startsWith('local-')));
+
+  // For local drafts, we need to actually create them on the server one by one
+  // or use a bulk create if available. For now, let's use createProduct logic.
+  if (localIds.length > 0) {
+    for (const id of localIds) {
+      const draft = localProductService.getDraftById(id);
+      if (draft) {
+        const { id: _, options, variants, ...rest } = draft;
+        // Create product on server
+        const result = await request('/products', {
+          method: 'POST',
+          body: JSON.stringify({ ...rest, status: 'PUBLISHED' }),
+          token
+        });
+        
+        // If draft had options or variants, save them too
+        if ((options && options.length > 0) || (variants && variants.length > 0)) {
+          await saveProductOptions(result.id, options || [], variants || [], token);
+        }
+        
+        localProductService.deleteDraft(id);
+      }
+    }
+  }
+
+  if (serverIds.length === 0) return { success: true };
+
+  return request('/admin/products/bulk-publish', {
+    method: 'POST',
+    body: JSON.stringify({ ids: serverIds }),
+    token
+  });
+}
+
+export async function bulkCreateProducts(products: any[], token?: string | null) {
+  return request('/admin/products/bulk-create', {
+    method: 'POST',
+    body: JSON.stringify({ products }),
+    token
+  });
+}
+
+// Cart
+export async function fetchCart() {
+  return request('/cart');
+}
+
+export async function addToCart(productId: number | string, quantity: number = 1, variantId?: number | string) {
+  return request('/cart', {
+    method: 'POST',
+    body: JSON.stringify({ productId, quantity, variantId }),
+  });
+}
+
+export async function updateCartItem(id: number | string, quantity: number) {
+  return request(`/cart/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify({ quantity }),
+  });
+}
+
+export async function removeFromCart(id: number | string) {
+  return request(`/cart/${id}`, { method: 'DELETE' });
+}
+
+// Orders
+export async function placeOrder(addressId: number | string, paymentMethod: string, shippingMethod: string, couponCode?: string) {
+  return request('/orders', {
+    method: 'POST',
+    body: JSON.stringify({ addressId, paymentMethod, shippingMethod, couponCode }),
+  });
+}
+
+export async function fetchOrders() {
+  return request('/orders', { skipMaintenanceTrigger: true });
+}
+
+export async function fetchOrderById(id: number | string) {
+  return request(`/orders/${id}`);
+}
+
+export async function cancelOrder(id: number | string) {
+  return request(`/orders/${id}/cancel`, { method: 'PUT' });
+}
+
+// Wishlist
+export async function fetchWishlist() {
+  return request('/wishlist');
+}
+
+export async function addToWishlist(productId: number | string) {
+  return request('/wishlist', {
+    method: 'POST',
+    body: JSON.stringify({ productId }),
+  });
+}
+
+export async function removeFromWishlist(productId: number | string) {
+  return request(`/wishlist/${productId}`, { method: 'DELETE' });
+}
+
+// Messages
+export async function fetchMessages(orderId: number | string) {
+  return request(`/messages/${orderId}`);
+}
+
+export async function fetchAdminMessages(token?: string | null) {
+  return request('/admin/messages', { token });
+}
+
+export async function sendMessage(orderId: number | string, text: string) {
+  return request('/messages', {
+    method: 'POST',
+    body: JSON.stringify({ orderId, text }),
+  });
+}
