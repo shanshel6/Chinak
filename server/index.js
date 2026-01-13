@@ -4509,6 +4509,7 @@ app.put('/api/orders/:id/cancel', authenticateToken, async (req, res) => {
 });
 
 // --- Wishlist routes ---
+/* Replaced by local storage
 app.get('/api/wishlist', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.id;
@@ -4521,6 +4522,7 @@ app.get('/api/wishlist', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch wishlist' });
   }
 });
+*/
 
 // --- Review routes ---
 app.post('/api/products/:id/reviews', authenticateToken, async (req, res) => {
@@ -4621,6 +4623,7 @@ app.get('/api/products/:id/reviews', async (req, res) => {
   }
 });
 
+/* Replaced by local storage
 app.post('/api/wishlist', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.id;
@@ -4658,6 +4661,7 @@ app.delete('/api/wishlist/:productId', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Failed to remove from wishlist' });
   }
 });
+*/
 
 // --- Admin: Banners ---
 app.get('/api/banners', async (req, res) => {

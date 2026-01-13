@@ -16,7 +16,7 @@ interface FlashSalesProps {
   products: Product[];
   loading: boolean;
   onNavigate: (path: string) => void;
-  onAddToWishlist: (e: React.MouseEvent, productId: number) => void;
+  onAddToWishlist: (e: React.MouseEvent, product: Product) => void;
   isProductInWishlist: (productId: number) => boolean;
 }
 
@@ -59,7 +59,7 @@ const FlashSales: React.FC<FlashSalesProps> = ({
                 <div className="absolute left-2 top-2 z-10 rounded bg-red-500 px-1.5 py-0.5 text-[10px] font-bold text-white">-10%</div>
                 
                 <button 
-                  onClick={(e) => onAddToWishlist(e, product.id)}
+                  onClick={(e) => onAddToWishlist(e, product)}
                   className={`absolute top-2 right-2 z-10 flex size-7 items-center justify-center rounded-full bg-white/90 shadow-sm backdrop-blur-sm transition hover:bg-white ${isProductInWishlist(product.id) ? 'text-red-500' : 'text-slate-400'}`}
                 >
                   <Heart size={16} fill={isProductInWishlist(product.id) ? "currentColor" : "none"} />

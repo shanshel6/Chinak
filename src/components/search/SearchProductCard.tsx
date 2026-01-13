@@ -12,7 +12,7 @@ interface Product {
 interface SearchProductCardProps {
   product: Product;
   onNavigate: (id: number) => void;
-  onToggleWishlist: (id: number) => void;
+  onToggleWishlist: (product: Product) => void;
   isWishlisted: boolean;
   onAddToCart: (product: Product) => void;
 }
@@ -38,7 +38,7 @@ const SearchProductCard: React.FC<SearchProductCardProps> = ({
         <button 
           onClick={(e) => {
             e.stopPropagation();
-            onToggleWishlist(product.id);
+            onToggleWishlist(product);
           }}
           className={`absolute top-2 left-2 w-8 h-8 flex items-center justify-center rounded-full backdrop-blur-sm transition-colors ${
             isWishlisted 

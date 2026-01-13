@@ -102,10 +102,10 @@ const Cart: React.FC = () => {
     }
   };
 
-  const handleSaveForLater = async (itemId: number | string, productId: number | string) => {
+  const handleSaveForLater = async (itemId: number | string, product: any) => {
     try {
-      if (!isProductInWishlist(productId)) {
-        toggleWishlist(productId);
+      if (!isProductInWishlist(product.id)) {
+        toggleWishlist(product.id, product);
       }
       await removeItem(itemId);
       showToast('تم نقل المنتج إلى المفضلة', 'success');
@@ -367,7 +367,7 @@ const Cart: React.FC = () => {
                       <button 
                         onClick={(e) => {
                           e.stopPropagation();
-                          handleSaveForLater(item.id, item.product.id);
+                          handleSaveForLater(item.id, item.product);
                         }}
                         className="w-10 h-10 rounded-xl bg-slate-50 dark:bg-slate-800/50 flex items-center justify-center transition-colors"
                         title="حفظ لوقت لاحق"

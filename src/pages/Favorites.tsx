@@ -11,17 +11,14 @@ import { ArrowLeft, ShoppingBag, LayoutGrid, List, Heart, ShoppingCart, Star } f
 const Favorites: React.FC = () => {
   const navigate = useNavigate();
   const wishlist = useWishlistStore((state) => state.items);
-  const loading = useWishlistStore((state) => state.isLoading);
+  // const loading = useWishlistStore((state) => state.isLoading); // Removed unused
   const toggleWishlist = useWishlistStore((state) => state.toggleWishlist);
   const addItem = useCartStore((state) => state.addItem);
+  // const fetchWishlist = useWishlistStore((state) => state.fetchWishlist); // Removed unused
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
   const showToast = useToastStore((state) => state.showToast);
-  const fetchWishlist = useWishlistStore((state) => state.fetchWishlist);
+  // const fetchWishlist = useWishlistStore((state) => state.fetchWishlist); // Removed unused
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
-
-  React.useEffect(() => {
-    fetchWishlist(wishlist.length > 0);
-  }, [fetchWishlist]);
 
   const handleMoveAllToCart = async () => {
     if (wishlist.length === 0) return;
@@ -47,23 +44,6 @@ const Favorites: React.FC = () => {
       showToast('فشل في إضافة المنتج للسلة', 'error');
     }
   };
-
-  if (loading && wishlist.length === 0) {
-    return (
-      <div className="relative flex min-h-screen w-full flex-col items-center justify-center max-w-md mx-auto bg-background-light dark:bg-background-dark shadow-2xl font-display text-text-primary-light dark:text-text-primary-dark antialiased" dir="rtl">
-        <div className="flex flex-col items-center gap-6 animate-in fade-in zoom-in duration-700">
-          <div className="flex flex-col items-center gap-2">
-            <div className="flex gap-1">
-              <div className="w-2 h-2 rounded-full bg-primary animate-bounce [animation-delay:-0.3s]"></div>
-              <div className="w-2 h-2 rounded-full bg-primary animate-bounce [animation-delay:-0.15s]"></div>
-              <div className="w-2 h-2 rounded-full bg-primary animate-bounce"></div>
-            </div>
-            <p className="text-sm font-bold text-slate-500 animate-pulse">جاري تحضير طلبك...</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden max-w-md mx-auto bg-background-light dark:bg-background-dark shadow-2xl pb-20 rtl" dir="rtl">
@@ -153,7 +133,7 @@ const Favorites: React.FC = () => {
                     <button 
                       onClick={(e) => {
                         e.stopPropagation();
-                        toggleWishlist(product.id);
+                        toggleWishlist(product.id, product);
                       }}
                       className="absolute top-2 left-2 z-10 flex size-8 items-center justify-center rounded-full bg-white/80 dark:bg-black/50 backdrop-blur-sm text-red-500"
                     >
@@ -217,7 +197,7 @@ const Favorites: React.FC = () => {
                     <button 
                       onClick={(e) => {
                         e.stopPropagation();
-                        toggleWishlist(product.id);
+                        toggleWishlist(product.id, product);
                       }}
                       className="size-10 rounded-xl bg-red-50 dark:bg-red-900/20 flex items-center justify-center text-red-500 active:scale-95 transition-transform"
                     >

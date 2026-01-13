@@ -190,12 +190,11 @@ const Home: React.FC = () => {
     };
   }, [loading, products.length, selectedCategoryId]);
 
-  const isProductInWishlist = (productId: number) => wishlistItems.some(item => item.productId === productId);
+  const isProductInWishlist = (productId: number) => wishlistItems.some(item => String(item.productId) === String(productId));
 
-  const handleAddToWishlist = (e: React.MouseEvent, productId: number) => {
+  const handleAddToWishlist = (e: React.MouseEvent, product: Product) => {
     e.stopPropagation();
-    const product = products.find(p => p.id === productId);
-    toggleWishlist(productId, product);
+    toggleWishlist(product.id, product);
   };
 
   const handleAddToCart = async (e: React.MouseEvent, productId: number) => {

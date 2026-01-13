@@ -19,7 +19,7 @@ interface Product {
 interface ProductCardProps {
   product: Product;
   onNavigate: (id: number) => void;
-  onAddToWishlist: (e: React.MouseEvent, id: number) => void;
+  onAddToWishlist: (e: React.MouseEvent, product: Product) => void;
   onAddToCart: (e: React.MouseEvent, id: number) => void;
   isProductInWishlist: (id: number) => boolean;
 }
@@ -106,7 +106,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
             </div>
           )}
           <button 
-            onClick={(e) => onAddToWishlist(e, product.id)}
+            onClick={(e) => onAddToWishlist(e, product)}
             className={`pointer-events-auto flex size-8 items-center justify-center rounded-full bg-white/90 shadow-sm backdrop-blur-sm transition hover:bg-white hover:scale-110 ${isProductInWishlist(product.id) ? 'text-red-500' : 'text-slate-400'}`}
           >
             <Heart size={18} fill={isProductInWishlist(product.id) ? "currentColor" : "none"} strokeWidth={2.5} />

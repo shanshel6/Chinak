@@ -58,7 +58,7 @@ const ProductDetails: React.FC = () => {
   const [searchParams] = useSearchParams();
   const productId = searchParams.get('id');
   
-  const isProductInWishlist = (id: number | string) => wishlistItems.some(item => item.productId === id);
+  const isProductInWishlist = (id: number | string) => wishlistItems.some(item => String(item.productId) === String(id));
   
   const [product, setProduct] = useState<Product | null>(() => {
     // 1. Try to get initial data from navigation state for instant rendering

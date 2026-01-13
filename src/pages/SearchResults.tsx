@@ -30,7 +30,7 @@ const SearchResults: React.FC = () => {
   const cartItems = useCartStore((state) => state.items);
   const cartCount = cartItems.reduce((acc, item) => acc + item.quantity, 0);
 
-  const isProductInWishlist = (productId: number) => wishlistItems.some(item => item.productId === productId);
+  const isProductInWishlist = (productId: number) => wishlistItems.some(item => String(item.productId) === String(productId));
   
   // Get query from URL if present
   const queryParams = new URLSearchParams(location.search);
@@ -245,7 +245,7 @@ const SearchResults: React.FC = () => {
                   key={product.id}
                   product={product}
                   onNavigate={(id) => navigate(`/product?id=${id}`, { state: { initialProduct: product } })}
-                  onToggleWishlist={(id) => toggleWishlist(id, product)}
+                  onToggleWishlist={(p) => toggleWishlist(p.id, p)}
                   isWishlisted={isProductInWishlist(product.id)}
                   onAddToCart={handleAddToCart}
                 />

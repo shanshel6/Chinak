@@ -273,6 +273,9 @@ export async function request(endpoint: string, options: any = {}, retries = 2) 
       if (!response.ok) {
         // If it's a 401 or 403, don't retry, just throw
         if (response.status === 401 || response.status === 403) {
+          // Clear local storage and dispatch event for global logout
+          localStorage.removeItem('auth_token');
+          window.dispatchEvent(new Event('auth-unauthorized'));
           throw new Error(data.error || data.message || `Unauthorized (${response.status})`);
         }
 
@@ -1124,7 +1127,8 @@ export async function cancelOrder(id: number | string) {
   return request(`/orders/${id}/cancel`, { method: 'PUT' });
 }
 
-// Wishlist
+// Wishlist - Replaced by local storage in useWishlistStore.ts
+/*
 export async function fetchWishlist() {
   return request('/wishlist');
 }
@@ -1139,6 +1143,7 @@ export async function addToWishlist(productId: number | string) {
 export async function removeFromWishlist(productId: number | string) {
   return request(`/wishlist/${productId}`, { method: 'DELETE' });
 }
+*/
 
 // Messages
 export async function fetchMessages(orderId: number | string) {

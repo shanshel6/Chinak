@@ -7,7 +7,7 @@ import ScrollToTop from './components/ScrollToTop';
 import Toast from './components/Toast';
 import { useAuthStore } from './store/useAuthStore';
 import { useCartStore } from './store/useCartStore';
-import { useWishlistStore } from './store/useWishlistStore';
+// import { useWishlistStore } from './store/useWishlistStore';
 import { useNotificationStore } from './store/useNotificationStore';
 import { useThemeStore } from './store/useThemeStore';
 import { useChatStore } from './store/useChatStore';
@@ -274,7 +274,7 @@ function AnimatedRoutes() {
 function App() {
   const checkAuth = useAuthStore((state) => state.checkAuth);
   const fetchCart = useCartStore((state) => state.fetchCart);
-  const fetchWishlist = useWishlistStore((state) => state.fetchWishlist);
+  // const fetchWishlist = useWishlistStore((state) => state.fetchWishlist); // Removed unused
   
   const { isAuthenticated, user } = useAuthStore(
     useShallow((state) => ({ 
@@ -295,6 +295,17 @@ function App() {
     performCacheMaintenance();
     checkAuth();
     initChatSocket();
+
+    // Listen for unauthorized errors from API
+    const handleUnauthorized = () => {
+      console.warn('Unauthorized access detected, logging out...');
+      useAuthStore.getState().logout();
+    };
+    window.addEventListener('auth-unauthorized', handleUnauthorized);
+
+    return () => {
+      window.removeEventListener('auth-unauthorized', handleUnauthorized);
+    };
   }, [checkAuth, initChatSocket]);
 
   useEffect(() => {
@@ -308,7 +319,7 @@ function App() {
   useEffect(() => {
     if (isAuthenticated && user) {
       fetchCart();
-      fetchWishlist();
+      // fetchWishlist(); // Removed as wishlist is now local storage only
       fetchNotifications();
       connectSocket();
       initNotificationSocket(user.id);
@@ -319,7 +330,7 @@ function App() {
     } else {
       disconnectSocket();
     }
-  }, [isAuthenticated, user, fetchCart, fetchWishlist, fetchNotifications, initNotificationSocket, cleanupNotificationSocket]);
+  }, [isAuthenticated, user, fetchCart, fetchNotifications, initNotificationSocket, cleanupNotificationSocket]);
 
   if (isServerDown) {
     return <MaintenanceScreen />;
