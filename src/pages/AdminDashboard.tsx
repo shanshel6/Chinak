@@ -41,9 +41,7 @@ import {
   bulkPublishProducts,
   updateOrderStatus,
   updateOrderInternationalFee,
-  updateProductPrice,
-  fetchStoreSettings,
-  updateStoreSettings
+  updateProductPrice
 } from '../services/api';
 import { localProductService } from '../services/localProductService';
 import { useToastStore } from '../store/useToastStore';
@@ -52,7 +50,6 @@ import StatsCards from '../components/admin/StatsCards';
 import ProductCard from '../components/admin/ProductCard';
 import ProductEditor from './ProductEditor';
 import LazyImage from '../components/LazyImage';
-import { Camera, Upload, Trash } from 'lucide-react';
 
 const AdminDashboard: React.FC = () => {
   const location = useLocation();
@@ -64,17 +61,6 @@ const AdminDashboard: React.FC = () => {
   const [products, setProducts] = useState<any[]>([]);
   const [orders, setOrders] = useState<any[]>([]);
   const [coupons, setCoupons] = useState<any[]>([]);
-  const [storeSettings, setStoreSettings] = useState<any>({
-    storeName: '',
-    contactEmail: '',
-    contactPhone: '',
-    currency: 'د.ع',
-    socialLinks: '{}',
-    footerText: '',
-    zainCashQR: null,
-    qicardQR: null
-  });
-  const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedProducts, setSelectedProducts] = useState<any[]>([]);
   const [isImporting, setIsImporting] = useState(false);
@@ -404,42 +390,6 @@ const AdminDashboard: React.FC = () => {
     }
   };
 
-  const handleSaveSettings = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsSavingSettings(true);
-    try {
-      const token = getAuthToken();
-      await updateStoreSettings(storeSettings, token);
-      showToast('تم حفظ الإعدادات بنجاح', 'success');
-      loadData(currentPage, true);
-    } catch (error) {
-      console.error('Save settings error:', error);
-      showToast('فشل حفظ الإعدادات', 'error');
-    } finally {
-      setIsSavingSettings(false);
-    }
-  };
-
-  const handleQRUpload = async (e: React.ChangeEvent<HTMLInputElement>, type: 'zaincash' | 'qicard') => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    if (file.size > 2 * 1024 * 1024) {
-      showToast('حجم الصورة كبير جداً (الحد الأقصى 2 ميجابايت)', 'error');
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      const base64String = reader.result as string;
-      setStoreSettings((prev: any) => ({
-        ...prev,
-        [type === 'zaincash' ? 'zainCashQR' : 'qicardQR']: base64String
-      }));
-    };
-    reader.readAsDataURL(file);
-  };
-
   const loadData = async (page = currentPage, silent = false) => {
     if (!silent) setLoading(true);
     const limit = getLimit();
@@ -521,11 +471,6 @@ const AdminDashboard: React.FC = () => {
         setCoupons(data || []);
         setTotalPages(1);
         setTotalItems(data.length || 0);
-      } else if (activeTab === 'settings') {
-        const data = await fetchStoreSettings();
-        setStoreSettings(data);
-        setTotalPages(1);
-        setTotalItems(1);
       }
     } catch (error: any) {
       console.error('[AdminDashboard] Error loading admin data:', error);
@@ -1101,188 +1046,6 @@ const AdminDashboard: React.FC = () => {
     </div>
   );
 
-  const renderSettings = () => (
-    <div className="space-y-8 animate-in fade-in duration-500 max-w-4xl">
-      <div>
-        <h2 className="text-2xl font-black text-slate-900 dark:text-white">إعدادات المتجر</h2>
-        <p className="text-slate-500 text-sm mt-1">تخصيص معلومات المتجر وطرق الدفع</p>
-      </div>
-
-      <form onSubmit={handleSaveSettings} className="space-y-6">
-        <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 sm:p-8 border border-slate-100 dark:border-slate-800 shadow-sm space-y-8">
-          {/* General Info */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="space-y-2">
-              <label className="text-sm font-black text-slate-700 dark:text-slate-300">اسم المتجر</label>
-              <input 
-                type="text"
-                value={storeSettings.storeName}
-                onChange={(e) => setStoreSettings({ ...storeSettings, storeName: e.target.value })}
-                className="w-full bg-slate-50 dark:bg-slate-800 border-none rounded-2xl py-3.5 px-4 text-sm focus:ring-2 focus:ring-primary/20 transition-all"
-                placeholder="أدخل اسم المتجر"
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-black text-slate-700 dark:text-slate-300">العملة</label>
-              <input 
-                type="text"
-                value={storeSettings.currency}
-                onChange={(e) => setStoreSettings({ ...storeSettings, currency: e.target.value })}
-                className="w-full bg-slate-50 dark:bg-slate-800 border-none rounded-2xl py-3.5 px-4 text-sm focus:ring-2 focus:ring-primary/20 transition-all"
-                placeholder="د.ع"
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-black text-slate-700 dark:text-slate-300">بريد التواصل</label>
-              <input 
-                type="email"
-                value={storeSettings.contactEmail || ''}
-                onChange={(e) => setStoreSettings({ ...storeSettings, contactEmail: e.target.value })}
-                className="w-full bg-slate-50 dark:bg-slate-800 border-none rounded-2xl py-3.5 px-4 text-sm focus:ring-2 focus:ring-primary/20 transition-all"
-                placeholder="example@store.com"
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-black text-slate-700 dark:text-slate-300">رقم الهاتف</label>
-              <input 
-                type="text"
-                value={storeSettings.contactPhone || ''}
-                onChange={(e) => setStoreSettings({ ...storeSettings, contactPhone: e.target.value })}
-                className="w-full bg-slate-50 dark:bg-slate-800 border-none rounded-2xl py-3.5 px-4 text-sm focus:ring-2 focus:ring-primary/20 transition-all"
-                placeholder="077XXXXXXXX"
-              />
-            </div>
-          </div>
-
-          {/* QR Codes Section */}
-          <div className="pt-6 border-t border-slate-100 dark:border-slate-800">
-            <h3 className="text-lg font-black mb-6 flex items-center gap-2">
-              <ShoppingCart size={20} className="text-primary" />
-              رموز QR للدفع
-            </h3>
-            
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-              {/* ZainCash QR */}
-              <div className="space-y-4">
-                <label className="text-sm font-black text-slate-700 dark:text-slate-300 flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-primary"></span>
-                  رمز QR لزين كاش
-                </label>
-                
-                <div className="relative group">
-                  <div className="aspect-square w-full max-w-[240px] mx-auto bg-slate-50 dark:bg-slate-800 rounded-3xl border-2 border-dashed border-slate-200 dark:border-slate-700 flex items-center justify-center overflow-hidden transition-all group-hover:border-primary/50">
-                    {storeSettings.zainCashQR ? (
-                      <img 
-                        src={storeSettings.zainCashQR} 
-                        alt="ZainCash QR" 
-                        className="w-full h-full object-contain p-4"
-                      />
-                    ) : (
-                      <div className="text-center p-6">
-                        <Camera className="mx-auto mb-2 text-slate-300" size={32} />
-                        <p className="text-xs text-slate-400 font-medium">لم يتم رفع صورة بعد</p>
-                      </div>
-                    )}
-                    
-                    <label className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-all flex items-center justify-center cursor-pointer">
-                      <div className="flex flex-col items-center gap-2 text-white">
-                        <Upload size={24} />
-                        <span className="text-xs font-bold">تغيير الصورة</span>
-                      </div>
-                      <input 
-                        type="file" 
-                        accept="image/*" 
-                        className="hidden" 
-                        onChange={(e) => handleQRUpload(e, 'zaincash')}
-                      />
-                    </label>
-                  </div>
-                  
-                  {storeSettings.zainCashQR && (
-                    <button 
-                      type="button"
-                      onClick={() => setStoreSettings({ ...storeSettings, zainCashQR: null })}
-                      className="absolute -top-2 -left-2 p-2 bg-rose-500 text-white rounded-full shadow-lg hover:scale-110 transition-all"
-                    >
-                      <Trash size={14} />
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {/* QiCard QR */}
-              <div className="space-y-4">
-                <label className="text-sm font-black text-slate-700 dark:text-slate-300 flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-amber-500"></span>
-                  رمز QR لكي كارد
-                </label>
-                
-                <div className="relative group">
-                  <div className="aspect-square w-full max-w-[240px] mx-auto bg-slate-50 dark:bg-slate-800 rounded-3xl border-2 border-dashed border-slate-200 dark:border-slate-700 flex items-center justify-center overflow-hidden transition-all group-hover:border-primary/50">
-                    {storeSettings.qicardQR ? (
-                      <img 
-                        src={storeSettings.qicardQR} 
-                        alt="QiCard QR" 
-                        className="w-full h-full object-contain p-4"
-                      />
-                    ) : (
-                      <div className="text-center p-6">
-                        <Camera className="mx-auto mb-2 text-slate-300" size={32} />
-                        <p className="text-xs text-slate-400 font-medium">لم يتم رفع صورة بعد</p>
-                      </div>
-                    )}
-                    
-                    <label className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-all flex items-center justify-center cursor-pointer">
-                      <div className="flex flex-col items-center gap-2 text-white">
-                        <Upload size={24} />
-                        <span className="text-xs font-bold">تغيير الصورة</span>
-                      </div>
-                      <input 
-                        type="file" 
-                        accept="image/*" 
-                        className="hidden" 
-                        onChange={(e) => handleQRUpload(e, 'qicard')}
-                      />
-                    </label>
-                  </div>
-                  
-                  {storeSettings.qicardQR && (
-                    <button 
-                      type="button"
-                      onClick={() => setStoreSettings({ ...storeSettings, qicardQR: null })}
-                      className="absolute -top-2 -left-2 p-2 bg-rose-500 text-white rounded-full shadow-lg hover:scale-110 transition-all"
-                    >
-                      <Trash size={14} />
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
-            
-            <p className="text-[10px] text-slate-400 mt-6 bg-slate-50 dark:bg-slate-800/50 p-3 rounded-xl border border-slate-100 dark:border-slate-800 italic">
-              * ملاحظة: يرجى رفع صور واضحة لرموز QR لضمان سهولة المسح من قبل العملاء. سيتم عرض هذه الرموز في صفحة "طلباتي" عند اختيار وسيلة الدفع المناسبة.
-            </p>
-          </div>
-        </div>
-
-        <div className="flex justify-end pt-4">
-          <button 
-            type="submit"
-            disabled={isSavingSettings}
-            className="flex items-center justify-center gap-2 px-8 py-4 bg-primary text-white rounded-2xl font-black shadow-xl shadow-primary/30 hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-50"
-          >
-            {isSavingSettings ? (
-              <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-            ) : (
-              <Settings size={20} />
-            )}
-            حفظ كافة التغييرات
-          </button>
-        </div>
-      </form>
-    </div>
-  );
-
   const renderUsers = () => (
     <div className="space-y-6 animate-in fade-in duration-500">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -1768,7 +1531,13 @@ const AdminDashboard: React.FC = () => {
           <Route path="users" element={renderUsers()} />
           <Route path="orders" element={renderOrders()} />
           <Route path="coupons" element={renderCoupons()} />
-          <Route path="settings" element={renderSettings()} />
+          <Route path="settings" element={
+            <div className="p-12 text-center bg-white dark:bg-slate-900 rounded-3xl border border-dashed border-slate-200 dark:border-slate-800">
+              <Settings className="mx-auto mb-4 text-slate-300" size={48} />
+              <h3 className="text-xl font-black mb-2">إعدادات النظام</h3>
+              <p className="text-slate-500">قريباً... ستتمكن من التحكم في إعدادات المتجر من هنا</p>
+            </div>
+          } />
         </Routes>
       )}
       {showOrderModal && renderOrderDetailsModal()}

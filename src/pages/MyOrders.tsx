@@ -9,9 +9,12 @@ import {
   X, 
   RotateCcw, 
   CreditCard,
-  Loader2
+  Loader2,
+  CheckCircle2,
+  ExternalLink,
+  Wallet
 } from 'lucide-react';
-import { fetchOrders, cancelOrder, fetchStoreSettings, confirmOrderPayment } from '../services/api';
+import { fetchOrders, cancelOrder, confirmOrderPayment, getBaseDomain } from '../services/api';
 import { useCartStore } from '../store/useCartStore';
 import { useToastStore } from '../store/useToastStore';
 import LazyImage from '../components/LazyImage';
@@ -29,25 +32,41 @@ const MyOrders: React.FC = () => {
   const [isReordering, setIsReordering] = useState<number | string | null>(null);
   const [isCancelling, setIsCancelling] = useState<number | string | null>(null);
   const [activeTab, setActiveTab] = useState<'current' | 'completed'>('current');
+  
+  // Payment Modal State
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<any>(null);
   const [paymentDone, setPaymentDone] = useState(false);
-  const [paymentMethod, setPaymentMethod] = useState<'zaincash' | 'qicard'>('zaincash');
-  const [storeSettings, setStoreSettings] = useState<any>(null);
-
   const [isConfirmingPayment, setIsConfirmingPayment] = useState(false);
 
   useEffect(() => {
     loadOrders();
-    loadSettings();
   }, []);
 
-  const loadSettings = async () => {
+  const handlePaymentDone = async () => {
+    if (!selectedOrder || isConfirmingPayment) return;
+    
+    setIsConfirmingPayment(true);
     try {
-      const settings = await fetchStoreSettings();
-      setStoreSettings(settings);
-    } catch (err) {
-      console.error('Failed to load store settings:', err);
+      console.log(`[Payment] Confirming payment for order ${selectedOrder.id}`);
+      const result = await confirmOrderPayment(selectedOrder.id);
+      console.log(`[Payment] API Response:`, result);
+      
+      setPaymentDone(true);
+      
+      // Delay to show success animation/message
+      setTimeout(() => {
+        setShowPaymentModal(false);
+        setSelectedOrder(null);
+        setPaymentDone(false);
+        setIsConfirmingPayment(false);
+        showToast('شكراً لك! تم استلام طلب الدفع الخاص بك وجاري تجهيزه.', 'success');
+        loadOrders(); // Refresh orders to show status update
+      }, 3000);
+    } catch (err: any) {
+      console.error('[Payment] Failed to confirm payment:', err);
+      showToast(err.message || 'فشل في تأكيد الدفع. يرجى المحاولة لاحقاً.', 'error');
+      setIsConfirmingPayment(false);
     }
   };
 
@@ -97,40 +116,6 @@ const MyOrders: React.FC = () => {
     }
   };
 
-  const handlePaymentClick = (order: any) => {
-    setSelectedOrder(order);
-    setShowPaymentModal(true);
-    setPaymentDone(false);
-  };
-
-  const handlePaymentDone = async () => {
-    if (!selectedOrder || isConfirmingPayment) return;
-    
-    setIsConfirmingPayment(true);
-    try {
-      console.log(`[Payment] Confirming payment for order ${selectedOrder.id}`);
-      // Call API to confirm payment and move to PREPARING
-      const result = await confirmOrderPayment(selectedOrder.id);
-      console.log(`[Payment] API Response:`, result);
-
-      setPaymentDone(true);
-
-      // Hide modal after a delay
-      setTimeout(() => {
-        setShowPaymentModal(false);
-        setSelectedOrder(null);
-        setPaymentDone(false);
-        setIsConfirmingPayment(false);
-        showToast('شكراً لك! تم استلام طلب الدفع الخاص بك وجاري تجهيزه.', 'success');
-        loadOrders(); // Reload orders to show new status
-      }, 3000);
-    } catch (err: any) {
-      console.error('[Payment] Failed to confirm payment:', err);
-      showToast(err.message || 'فشل في تأكيد الدفع. يرجى المحاولة لاحقاً.', 'error');
-      setIsConfirmingPayment(false);
-    }
-  };
-
   const loadOrders = async () => {
     const token = localStorage.getItem('auth_token');
     if (!token) {
@@ -169,138 +154,6 @@ const MyOrders: React.FC = () => {
 
   return (
     <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden max-w-md mx-auto bg-background-light dark:bg-background-dark shadow-2xl font-display" dir="rtl">
-      {/* Payment Modal */}
-      {showPaymentModal && selectedOrder && (
-        <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-300">
-          <div className="w-full max-w-md bg-white dark:bg-slate-900 rounded-t-3xl sm:rounded-3xl shadow-2xl overflow-hidden animate-in slide-in-from-bottom duration-500">
-            {/* Modal Header */}
-            <div className="relative p-6 border-b border-slate-100 dark:border-slate-800 flex flex-col items-center gap-4">
-              <h3 className="text-xl font-black text-slate-900 dark:text-white">اختر طريقة الدفع</h3>
-              <div className="flex gap-2 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl w-full">
-                <button 
-                  onClick={() => setPaymentMethod('zaincash')}
-                  className={`flex-1 py-2 px-4 rounded-lg text-sm font-black transition-all ${
-                    paymentMethod === 'zaincash' 
-                    ? 'bg-white dark:bg-slate-700 text-primary shadow-sm' 
-                    : 'text-slate-500 hover:text-slate-700 dark:text-slate-400'
-                  }`}
-                >
-                  زين كاش
-                </button>
-                <button 
-                  onClick={() => setPaymentMethod('qicard')}
-                  className={`flex-1 py-2 px-4 rounded-lg text-sm font-black transition-all ${
-                    paymentMethod === 'qicard' 
-                    ? 'bg-white dark:bg-slate-700 text-primary shadow-sm' 
-                    : 'text-slate-500 hover:text-slate-700 dark:text-slate-400'
-                  }`}
-                >
-                  كي كارد
-                </button>
-              </div>
-              <button 
-                onClick={() => setShowPaymentModal(false)}
-                className="absolute left-6 top-6 p-2 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:text-red-500 transition-colors"
-              >
-                <X size={20} />
-              </button>
-            </div>
-
-            {/* Modal Content */}
-            <div className="p-6 flex flex-col items-center text-center gap-6">
-              {!paymentDone ? (
-                <>
-                  <div className="flex flex-col gap-2 w-full">
-                    <span className="text-slate-500 dark:text-slate-400 text-sm font-bold">المبلغ المطلوب دفعه</span>
-                    <span className="text-3xl font-black text-primary font-sans" dir="ltr">
-                      {(selectedOrder.total + (selectedOrder.internationalShippingFee || 0)).toLocaleString()} د.ع
-                    </span>
-                  </div>
-
-                  <div className="relative group">
-                    <div className="absolute -inset-2 bg-gradient-to-r from-purple-600 to-blue-600 rounded-2xl blur opacity-25 group-hover:opacity-50 transition duration-1000 group-hover:duration-200"></div>
-                    <div className="relative size-56 bg-white p-4 rounded-xl border border-slate-100 shadow-sm flex items-center justify-center overflow-hidden">
-                      {paymentMethod === 'zaincash' ? (
-                        storeSettings?.zainCashQR ? (
-                          <img 
-                            src={storeSettings.zainCashQR} 
-                            alt="ZainCash QR Code" 
-                            className="w-full h-full object-contain"
-                          />
-                        ) : (
-                          <div className="flex flex-col items-center gap-2 text-slate-300">
-                            <CreditCard size={48} />
-                            <span className="text-xs font-bold">بانتظار رفع الرمز</span>
-                          </div>
-                        )
-                      ) : (
-                        storeSettings?.qicardQR ? (
-                          <img 
-                            src={storeSettings.qicardQR} 
-                            alt="QiCard QR Code" 
-                            className="w-full h-full object-contain"
-                          />
-                        ) : (
-                          <div className="flex flex-col items-center gap-2 text-slate-300">
-                            <CreditCard size={48} />
-                            <span className="text-xs font-bold">بانتظار رفع الرمز</span>
-                          </div>
-                        )
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="flex flex-col gap-3 w-full p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-slate-800">
-                    <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
-                      {paymentMethod === 'zaincash' 
-                        ? 'يمكنك المسح الضوئي لرمز الـ QR أعلاه للدفع مباشرة عبر زين كاش، أو التحويل يدوياً إلى الرقم التالي:'
-                        : 'افتح "إرسال" في تطبيق سوبر كي وامسح الرمز أعلاه، أو التحويل يدوياً إلى الرقم التالي:'
-                      }
-                    </p>
-                    <div className="flex items-center justify-center gap-2 bg-white dark:bg-slate-900 p-3 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm select-all">
-                      <span className="text-lg font-black text-slate-900 dark:text-white font-sans tracking-wider">
-                        {storeSettings?.contactPhone || '07779786420'}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3 w-full pt-2">
-                    <button 
-                      onClick={() => setShowPaymentModal(false)}
-                      className="px-6 py-4 rounded-2xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-bold hover:bg-slate-200 dark:hover:bg-slate-700 transition-all active:scale-95"
-                    >
-                      إلغاء
-                    </button>
-                    <button 
-                      onClick={handlePaymentDone}
-                      disabled={isConfirmingPayment}
-                      className="px-6 py-4 rounded-2xl bg-primary text-white font-black shadow-lg shadow-primary/30 hover:bg-blue-600 transition-all active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50"
-                    >
-                      {isConfirmingPayment ? <Loader2 size={20} className="animate-spin" /> : 'تأكيد الدفع'}
-                    </button>
-                  </div>
-                </>
-              ) : (
-                <div className="py-12 flex flex-col items-center gap-6 animate-in zoom-in duration-500">
-                  <div className="size-24 bg-green-100 dark:bg-green-900/30 rounded-full flex items-center justify-center text-green-500 animate-bounce-slow">
-                    <Loader2 size={48} className="animate-spin" />
-                  </div>
-                  <div className="flex flex-col gap-2">
-                    <h4 className="text-2xl font-black text-slate-900 dark:text-white">جاري معالجة طلبك</h4>
-                    <p className="text-slate-500 dark:text-slate-400 max-w-[260px]">
-                      شكراً لك! لقد سجلنا طلب الدفع الخاص بك. سنقوم بمراجعة العملية وتأكيد طلبك في أقرب وقت ممكن.
-                    </p>
-                  </div>
-                </div>
-              )}
-            </div>
-            
-            {/* Modal Footer Decorative */}
-            <div className="h-2 bg-gradient-to-r from-purple-600 via-primary to-blue-600"></div>
-          </div>
-        </div>
-      )}
-
       {/* Scrollable Area */}
       <div className="flex-1 flex flex-col">
         {/* Header Section */}
@@ -467,11 +320,14 @@ const MyOrders: React.FC = () => {
                     )}
                     {order.status === 'AWAITING_PAYMENT' && (
                       <button 
-                        onClick={() => handlePaymentClick(order)}
+                        onClick={() => {
+                          setSelectedOrder(order);
+                          setShowPaymentModal(true);
+                        }}
                         className="px-6 py-2 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-sm font-black transition-all shadow-lg shadow-purple-500/20 flex items-center gap-2 animate-bounce-slow"
                       >
                         <CreditCard size={14} />
-                        ادفع هنا
+                        ادفع الآن
                       </button>
                     )}
                     <button 
@@ -487,6 +343,158 @@ const MyOrders: React.FC = () => {
           )}
         </div>
       </div>
+
+      {/* Payment Modal */}
+      {showPaymentModal && selectedOrder && (
+        <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-300">
+          <div 
+            className="w-full max-w-md bg-white dark:bg-slate-900 rounded-t-[2rem] sm:rounded-[2rem] shadow-2xl overflow-hidden animate-in slide-in-from-bottom duration-500 border-t sm:border border-slate-200 dark:border-slate-800 rtl flex flex-col max-h-[95vh]"
+            dir="rtl"
+          >
+            {/* Modal Handle (for mobile) */}
+            <div className="w-full flex justify-center pt-3 sm:hidden">
+              <div className="w-12 h-1.5 bg-slate-300 dark:bg-slate-700 rounded-full"></div>
+            </div>
+
+            {/* Modal Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800 shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="size-10 rounded-xl bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center text-purple-600 dark:text-purple-400">
+                  <Wallet size={24} />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-slate-900 dark:text-white">إتمام عملية الدفع</h3>
+                  <p className="text-xs text-slate-500">طلب رقم #{selectedOrder.id}</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => !isConfirmingPayment && setShowPaymentModal(false)}
+                className="size-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 transition-colors"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Modal Body - Scrollable */}
+            <div className="p-6 overflow-y-auto custom-scrollbar flex-1">
+              {!paymentDone ? (
+                <div className="flex flex-col gap-6">
+                  {/* Amount Section */}
+                  <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-5 border border-slate-100 dark:border-slate-800 text-center">
+                    <p className="text-sm text-slate-500 mb-1">المبلغ المطلوب دفعه</p>
+                    <div className="text-3xl font-black text-primary font-sans tracking-tight">
+                      {(selectedOrder.total + (selectedOrder.internationalShippingFee || 0)).toLocaleString()} <span className="text-sm">د.ع</span>
+                    </div>
+                  </div>
+
+                  {/* Payment Instructions */}
+                  <div className="space-y-4">
+                    <p className="text-sm font-bold text-slate-700 dark:text-slate-300 flex items-center gap-2">
+                      <div className="size-1.5 rounded-full bg-primary"></div>
+                      اختر وسيلة الدفع المناسبة لك:
+                    </p>
+
+                    <div className="grid grid-cols-1 gap-4">
+                      {/* Zain Cash */}
+                      <div className="flex flex-col gap-3 p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-slate-900 dark:text-white">زين كاش (Zain Cash)</span>
+                          <span className="text-[10px] px-2 py-0.5 bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 rounded-full font-bold">نشط</span>
+                        </div>
+                        <div className="aspect-square w-full max-w-[200px] mx-auto bg-white rounded-xl p-2 shadow-inner border border-slate-100 flex items-center justify-center overflow-hidden">
+                          <img 
+                            src="/assets/payment/zaincash_qr.png" 
+                            alt="Zain Cash QR" 
+                            className="w-full h-full object-contain"
+                            onError={(e) => {
+                              console.error('Failed to load ZainCash QR image');
+                              e.currentTarget.src = 'https://placehold.co/400x400?text=ZainCash+QR';
+                            }}
+                          />
+                        </div>
+                        <p className="text-[10px] text-center text-slate-500">قم بمسح الكود أعلاه عبر تطبيق زين كاش</p>
+                      </div>
+
+                      {/* Qi Card */}
+                      <div className="flex flex-col gap-3 p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-slate-900 dark:text-white">كي كارد (Qi Card)</span>
+                          <span className="text-[10px] px-2 py-0.5 bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 rounded-full font-bold">نشط</span>
+                        </div>
+                        <div className="aspect-square w-full max-w-[200px] mx-auto bg-white rounded-xl p-2 shadow-inner border border-slate-100 flex items-center justify-center overflow-hidden">
+                          <img 
+                            src="/assets/payment/qicard_qr.png" 
+                            alt="Qi Card QR" 
+                            className="w-full h-full object-contain"
+                            onError={(e) => {
+                              console.error('Failed to load QiCard QR image');
+                              e.currentTarget.src = 'https://placehold.co/400x400?text=QiCard+QR';
+                            }}
+                          />
+                        </div>
+                        <p className="text-[10px] text-center text-slate-500">قم بمسح الكود أعلاه عبر تطبيق كي كارد</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Warning Box */}
+                  <div className="bg-amber-50 dark:bg-amber-900/20 rounded-xl p-4 border border-amber-100 dark:border-amber-900/30">
+                    <p className="text-xs text-amber-700 dark:text-amber-400 leading-relaxed">
+                      * يرجى الضغط على "تم التحويل" بعد إتمام العملية لكي يتم تحديث حالة طلبك.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center py-12 text-center">
+                  <div className="size-20 bg-green-100 dark:bg-green-900/30 rounded-full flex items-center justify-center text-green-600 dark:text-green-400 mb-6 animate-bounce">
+                    <CheckCircle2 size={48} />
+                  </div>
+                  <h3 className="text-2xl font-black text-slate-900 dark:text-white mb-3">تم إرسال الطلب!</h3>
+                  <p className="text-slate-500 dark:text-slate-400 max-w-[250px]">
+                    شكراً لك! لقد استلمنا إشعار الدفع الخاص بك. سيتم مراجعة العملية وتحديث حالة طلبك خلال دقائق.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-6 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 shrink-0">
+              {!paymentDone ? (
+                <div className="flex flex-col gap-3">
+                  <button 
+                    onClick={handlePaymentDone}
+                    disabled={isConfirmingPayment}
+                    className="w-full py-4 bg-primary hover:bg-blue-600 disabled:bg-slate-300 text-white rounded-2xl font-black text-lg shadow-xl shadow-blue-500/20 transition-all active:scale-[0.98] flex items-center justify-center gap-3"
+                  >
+                    {isConfirmingPayment ? (
+                      <Loader2 size={24} className="animate-spin" />
+                    ) : (
+                      <>
+                        <CheckCircle2 size={24} />
+                        تم التحويل
+                      </>
+                    )}
+                  </button>
+                  <button 
+                    onClick={() => setShowPaymentModal(false)}
+                    disabled={isConfirmingPayment}
+                    className="w-full py-3 bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 rounded-xl font-bold text-sm transition-all active:scale-[0.98]"
+                  >
+                    إلغاء
+                  </button>
+                </div>
+              ) : (
+                <button 
+                  onClick={() => setShowPaymentModal(false)}
+                  className="w-full py-4 bg-slate-900 dark:bg-white dark:text-slate-900 text-white rounded-2xl font-black text-lg transition-all active:scale-[0.98]"
+                >
+                  إغلاق
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

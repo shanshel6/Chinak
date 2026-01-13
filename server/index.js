@@ -1108,80 +1108,6 @@ const createNotification = async (title, message, type, link) => {
   }
 };
 
-// --- Store Settings Endpoints ---
-app.get('/api/store-settings', async (req, res) => {
-  try {
-    let settings = await prisma.storeSettings.findFirst();
-    
-    if (!settings) {
-      // Create default settings if they don't exist
-      settings = await prisma.storeSettings.create({
-        data: {
-          storeName: "My Store",
-          currency: "د.ع",
-          socialLinks: "{}"
-        }
-      });
-    }
-    
-    res.json(settings);
-  } catch (error) {
-    console.error('Error fetching store settings:', error);
-    res.status(500).json({ error: 'Failed to fetch store settings' });
-  }
-});
-
-app.put('/api/admin/store-settings', authenticateToken, isAdmin, async (req, res) => {
-  try {
-    const { 
-      storeName, 
-      contactEmail, 
-      contactPhone, 
-      currency, 
-      socialLinks, 
-      footerText,
-      zainCashQR,
-      qicardQR 
-    } = req.body;
-
-    let settings = await prisma.storeSettings.findFirst();
-
-    if (settings) {
-      settings = await prisma.storeSettings.update({
-        where: { id: settings.id },
-        data: {
-          storeName,
-          contactEmail,
-          contactPhone,
-          currency,
-          socialLinks: typeof socialLinks === 'string' ? socialLinks : JSON.stringify(socialLinks),
-          footerText,
-          zainCashQR,
-          qicardQR
-        }
-      });
-    } else {
-      settings = await prisma.storeSettings.create({
-        data: {
-          storeName,
-          contactEmail,
-          contactPhone,
-          currency,
-          socialLinks: typeof socialLinks === 'string' ? socialLinks : JSON.stringify(socialLinks),
-          footerText,
-          zainCashQR,
-          qicardQR
-        }
-      });
-    }
-
-    res.json(settings);
-  } catch (error) {
-    console.error('Error updating store settings:', error);
-    res.status(500).json({ error: 'Failed to update store settings' });
-  }
-});
-
 // ADMIN: Get stats
 app.get('/api/admin/stats', authenticateToken, isAdmin, async (req, res) => {
   console.log('GET /api/admin/stats hit by user:', req.user.id, req.user.name);
@@ -1559,54 +1485,6 @@ app.put('/api/admin/orders/:id/status', authenticateToken, isAdmin, hasPermissio
   } catch (error) {
     console.error('Update status error:', error);
     res.status(500).json({ error: 'Failed to update order status' });
-  }
-});
-
-// USER: Confirm payment (Move to PREPARING)
-app.put('/api/orders/:id/confirm-payment', authenticateToken, async (req, res) => {
-  try {
-    const { id } = req.params;
-    
-    // Find the order and ensure it belongs to the user
-    const order = await prisma.order.findUnique({
-      where: { id: safeParseId(id) }
-    });
-
-    if (!order) {
-      return res.status(404).json({ error: 'Order not found' });
-    }
-
-    if (order.userId !== req.user.id) {
-      return res.status(403).json({ error: 'Not authorized to update this order' });
-    }
-
-    // Only allow moving from AWAITING_PAYMENT to PREPARING
-    if (order.status !== 'AWAITING_PAYMENT') {
-      return res.status(400).json({ error: 'Order is not awaiting payment' });
-    }
-
-    const updatedOrder = await prisma.order.update({
-      where: { id: safeParseId(id) },
-      data: { status: 'PREPARING' }
-    });
-    
-    console.log(`[Order] Payment confirmed for order #${id}, moved to PREPARING`);
-    
-    await sendOrderStatusNotification(id, 'PREPARING', order.userId);
-    
-    // Notify admins via socket
-    if (io) {
-      console.log(`[Socket] Emitting order_status_updated for order #${id}`);
-      io.to('admin_notifications').emit('order_status_updated', updatedOrder);
-      // Also notify the user specifically
-      io.emit(`order_status_updated_${id}`, updatedOrder);
-      io.emit('order_status_update', updatedOrder);
-    }
-    
-    res.json(updatedOrder);
-  } catch (error) {
-    console.error('Confirm payment error:', error);
-    res.status(500).json({ error: 'Failed to confirm payment' });
   }
 });
 
@@ -4654,6 +4532,51 @@ app.put('/api/orders/:id/cancel', authenticateToken, async (req, res) => {
     res.json(updatedOrder);
   } catch (error) {
     res.status(500).json({ error: 'Failed to cancel order' });
+  }
+});
+
+app.put('/api/orders/:id/confirm-payment', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.id;
+    const orderId = safeParseId(id);
+
+    console.log(`[Payment] Confirmation request for order ${id} from user ${userId}`);
+
+    const order = await prisma.order.findUnique({
+      where: { id: orderId }
+    });
+
+    if (!order) {
+      console.log(`[Payment] Order ${id} not found`);
+      return res.status(404).json({ error: 'Order not found' });
+    }
+    
+    if (order.userId !== userId) {
+      console.log(`[Payment] Order ${id} does not belong to user ${userId}`);
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    // Update order status to PREPARING (or a status that indicates payment is being verified)
+    // We'll use PREPARING as it's the next logical step after AWAITING_PAYMENT
+    const updatedOrder = await prisma.order.update({
+      where: { id: orderId },
+      data: { status: 'PREPARING' }
+    });
+
+    console.log(`[Payment] Order ${id} status updated to PREPARING`);
+
+    // Notify admins via socket
+    io.to('admin_notifications').emit('order_status_update', {
+      id: orderId,
+      status: 'PREPARING',
+      message: `تم استلام إشعار دفع للطلب #${id}`
+    });
+
+    res.json(updatedOrder);
+  } catch (error) {
+    console.error('[Payment] Error confirming payment:', error);
+    res.status(500).json({ error: 'Failed to confirm payment' });
   }
 });
 

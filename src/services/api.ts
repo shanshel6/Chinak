@@ -3,15 +3,90 @@ import { useMaintenanceStore } from '../store/useMaintenanceStore';
 import { localProductService } from './localProductService';
 
 export const getBaseDomain = () => {
-  // Allow override via environment variable
+  // 1. Priority: Environment variable (set this in .env or via build tool)
   const envApiUrl = import.meta.env.VITE_API_URL;
   if (envApiUrl) return envApiUrl;
 
-  // Always use Hugging Face for the backend to ensure consistency across devices
+  // 2. Mobile Development: If on Capacitor and window.location.hostname is an IP or localhost
+  // we might want to use the current host's IP for the backend if it's running on the same machine
+  if (window.location.hostname !== 'localhost' && 
+      /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(window.location.hostname)) {
+    return `http://${window.location.hostname}:5000`;
+  }
+
+  // 3. Fallback: Default local development port
+  if (window.location.hostname === 'localhost') {
+    return 'http://localhost:5000';
+  }
+
+  // 4. Production Fallback: Hugging Face or other hosted backend
   return 'https://shanshal66-my-shop-backend.hf.space';
 };
 
 const API_BASE_URL = `${getBaseDomain()}/api`;
+
+// Add a helper for logging requests
+const logRequest = (url: string, options: any) => {
+  console.log(`[API Request] ${options.method || 'GET'} ${url}`, options.body ? JSON.parse(options.body) : '');
+};
+
+async function request(endpoint: string, options: any = {}) {
+  const token = localStorage.getItem('auth_token');
+  const headers = {
+    'Content-Type': 'application/json',
+    ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+    ...options.headers,
+  };
+
+  const url = endpoint.startsWith('http') ? endpoint : `${API_BASE_URL}${endpoint}`;
+  
+  // Log the request for debugging (especially useful for 404s)
+  logRequest(url, { ...options, headers });
+
+  const response = await fetch(url, {
+    ...options,
+    headers,
+  });
+
+  if (!response.ok) {
+    let errorMsg = 'API request failed';
+    try {
+      const errorData = await response.json();
+      errorMsg = errorData.error || errorData.message || errorMsg;
+    } catch (e) {
+      // If response is not JSON (like a 404 HTML page), use status text
+      errorMsg = `Error ${response.status}: ${response.statusText}`;
+      console.error('[API Error] Non-JSON response received:', await response.clone().text());
+    }
+    throw new Error(errorMsg);
+  }
+
+  // For DELETE or other requests that might return 204 No Content
+  if (response.status === 204) return null;
+
+  return response.json();
+}
+
+export async function fetchOrders() {
+  // Use a cache-busting timestamp for orders to ensure we get fresh status updates
+  return request(`/orders?_t=${Date.now()}`);
+}
+
+export async function fetchOrderById(id: number | string) {
+  return request(`/orders/${id}?_t=${Date.now()}`);
+}
+
+export async function confirmOrderPayment(id: number | string) {
+  return request(`/orders/${id}/confirm-payment`, {
+    method: 'PUT',
+  });
+}
+
+export async function cancelOrder(id: number | string) {
+  return request(`/orders/${id}/cancel`, {
+    method: 'POST',
+  });
+}
 
 // Simple in-memory cache
 const cache = new Map<string, { data: any; timestamp: number }>();
@@ -745,18 +820,6 @@ export async function fetchAdminOrderDetails(orderId: string | number, token?: s
 }
 
 // Admin: Stats
-export async function fetchStoreSettings() {
-  return request('/store-settings', { skipCache: true });
-}
-
-export async function updateStoreSettings(settings: any, token?: string | null) {
-  return request('/admin/store-settings', {
-    method: 'PUT',
-    body: JSON.stringify(settings),
-    token
-  });
-}
-
 export async function fetchAdminStats(token?: string | null) {
   return request('/admin/stats', { token });
 }
@@ -1164,10 +1227,6 @@ export async function fetchOrderById(id: number | string) {
 
 export async function cancelOrder(id: number | string) {
   return request(`/orders/${id}/cancel`, { method: 'PUT' });
-}
-
-export async function confirmOrderPayment(id: number | string) {
-  return request(`/orders/${id}/confirm-payment`, { method: 'PUT' });
 }
 
 // Wishlist - Replaced by local storage in useWishlistStore.ts
