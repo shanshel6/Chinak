@@ -25,69 +25,6 @@ export const getBaseDomain = () => {
 
 const API_BASE_URL = `${getBaseDomain()}/api`;
 
-// Add a helper for logging requests
-const logRequest = (url: string, options: any) => {
-  console.log(`[API Request] ${options.method || 'GET'} ${url}`, options.body ? JSON.parse(options.body) : '');
-};
-
-async function request(endpoint: string, options: any = {}) {
-  const token = localStorage.getItem('auth_token');
-  const headers = {
-    'Content-Type': 'application/json',
-    ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
-    ...options.headers,
-  };
-
-  const url = endpoint.startsWith('http') ? endpoint : `${API_BASE_URL}${endpoint}`;
-  
-  // Log the request for debugging (especially useful for 404s)
-  logRequest(url, { ...options, headers });
-
-  const response = await fetch(url, {
-    ...options,
-    headers,
-  });
-
-  if (!response.ok) {
-    let errorMsg = 'API request failed';
-    try {
-      const errorData = await response.json();
-      errorMsg = errorData.error || errorData.message || errorMsg;
-    } catch (e) {
-      // If response is not JSON (like a 404 HTML page), use status text
-      errorMsg = `Error ${response.status}: ${response.statusText}`;
-      console.error('[API Error] Non-JSON response received:', await response.clone().text());
-    }
-    throw new Error(errorMsg);
-  }
-
-  // For DELETE or other requests that might return 204 No Content
-  if (response.status === 204) return null;
-
-  return response.json();
-}
-
-export async function fetchOrders() {
-  // Use a cache-busting timestamp for orders to ensure we get fresh status updates
-  return request(`/orders?_t=${Date.now()}`);
-}
-
-export async function fetchOrderById(id: number | string) {
-  return request(`/orders/${id}?_t=${Date.now()}`);
-}
-
-export async function confirmOrderPayment(id: number | string) {
-  return request(`/orders/${id}/confirm-payment`, {
-    method: 'PUT',
-  });
-}
-
-export async function cancelOrder(id: number | string) {
-  return request(`/orders/${id}/cancel`, {
-    method: 'POST',
-  });
-}
-
 // Simple in-memory cache
 const cache = new Map<string, { data: any; timestamp: number }>();
 
@@ -237,7 +174,7 @@ const persistentCache = {
       // Search in-memory cache first
       for (const [key, value] of cache.entries()) {
         if (key.includes('/products') && Array.isArray(value.data)) {
-          const found = value.data.find(p => String(p.id) === String(productId));
+          const found = value.data.find((p: any) => String(p.id) === String(productId));
           if (found) return found;
         }
         // Also check if the data is an object with a products array
@@ -1218,11 +1155,18 @@ export async function placeOrder(addressId: number | string, paymentMethod: stri
 }
 
 export async function fetchOrders() {
-  return request('/orders', { skipMaintenanceTrigger: true });
+  // Use a cache-busting timestamp for orders to ensure we get fresh status updates
+  return request(`/orders?_t=${Date.now()}`, { skipMaintenanceTrigger: true });
 }
 
 export async function fetchOrderById(id: number | string) {
-  return request(`/orders/${id}`);
+  return request(`/orders/${id}?_t=${Date.now()}`);
+}
+
+export async function confirmOrderPayment(id: number | string) {
+  return request(`/orders/${id}/confirm-payment`, {
+    method: 'PUT',
+  });
 }
 
 export async function cancelOrder(id: number | string) {

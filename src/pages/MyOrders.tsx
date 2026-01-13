@@ -11,10 +11,9 @@ import {
   CreditCard,
   Loader2,
   CheckCircle2,
-  ExternalLink,
   Wallet
 } from 'lucide-react';
-import { fetchOrders, cancelOrder, confirmOrderPayment, getBaseDomain } from '../services/api';
+import { fetchOrders, cancelOrder, confirmOrderPayment } from '../services/api';
 import { useCartStore } from '../store/useCartStore';
 import { useToastStore } from '../store/useToastStore';
 import LazyImage from '../components/LazyImage';
