@@ -19,10 +19,19 @@ server/node_modules
 # Build
 dist
 dist-ssr
-android/app/build
-android/.gradle
-ios/App/public
-ios/App/Pods
+
+# Android & iOS
+android/
+ios/
+assets/
+
+# Binary data
+*.traineddata
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.ico
 
 # Database
 *.db
