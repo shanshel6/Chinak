@@ -2217,12 +2217,19 @@ app.get('/api/admin/reports/abandoned-carts', authenticateToken, isAdmin, async 
   try {
     // Abandoned carts are users who have items in their cart but haven't placed an order in the last 24 hours
     // or simply have items in cart while their last order is older than their cart items.
-    // For simplicity, let's get all users with cart items and their total value.
+    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    
     const abandonedCarts = await prisma.user.findMany({
       where: {
         cart: {
-          some: {}
-        }
+          some: {
+            updatedAt: { lte: twentyFourHoursAgo }
+          }
+        },
+        OR: [
+          { orders: { none: {} } },
+          { orders: { some: { createdAt: { lte: twentyFourHoursAgo } } } }
+        ]
       },
       select: {
         id: true,
