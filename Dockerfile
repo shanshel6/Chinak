@@ -4,12 +4,14 @@ FROM node:20
 # Create app directory
 WORKDIR /app
 
-# Copy package files and install dependencies
-COPY package*.json ./
+# Copy server package files
+COPY server/package*.json ./
+
+# Install dependencies
 RUN npm install
 
 # Copy the rest of the server code
-COPY . .
+COPY server/ .
 
 # Generate Prisma client
 RUN npx prisma generate

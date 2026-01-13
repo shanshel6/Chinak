@@ -1,0 +1,12 @@
+node_modules
+server/node_modules
+.env
+server/.env
+.git
+android
+ios
+src
+public
+*.md
+Dockerfile
+.dockerignore
