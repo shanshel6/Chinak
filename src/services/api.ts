@@ -7,69 +7,8 @@ export const getBaseDomain = () => {
   const envApiUrl = import.meta.env.VITE_API_URL;
   if (envApiUrl) return envApiUrl;
 
-  const hostname = window.location.hostname;
-  const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1';
-  const isIP = /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(hostname);
-  const isDevDomain = hostname.includes('ngrok') || 
-                     hostname.includes('local') || 
-                     hostname.includes('tunnel') || 
-                     hostname.includes('trycloudflare') ||
-                     hostname.includes('localto.net');
-  
-  const domain = (() => {
-    // Check if we are running in a native environment (Capacitor)
-    const isCapacitor = (window as any).Capacitor?.isNative || 
-                       /Capacitor/i.test(navigator.userAgent) ||
-                       window.location.protocol === 'capacitor:';
-    
-    // If we are in a native app (Capacitor), we need a specific IP or a production URL
-    if (isCapacitor) {
-      // In development for Capacitor, use the machine's IP
-      if (import.meta.env.DEV) {
-        // Try to detect the IP from the script source
-        const scriptTags = document.getElementsByTagName('script');
-        for (let i = 0; i < scriptTags.length; i++) {
-          const src = scriptTags[i].src;
-          if (src && src.includes('://') && !src.includes('localhost') && !src.includes('127.0.0.1')) {
-            const url = new URL(src);
-            return `${url.protocol}//${url.hostname}:5173`;
-          }
-        }
-        // If we are on an IP already, use it
-        if (isIP) {
-          return `http://${hostname}:5173`;
-        }
-        return `http://10.0.2.2:5173`; // Updated for emulator access to Vite proxy
-      }
-      return 'https://your-api-domain.com';
-    }
-
-    if (isLocalhost || isIP) {
-      // If we are on an IP already, use it for the backend too
-      if (isIP) {
-        return `http://${hostname}:5173`;
-      }
-      return 'http://localhost:5173';
-    }
-
-    if (isDevDomain) {
-      const protocol = window.location.protocol;
-      const port = window.location.port;
-      
-      if (!port || port === '80' || port === '443') {
-        return `${protocol}//${hostname}`;
-      }
-      return `${protocol}//${hostname}:5173`;
-    }
-
-    // Use environment variable if available, otherwise default to production URL
-    return import.meta.env.VITE_API_URL || 'https://your-api-domain.onrender.com';
-  })();
-
-  if (import.meta.env.DEV) {
-    console.log(`[API Domain] Detected: ${domain} (hostname: ${hostname}, protocol: ${window.location.protocol})`);
-  }
-  return domain;
+  // Always use Hugging Face for the backend to ensure consistency across devices
+  return 'https://shanshal66-my-shop-backend.hf.space';
 };
 
 const API_BASE_URL = `${getBaseDomain()}/api`;
