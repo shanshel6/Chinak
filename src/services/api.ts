@@ -199,8 +199,9 @@ export const performCacheMaintenance = persistentCache.maintenance;
 performCacheMaintenance();
 
 export function getAuthHeaders() {
-  const token = localStorage.getItem('auth_token');
-  return token ? { 'Authorization': `Bearer ${token}` } : {};
+  const token = localStorage.getItem('auth_token')?.trim();
+  if (!token || token === 'null' || token === 'undefined') return {};
+  return { 'Authorization': `Bearer ${token}` };
 }
 
 // Base fetch wrapper with caching and retry logic
@@ -220,7 +221,12 @@ export async function request(endpoint: string, options: any = {}, retries = 2) 
 
   const executeRequest = async (attempt: number): Promise<any> => {
     // Priority: 1. options.token, 2. localStorage
-    let token = options.token || localStorage.getItem('auth_token');
+    let token = (options.token || localStorage.getItem('auth_token'))?.trim();
+    
+    // Explicitly handle "null" or "undefined" strings that can sometimes get into localStorage
+    if (token === 'null' || token === 'undefined') {
+      token = null;
+    }
     
     // For admin routes, if token is missing, try to wait a bit or check store
     if (!token && endpoint.startsWith('/admin')) {
@@ -273,10 +279,31 @@ export async function request(endpoint: string, options: any = {}, retries = 2) 
       if (!response.ok) {
         // If it's a 401 or 403, don't retry, just throw
         if (response.status === 401 || response.status === 403) {
-          // Clear local storage and dispatch event for global logout
-          localStorage.removeItem('auth_token');
-          window.dispatchEvent(new Event('auth-unauthorized'));
-          throw new Error(data.error || data.message || `Unauthorized (${response.status})`);
+          // IMPORTANT: Only auto-logout if we ARE NOT currently trying to log in
+          const isAuthRequest = endpoint.includes('/auth/me') || 
+                               endpoint.includes('/auth/sync-supabase-user') || 
+                               endpoint.includes('/auth/verify-otp');
+          
+          // Check if the token that failed is still the current token
+          // This prevents "zombie" requests from old sessions from logging out a new session
+          const currentToken = localStorage.getItem('auth_token')?.trim();
+          const requestToken = headers['Authorization']?.replace('Bearer ', '')?.trim();
+          
+          if (currentToken && currentToken !== requestToken) {
+            console.warn('[API] Detected 401 from old token, retrying with new token...');
+            // Retry once with the current token
+            return executeRequest(attempt); 
+          }
+
+          if (!isAuthRequest && (currentToken === requestToken || !currentToken)) {
+            // Clear local storage and dispatch event for global logout
+            localStorage.removeItem('auth_token');
+            window.dispatchEvent(new Event('auth-unauthorized'));
+          }
+          
+          const errorMsg = data.error || data.message || `Unauthorized (${response.status})`;
+          const debugInfo = token ? ` (Token: ${token.substring(0, 8)}...)` : ' (No Token)';
+          throw new Error(`${errorMsg}${debugInfo}`);
         }
 
         // Only retry on certain status codes (e.g., 500, 502, 503, 504) or if it's a first load issue

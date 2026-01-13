@@ -30,17 +30,20 @@ export const useAuthStore = create<AuthState>((set) => ({
 
   setAuth: (token, user) => {
     try {
-      localStorage.setItem('auth_token', token);
+      const trimmedToken = token?.trim();
+      localStorage.setItem('auth_token', trimmedToken);
+      set({ token: trimmedToken, user, isAuthenticated: true, isLoading: false });
     } catch (e) {
       // If setting token fails, perform emergency cleanup
       performCacheMaintenance();
       try {
-        localStorage.setItem('auth_token', token);
+        const trimmedToken = token?.trim();
+        localStorage.setItem('auth_token', trimmedToken);
+        set({ token: trimmedToken, user, isAuthenticated: true, isLoading: false });
       } catch (retryError) {
         console.error('Critical: Failed to save auth token even after cleanup');
       }
     }
-    set({ token, user, isAuthenticated: true, isLoading: false });
   },
 
   logout: async () => {

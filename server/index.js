@@ -296,6 +296,16 @@ app.use(compression());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
+app.get('/api/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    time: new Date().toISOString(),
+    env: process.env.NODE_ENV,
+    hasJwtSecret: !!process.env.JWT_SECRET,
+    usingDefaultSecret: JWT_SECRET === 'c2hhbnNoYWw2Ni1teS1zaG9wLWJhY2tlbmQtc2VjcmV0LTIwMjY='
+  });
+});
+
 // --- Authentication Middleware ---
 const authenticateToken = async (req, res, next) => {
   const authHeader = req.headers['authorization'];
@@ -371,15 +381,25 @@ const authenticateToken = async (req, res, next) => {
     try {
       const verified = jwt.verify(token, JWT_SECRET);
       console.log('[Auth] Local JWT verified for user ID:', verified.id);
+      
+      // Ensure ID is a number if it's stored as a number in DB
+      const userId = typeof verified.id === 'string' ? parseInt(verified.id) : verified.id;
+      
+      if (!userId || isNaN(userId)) {
+        console.log('[Auth] Invalid user ID in token');
+        return res.status(401).json({ error: 'Invalid token payload' });
+      }
+
       const user = await prisma.user.findUnique({
-        where: { id: verified.id }
+        where: { id: userId }
       });
       
       if (user) {
-        req.user = verified;
+        // Update verified object with the numeric ID to be safe
+        req.user = { ...verified, id: userId };
         next();
       } else {
-        console.log('[Auth] User not found in local DB');
+        console.log('[Auth] User not found in local DB for ID:', userId);
         return res.status(401).json({ error: 'User not found' });
       }
     } catch (jwtError) {
