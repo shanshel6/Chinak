@@ -296,7 +296,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
         </button>
       </div>
 
-      <div className="p-4 flex gap-4 flex-row-reverse">
+      <div className="p-4 flex gap-4 flex-row-reverse items-start">
         <ProductImageCarousel 
           images={[...(product.images || []), ...(product.detailImages || [])]} 
           mainImage={product.image} 
@@ -318,7 +318,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
         </div>
         <div className="flex-1 min-w-0 text-right">
           <div className="flex items-start justify-between gap-2 mb-1 flex-row-reverse">
-            <div className="flex-1 flex flex-col items-end">
+            <div className="flex-1 flex flex-col items-end min-w-0">
               {isEditingName && product.status === 'DRAFT' ? (
                 <input
                   type="text"
@@ -339,7 +339,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
                 </h4>
               )}
               {product.chineseName && (
-                <span className="text-[10px] text-slate-400 font-bold font-sans">{product.chineseName}</span>
+                <span className="text-[10px] text-slate-400 font-bold font-sans truncate w-full text-right">{product.chineseName}</span>
               )}
               {product.purchaseUrl && (
                 <div className="flex justify-end mt-1">
@@ -535,14 +535,14 @@ const ProductCard: React.FC<ProductCardProps> = ({
         </div>
       </div>
 
-      <div className="px-4 py-3 bg-slate-50 dark:bg-slate-900/50 border-t border-slate-100 dark:border-slate-700/50 flex justify-between items-center flex-row-reverse">
-        <div className="flex gap-2 flex-row-reverse">
+      <div className="px-4 py-3 bg-slate-50 dark:bg-slate-900/50 border-t border-slate-100 dark:border-slate-700/50 flex flex-col sm:flex-row justify-between items-center gap-3 sm:gap-4 flex-row-reverse">
+        <div className="flex flex-wrap gap-2 flex-row-reverse justify-center sm:justify-start">
           {checkPermission('manage_products') && (
             <>
               {product.status === 'DRAFT' ? (
                 <button
                   onClick={() => onUpdateStatus(product.id, { isActive: true, status: 'PUBLISHED' })}
-                  className="px-3 py-1.5 bg-emerald-500 text-white text-[10px] font-bold rounded-xl hover:bg-emerald-600 transition-colors flex items-center gap-1 shadow-sm"
+                  className="px-3 py-1.5 bg-emerald-500 text-white text-[10px] font-bold rounded-xl hover:bg-emerald-600 transition-colors flex items-center gap-1 shadow-sm shrink-0"
                   title="نشر المنتج"
                 >
                   <Upload size={16} />
@@ -551,7 +551,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
               ) : (
                 <button
                   onClick={() => onUpdateStatus(product.id, { isActive: !product.isActive })}
-                  className={`p-2 rounded-xl transition-colors ${
+                  className={`p-2 rounded-xl transition-colors shrink-0 ${
                     product.isActive 
                       ? 'text-slate-400 hover:bg-slate-200' 
                       : 'text-emerald-500 hover:bg-emerald-500/10'
@@ -563,7 +563,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
               )}
               <button
                 onClick={() => onUpdateStatus(product.id, { isFeatured: !product.isFeatured })}
-                className={`p-2 rounded-xl transition-colors ${
+                className={`p-2 rounded-xl transition-colors shrink-0 ${
                   product.isFeatured 
                     ? 'text-amber-500 hover:bg-amber-500/10' 
                     : 'text-slate-400 hover:bg-slate-200'
@@ -574,14 +574,14 @@ const ProductCard: React.FC<ProductCardProps> = ({
               </button>
               <button
                 onClick={() => onImportReviews(product)}
-                className="p-2 text-emerald-500 hover:bg-emerald-500/10 rounded-xl transition-colors"
+                className="p-2 text-emerald-500 hover:bg-emerald-500/10 rounded-xl transition-colors shrink-0"
                 title="رفع التقييمات"
               >
                 <MessageSquareQuote size={20} />
               </button>
               <button
                 onClick={() => onAddPictures(product)}
-                className="p-2 text-emerald-500 hover:bg-emerald-500/10 rounded-xl transition-colors flex items-center gap-1"
+                className="p-2 text-emerald-500 hover:bg-emerald-500/10 rounded-xl transition-colors flex items-center gap-1 shrink-0"
                 title="إضافة صور المنتج"
               >
                 <Camera size={20} />
@@ -589,14 +589,14 @@ const ProductCard: React.FC<ProductCardProps> = ({
               </button>
               <button
                 onClick={() => onEdit(product)}
-                className="p-2 text-primary hover:bg-primary/10 rounded-xl transition-colors"
+                className="p-2 text-primary hover:bg-primary/10 rounded-xl transition-colors shrink-0"
                 title={t('dashboard.products.tooltips.edit')}
               >
                 <Edit3 size={20} />
               </button>
               <button
                 onClick={() => onDelete(product.id)}
-                className="p-2 text-rose-500 hover:bg-rose-500/10 rounded-xl transition-colors"
+                className="p-2 text-rose-500 hover:bg-rose-500/10 rounded-xl transition-colors shrink-0"
                 title={t('dashboard.products.tooltips.delete')}
               >
                 <Trash2 size={20} />
@@ -604,7 +604,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
             </>
           )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
           <span className="text-[10px] font-black text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-lg">
             #{product.id}
           </span>

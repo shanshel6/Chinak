@@ -1,5 +1,6 @@
 import React from 'react';
 import { useTranslation } from 'react-i18next';
+import LazyImage from '../LazyImage';
 
 interface BestSellersProps {
   products: any[];
@@ -19,10 +20,11 @@ const BestSellers: React.FC<BestSellersProps> = ({ products, onViewAll }) => {
         {products.slice(0, 6).map((product, i) => (
           <div key={i} className="flex items-center gap-3 p-2 rounded-2xl hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors flex-row-reverse">
             <div className="relative">
-              <img 
+              <LazyImage 
                 src={product.image} 
                 alt="" 
                 className="w-12 h-12 rounded-xl object-cover shadow-sm" 
+                isThumbnail={true}
               />
               <div className="absolute -top-1 -left-1 w-5 h-5 bg-white dark:bg-slate-800 rounded-full flex items-center justify-center text-[10px] font-black text-slate-400 border border-slate-100 dark:border-slate-700 shadow-sm">
                 {i + 1}

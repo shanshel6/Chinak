@@ -1,5 +1,6 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
+import LazyImage from '../components/LazyImage';
 import { 
   ChevronRight, 
   Truck, 
@@ -42,10 +43,11 @@ const AboutUs: React.FC = () => {
           <div className="relative flex flex-col gap-6 rounded-xl items-center justify-center p-8 overflow-hidden min-h-[320px] shadow-sm">
             {/* Background Image with Overlay */}
             <div className="absolute inset-0 z-0">
-              <img 
+              <LazyImage 
                 src="https://images.unsplash.com/photo-1586528116311-ad8dd3c8310d?q=80&w=1000&auto=format&fit=crop" 
                 alt="Global Shipping" 
                 className="w-full h-full object-cover"
+                isThumbnail={false}
               />
               <div className="absolute inset-0 bg-gradient-to-t from-[#101922]/90 via-[#101922]/40 to-[#101922]/40"></div>
             </div>

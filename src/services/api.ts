@@ -32,38 +32,34 @@ export const getBaseDomain = () => {
           const src = scriptTags[i].src;
           if (src && src.includes('://') && !src.includes('localhost') && !src.includes('127.0.0.1')) {
             const url = new URL(src);
-            return `${url.protocol}//${url.hostname}:5000`;
+            return `${url.protocol}//${url.hostname}:5173`;
           }
         }
         // If we are on an IP already, use it
         if (isIP) {
-          return `http://${hostname}:5000`;
+          return `http://${hostname}:5173`;
         }
-        return `http://192.168.2.200:5000`; // Default fallback
+        return `http://10.0.2.2:5173`; // Updated for emulator access to Vite proxy
       }
       return 'https://your-api-domain.com';
     }
 
     if (isLocalhost || isIP) {
-      // Use HTTP for localhost/IP by default unless specifically on HTTPS
-      // Most local dev servers for port 5000 are HTTP
-      const protocol = (hostname === 'localhost' || hostname === '127.0.0.1') ? 'http:' : window.location.protocol;
-      const url = `${protocol}//${hostname}:5000`;
-      return url;
+      // If we are on an IP already, use it for the backend too
+      if (isIP) {
+        return `http://${hostname}:5173`;
+      }
+      return 'http://localhost:5173';
     }
 
     if (isDevDomain) {
       const protocol = window.location.protocol;
       const port = window.location.port;
       
-      // If we are on a dev domain (like ngrok) and no port is specified, 
-      // it means we are likely using a proxy that handles the port.
       if (!port || port === '80' || port === '443') {
         return `${protocol}//${hostname}`;
       }
-      
-      // If we are on a dev domain with a port (like localhost:5173), use 5000
-      return `${protocol}//${hostname}:5000`;
+      return `${protocol}//${hostname}:5173`;
     }
 
     // Use environment variable if available, otherwise default to production URL

@@ -19,6 +19,7 @@ import axios from 'axios';
 import { fileURLToPath } from 'url';
 import prisma from './prismaClient.js';
 import { processProductAI, hybridSearch } from './services/aiService.js';
+import { setupLinkCheckerCron, checkAllProductLinks } from './services/linkCheckerService.js';
 import { createClient } from '@supabase/supabase-js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -432,7 +433,7 @@ app.post('/api/auth/sync-supabase-user', async (req, res) => {
     const token = jwt.sign(
       { id: user.id, role: user.role, email: user.email },
       JWT_SECRET,
-      { expiresIn: '30d' }
+      { expiresIn: '36500d' }
     );
 
     res.json({
@@ -496,7 +497,7 @@ app.post('/api/auth/email-login', async (req, res) => {
     const token = jwt.sign(
       { id: user.id, role: user.role, email: user.email },
       JWT_SECRET,
-      { expiresIn: '30d' }
+      { expiresIn: '36500d' }
     );
 
     res.json({
@@ -626,7 +627,7 @@ app.post('/api/auth/verify-email-otp', async (req, res) => {
     const token = jwt.sign(
       { id: updatedUser.id, role: updatedUser.role, email: updatedUser.email },
       JWT_SECRET,
-      { expiresIn: '30d' }
+      { expiresIn: '36500d' }
     );
 
     res.json({
@@ -884,7 +885,7 @@ app.post('/api/auth/verify-otp', async (req, res) => {
     const token = jwt.sign(
       { id: updatedUser.id, role: updatedUser.role, email: updatedUser.email },
       JWT_SECRET,
-      { expiresIn: '30d' }
+      { expiresIn: '36500d' }
     );
 
     res.json({ 
@@ -2415,6 +2416,11 @@ app.get('/api/admin/products', authenticateToken, isAdmin, hasPermission('manage
     console.error('Fetch admin products error:', error);
     res.status(500).json({ error: 'Failed to fetch admin products' });
   }
+});
+
+app.post('/api/admin/check-links', authenticateToken, isAdmin, async (req, res) => {
+  checkAllProductLinks();
+  res.json({ message: 'Link check started in background' });
 });
 
 // ADMIN: Create product
@@ -4872,6 +4878,8 @@ app.post('/api/messages', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Failed to send message' });
   }
 });
+
+setupLinkCheckerCron();
 
 httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`Server is running on port ${PORT} (accessible from network)`);

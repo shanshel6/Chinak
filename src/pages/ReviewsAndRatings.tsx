@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { fetchProductReviews, addProductReview, checkProductPurchase } from '../services/api';
 import { useToastStore } from '../store/useToastStore';
+import LazyImage from '../components/LazyImage';
 
 const ReviewsAndRatings: React.FC = () => {
   const navigate = useNavigate();
@@ -204,10 +205,11 @@ const ReviewsAndRatings: React.FC = () => {
               <div className="flex gap-3 overflow-x-auto pb-2 no-scrollbar">
                 {allPhotos.map((photo, i) => (
                   <div key={i} className="relative size-24 rounded-2xl overflow-hidden shrink-0 border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-md transition-shadow cursor-pointer group">
-                    <img 
+                    <LazyImage 
                       src={photo} 
                       alt="" 
                       className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" 
+                      isThumbnail={true}
                     />
                   </div>
                 ))}
@@ -296,7 +298,7 @@ const ReviewsAndRatings: React.FC = () => {
                   {review.images && review.images.length > 0 && (
                     <div className="flex gap-3 mt-1 overflow-x-auto pb-1 no-scrollbar">
                       {review.images.map((img: string, idx: number) => (
-                        <img key={idx} src={img} alt="" className="size-20 rounded-2xl object-cover border border-slate-100 dark:border-slate-800 shadow-sm" />
+                        <LazyImage key={idx} src={img} alt="" className="size-20 rounded-2xl object-cover border border-slate-100 dark:border-slate-800 shadow-sm" isThumbnail={true} />
                       ))}
                     </div>
                   )}
@@ -407,10 +409,11 @@ const ReviewsAndRatings: React.FC = () => {
                 <div className="flex flex-wrap gap-4">
                   {newImages.map((img, idx) => (
                     <div key={idx} className="relative size-24 rounded-2xl overflow-hidden border-2 border-slate-100 dark:border-slate-800 shadow-sm group">
-                      <img 
+                      <LazyImage 
                         src={img} 
                         alt="" 
                         className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" 
+                        isThumbnail={true}
                       />
                       <button 
                         onClick={() => removeImage(idx)}

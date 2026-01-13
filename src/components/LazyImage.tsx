@@ -12,6 +12,7 @@ interface LazyImageProps {
   quality?: number;
   objectFit?: 'cover' | 'contain' | 'fill' | 'none' | 'scale-down';
   isThumbnail?: boolean;
+  onClick?: (e: React.MouseEvent<HTMLDivElement>) => void;
 }
 
 const LazyImage: React.FC<LazyImageProps> = ({ 
@@ -23,7 +24,8 @@ const LazyImage: React.FC<LazyImageProps> = ({
   height,
   quality = 80,
   objectFit = 'cover',
-  isThumbnail = false
+  isThumbnail = false,
+  onClick
 }) => {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState(false);
@@ -38,6 +40,21 @@ const LazyImage: React.FC<LazyImageProps> = ({
 
     if (!src) return `https://images.weserv.nl/?url=https://images.unsplash.com/photo-1560393464-5c69a73c5770&w=${finalWidth}&q=${finalQuality}&output=webp&fit=${objectFit}`;
     
+    // If it's a data URL (base64), don't proxy it
+    if (src.startsWith('data:')) {
+      return src;
+    }
+
+    // Don't proxy local URLs or IPs as the proxy service can't reach them
+    const isLocal = src.includes('localhost') || 
+                   src.includes('127.0.0.1') || 
+                   src.includes('10.0.2.2') ||
+                   src.includes('192.168.');
+    
+    if (isLocal) {
+      return src;
+    }
+
     try {
       const cleanUrl = src.replace(/^https?:\/\//, '');
       let proxyUrl = `https://images.weserv.nl/?url=${encodeURIComponent(cleanUrl)}&w=${finalWidth}&q=${finalQuality}&output=webp&fit=${objectFit}&il`;
@@ -88,6 +105,7 @@ const LazyImage: React.FC<LazyImageProps> = ({
     <div 
       ref={imgRef}
       className={`relative overflow-hidden ${className} bg-slate-100 dark:bg-slate-800`}
+      onClick={onClick}
     >
       {!loaded && !error && (
         <div className="absolute inset-0 bg-slate-200 dark:bg-slate-700 animate-pulse" />

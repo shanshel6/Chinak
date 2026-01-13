@@ -84,26 +84,35 @@ function BackButtonHandler() {
   const lastBackPress = useRef<number>(0);
 
   useEffect(() => {
-    const backButtonListener = CapApp.addListener('backButton', ({ canGoBack }) => {
-      if (location.pathname === '/') {
-        const now = Date.now();
-        if (now - lastBackPress.current < 2000) {
-          CapApp.exitApp();
+    let backButtonListener: any = null;
+    
+    // Defensive check for Capacitor
+    const isNative = (window as any).Capacitor?.isNative;
+    
+    if (isNative) {
+      backButtonListener = CapApp.addListener('backButton', ({ canGoBack }) => {
+        if (location.pathname === '/') {
+          const now = Date.now();
+          if (now - lastBackPress.current < 2000) {
+            CapApp.exitApp();
+          } else {
+            lastBackPress.current = now;
+            showToast('اضغط مرة أخرى للخروج', 'info', 2000);
+          }
+        } else if (canGoBack) {
+          window.history.back();
         } else {
-          lastBackPress.current = now;
-          showToast('اضغط مرة أخرى للخروج', 'info', 2000);
+          navigate('/', { replace: true });
         }
-      } else if (canGoBack) {
-        window.history.back();
-      } else {
-        navigate('/', { replace: true });
-      }
-    });
+      });
+    }
 
     return () => {
-      backButtonListener.then(l => l.remove());
+      if (backButtonListener) {
+        backButtonListener.remove();
+      }
     };
-  }, [navigate, location, showToast]);
+  }, [location, navigate, showToast]);
 
   return null;
 }

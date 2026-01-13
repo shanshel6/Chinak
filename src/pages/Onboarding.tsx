@@ -1,5 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import LazyImage from '../components/LazyImage';
 import { Signal, Wifi, BatteryFull, Check, ArrowLeft } from 'lucide-react';
 
 const Onboarding: React.FC = () => {
@@ -72,10 +73,11 @@ const Onboarding: React.FC = () => {
             
             {/* Main Illustration */}
             <div className="relative w-72 h-72 rounded-2xl overflow-hidden shadow-soft bg-white dark:bg-slate-800 transition-transform hover:scale-105 duration-500">
-              <img 
+              <LazyImage 
                 src="https://images.unsplash.com/photo-1557821552-17105176677c?q=80&w=1000&auto=format&fit=crop" 
                 alt="Shopping from China" 
                 className="w-full h-full object-cover"
+                isThumbnail={false}
               />
               <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent"></div>
             </div>
@@ -100,10 +102,11 @@ const Onboarding: React.FC = () => {
             <div className="h-[60%] w-full relative flex items-center justify-center bg-blue-50/50 dark:bg-slate-800/30">
               <div className="absolute top-1/3 left-1/3 w-72 h-72 bg-emerald-100/40 dark:bg-emerald-900/20 rounded-full blur-3xl"></div>
               <div className="relative w-72 h-72 rounded-2xl overflow-hidden shadow-soft bg-white dark:bg-slate-800">
-                <img 
+                <LazyImage 
                   src="https://images.unsplash.com/photo-1563013544-824ae1b704d3?q=80&w=1000&auto=format&fit=crop" 
                   alt="Secure Payment" 
                   className="w-full h-full object-cover"
+                  isThumbnail={false}
                 />
               </div>
             </div>
@@ -125,10 +128,11 @@ const Onboarding: React.FC = () => {
             <div className="h-[60%] w-full relative flex items-center justify-center bg-blue-50/50 dark:bg-slate-800/30">
               <div className="absolute bottom-1/3 right-1/4 w-60 h-60 bg-orange-100/40 dark:bg-orange-900/20 rounded-full blur-3xl"></div>
               <div className="relative w-72 h-72 rounded-2xl overflow-hidden shadow-soft bg-white dark:bg-slate-800">
-                <img 
+                <LazyImage 
                   src="https://images.unsplash.com/photo-1566576721346-d4a3b4eaad5b?q=80&w=1000&auto=format&fit=crop" 
                   alt="Fast Delivery" 
                   className="w-full h-full object-cover"
+                  isThumbnail={false}
                 />
               </div>
             </div>

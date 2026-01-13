@@ -1,5 +1,6 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
+import LazyImage from '../components/LazyImage';
 import { 
   ArrowRight, 
   Search, 
@@ -98,7 +99,7 @@ const CustomerSupport: React.FC = () => {
               <div className="snap-center shrink-0 w-[280px] bg-white dark:bg-surface-dark rounded-2xl p-4 border border-slate-100 dark:border-slate-800 shadow-sm flex flex-col gap-3">
                 <div className="flex gap-3">
                   <div className="w-16 h-16 shrink-0 rounded-lg bg-slate-100 dark:bg-slate-700 overflow-hidden">
-                    <img alt="Smart Watch" className="w-full h-full object-cover" src="https://images.unsplash.com/photo-1523275335684-37898b6baf30?q=80&w=1000&auto=format&fit=crop" />
+                    <LazyImage alt="Smart Watch" className="w-full h-full object-cover" src="https://images.unsplash.com/photo-1523275335684-37898b6baf30?q=80&w=1000&auto=format&fit=crop" isThumbnail={true} />
                   </div>
                   <div className="flex flex-col flex-1 justify-center text-right">
                     <span className="text-xs text-slate-500 dark:text-slate-400">طلب #89203</span>
@@ -117,7 +118,7 @@ const CustomerSupport: React.FC = () => {
               <div className="snap-center shrink-0 w-[280px] bg-white dark:bg-surface-dark rounded-2xl p-4 border border-slate-100 dark:border-slate-800 shadow-sm flex flex-col gap-3">
                 <div className="flex gap-3">
                   <div className="w-16 h-16 shrink-0 rounded-lg bg-slate-100 dark:bg-slate-700 overflow-hidden">
-                    <img alt="Headphones" className="w-full h-full object-cover" src="https://images.unsplash.com/photo-1505740420928-5e560c06d30e?q=80&w=1000&auto=format&fit=crop" />
+                    <LazyImage alt="Headphones" className="w-full h-full object-cover" src="https://images.unsplash.com/photo-1505740420928-5e560c06d30e?q=80&w=1000&auto=format&fit=crop" isThumbnail={true} />
                   </div>
                   <div className="flex flex-col flex-1 justify-center text-right">
                     <span className="text-xs text-slate-500 dark:text-slate-400">طلب #89199</span>

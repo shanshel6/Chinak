@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Search, ShoppingCart, SearchCode, Keyboard } from 'lucide-react';
+import LazyImage from './LazyImage';
 
 interface GlobalSearchProps {
   isOpen: boolean;
@@ -156,10 +157,11 @@ const GlobalSearch: React.FC<GlobalSearchProps> = ({
                       }}
                       className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-right hover:bg-slate-50 dark:hover:bg-slate-900/50"
                     >
-                      <img 
+                      <LazyImage 
                         src={product.image} 
                         alt="" 
                         className="h-8 w-8 rounded-lg object-cover" 
+                        isThumbnail={true}
                       />
                       <div className="flex-1">
                         <p className="font-bold">{product.name}</p>

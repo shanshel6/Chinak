@@ -1,5 +1,6 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
+import LazyImage from '../components/LazyImage';
 import { ChevronRight, Search, Headphones } from 'lucide-react';
 
 const OrderNotFound: React.FC = () => {
@@ -29,10 +30,11 @@ const OrderNotFound: React.FC = () => {
               {/* Decorative background circle */}
               <div className="absolute inset-0 rounded-full border border-blue-100 dark:border-slate-700 animate-pulse"></div>
               {/* Main Illustration Image */}
-              <img 
+              <LazyImage 
                 src="https://img.freepik.com/free-vector/no-data-concept-illustration_114360-616.jpg" 
                 alt="Order not found"
                 className="size-40 object-contain relative z-10"
+                isThumbnail={false}
               />
             </div>
           </div>

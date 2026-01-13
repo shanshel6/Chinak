@@ -16,6 +16,7 @@ import {
   Layout,
   Info
 } from 'lucide-react';
+import LazyImage from '../components/LazyImage';
 import { 
   fetchProductById, 
   updateProduct, 
@@ -481,7 +482,12 @@ const ProductEditor: React.FC<ProductEditorProps> = ({ productId, onClose, onSuc
                 <div className="w-48 h-48 rounded-3xl bg-slate-50 dark:bg-slate-800 border-2 border-dashed border-slate-200 dark:border-slate-700 overflow-hidden flex items-center justify-center relative group shrink-0">
                   {formData.image ? (
                     <>
-                      <img src={formData.image} className="w-full h-full object-cover" alt="Main" />
+                      <LazyImage 
+                        src={formData.image} 
+                        className="w-full h-full object-cover" 
+                        alt="Main" 
+                        isThumbnail={true}
+                      />
                       <button 
                         onClick={() => setFormData((prev: any) => ({ ...prev, image: '' }))}
                         className="absolute top-2 right-2 p-2 bg-rose-500 text-white rounded-xl opacity-0 group-hover:opacity-100 transition-opacity shadow-lg"
@@ -517,7 +523,12 @@ const ProductEditor: React.FC<ProductEditorProps> = ({ productId, onClose, onSuc
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
                 {formData.images.map((img: any, idx: number) => (
                   <div key={idx} className="aspect-square rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-800 overflow-hidden relative group">
-                    <img src={img.url} className="w-full h-full object-cover" alt={`Gallery ${idx}`} />
+                    <LazyImage 
+                      src={img.url} 
+                      className="w-full h-full object-cover" 
+                      alt={`Gallery ${idx}`} 
+                      isThumbnail={true}
+                    />
                     <button 
                       onClick={() => setFormData((prev: any) => ({ 
                         ...prev, 
@@ -749,7 +760,12 @@ const ProductEditor: React.FC<ProductEditorProps> = ({ productId, onClose, onSuc
                             <td className="px-6 py-4">
                               <div className="w-10 h-10 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 overflow-hidden flex items-center justify-center relative group/vimg">
                                 {v.image ? (
-                                  <img src={v.image} className="w-full h-full object-cover" alt="" />
+                                  <LazyImage 
+                                    src={v.image} 
+                                    className="w-full h-full object-cover" 
+                                    alt="" 
+                                    isThumbnail={true}
+                                  />
                                 ) : (
                                   <ImageIcon size={16} className="text-slate-400" />
                                 )}
@@ -848,7 +864,11 @@ const ProductEditor: React.FC<ProductEditorProps> = ({ productId, onClose, onSuc
                 <div className="grid grid-cols-1 gap-4">
                   {formData.detailImages.map((img: any, idx: number) => (
                     <div key={idx} className="relative group rounded-2xl overflow-hidden border border-slate-100 dark:border-slate-800">
-                      <img src={img.url} className="w-full object-cover" alt="" />
+                      <LazyImage 
+                        src={img.url} 
+                        className="w-full object-cover" 
+                        alt="" 
+                      />
                       <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                         <button 
                           onClick={() => setFormData((prev: any) => ({ 

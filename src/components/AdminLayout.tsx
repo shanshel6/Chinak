@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { 
   LayoutDashboard, 
@@ -10,7 +10,10 @@ import {
   LogOut,
   Search,
   Bell,
-  User
+  User,
+  Menu,
+  X,
+  Home
 } from 'lucide-react';
 import Logo from './Logo';
 import { useAuthStore } from '../store/useAuthStore';
@@ -23,6 +26,7 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
   const navigate = useNavigate();
   const logout = useAuthStore((state) => state.logout);
   const user = useAuthStore((state) => state.user);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   const menuItems = [
     { id: 'dashboard', label: 'لوحة التحكم', icon: LayoutDashboard, path: '/admin' },
@@ -40,19 +44,50 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
 
   return (
     <div className="flex min-h-screen bg-slate-50 dark:bg-slate-950 font-display rtl" dir="rtl">
+      {/* Mobile Overlay */}
+      {isSidebarOpen && (
+        <div 
+          className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-40 lg:hidden"
+          onClick={() => setIsSidebarOpen(false)}
+        />
+      )}
+
       {/* Sidebar */}
-      <aside className="w-64 bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 flex flex-col sticky top-0 h-screen z-40">
-        <div className="p-6 flex items-center gap-3">
-          <Logo size="sm" />
-          <span className="text-xl font-black text-slate-900 dark:text-white">شيناك أدمن</span>
+      <aside className={`
+        fixed lg:sticky top-0 right-0 h-screen w-64 bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 
+        flex flex-col z-50 transition-transform duration-300 lg:translate-x-0
+        ${isSidebarOpen ? 'translate-x-0' : 'translate-x-full'}
+      `}>
+        <div className="p-6 flex items-center justify-between lg:justify-start gap-3">
+          <div className="flex items-center gap-3">
+            <Logo size="sm" />
+            <span className="text-xl font-black text-slate-900 dark:text-white">شيناك أدمن</span>
+          </div>
+          <button 
+            className="lg:hidden p-2 text-slate-500"
+            onClick={() => setIsSidebarOpen(false)}
+          >
+            <X size={20} />
+          </button>
         </div>
 
-        <nav className="flex-1 px-4 space-y-2 mt-4">
+        <div className="px-4 mb-4">
+          <NavLink
+            to="/"
+            className="flex items-center gap-3 px-4 py-3 rounded-2xl text-sm font-bold text-primary bg-primary/10 hover:bg-primary/20 transition-all border border-primary/10"
+          >
+            <Home size={20} />
+            العودة للمتجر
+          </NavLink>
+        </div>
+
+        <nav className="flex-1 px-4 space-y-2 mt-4 overflow-y-auto">
           {menuItems.map((item) => (
             <NavLink
               key={item.id}
               to={item.path}
               end={item.path === '/admin'}
+              onClick={() => setIsSidebarOpen(false)}
               className={({ isActive }) => `
                 flex items-center gap-3 px-4 py-3 rounded-2xl text-sm font-bold transition-all
                 ${isActive 
@@ -80,9 +115,24 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
       {/* Main Content */}
       <main className="flex-1 flex flex-col min-w-0">
         {/* Header */}
-        <header className="h-20 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 flex items-center justify-between px-8 sticky top-0 z-30">
+        <header className="h-20 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 flex items-center justify-between px-4 lg:px-8 sticky top-0 z-30">
           <div className="flex items-center gap-4 flex-1">
-            <div className="relative max-w-md w-full">
+            <button 
+              className="lg:hidden p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl"
+              onClick={() => setIsSidebarOpen(true)}
+            >
+              <Menu size={24} />
+            </button>
+
+            <button 
+              onClick={() => navigate('/')}
+              className="p-2 text-primary hover:bg-primary/10 rounded-xl transition-all sm:hidden"
+              title="العودة للمتجر"
+            >
+              <Home size={22} />
+            </button>
+            
+            <div className="relative max-w-md w-full hidden sm:block">
               <Search className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
               <input 
                 type="text"
@@ -92,18 +142,18 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
             </div>
           </div>
 
-          <div className="flex items-center gap-6">
+          <div className="flex items-center gap-3 lg:gap-6">
             <button className="relative p-2 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-all">
               <Bell size={22} />
               <span className="absolute top-2 left-2 w-2 h-2 bg-primary rounded-full border-2 border-white dark:border-slate-900"></span>
             </button>
             
-            <div className="flex items-center gap-3 pr-6 border-r border-slate-200 dark:border-slate-800">
-              <div className="text-left">
-                <p className="text-sm font-bold text-slate-900 dark:text-white">{user?.name || 'الأدمن'}</p>
+            <div className="flex items-center gap-3 pr-3 lg:pr-6 border-r border-slate-200 dark:border-slate-800">
+              <div className="text-left hidden xs:block">
+                <p className="text-sm font-bold text-slate-900 dark:text-white truncate max-w-[100px]">{user?.name || 'الأدمن'}</p>
                 <p className="text-[10px] text-slate-500 font-medium uppercase tracking-wider">{user?.role || 'ADMIN'}</p>
               </div>
-              <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary font-bold">
+              <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary font-bold shrink-0">
                 {user?.name?.[0] || <User size={20} />}
               </div>
             </div>
@@ -111,7 +161,7 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
         </header>
 
         {/* Page Content */}
-        <div className="p-8">
+        <div className="p-4 lg:p-8">
           {children}
         </div>
       </main>

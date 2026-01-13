@@ -49,6 +49,7 @@ import { useAuthStore } from '../store/useAuthStore';
 import StatsCards from '../components/admin/StatsCards';
 import ProductCard from '../components/admin/ProductCard';
 import ProductEditor from './ProductEditor';
+import LazyImage from '../components/LazyImage';
 
 const AdminDashboard: React.FC = () => {
   const location = useLocation();
@@ -509,53 +510,54 @@ const AdminDashboard: React.FC = () => {
     const limit = getLimit();
 
     return (
-      <div className="flex items-center justify-between px-6 py-4 bg-white dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800">
-        <div className="text-sm text-slate-500 font-medium">
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-4 px-6 py-4 bg-white dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800">
+        <div className="text-sm text-slate-500 font-medium text-center sm:text-right">
           عرض <span className="font-bold text-slate-900 dark:text-white">{(currentPage - 1) * limit + 1}</span> إلى <span className="font-bold text-slate-900 dark:text-white">{Math.min(currentPage * limit, totalItems)}</span> من <span className="font-bold text-slate-900 dark:text-white">{totalItems}</span> نتيجة
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 overflow-x-auto pb-2 sm:pb-0 w-full sm:w-auto justify-center">
           <button
             onClick={() => handlePageChange(currentPage - 1)}
             disabled={currentPage === 1}
-            className="p-2 rounded-xl border border-slate-200 dark:border-slate-700 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-slate-50 dark:hover:bg-slate-800 transition-all"
+            className="p-2 min-w-[40px] h-10 rounded-xl border border-slate-200 dark:border-slate-700 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-slate-50 dark:hover:bg-slate-800 transition-all shrink-0"
           >
             <ChevronRight size={20} />
           </button>
           
-          {[...Array(totalPages)].map((_, i) => {
-            const pageNum = i + 1;
-            // Simple pagination logic: show first, last, and current +/- 2
-            if (
-              pageNum === 1 || 
-              pageNum === totalPages || 
-              (pageNum >= currentPage - 1 && pageNum <= currentPage + 1)
-            ) {
-              return (
-                <button
-                  key={pageNum}
-                  onClick={() => handlePageChange(pageNum)}
-                  className={`w-10 h-10 rounded-xl font-bold text-sm transition-all ${
-                    currentPage === pageNum 
-                      ? 'bg-primary text-white shadow-lg shadow-primary/25' 
-                      : 'hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400'
-                  }`}
-                >
-                  {pageNum}
-                </button>
-              );
-            } else if (
-              pageNum === currentPage - 2 || 
-              pageNum === currentPage + 2
-            ) {
-              return <span key={pageNum} className="flex items-center justify-center w-8 text-slate-400">...</span>;
-            }
-            return null;
-          })}
+          <div className="flex gap-2">
+            {[...Array(totalPages)].map((_, i) => {
+              const pageNum = i + 1;
+              if (
+                pageNum === 1 || 
+                pageNum === totalPages || 
+                (pageNum >= currentPage - 1 && pageNum <= currentPage + 1)
+              ) {
+                return (
+                  <button
+                    key={pageNum}
+                    onClick={() => handlePageChange(pageNum)}
+                    className={`w-10 h-10 rounded-xl font-bold text-sm transition-all shrink-0 ${
+                      currentPage === pageNum 
+                        ? 'bg-primary text-white shadow-lg shadow-primary/25' 
+                        : 'hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400'
+                    }`}
+                  >
+                    {pageNum}
+                  </button>
+                );
+              } else if (
+                pageNum === currentPage - 2 || 
+                pageNum === currentPage + 2
+              ) {
+                return <span key={pageNum} className="flex items-center justify-center w-6 text-slate-400 shrink-0">...</span>;
+              }
+              return null;
+            })}
+          </div>
 
           <button
             onClick={() => handlePageChange(currentPage + 1)}
             disabled={currentPage === totalPages}
-            className="p-2 rounded-xl border border-slate-200 dark:border-slate-700 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-slate-50 dark:hover:bg-slate-800 transition-all"
+            className="p-2 min-w-[40px] h-10 rounded-xl border border-slate-200 dark:border-slate-700 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-slate-50 dark:hover:bg-slate-800 transition-all shrink-0"
           >
             <ChevronLeft size={20} />
           </button>
@@ -566,17 +568,17 @@ const AdminDashboard: React.FC = () => {
 
   const renderStats = () => (
     <div className="space-y-8 animate-in fade-in duration-500">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl font-black text-slate-900 dark:text-white">نظرة عامة</h2>
           <p className="text-slate-500 text-sm mt-1">متابعة أداء المتجر والإحصائيات الحالية</p>
         </div>
-        <div className="flex gap-3">
-          <button className="flex items-center gap-2 px-4 py-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-sm font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-50 transition-all">
+        <div className="flex flex-wrap gap-3">
+          <button className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-sm font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-50 transition-all">
             <Calendar size={18} />
             آخر 30 يوم
           </button>
-          <button className="flex items-center gap-2 px-4 py-2.5 bg-primary text-white rounded-xl text-sm font-bold shadow-lg shadow-primary/25 hover:scale-105 transition-all">
+          <button className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2.5 bg-primary text-white rounded-xl text-sm font-bold shadow-lg shadow-primary/25 hover:scale-105 transition-all">
             <Download size={18} />
             تصدير التقرير
           </button>
@@ -586,7 +588,7 @@ const AdminDashboard: React.FC = () => {
       <StatsCards stats={stats} />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <div className="lg:col-span-2 bg-white dark:bg-slate-900 rounded-3xl p-8 border border-slate-100 dark:border-slate-800">
+        <div className="lg:col-span-2 bg-white dark:bg-slate-900 rounded-3xl p-6 sm:p-8 border border-slate-100 dark:border-slate-800">
           <div className="flex items-center justify-between mb-8">
             <h3 className="text-lg font-black">تحليل المبيعات</h3>
             <div className="flex gap-2">
@@ -596,12 +598,12 @@ const AdminDashboard: React.FC = () => {
               </span>
             </div>
           </div>
-          <div className="h-64 flex items-center justify-center text-slate-400 font-medium bg-slate-50 dark:bg-slate-800/50 rounded-2xl border-2 border-dashed border-slate-200 dark:border-slate-700">
+          <div className="h-48 sm:h-64 flex items-center justify-center text-slate-400 font-medium bg-slate-50 dark:bg-slate-800/50 rounded-2xl border-2 border-dashed border-slate-200 dark:border-slate-700 text-center px-4">
             [رسم بياني للمبيعات سيتم دمجه لاحقاً]
           </div>
         </div>
 
-        <div className="bg-white dark:bg-slate-900 rounded-3xl p-8 border border-slate-100 dark:border-slate-800">
+        <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 sm:p-8 border border-slate-100 dark:border-slate-800">
           <h3 className="text-lg font-black mb-6">أهم التصنيفات</h3>
           <div className="space-y-6">
             {[
@@ -628,44 +630,44 @@ const AdminDashboard: React.FC = () => {
 
   const renderProducts = () => (
     <div className="space-y-6 animate-in fade-in duration-500">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl font-black text-slate-900 dark:text-white">المنتجات</h2>
           <p className="text-slate-500 text-sm mt-1">إدارة المخزون والأسعار والخصومات</p>
         </div>
-        <div className="flex gap-3">
+        <div className="flex flex-wrap gap-3">
           <button 
             onClick={() => setShowImportModal(true)}
             disabled={isImporting}
-            className="flex items-center gap-2 px-6 py-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl text-sm font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-50 transition-all disabled:opacity-50"
+            className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 sm:px-6 py-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl text-sm font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-50 transition-all disabled:opacity-50"
           >
             {isImporting ? (
               <div className="w-5 h-5 border-2 border-slate-300 border-t-slate-600 rounded-full animate-spin"></div>
             ) : (
               <Plus size={20} />
             )}
-            استيراد بالجملة
+            <span className="whitespace-nowrap">استيراد بالجملة</span>
           </button>
           <button 
             onClick={() => {
               setEditingProductId(null);
               setShowProductEditor(true);
             }}
-            className="flex items-center gap-2 px-6 py-3 bg-primary text-white rounded-2xl text-sm font-bold shadow-lg shadow-primary/25 hover:scale-105 transition-all"
+            className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 sm:px-6 py-3 bg-primary text-white rounded-2xl text-sm font-bold shadow-lg shadow-primary/25 hover:scale-105 transition-all"
           >
             <Plus size={20} />
-            إضافة منتج جديد
+            <span className="whitespace-nowrap">إضافة منتج</span>
           </button>
         </div>
       </div>
 
       {showImportModal && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-300">
-          <div className="bg-white dark:bg-slate-900 w-full max-w-2xl rounded-3xl shadow-2xl border border-slate-100 dark:border-slate-800 overflow-hidden animate-in zoom-in-95 duration-300">
-            <div className="p-6 border-b border-slate-50 dark:border-slate-800 flex items-center justify-between">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-2 sm:p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-300">
+          <div className="bg-white dark:bg-slate-900 w-full max-w-2xl max-h-[95vh] rounded-2xl sm:rounded-3xl shadow-2xl border border-slate-100 dark:border-slate-800 overflow-hidden animate-in zoom-in-95 duration-300 flex flex-col">
+            <div className="p-4 sm:p-6 border-b border-slate-50 dark:border-slate-800 flex items-center justify-between shrink-0">
               <div>
-                <h3 className="text-xl font-black text-slate-900 dark:text-white">استيراد المنتجات بالجملة</h3>
-                <p className="text-sm text-slate-500 mt-1">قم بلصق بيانات JSON للمنتجات هنا</p>
+                <h3 className="text-lg sm:text-xl font-black text-slate-900 dark:text-white">استيراد المنتجات بالجملة</h3>
+                <p className="text-xs sm:text-sm text-slate-500 mt-1">قم بلصق بيانات JSON للمنتجات هنا</p>
               </div>
               <button 
                 onClick={() => setShowImportModal(false)}
@@ -674,7 +676,7 @@ const AdminDashboard: React.FC = () => {
                 <X size={20} />
               </button>
             </div>
-            <div className="p-6">
+            <div className="p-4 sm:p-6 overflow-y-auto">
               <textarea
                 value={importText}
                 onChange={(e) => setImportText(e.target.value)}
@@ -685,19 +687,19 @@ const AdminDashboard: React.FC = () => {
                   }
                 }}
                 placeholder='{"products": [...] }'
-                className="w-full h-64 bg-slate-50 dark:bg-slate-800 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-2xl p-4 text-left font-mono text-sm focus:ring-2 focus:ring-primary/20 outline-none transition-all resize-none"
+                className="w-full h-48 sm:h-64 bg-slate-50 dark:bg-slate-800 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-2xl p-4 text-left font-mono text-xs sm:text-sm focus:ring-2 focus:ring-primary/20 outline-none transition-all resize-none"
               />
-              <div className="flex gap-3 mt-6">
+              <div className="flex flex-col sm:flex-row gap-3 mt-6">
                 <button
                   onClick={handlePasteImport}
                   disabled={isImporting || !importText.trim()}
-                  className="flex-1 bg-primary text-white py-4 rounded-2xl font-bold shadow-lg shadow-primary/25 hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-50 disabled:scale-100"
+                  className="flex-1 bg-primary text-white py-3.5 sm:py-4 rounded-2xl font-bold shadow-lg shadow-primary/25 hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-50 disabled:scale-100"
                 >
                   {isImporting ? 'جاري الاستيراد...' : 'بدء الاستيراد'}
                 </button>
                 <button
                   onClick={() => setShowImportModal(false)}
-                  className="px-8 py-4 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 rounded-2xl font-bold hover:bg-slate-200 transition-all"
+                  className="px-8 py-3.5 sm:py-4 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 rounded-2xl font-bold hover:bg-slate-200 transition-all"
                 >
                   إلغاء
                 </button>
@@ -707,53 +709,57 @@ const AdminDashboard: React.FC = () => {
         </div>
       )}
 
-      <div className="flex gap-4">
-        <div className="flex items-center gap-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl px-4 py-3.5">
-          <input 
-            type="checkbox" 
-            checked={products.length > 0 && selectedProducts.length === products.length}
-            onChange={(e) => {
-              if (e.target.checked) {
-                setSelectedProducts(products.map(p => p.id));
-              } else {
-                setSelectedProducts([]);
-              }
+      <div className="flex flex-col md:flex-row gap-4">
+        <div className="flex gap-2">
+          <div className="flex items-center gap-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl px-4 py-3.5 flex-1 md:flex-none">
+            <input 
+              type="checkbox" 
+              checked={products.length > 0 && selectedProducts.length === products.length}
+              onChange={(e) => {
+                if (e.target.checked) {
+                  setSelectedProducts(products.map(p => p.id));
+                } else {
+                  setSelectedProducts([]);
+                }
+              }}
+              className="w-5 h-5 rounded border-slate-300 text-primary focus:ring-primary"
+            />
+            <span className="text-sm font-bold text-slate-500">الكل</span>
+          </div>
+          
+          <button 
+            onClick={() => {
+              const drafts = products.filter(p => p.status === 'DRAFT').map(p => p.id);
+              setSelectedProducts(drafts);
             }}
-            className="w-5 h-5 rounded border-slate-300 text-primary focus:ring-primary"
-          />
-          <span className="text-sm font-bold text-slate-500">الكل</span>
+            className="px-4 py-3.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl text-sm font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-50 transition-all flex-1 md:flex-none"
+          >
+            تحديد المسودات
+          </button>
         </div>
-        
-        <button 
-          onClick={() => {
-            const drafts = products.filter(p => p.status === 'DRAFT').map(p => p.id);
-            setSelectedProducts(drafts);
-          }}
-          className="px-4 py-3.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl text-sm font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-50 transition-all"
-        >
-          تحديد المسودات فقط
-        </button>
 
-        <div className="relative flex-1">
-          <Search className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
-          <input 
-            type="text"
-            placeholder="ابحث عن منتج بالاسم أو الكود..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && loadData(1)}
-            className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl py-3.5 pr-12 pl-4 text-sm focus:ring-2 focus:ring-primary/20 transition-all"
-          />
+        <div className="flex gap-2 flex-1">
+          <div className="relative flex-1">
+            <Search className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
+            <input 
+              type="text"
+              placeholder="ابحث عن منتج..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && loadData(1)}
+              className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl py-3.5 pr-12 pl-4 text-sm focus:ring-2 focus:ring-primary/20 transition-all"
+            />
+          </div>
+          <button 
+            onClick={() => loadData(1)}
+            className="px-6 py-3.5 bg-primary text-white rounded-2xl text-sm font-bold shadow-lg shadow-primary/25 hover:scale-105 transition-all"
+          >
+            بحث
+          </button>
+          <button className="px-5 py-3.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl text-slate-600 dark:text-slate-400 hover:bg-slate-50 transition-all">
+            <Filter size={20} />
+          </button>
         </div>
-        <button 
-          onClick={() => loadData(1)}
-          className="px-6 py-3.5 bg-primary text-white rounded-2xl text-sm font-bold shadow-lg shadow-primary/25 hover:scale-105 transition-all"
-        >
-          بحث
-        </button>
-        <button className="px-5 py-3.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl text-slate-600 dark:text-slate-400 hover:bg-slate-50 transition-all">
-          <Filter size={20} />
-        </button>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-6">
@@ -787,37 +793,45 @@ const AdminDashboard: React.FC = () => {
 
       {/* Floating Bulk Actions Bar */}
       {selectedProducts.length > 0 && (
-        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[90] animate-in slide-in-from-bottom-10 duration-300">
-          <div className="bg-slate-900 text-white px-6 py-4 rounded-3xl shadow-2xl flex items-center gap-8 border border-slate-800">
-            <div className="flex items-center gap-3 border-l border-slate-700 pl-8">
-              <span className="w-8 h-8 bg-primary rounded-full flex items-center justify-center text-sm font-black">
-                {selectedProducts.length}
-              </span>
-              <span className="text-sm font-bold">منتجات مختارة</span>
-            </div>
-            
-            <div className="flex items-center gap-4">
+        <div className="fixed bottom-6 sm:bottom-8 left-4 right-4 sm:left-1/2 sm:right-auto sm:-translate-x-1/2 z-[90] animate-in slide-in-from-bottom-10 duration-300">
+          <div className="bg-slate-900 text-white px-4 sm:px-6 py-3 sm:py-4 rounded-2xl sm:rounded-3xl shadow-2xl flex flex-col sm:flex-row items-center gap-4 sm:gap-8 border border-slate-800">
+            <div className="flex items-center gap-3 sm:border-l sm:border-slate-700 sm:pl-8 w-full sm:w-auto justify-between sm:justify-start">
+              <div className="flex items-center gap-3">
+                <span className="w-8 h-8 bg-primary rounded-full flex items-center justify-center text-sm font-black">
+                  {selectedProducts.length}
+                </span>
+                <span className="text-sm font-bold">منتجات مختارة</span>
+              </div>
               <button 
                 onClick={() => setSelectedProducts([])}
-                className="text-sm font-bold text-slate-400 hover:text-white transition-colors"
+                className="sm:hidden text-xs font-bold text-slate-400 hover:text-white transition-colors"
+              >
+                إلغاء
+              </button>
+            </div>
+            
+            <div className="flex items-center gap-2 sm:gap-4 w-full sm:w-auto">
+              <button 
+                onClick={() => setSelectedProducts([])}
+                className="hidden sm:block text-sm font-bold text-slate-400 hover:text-white transition-colors"
               >
                 إلغاء التحديد
               </button>
               
               <button 
                 onClick={handleBulkPublish}
-                className="flex items-center gap-2 px-6 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-sm font-bold transition-all shadow-lg shadow-emerald-500/20"
+                className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 sm:px-6 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-sm font-bold transition-all shadow-lg shadow-emerald-500/20"
               >
                 <CheckCircle2 size={18} />
-                نشر المحدد
+                <span className="whitespace-nowrap">نشر</span>
               </button>
 
               <button 
                 onClick={handleBulkDelete}
-                className="flex items-center gap-2 px-6 py-2.5 bg-rose-500 hover:bg-rose-600 text-white rounded-xl text-sm font-bold transition-all shadow-lg shadow-rose-500/20"
+                className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 sm:px-6 py-2.5 bg-rose-500 hover:bg-rose-600 text-white rounded-xl text-sm font-bold transition-all shadow-lg shadow-rose-500/20"
               >
                 <Trash2 size={18} />
-                حذف المحدد
+                <span className="whitespace-nowrap">حذف</span>
               </button>
             </div>
           </div>
@@ -828,20 +842,23 @@ const AdminDashboard: React.FC = () => {
 
   const renderCoupons = () => (
     <div className="space-y-6 animate-in fade-in duration-500">
-      <div className="flex flex-col md:flex-row gap-4 items-center justify-between">
-        <h2 className="text-2xl font-black text-slate-900 dark:text-white">إدارة الخصومات والكوبونات</h2>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h2 className="text-2xl font-black text-slate-900 dark:text-white">إدارة الخصومات والكوبونات</h2>
+          <p className="text-slate-500 text-sm mt-1">إنشاء وإدارة أكواد الخصم للمتجر</p>
+        </div>
         <button 
           onClick={() => openCouponModal()}
-          className="flex items-center gap-2 px-6 py-3.5 bg-primary text-white rounded-2xl text-sm font-bold shadow-lg shadow-primary/25 hover:scale-105 transition-all"
+          className="flex items-center justify-center gap-2 px-6 py-3.5 bg-primary text-white rounded-2xl text-sm font-bold shadow-lg shadow-primary/25 hover:scale-105 transition-all w-full sm:w-auto"
         >
           <Plus size={20} />
-          إضافة كوبون جديد
+          <span className="whitespace-nowrap">إضافة كوبون جديد</span>
         </button>
       </div>
 
       <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-100 dark:border-slate-800 overflow-hidden shadow-sm">
-        <div className="overflow-x-auto">
-          <table className="w-full text-right">
+        <div className="overflow-x-auto scrollbar-thin scrollbar-thumb-slate-200 dark:scrollbar-thumb-slate-800">
+          <table className="w-full text-right min-w-[800px]">
             <thead className="bg-slate-50 dark:bg-slate-800/50 text-slate-500 text-[10px] font-black uppercase tracking-wider">
               <tr>
                 <th className="px-6 py-4">الكود</th>
@@ -913,19 +930,19 @@ const AdminDashboard: React.FC = () => {
       </div>
 
       {showCouponModal && (
-        <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-300">
-          <div className="bg-white dark:bg-slate-900 w-full max-w-md rounded-3xl shadow-2xl border border-slate-100 dark:border-slate-800 overflow-hidden animate-in zoom-in-95 duration-300">
-            <div className="p-6 border-b border-slate-50 dark:border-slate-800 flex items-center justify-between">
-              <h3 className="text-xl font-black text-slate-900 dark:text-white">
+        <div className="fixed inset-0 z-[120] flex items-center justify-center p-2 sm:p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-300">
+          <div className="bg-white dark:bg-slate-900 w-full max-w-md max-h-[95vh] rounded-2xl sm:rounded-3xl shadow-2xl border border-slate-100 dark:border-slate-800 overflow-hidden animate-in zoom-in-95 duration-300 flex flex-col">
+            <div className="p-4 sm:p-6 border-b border-slate-50 dark:border-slate-800 flex items-center justify-between shrink-0">
+              <h3 className="text-lg sm:text-xl font-black text-slate-900 dark:text-white">
                 {selectedCoupon ? 'تعديل كوبون' : 'إضافة كوبون جديد'}
               </h3>
               <button onClick={() => setShowCouponModal(false)} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl">
                 <X size={20} />
               </button>
             </div>
-            <form onSubmit={handleSaveCoupon} className="p-6 space-y-4">
+            <form onSubmit={handleSaveCoupon} className="p-4 sm:p-6 space-y-4 overflow-y-auto">
               <div>
-                <label className="block text-xs font-black text-slate-500 mb-2 uppercase">كود الكوبون</label>
+                <label className="block text-[10px] sm:text-xs font-black text-slate-500 mb-2 uppercase">كود الكوبون</label>
                 <input 
                   type="text"
                   required
@@ -936,9 +953,9 @@ const AdminDashboard: React.FC = () => {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-black text-slate-500 mb-2 uppercase">نوع الخصم</label>
+                  <label className="block text-[10px] sm:text-xs font-black text-slate-500 mb-2 uppercase">نوع الخصم</label>
                   <select 
                     value={couponFormData.discountType}
                     onChange={(e) => setCouponFormData({...couponFormData, discountType: e.target.value})}
@@ -949,7 +966,7 @@ const AdminDashboard: React.FC = () => {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-black text-slate-500 mb-2 uppercase">القيمة</label>
+                  <label className="block text-[10px] sm:text-xs font-black text-slate-500 mb-2 uppercase">القيمة</label>
                   <input 
                     type="number"
                     required
@@ -960,9 +977,9 @@ const AdminDashboard: React.FC = () => {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-black text-slate-500 mb-2 uppercase">الحد الأدنى للطلب</label>
+                  <label className="block text-[10px] sm:text-xs font-black text-slate-500 mb-2 uppercase">الحد الأدنى للطلب</label>
                   <input 
                     type="number"
                     required
@@ -972,7 +989,7 @@ const AdminDashboard: React.FC = () => {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-black text-slate-500 mb-2 uppercase">تاريخ الانتهاء</label>
+                  <label className="block text-[10px] sm:text-xs font-black text-slate-500 mb-2 uppercase">تاريخ الانتهاء</label>
                   <input 
                     type="date"
                     required
@@ -983,9 +1000,9 @@ const AdminDashboard: React.FC = () => {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-black text-slate-500 mb-2 uppercase">النوع</label>
+                  <label className="block text-[10px] sm:text-xs font-black text-slate-500 mb-2 uppercase">النوع</label>
                   <select 
                     value={couponFormData.isPublic ? 'true' : 'false'}
                     onChange={(e) => setCouponFormData({...couponFormData, isPublic: e.target.value === 'true'})}
@@ -996,7 +1013,7 @@ const AdminDashboard: React.FC = () => {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-black text-slate-500 mb-2 uppercase">حد الاستخدام</label>
+                  <label className="block text-[10px] sm:text-xs font-black text-slate-500 mb-2 uppercase">حد الاستخدام</label>
                   <input 
                     type="number"
                     value={couponFormData.usageLimit}
@@ -1007,17 +1024,17 @@ const AdminDashboard: React.FC = () => {
                 </div>
               </div>
 
-              <div className="pt-4 flex gap-3">
+              <div className="pt-4 flex flex-col sm:flex-row gap-3">
                 <button 
                   type="button"
                   onClick={() => setShowCouponModal(false)}
-                  className="flex-1 py-3.5 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 rounded-2xl font-bold hover:bg-slate-200 transition-all"
+                  className="flex-1 py-3.5 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 rounded-2xl font-bold hover:bg-slate-200 transition-all order-2 sm:order-1"
                 >
                   إلغاء
                 </button>
                 <button 
                   type="submit"
-                  className="flex-1 py-3.5 bg-primary text-white rounded-2xl font-bold shadow-lg shadow-primary/25 hover:scale-105 transition-all"
+                  className="flex-1 py-3.5 bg-primary text-white rounded-2xl font-bold shadow-lg shadow-primary/25 hover:scale-105 transition-all order-1 sm:order-2"
                 >
                   {selectedCoupon ? 'تحديث' : 'إنشاء'}
                 </button>
@@ -1031,14 +1048,14 @@ const AdminDashboard: React.FC = () => {
 
   const renderUsers = () => (
     <div className="space-y-6 animate-in fade-in duration-500">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl font-black text-slate-900 dark:text-white">المستخدمين</h2>
           <p className="text-slate-500 text-sm mt-1">إدارة صلاحيات المستخدمين والبيانات الشخصية</p>
         </div>
       </div>
 
-      <div className="flex gap-4">
+      <div className="flex flex-col sm:flex-row gap-4">
         <div className="relative flex-1">
           <Search className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
           <input 
@@ -1052,14 +1069,15 @@ const AdminDashboard: React.FC = () => {
         </div>
         <button 
           onClick={() => loadData(1)}
-          className="px-6 py-3.5 bg-primary text-white rounded-2xl text-sm font-bold shadow-lg shadow-primary/25 hover:scale-105 transition-all"
+          className="px-6 py-3.5 bg-primary text-white rounded-2xl text-sm font-bold shadow-lg shadow-primary/25 hover:scale-105 transition-all w-full sm:w-auto"
         >
           بحث
         </button>
       </div>
 
       <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-100 dark:border-slate-800 overflow-hidden shadow-sm">
-        <table className="w-full text-right">
+        <div className="overflow-x-auto scrollbar-thin scrollbar-thumb-slate-200 dark:scrollbar-thumb-slate-800">
+          <table className="w-full text-right min-w-[800px]">
           <thead>
             <tr className="bg-slate-50 dark:bg-slate-800/50 text-slate-500 text-xs font-black uppercase tracking-wider">
               <th className="px-6 py-4">المستخدم</th>
@@ -1111,6 +1129,7 @@ const AdminDashboard: React.FC = () => {
             ))}
           </tbody>
         </table>
+        </div>
         {renderPagination()}
       </div>
     </div>
@@ -1141,18 +1160,18 @@ const AdminDashboard: React.FC = () => {
     if (!selectedOrder) return null;
 
     return (
-      <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-300">
-        <div className="bg-white dark:bg-slate-900 w-full max-w-4xl max-h-[90vh] rounded-3xl shadow-2xl border border-slate-100 dark:border-slate-800 overflow-hidden animate-in zoom-in-95 duration-300 flex flex-col">
+      <div className="fixed inset-0 z-[110] flex items-center justify-center p-2 sm:p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-300">
+        <div className="bg-white dark:bg-slate-900 w-full max-w-4xl max-h-[95vh] rounded-2xl sm:rounded-3xl shadow-2xl border border-slate-100 dark:border-slate-800 overflow-hidden animate-in zoom-in-95 duration-300 flex flex-col">
           {/* Modal Header */}
-          <div className="p-6 border-b border-slate-50 dark:border-slate-800 flex items-center justify-between shrink-0">
+          <div className="p-4 sm:p-6 border-b border-slate-50 dark:border-slate-800 flex items-center justify-between shrink-0">
             <div>
-              <div className="flex items-center gap-3">
-                <h3 className="text-xl font-black text-slate-900 dark:text-white">تفاصيل الطلب #{selectedOrder.id}</h3>
-                <span className={`px-3 py-1 rounded-full text-[10px] font-black ${getStatusConfig(selectedOrder.status).class}`}>
+              <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
+                <h3 className="text-lg sm:text-xl font-black text-slate-900 dark:text-white">تفاصيل الطلب #{selectedOrder.id}</h3>
+                <span className={`w-fit px-3 py-1 rounded-full text-[10px] font-black ${getStatusConfig(selectedOrder.status).class}`}>
                   {getStatusConfig(selectedOrder.status).label}
                 </span>
               </div>
-              <p className="text-sm text-slate-500 mt-1">
+              <p className="text-xs sm:text-sm text-slate-500 mt-1">
                 تم الطلب في {new Date(selectedOrder.createdAt).toLocaleString('ar-IQ')}
               </p>
             </div>
@@ -1165,7 +1184,7 @@ const AdminDashboard: React.FC = () => {
           </div>
 
           {/* Modal Body */}
-          <div className="p-6 overflow-y-auto space-y-8 min-h-[400px]">
+          <div className="p-4 sm:p-6 overflow-y-auto space-y-8">
             {modalLoading ? (
               <div className="flex flex-col items-center justify-center py-20 gap-4">
                 <div className="w-10 h-10 border-4 border-primary/20 border-t-primary rounded-full animate-spin"></div>
@@ -1175,24 +1194,24 @@ const AdminDashboard: React.FC = () => {
               <>
                 {/* Customer & Shipping Info */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-5 border border-slate-100 dark:border-slate-800">
-                <h4 className="font-black text-sm mb-4 flex items-center gap-2">
+              <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-4 sm:p-5 border border-slate-100 dark:border-slate-800">
+                <h4 className="font-black text-xs sm:text-sm mb-4 flex items-center gap-2">
                   <Users size={16} className="text-primary" />
                   معلومات العميل
                 </h4>
-                <div className="space-y-2 text-sm">
+                <div className="space-y-2 text-xs sm:text-sm">
                   <p><span className="text-slate-500">الاسم:</span> <span className="font-bold">{selectedOrder.user?.name || 'مستخدم'}</span></p>
                   <p><span className="text-slate-500">الهاتف:</span> <span className="font-bold">{selectedOrder.address?.phone || '-'}</span></p>
                   <p><span className="text-slate-500">البريد:</span> <span className="font-bold">{selectedOrder.user?.email || '-'}</span></p>
                 </div>
               </div>
 
-              <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-5 border border-slate-100 dark:border-slate-800">
-                <h4 className="font-black text-sm mb-4 flex items-center gap-2">
+              <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-4 sm:p-5 border border-slate-100 dark:border-slate-800">
+                <h4 className="font-black text-xs sm:text-sm mb-4 flex items-center gap-2">
                   <Package size={16} className="text-primary" />
                   عنوان الشحن
                 </h4>
-                <div className="space-y-2 text-sm">
+                <div className="space-y-2 text-xs sm:text-sm">
                   <p><span className="text-slate-500">المدينة:</span> <span className="font-bold">{selectedOrder.address?.city || '-'}</span></p>
                   <p><span className="text-slate-500">الشارع:</span> <span className="font-bold">{selectedOrder.address?.street || '-'}</span></p>
                   <p><span className="text-slate-500">البناية/الطابق:</span> <span className="font-bold">{selectedOrder.address?.buildingNo || '-'}{selectedOrder.address?.floorNo ? ` / ${selectedOrder.address.floorNo}` : ''}</span></p>
@@ -1202,13 +1221,13 @@ const AdminDashboard: React.FC = () => {
 
             {/* Order Items */}
             <div>
-              <h4 className="font-black text-sm mb-4 flex items-center gap-2">
+              <h4 className="font-black text-xs sm:text-sm mb-4 flex items-center gap-2">
                 <ShoppingCart size={16} className="text-primary" />
                 المنتجات المطلوبة ({selectedOrder.items?.length || 0})
               </h4>
-              <div className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl overflow-hidden">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-right text-sm">
+              <div className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl overflow-hidden shadow-sm">
+                <div className="overflow-x-auto scrollbar-thin">
+                  <table className="w-full text-right text-xs sm:text-sm min-w-[600px]">
                     <thead className="bg-slate-50 dark:bg-slate-800/50 text-slate-500 text-[10px] font-black uppercase">
                       <tr>
                         <th className="px-4 py-3">المنتج</th>
@@ -1223,15 +1242,16 @@ const AdminDashboard: React.FC = () => {
                         <tr key={item.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
                           <td className="px-4 py-4">
                             <div className="flex items-center gap-3">
-                              <img 
+                              <LazyImage 
                                 src={item.product?.image} 
                                 alt={item.product?.name} 
-                                className="w-12 h-12 rounded-lg object-cover bg-slate-100"
+                                className="w-10 h-10 sm:w-12 sm:h-12 rounded-lg object-cover bg-slate-100 shrink-0"
+                                isThumbnail={true}
                               />
-                              <div>
-                                <p className="font-bold line-clamp-1">{item.product?.name}</p>
+                              <div className="min-w-0">
+                                <p className="font-bold truncate max-w-[150px] sm:max-w-[200px]">{item.product?.name}</p>
                                 {item.variant && (
-                                  <p className="text-[10px] text-slate-500 mt-0.5">
+                                  <p className="text-[10px] text-slate-500 mt-0.5 truncate max-w-[150px] sm:max-w-[200px]">
                                     {item.variant.combination}
                                   </p>
                                 )}
@@ -1295,13 +1315,13 @@ const AdminDashboard: React.FC = () => {
 
             {/* Order Summary */}
             <div className="flex justify-end">
-              <div className="w-full md:w-80 space-y-3">
-                <div className="flex justify-between text-sm">
-                  <span className="text-slate-500">المجموع الفرعي:</span>
-                  <span className="font-bold">{(selectedOrder.total - (selectedOrder.internationalShippingFee || 0)).toLocaleString()} د.ع</span>
+              <div className="w-full sm:w-80 space-y-3 bg-slate-50 dark:bg-slate-800/50 p-4 rounded-2xl border border-slate-100 dark:border-slate-800">
+                <div className="flex justify-between text-xs sm:text-sm">
+                  <span className="text-slate-500 font-bold">المجموع الفرعي:</span>
+                  <span className="font-black">{(selectedOrder.total - (selectedOrder.internationalShippingFee || 0)).toLocaleString()} د.ع</span>
                 </div>
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-slate-500">رسوم الشحن الدولي:</span>
+                <div className="flex items-center justify-between text-xs sm:text-sm">
+                  <span className="text-slate-500 font-bold">رسوم الشحن الدولي:</span>
                   <div className="flex items-center gap-2">
                     <input 
                       type="number"
@@ -1313,14 +1333,14 @@ const AdminDashboard: React.FC = () => {
                           handleUpdateInternationalFee(selectedOrder.id, val.toString());
                         }
                       }}
-                      className="w-28 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs font-bold text-blue-600 focus:ring-1 focus:ring-primary/50 outline-none transition-all text-left"
+                      className="w-24 sm:w-28 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs font-black text-blue-600 focus:ring-1 focus:ring-primary/50 outline-none transition-all text-left"
                     />
                     <span className="text-[10px] font-bold text-slate-400">د.ع</span>
                   </div>
                 </div>
-                <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex justify-between">
-                  <span className="font-black">الإجمالي الكلي:</span>
-                  <span className="font-black text-lg text-primary">{selectedOrder.total.toLocaleString()} د.ع</span>
+                <div className="pt-3 border-t border-slate-200 dark:border-slate-700 flex justify-between items-center">
+                  <span className="font-black text-sm sm:text-base">الإجمالي الكلي:</span>
+                  <span className="font-black text-lg sm:text-xl text-primary">{selectedOrder.total.toLocaleString()} د.ع</span>
                 </div>
               </div>
             </div>
@@ -1329,10 +1349,10 @@ const AdminDashboard: React.FC = () => {
       </div>
 
       {/* Modal Footer */}
-          <div className="p-6 border-t border-slate-50 dark:border-slate-800 shrink-0 flex gap-3">
+          <div className="p-4 sm:p-6 border-t border-slate-50 dark:border-slate-800 shrink-0 flex flex-col sm:flex-row gap-3">
             <button
               onClick={() => setShowOrderModal(false)}
-              className="flex-1 py-4 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 rounded-2xl font-bold hover:bg-slate-200 transition-all"
+              className="flex-1 py-3.5 sm:py-4 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 rounded-2xl font-bold hover:bg-slate-200 transition-all order-2 sm:order-1"
             >
               إغلاق
             </button>
@@ -1340,7 +1360,7 @@ const AdminDashboard: React.FC = () => {
               onClick={() => {
                 window.print();
               }}
-              className="px-8 py-4 bg-primary/10 text-primary rounded-2xl font-bold hover:bg-primary/20 transition-all flex items-center gap-2"
+              className="px-8 py-3.5 sm:py-4 bg-primary/10 text-primary rounded-2xl font-bold hover:bg-primary/20 transition-all flex items-center justify-center gap-2 order-1 sm:order-2"
             >
               <Download size={20} />
               طباعة
@@ -1353,19 +1373,19 @@ const AdminDashboard: React.FC = () => {
 
   const renderOrders = () => (
     <div className="space-y-6 animate-in fade-in duration-500">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl font-black text-slate-900 dark:text-white">الطلبات</h2>
           <p className="text-slate-500 text-sm mt-1">متابعة حالة الطلبات والشحن والمدفوعات</p>
         </div>
       </div>
 
-      <div className="flex gap-4">
+      <div className="flex flex-col sm:flex-row gap-4">
         <div className="relative flex-1">
           <Search className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
           <input 
             type="text"
-            placeholder="ابحث برقم الطلب، اسم العميل، أو الهاتف..."
+            placeholder="ابحث برقم الطلب، اسم العميل..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && loadData(1)}
@@ -1374,14 +1394,15 @@ const AdminDashboard: React.FC = () => {
         </div>
         <button 
           onClick={() => loadData(1)}
-          className="px-6 py-3.5 bg-primary text-white rounded-2xl text-sm font-bold shadow-lg shadow-primary/25 hover:scale-105 transition-all"
+          className="px-6 py-3.5 bg-primary text-white rounded-2xl text-sm font-bold shadow-lg shadow-primary/25 hover:scale-105 transition-all w-full sm:w-auto"
         >
           بحث
         </button>
       </div>
 
       <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-100 dark:border-slate-800 overflow-hidden shadow-sm">
-        <table className="w-full text-right">
+        <div className="overflow-x-auto scrollbar-thin scrollbar-thumb-slate-200 dark:scrollbar-thumb-slate-800">
+          <table className="w-full text-right min-w-[1000px]">
           <thead>
             <tr className="bg-slate-50 dark:bg-slate-800/50 text-slate-500 text-xs font-black uppercase tracking-wider">
               <th className="px-6 py-4">رقم الطلب</th>
@@ -1481,6 +1502,7 @@ const AdminDashboard: React.FC = () => {
             ))}
           </tbody>
         </table>
+        </div>
         {orders.length === 0 && (
           <div className="py-20 text-center">
             <ShoppingCart className="mx-auto mb-4 text-slate-200" size={48} />
@@ -1493,7 +1515,7 @@ const AdminDashboard: React.FC = () => {
   );
 
   return (
-    <div className="max-w-[1600px] mx-auto">
+    <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-8">
       {loading ? (
         <div className="flex flex-col items-center justify-center py-32 gap-6">
           <div className="w-12 h-12 border-4 border-primary/20 border-t-primary rounded-full animate-spin"></div>

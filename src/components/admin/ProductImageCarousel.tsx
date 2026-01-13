@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
+import LazyImage from '../LazyImage';
 
 interface ProductImageCarouselProps {
   images: any[];
@@ -28,10 +29,11 @@ const ProductImageCarousel: React.FC<ProductImageCarouselProps> = ({ images, mai
 
   return (
     <div className={`w-20 h-20 rounded-xl overflow-hidden bg-slate-100 dark:bg-slate-700 shrink-0 relative group/carousel ${!isActive ? 'opacity-60 grayscale' : ''}`}>
-      <img 
+      <LazyImage 
         className="w-full h-full object-cover transition-transform duration-500 group-hover/carousel:scale-110" 
         src={displayImages[currentIndex]?.url || mainImage} 
         alt="" 
+        priority={true}
       />
       
       {displayImages.length > 1 && (

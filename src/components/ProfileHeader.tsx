@@ -1,6 +1,7 @@
 import React from 'react';
 import { User as UserIcon, Camera } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import LazyImage from './LazyImage';
 
 interface ProfileHeaderProps {
   user: any;
@@ -42,7 +43,7 @@ const ProfileHeader: React.FC<ProfileHeaderProps> = ({
           className="bg-center bg-no-repeat aspect-square bg-cover rounded-full h-24 w-24 border-4 border-slate-50 dark:border-slate-700 shadow-sm transition-transform group-hover:scale-105 flex items-center justify-center bg-slate-100 dark:bg-slate-800 overflow-hidden"
         >
           {editAvatar || user?.avatar ? (
-            <img src={editAvatar || user?.avatar} alt={user?.name} className="h-full w-full object-cover" />
+            <LazyImage src={editAvatar || user?.avatar} alt={user?.name} className="h-full w-full object-cover" isThumbnail={false} />
           ) : (
             <UserIcon size={48} className="text-slate-400" />
           )}

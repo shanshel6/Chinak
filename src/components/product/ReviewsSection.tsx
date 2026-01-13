@@ -280,11 +280,12 @@ const ReviewsSection: React.FC<ReviewsSectionProps> = ({
           </button>
           
           <div className="relative w-full max-w-4xl h-[75vh] flex items-center justify-center">
-            <img 
+            <LazyImage 
               src={selectedImage} 
               alt="Zoomed review" 
               className="max-w-full max-h-full object-contain rounded-[40px] shadow-2xl animate-in zoom-in-95 duration-500 border-4 border-white/10"
-              onClick={(e) => e.stopPropagation()}
+              isThumbnail={false}
+              onClick={(e: React.MouseEvent) => e.stopPropagation()}
             />
           </div>
           

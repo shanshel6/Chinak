@@ -50,10 +50,11 @@ const CartEmpty: React.FC = () => {
           <div className="flex flex-col items-center gap-6 animate-fade-in-up">
             {/* Illustration */}
             <div className="relative w-full max-w-[280px] aspect-square rounded-full bg-blue-50 dark:bg-blue-900/20 flex items-center justify-center p-8">
-              <img 
+              <LazyImage 
                 src="https://images.unsplash.com/photo-1586769852044-692d6e671f6e?q=80&w=1000&auto=format&fit=crop" 
                 alt="Empty Cart Illustration" 
                 className="w-full h-full object-contain mix-blend-multiply"
+                isThumbnail={false}
               />
             </div>
 
