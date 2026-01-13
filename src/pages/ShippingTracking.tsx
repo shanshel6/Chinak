@@ -42,6 +42,7 @@ const ShippingTracking: React.FC = () => {
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [paymentDone, setPaymentDone] = useState(false);
   const [isConfirmingPayment, setIsConfirmingPayment] = useState(false);
+  const [paymentTab, setPaymentTab] = useState<'zain' | 'qi'>('zain');
 
   const unreadNotifications = useNotificationStore(state => state.unreadCount);
 
@@ -639,46 +640,81 @@ const ShippingTracking: React.FC = () => {
                       اختر وسيلة الدفع المناسبة لك:
                     </p>
 
-                    <div className="grid grid-cols-1 gap-4">
-                      {/* Zain Cash */}
-                      <div className="flex flex-col gap-3 p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700">
-                        <div className="flex items-center justify-between">
-                          <span className="font-bold text-slate-900 dark:text-white">زين كاش (Zain Cash)</span>
-                          <span className="text-[10px] px-2 py-0.5 bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 rounded-full font-bold">نشط</span>
-                        </div>
-                        <div className="aspect-square w-full max-w-[200px] mx-auto bg-white rounded-xl p-2 shadow-inner border border-slate-100 flex items-center justify-center overflow-hidden">
-                          <img 
-                            src="/assets/payment/zaincash_qr.png" 
-                            alt="Zain Cash QR" 
-                            className="w-full h-full object-contain"
-                            onError={(e) => {
-                              console.error('Failed to load ZainCash QR image');
-                              e.currentTarget.src = 'https://placehold.co/400x400?text=ZainCash+QR';
-                            }}
-                          />
-                        </div>
-                        <p className="text-[10px] text-center text-slate-500">قم بمسح الكود أعلاه عبر تطبيق زين كاش</p>
-                      </div>
+                    {/* Tabs */}
+                    <div className="flex p-1 bg-slate-100 dark:bg-slate-800 rounded-xl gap-1">
+                      <button 
+                        onClick={() => setPaymentTab('zain')}
+                        className={`flex-1 py-2.5 rounded-lg text-sm font-bold transition-all ${paymentTab === 'zain' ? 'bg-white dark:bg-slate-700 text-primary shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                      >
+                        زين كاش
+                      </button>
+                      <button 
+                        onClick={() => setPaymentTab('qi')}
+                        className={`flex-1 py-2.5 rounded-lg text-sm font-bold transition-all ${paymentTab === 'qi' ? 'bg-white dark:bg-slate-700 text-primary shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                      >
+                        سوبر كي
+                      </button>
+                    </div>
 
-                      {/* Qi Card */}
-                      <div className="flex flex-col gap-3 p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700">
-                        <div className="flex items-center justify-between">
-                          <span className="font-bold text-slate-900 dark:text-white">كي كارد (Qi Card)</span>
-                          <span className="text-[10px] px-2 py-0.5 bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 rounded-full font-bold">نشط</span>
+                    <div className="mt-4">
+                      {paymentTab === 'zain' ? (
+                        /* Zain Cash */
+                        <div className="flex flex-col gap-3 p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700 animate-in fade-in slide-in-from-left-4 duration-300">
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-slate-900 dark:text-white">زين كاش (Zain Cash)</span>
+                            <span className="text-[10px] px-2 py-0.5 bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 rounded-full font-bold">نشط</span>
+                          </div>
+                          <div className="aspect-square w-full max-w-[200px] mx-auto bg-white rounded-xl p-2 shadow-inner border border-slate-100 flex items-center justify-center overflow-hidden">
+                            <img 
+                              src="/assets/payment/zaincash_qr.png" 
+                              alt="Zain Cash QR" 
+                              className="w-full h-full object-contain"
+                              onError={(e) => {
+                                console.error('Failed to load ZainCash QR image');
+                                e.currentTarget.src = 'https://placehold.co/400x400?text=ZainCash+QR';
+                              }}
+                            />
+                          </div>
+                          <p className="text-[10px] text-center text-slate-500">قم بمسح الكود أعلاه عبر تطبيق زين كاش</p>
                         </div>
-                        <div className="aspect-square w-full max-w-[200px] mx-auto bg-white rounded-xl p-2 shadow-inner border border-slate-100 flex items-center justify-center overflow-hidden">
-                          <img 
-                            src="/assets/payment/qicard_qr.png" 
-                            alt="Qi Card QR" 
-                            className="w-full h-full object-contain"
-                            onError={(e) => {
-                              console.error('Failed to load QiCard QR image');
-                              e.currentTarget.src = 'https://placehold.co/400x400?text=QiCard+QR';
-                            }}
-                          />
+                      ) : (
+                        /* Qi Card */
+                        <div className="flex flex-col gap-3 p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700 animate-in fade-in slide-in-from-right-4 duration-300">
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-slate-900 dark:text-white">سوبر كي (Super Ki)</span>
+                            <span className="text-[10px] px-2 py-0.5 bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 rounded-full font-bold">نشط</span>
+                          </div>
+                          <div className="aspect-square w-full max-w-[200px] mx-auto bg-white rounded-xl p-2 shadow-inner border border-slate-100 flex items-center justify-center overflow-hidden">
+                            <img 
+                              src="/assets/payment/qicard_qr.png" 
+                              alt="Qi Card QR" 
+                              className="w-full h-full object-contain"
+                              onError={(e) => {
+                                console.error('Failed to load QiCard QR image');
+                                e.currentTarget.src = 'https://placehold.co/400x400?text=QiCard+QR';
+                              }}
+                            />
+                          </div>
+                          <p className="text-[10px] text-center text-slate-500">قم بمسح الكود أعلاه عبر تطبيق كي كارد</p>
                         </div>
-                        <p className="text-[10px] text-center text-slate-500">قم بمسح الكود أعلاه عبر تطبيق كي كارد</p>
-                      </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Phone Number Info */}
+                  <div className="bg-blue-50 dark:bg-blue-900/20 rounded-xl p-4 border border-blue-100 dark:border-blue-900/30">
+                    <p className="text-sm font-bold text-blue-900 dark:text-blue-300 mb-1">يمكنك أيضاً الدفع عبر هذا الرقم:</p>
+                    <div className="flex items-center justify-between">
+                      <span className="text-lg font-black text-primary font-sans" dir="ltr">07779786420</span>
+                      <button 
+                        onClick={() => {
+                          navigator.clipboard.writeText('07779786420');
+                          showToast('تم نسخ الرقم', 'success');
+                        }}
+                        className="text-xs bg-white dark:bg-slate-800 px-3 py-1.5 rounded-lg shadow-sm border border-blue-100 dark:border-blue-900/30 font-bold text-blue-600 dark:text-blue-400 active:scale-95 transition-all"
+                      >
+                        نسخ الرقم
+                      </button>
                     </div>
                   </div>
 
