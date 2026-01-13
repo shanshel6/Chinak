@@ -51,6 +51,10 @@ const ShippingTracking: React.FC = () => {
   const handlePaymentDone = async () => {
     if (!order || isConfirmingPayment) return;
     
+    // Add confirmation dialog
+    const isConfirmed = window.confirm('هل أنت متأكد أنك قمت بتحويل المبلغ؟\nAre you sure you paid the bill?');
+    if (!isConfirmed) return;
+    
     setIsConfirmingPayment(true);
     try {
       console.log(`[Payment] Confirming payment for order ${order.id}`);
@@ -309,16 +313,18 @@ const ShippingTracking: React.FC = () => {
         {/* Scrollable Content */}
         <div className="flex-1 flex flex-col gap-6 p-4 pb-10">
           {/* Need Payment Action Card */}
-          {order.status === 'NEED_PAYMENT' && (
+          {(order.status === 'NEED_PAYMENT' || order.status === 'AWAITING_PAYMENT') && (
             <div className="flex flex-col gap-4 bg-purple-50 dark:bg-purple-900/20 rounded-2xl p-5 border border-purple-200 dark:border-purple-800 shadow-sm animate-pulse-subtle">
               <div className="flex items-start gap-4">
                 <div className="size-12 rounded-full bg-purple-500 flex items-center justify-center text-white shrink-0 shadow-lg shadow-purple-500/30">
                   <CreditCard size={28} />
                 </div>
                 <div className="flex flex-col gap-1">
-                  <h3 className="text-purple-900 dark:text-purple-300 text-lg font-bold">{t('status.need_payment')}</h3>
+                  <h3 className="text-purple-900 dark:text-purple-300 text-lg font-bold">
+                    {order.status === 'AWAITING_PAYMENT' ? 'بانتظار الدفع' : t('status.need_payment')}
+                  </h3>
                   <p className="text-purple-700 dark:text-purple-400 text-sm leading-relaxed">
-                    {t('tracking.status_desc_need_payment')}
+                    {order.status === 'AWAITING_PAYMENT' ? 'يرجى إتمام عملية الدفع لتأكيد طلبك وبدء التجهيز.' : t('tracking.status_desc_need_payment')}
                   </p>
                 </div>
               </div>

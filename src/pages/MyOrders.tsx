@@ -46,6 +46,10 @@ const MyOrders: React.FC = () => {
   const handlePaymentDone = async () => {
     if (!selectedOrder || isConfirmingPayment) return;
     
+    // Add confirmation dialog
+    const isConfirmed = window.confirm('هل أنت متأكد أنك قمت بتحويل المبلغ؟\nAre you sure you paid the bill?');
+    if (!isConfirmed) return;
+    
     setIsConfirmingPayment(true);
     try {
       console.log(`[Payment] Confirming payment for order ${selectedOrder.id}`);
