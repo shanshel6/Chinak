@@ -3,23 +3,36 @@ import { useMaintenanceStore } from '../store/useMaintenanceStore';
 import { localProductService } from './localProductService';
 
 export const getBaseDomain = () => {
-  // 1. Priority: Environment variable (set this in .env or via build tool)
+  // 1. Priority: Environment variable
   const envApiUrl = import.meta.env.VITE_API_URL;
   if (envApiUrl) return envApiUrl;
 
-  // 2. Mobile Development: If on Capacitor and window.location.hostname is an IP or localhost
-  // we might want to use the current host's IP for the backend if it's running on the same machine
-  if (window.location.hostname !== 'localhost' && 
-      /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(window.location.hostname)) {
-    return `http://${window.location.hostname}:5000`;
+  // 2. Check for Capacitor/Mobile environment
+  const isCapacitor = window.hasOwnProperty('Capacitor');
+  
+  // 3. Mobile Development Logic
+  if (isCapacitor || window.location.hostname !== 'localhost') {
+    // If we're on a real device or emulator, localhost won't work for the backend
+    // If the hostname is an IP, use it
+    if (/^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(window.location.hostname)) {
+      return `http://${window.location.hostname}:5000`;
+    }
+    
+    // For Android emulators, 10.0.2.2 points to the host machine
+    // We can't easily detect if it's an emulator here, but we can try to use the current IP
+    // if we are running in a local network.
+    
+    // Fallback for mobile: try the common local IP range or a known host IP
+    // Note: 192.168.2.200 is the current machine IP found via ipconfig
+    return 'http://192.168.2.200:5000';
   }
 
-  // 3. Fallback: Default local development port
+  // 4. Default local development
   if (window.location.hostname === 'localhost') {
     return 'http://localhost:5000';
   }
 
-  // 4. Production Fallback: Hugging Face or other hosted backend
+  // 5. Production Fallback
   return 'https://shanshal66-my-shop-backend.hf.space';
 };
 
