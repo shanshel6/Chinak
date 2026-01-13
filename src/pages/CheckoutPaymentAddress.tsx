@@ -15,6 +15,7 @@ import {
   Briefcase,
   Tag
 } from 'lucide-react';
+import { motion } from 'framer-motion';
 import { fetchAddresses, placeOrder, fetchCoupons } from '../services/api';
 import { useCartStore } from '../store/useCartStore';
 import { useCheckoutStore } from '../store/useCheckoutStore';
@@ -196,7 +197,7 @@ const CheckoutPaymentAddress: React.FC = () => {
               onClick={() => setShowAddressSheet(true)}
               className="text-sm text-primary font-bold bg-primary/10 px-3 py-1.5 rounded-full hover:bg-primary/20 transition-colors"
             >
-              تغيير
+              {addresses.length > 0 ? 'تغيير' : 'إضافة عنوان'}
             </button>
           </div>
           
@@ -237,16 +238,40 @@ const CheckoutPaymentAddress: React.FC = () => {
               </div>
             </div>
           ) : (
-            <div 
+            <motion.div 
               onClick={() => navigate('/addresses/add', { state: { from: '/checkout/payment-address' } })}
-              className="bg-slate-50 dark:bg-slate-800/50 rounded-3xl p-10 border-2 border-dashed border-slate-200 dark:border-slate-700 flex flex-col items-center justify-center text-center cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors group"
+              initial={{ opacity: 0.8, scale: 0.98 }}
+              animate={{ 
+                opacity: [0.8, 1, 0.8],
+                scale: [0.98, 1.02, 0.98],
+                borderColor: ['#e2e8f0', '#3b82f6', '#e2e8f0']
+              }}
+              transition={{ 
+                duration: 3, 
+                repeat: Infinity, 
+                ease: "easeInOut" 
+              }}
+              className="bg-primary/5 dark:bg-primary/10 rounded-3xl p-12 border-2 border-dashed border-primary/30 dark:border-primary/20 flex flex-col items-center justify-center text-center cursor-pointer hover:bg-primary/10 dark:hover:bg-primary/20 transition-all group relative overflow-hidden"
             >
-              <div className="w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                <MapPinPlus size={30} className="text-slate-400" />
+              <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-primary/50 to-transparent"></div>
+              
+              <div className="w-20 h-20 rounded-full bg-primary/10 dark:bg-primary/20 flex items-center justify-center mb-6 group-hover:scale-110 transition-transform relative">
+                <MapPinPlus size={40} className="text-primary animate-pulse" />
+                <div className="absolute -top-1 -right-1 w-6 h-6 bg-primary text-white rounded-full flex items-center justify-center">
+                  <span className="text-xs font-black">+</span>
+                </div>
               </div>
-              <p className="text-sm font-bold text-slate-600 dark:text-slate-400">لا يوجد عنوان محفوظ</p>
-              <p className="text-xs text-slate-400 mt-1">اضغط لإضافة عنوان جديد لتتمكن من المتابعة</p>
-            </div>
+              
+              <h4 className="text-xl font-black text-slate-900 dark:text-white mb-2">لا يوجد عنوان محفوظ</h4>
+              <p className="text-sm text-slate-500 dark:text-slate-400 max-w-[200px] leading-relaxed">
+                يرجى إضافة عنوان توصيل لتتمكن من متابعة الطلب
+              </p>
+              
+              <div className="mt-6 bg-primary text-white px-6 py-2.5 rounded-2xl font-bold shadow-lg shadow-primary/20 flex items-center gap-2 group-hover:shadow-primary/40 transition-all">
+                <span>إضافة عنوان الآن</span>
+                <span className="text-lg font-black">+</span>
+              </div>
+            </motion.div>
           )}
 
           <p className="text-[10px] text-slate-400 text-center px-4 leading-relaxed">

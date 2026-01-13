@@ -136,7 +136,7 @@ const AddAddress: React.FC = () => {
   };
 
   return (
-    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden max-w-md mx-auto bg-background-light dark:bg-background-dark shadow-2xl font-display text-text-primary-light dark:text-text-primary-dark antialiased pb-48" dir="rtl">
+    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden max-w-md mx-auto bg-background-light dark:bg-background-dark shadow-2xl font-display text-text-primary-light dark:text-text-primary-dark antialiased pb-10" dir="rtl">
       {/* Header */}
       <header className="sticky top-0 z-50 bg-surface-light/90 dark:bg-surface-dark/90 backdrop-blur-md border-b border-border-light dark:border-border-dark transition-colors duration-300">
         <div className="flex items-center justify-between p-4 h-16">
@@ -294,20 +294,18 @@ const AddAddress: React.FC = () => {
           </div>
 
           {/* Save Button */}
-          <div className="fixed bottom-24 left-0 right-0 p-4 bg-surface-light/80 dark:bg-surface-dark/80 backdrop-blur-sm border-t border-border-light dark:border-border-dark z-30">
-            <div className="max-w-md mx-auto">
-              <button 
-                type="submit"
-                disabled={loading}
-                className="w-full h-14 bg-primary hover:bg-primary-dark text-white font-bold rounded-2xl shadow-lg shadow-primary/30 transition-all active:scale-[0.98] flex items-center justify-center gap-2 disabled:opacity-50"
-              >
-                {loading ? (
-                  <div className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                ) : (
-                  <span>حفظ العنوان</span>
-                )}
-              </button>
-            </div>
+          <div className="pt-6">
+            <button 
+              type="submit"
+              disabled={loading}
+              className="w-full h-14 bg-primary hover:bg-primary-dark text-white font-bold rounded-2xl shadow-lg shadow-primary/30 transition-all active:scale-[0.98] flex items-center justify-center gap-2 disabled:opacity-50"
+            >
+              {loading ? (
+                <div className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+              ) : (
+                <span>حفظ العنوان</span>
+              )}
+            </button>
           </div>
         </form>
       </main>

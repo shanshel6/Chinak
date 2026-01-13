@@ -745,6 +745,18 @@ export async function fetchAdminOrderDetails(orderId: string | number, token?: s
 }
 
 // Admin: Stats
+export async function fetchStoreSettings() {
+  return request('/store-settings', { skipCache: true });
+}
+
+export async function updateStoreSettings(settings: any, token?: string | null) {
+  return request('/admin/store-settings', {
+    method: 'PUT',
+    body: JSON.stringify(settings),
+    token
+  });
+}
+
 export async function fetchAdminStats(token?: string | null) {
   return request('/admin/stats', { token });
 }
@@ -1152,6 +1164,10 @@ export async function fetchOrderById(id: number | string) {
 
 export async function cancelOrder(id: number | string) {
   return request(`/orders/${id}/cancel`, { method: 'PUT' });
+}
+
+export async function confirmOrderPayment(id: number | string) {
+  return request(`/orders/${id}/confirm-payment`, { method: 'PUT' });
 }
 
 // Wishlist - Replaced by local storage in useWishlistStore.ts

@@ -5,6 +5,7 @@ import { useWishlistStore } from '../store/useWishlistStore';
 import { useCartStore } from '../store/useCartStore';
 import { useAuthStore } from '../store/useAuthStore';
 import { useToastStore } from '../store/useToastStore';
+import { usePageCacheStore } from '../store/usePageCacheStore';
 import SearchHeader from '../components/search/SearchHeader';
 import SearchSuggestions from '../components/search/SearchSuggestions';
 import FilterSortStrip from '../components/search/FilterSortStrip';
@@ -36,9 +37,17 @@ const SearchResults: React.FC = () => {
   const queryParams = new URLSearchParams(location.search);
   const initialQuery = queryParams.get('q') || '';
 
-  const [searchQuery, setSearchQuery] = useState(initialQuery);
-  const [products, setProducts] = useState<Product[]>([]);
-  const [filteredProducts, setFilteredProducts] = useState<Product[]>([]);
+  const { 
+    searchResults, 
+    searchQuery: cachedQuery, 
+    searchScrollPos,
+    setSearchData, 
+    setSearchScrollPos 
+  } = usePageCacheStore();
+
+  const [searchQuery, setSearchQuery] = useState(initialQuery || cachedQuery);
+  const [products, setProducts] = useState<Product[]>(searchResults);
+  const [filteredProducts, setFilteredProducts] = useState<Product[]>(searchResults);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeFilter, setActiveFilter] = useState('all');
@@ -81,6 +90,22 @@ const SearchResults: React.FC = () => {
   };
 
   useEffect(() => {
+    if (products.length > 0) {
+      setTimeout(() => {
+        window.scrollTo(0, searchScrollPos);
+      }, 50);
+    }
+  }, []);
+
+  useEffect(() => {
+    const handleScroll = () => {
+      setSearchScrollPos(window.scrollY);
+    };
+    window.addEventListener('scroll', handleScroll);
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, [setSearchScrollPos]);
+
+  useEffect(() => {
     const performSearch = async () => {
       if (!searchQuery.trim()) {
         setProducts([]);
@@ -95,6 +120,7 @@ const SearchResults: React.FC = () => {
         const data = await searchProducts(searchQuery);
         setProducts(data);
         setFilteredProducts(data);
+        setSearchData(data, searchQuery);
         if (data.length > 0 && searchQuery) {
           addToRecentSearches(searchQuery);
         }

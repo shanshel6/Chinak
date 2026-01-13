@@ -334,20 +334,18 @@ const EditAddress: React.FC = () => {
           </div>
 
           {/* Update Button */}
-          <div className="fixed bottom-24 left-0 right-0 p-4 bg-surface-light/80 dark:bg-surface-dark/80 backdrop-blur-sm border-t border-border-light dark:border-border-dark z-30">
-            <div className="max-w-md mx-auto">
-              <button 
-                type="submit"
-                disabled={loading}
-                className="w-full h-14 bg-primary hover:bg-primary-dark text-white font-bold rounded-2xl shadow-lg shadow-primary/30 transition-all active:scale-[0.98] flex items-center justify-center gap-2 disabled:opacity-50"
-              >
-                {loading ? (
-                  <div className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                ) : (
-                  <span>تحديث العنوان</span>
-                )}
-              </button>
-            </div>
+          <div className="pt-6">
+            <button 
+              type="submit"
+              disabled={loading}
+              className="w-full h-14 bg-primary hover:bg-primary-dark text-white font-bold rounded-2xl shadow-lg shadow-primary/30 transition-all active:scale-[0.98] flex items-center justify-center gap-2 disabled:opacity-50"
+            >
+              {loading ? (
+                <div className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+              ) : (
+                <span>تحديث العنوان</span>
+              )}
+            </button>
           </div>
         </form>
       </main>

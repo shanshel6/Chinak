@@ -41,6 +41,7 @@ assets/
 android/release-key.jks
 *.jks
 *.keystore
+key-credentials.txt
 
 # Editor directories and files
 .vscode/*

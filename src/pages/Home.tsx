@@ -6,6 +6,7 @@ import { useAuthStore } from '../store/useAuthStore';
 import { useCartStore } from '../store/useCartStore';
 import { useNotificationStore } from '../store/useNotificationStore';
 import { useToastStore } from '../store/useToastStore';
+import { usePageCacheStore } from '../store/usePageCacheStore';
 import Skeleton from '../components/Skeleton';
 import { useTranslation } from 'react-i18next';
 import HomeHeader from '../components/home/HomeHeader';
@@ -35,16 +36,25 @@ const Home: React.FC = () => {
   const showToast = useToastStore((state) => state.showToast);
   const unreadNotificationsCount = useNotificationStore((state) => state.unreadCount);
 
-  const [products, setProducts] = useState<Product[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { 
+    homeProducts, 
+    homePage, 
+    homeCategoryId, 
+    homeScrollPos,
+    setHomeData, 
+    setHomeScrollPos 
+  } = usePageCacheStore();
+
+  const [products, setProducts] = useState<Product[]>(homeProducts);
+  const [loading, setLoading] = useState(homeProducts.length === 0);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
   // Infinite Scroll & Categories State
   const [hasMore, setHasMore] = useState(true);
-  const [selectedCategoryId, setSelectedCategoryId] = useState('all');
+  const [selectedCategoryId, setSelectedCategoryId] = useState(homeCategoryId);
   const observer = useRef<IntersectionObserver | null>(null);
-  const [, setPage] = useState(1);
+  const [, setPage] = useState(homePage);
 
   const categories = [
     { id: 'all', name: 'الكل', icon: Grid2X2 },
@@ -77,8 +87,11 @@ const Home: React.FC = () => {
       
       if (isInitial) {
         setProducts(newProducts);
+        setHomeData(newProducts, pageNum, categoryId);
       } else {
-        setProducts(prev => [...prev, ...newProducts]);
+        const updatedProducts = [...products, ...newProducts];
+        setProducts(updatedProducts);
+        setHomeData(updatedProducts, pageNum, categoryId);
       }
       
       setHasMore(newProducts.length === 10);
@@ -105,11 +118,32 @@ const Home: React.FC = () => {
   };
 
   useEffect(() => {
-    setProducts([]); // Clear products to avoid showing stale data from previous category
-    setHasMore(true); // Reset hasMore to true for the new category
-    loadData(1, selectedCategoryId, true);
-    setPage(1);
+    // Only load if we don't have products or if the category has changed
+    if (products.length === 0 || selectedCategoryId !== homeCategoryId) {
+      setProducts([]); 
+      setHasMore(true);
+      loadData(1, selectedCategoryId, true);
+      setPage(1);
+    } else {
+      // If we have products and category matches, just restore scroll
+      setTimeout(() => {
+        window.scrollTo(0, homeScrollPos);
+      }, 50);
+    }
   }, [selectedCategoryId]);
+
+  // Save scroll position on unmount
+  useEffect(() => {
+    const handleScroll = () => {
+      // Use a small timeout to debounce scroll saving
+      setHomeScrollPos(window.scrollY);
+    };
+
+    window.addEventListener('scroll', handleScroll);
+    return () => {
+      window.removeEventListener('scroll', handleScroll);
+    };
+  }, [setHomeScrollPos]);
 
   const lastProductElementRef = useCallback((node: HTMLDivElement) => {
     if (loading || loadingMore) return;

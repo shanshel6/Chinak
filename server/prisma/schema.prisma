@@ -167,6 +167,8 @@ model StoreSettings {
   currency     String   @default("د.ع")
   socialLinks  String   @default("{}")
   footerText   String?
+  zainCashQR   String?  @db.Text
+  qicardQR     String?  @db.Text
   updatedAt    DateTime @updatedAt
 }
 

@@ -88,6 +88,7 @@ i18n
             copied: 'تم نسخ رقم التتبع',
             order_not_found: 'الطلب غير موجود',
             back_to_orders: 'العودة لطلباتي',
+            status_updated_live: 'تم تحديث حالة الطلب الآن',
             order_id_with_qty: 'طلب رقم #{{id}} ({{count}} منتجات)',
             qty: 'الكمية',
             air_shipping: 'شحن جوي',
