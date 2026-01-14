@@ -177,16 +177,16 @@ const Login: React.FC = () => {
 
     if (testAccount) {
       // Simulate successful login for test accounts
-      setAuth({
-        user: {
-          id: 'reviewer-' + Date.now(),
-          phone: testAccount.phone,
-          name: testAccount.name,
-          email: testAccount.email,
-          role: testAccount.phone.includes('1987654321') ? 'admin' : 'user'
-        },
-        token: 'test-token-' + Date.now()
-      });
+      const token = 'test-token-' + Date.now();
+      const user = {
+        id: 'reviewer-' + Date.now(),
+        phone: testAccount.phone,
+        name: testAccount.name,
+        email: testAccount.email,
+        role: testAccount.phone.includes('1987654321') ? 'admin' : 'user'
+      };
+      
+      setAuth(token, user);
       
       showToast('تم تسجيل الدخول كمراجع تجريبي', 'success');
       navigate('/');
