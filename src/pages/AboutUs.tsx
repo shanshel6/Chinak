@@ -24,9 +24,9 @@ const AboutUs: React.FC = () => {
   const navigate = useNavigate();
 
   return (
-    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden max-w-md mx-auto bg-background-light dark:bg-background-dark shadow-2xl font-display text-slate-900 dark:text-white antialiased selection:bg-primary/30 rtl pb-20" dir="rtl">
+    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden bg-background-light dark:bg-background-dark font-display text-slate-900 dark:text-white antialiased selection:bg-primary/30 rtl pb-20 pb-safe pt-safe" dir="rtl">
         {/* Header */}
-        <div className="sticky top-0 z-50 flex items-center bg-white/90 dark:bg-slate-900/90 backdrop-blur-md p-4 border-b border-slate-100 dark:border-slate-800 justify-between h-14">
+        <div className="sticky top-0 z-50 flex items-center bg-white/90 dark:bg-slate-900/90 backdrop-blur-md p-4 border-b border-slate-100 dark:border-slate-800 justify-between h-14 pt-safe">
           <div className="w-10 flex justify-start">
           </div>
           <h2 className="text-lg font-bold leading-tight tracking-[-0.015em] flex-1 text-center">من نحن</h2>
@@ -74,7 +74,7 @@ const AboutUs: React.FC = () => {
 
         {/* Stats Section */}
         <div className="px-4 py-2">
-          <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-hide">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div className="flex min-w-[140px] flex-1 flex-col items-center gap-1 rounded-xl p-4 bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 shadow-sm">
               <Smile className="text-primary mb-1" size={24} />
               <p className="text-2xl font-black leading-tight text-slate-900 dark:text-white">50k+</p>
@@ -100,7 +100,7 @@ const AboutUs: React.FC = () => {
             <h2 className="text-[#0d141b] dark:text-white text-xl font-bold">مهمتنا ورؤيتنا</h2>
           </div>
           
-          <div className="flex flex-col gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700">
               <div className="flex items-center gap-3 mb-2">
                 <div className="p-2 rounded-lg bg-primary/10 text-primary">
@@ -126,7 +126,7 @@ const AboutUs: React.FC = () => {
             </div>
 
             {/* Story Card */}
-            <div className="flex flex-col gap-4 rounded-xl bg-white dark:bg-slate-800 p-4 shadow-[0_2px_8px_rgba(0,0,0,0.04)] border border-slate-100 dark:border-slate-700">
+            <div className="md:col-span-2 flex flex-col gap-4 rounded-xl bg-white dark:bg-slate-800 p-4 shadow-[0_2px_8px_rgba(0,0,0,0.04)] border border-slate-100 dark:border-slate-700">
               <div 
                 className="w-full aspect-video bg-cover bg-center rounded-lg" 
                 style={{ backgroundImage: `url('https://images.unsplash.com/photo-1460925895917-afdab827c52f?q=80&w=1000&auto=format&fit=crop')` }}
@@ -196,7 +196,7 @@ const AboutUs: React.FC = () => {
             <h2 className="text-[#0d141b] dark:text-white text-xl font-bold">قيمنا الجوهرية</h2>
           </div>
           
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             {[
               { icon: ShieldCheck, title: 'الأمان المالي', desc: 'حماية كاملة لمدفوعاتك' },
               { icon: Zap, title: 'السرعة', desc: 'التزام بمواعيد التوصيل' },

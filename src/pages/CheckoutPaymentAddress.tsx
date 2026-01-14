@@ -146,7 +146,7 @@ const CheckoutPaymentAddress: React.FC = () => {
   const selectedAddress = addresses.find(a => a.id === selectedAddressId);
 
   if (loading) return (
-    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden max-w-md mx-auto bg-background-light dark:bg-background-dark shadow-2xl items-center justify-center">
+    <div className="relative flex min-h-screen w-full flex-col items-center justify-center bg-background-light dark:bg-background-dark shadow-2xl font-display text-text-primary-light dark:text-text-primary-dark antialiased" dir="rtl">
       <div className="flex flex-col items-center gap-6 animate-in fade-in zoom-in duration-700">
         <div className="flex flex-col items-center gap-2">
           <div className="flex gap-1">
@@ -161,8 +161,8 @@ const CheckoutPaymentAddress: React.FC = () => {
   );
 
   return (
-    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden max-w-md mx-auto bg-background-light dark:bg-background-dark shadow-2xl font-display text-text-primary-light dark:text-text-primary-dark antialiased pb-6" dir="rtl">
-      <header className="sticky top-0 z-50 bg-surface-light/90 dark:bg-surface-dark/90 backdrop-blur-md border-b border-border-light dark:border-border-dark transition-colors duration-300">
+    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden bg-background-light dark:bg-background-dark shadow-2xl font-display text-text-primary-light dark:text-text-primary-dark antialiased pb-32 pt-safe" dir="rtl">
+      <header className="sticky top-0 z-50 bg-surface-light/90 dark:bg-surface-dark/90 backdrop-blur-md border-b border-border-light dark:border-border-dark transition-colors duration-300 pt-safe">
         <div className="flex items-center justify-between p-4 h-14">
           <button 
             onClick={() => navigate(-1)}
@@ -188,7 +188,7 @@ const CheckoutPaymentAddress: React.FC = () => {
         </div>
       </header>
 
-      <main className="flex-1 w-full max-w-md mx-auto p-4 space-y-4">
+      <main className="flex-1 w-full p-4 space-y-4">
         {/* Section: Address */}
         <section className="space-y-3 animate-[fadeIn_0.5s_ease-out]">
           <div className="flex items-center justify-between">
@@ -448,8 +448,8 @@ const CheckoutPaymentAddress: React.FC = () => {
       )}
 
       {/* Bottom Action Bar (Non-Sticky) */}
-      <div className="relative mt-2 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 p-4">
-        <div className="max-w-md mx-auto w-full space-y-4">
+      <div className="relative mt-2 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 p-4 pb-safe">
+        <div className="w-full space-y-4">
           {/* Mandatory Checkbox and Policy Links */}
           <div className="bg-slate-50/50 dark:bg-slate-800/40 p-4 rounded-2xl border border-slate-100 dark:border-slate-700/50">
             <label className="flex items-start gap-3 cursor-pointer group">
@@ -521,7 +521,7 @@ const CheckoutPaymentAddress: React.FC = () => {
             className="absolute inset-0 bg-black/40 backdrop-blur-sm animate-in fade-in duration-300"
             onClick={() => setShowAddressSheet(false)}
           ></div>
-          <div className="relative w-full max-w-md bg-white dark:bg-slate-900 rounded-t-[32px] shadow-2xl animate-in slide-in-from-bottom duration-500 max-h-[85vh] overflow-hidden flex flex-col border-x border-t border-slate-100 dark:border-slate-800">
+          <div className="relative w-full bg-white dark:bg-slate-900 rounded-t-[32px] shadow-2xl animate-in slide-in-from-bottom duration-500 max-h-[85vh] overflow-hidden flex flex-col border-x border-t border-slate-100 dark:border-slate-800 pb-safe">
             {/* Handle Bar */}
             <div className="w-12 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full mx-auto mt-3 mb-1 shrink-0"></div>
             

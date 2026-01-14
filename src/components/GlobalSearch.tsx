@@ -125,7 +125,7 @@ const GlobalSearch: React.FC<GlobalSearchProps> = ({
     <div className="fixed inset-0 z-[100] overflow-y-auto p-4 sm:p-6 md:p-20" role="dialog" aria-modal="true">
       <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity" onClick={onClose}></div>
 
-      <div className="mx-auto max-w-2xl transform divide-y divide-slate-100 dark:divide-slate-700 overflow-hidden rounded-2xl bg-white dark:bg-slate-800 shadow-2xl ring-1 ring-black ring-opacity-5 transition-all">
+      <div className="mx-auto w-full max-w-7xl transform divide-y divide-slate-100 dark:divide-slate-700 overflow-hidden rounded-2xl bg-white dark:bg-slate-800 shadow-2xl ring-1 ring-black ring-opacity-5 transition-all">
         <div className="relative">
           <Search className="absolute left-4 top-3.5 h-5 w-5 text-slate-400" />
           <input

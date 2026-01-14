@@ -380,8 +380,8 @@ const ProductDetails: React.FC = () => {
 
   if (loading && !product) {
     return (
-      <div className="relative flex min-h-screen w-full flex-col items-center justify-center max-w-md mx-auto bg-background-light dark:bg-background-dark shadow-2xl font-display text-text-primary-light dark:text-text-primary-dark antialiased" dir="rtl">
-        <div className="flex flex-col items-center gap-6 animate-in fade-in zoom-in duration-700">
+      <div className="flex min-h-screen items-center justify-center bg-background-light dark:bg-background-dark pt-safe">
+        <div className="flex flex-col items-center gap-4">
           <div className="flex flex-col items-center gap-2">
             <div className="flex gap-1">
               <div className="w-2 h-2 rounded-full bg-primary animate-bounce [animation-delay:-0.3s]"></div>
@@ -397,7 +397,7 @@ const ProductDetails: React.FC = () => {
 
   if (error || !product) {
     return (
-      <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden max-w-md mx-auto bg-background-light dark:bg-background-dark shadow-xl ring-1 ring-slate-900/5 items-center justify-center p-6 text-center rtl" dir="rtl">
+      <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden bg-background-light dark:bg-background-dark items-center justify-center p-6 text-center rtl pt-safe" dir="rtl">
         <div className="w-24 h-24 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center mb-6 text-slate-400">
           {error ? <AlertCircle size={48} /> : <Package size={48} />}
         </div>
@@ -412,7 +412,7 @@ const ProductDetails: React.FC = () => {
   }
 
   return (
-    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden max-w-md mx-auto bg-background-light dark:bg-background-dark shadow-xl ring-1 ring-slate-900/5 pb-32" dir="rtl">
+    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden bg-background-light dark:bg-background-dark pb-32 pb-safe pt-safe" dir="rtl">
       <ProductHeader 
         onBack={() => navigate(-1)}
         onShare={handleShare}
@@ -420,12 +420,15 @@ const ProductDetails: React.FC = () => {
         isWishlisted={isProductInWishlist(product.id)}
       />
 
-        <ImageGallery 
-          images={galleryImages}
-          productName={product.name}
-        />
+      <div className="md:grid md:grid-cols-2 md:gap-8 lg:gap-12 md:px-6 md:pt-6">
+        <div className="md:sticky md:top-24 h-fit">
+          <ImageGallery 
+            images={galleryImages}
+            productName={product.name}
+          />
+        </div>
 
-        <main className="relative -mt-6 bg-background-light dark:bg-background-dark rounded-t-3xl px-5 pt-8 shadow-[0_-4px_20px_rgba(0,0,0,0.05)]">
+        <main className="relative -mt-6 md:mt-0 bg-background-light dark:bg-background-dark rounded-t-3xl md:rounded-none px-5 md:px-0 pt-8 md:pt-0 shadow-[0_-4px_20px_rgba(0,0,0,0.05)] md:shadow-none">
           <ProductInfo 
             price={currentVariant?.price || product.price || 0}
             originalPrice={product.originalPrice}
@@ -604,6 +607,7 @@ const ProductDetails: React.FC = () => {
           onGoToCart={() => navigate('/cart')}
         />
       </div>
+    </div>
   );
 };
 

@@ -194,9 +194,9 @@ const Notifications: React.FC = () => {
   const groupedNotifications = groupNotifications(filteredNotifications);
 
   return (
-    <div className="relative flex min-h-screen w-full flex-col max-w-md mx-auto bg-background-light dark:bg-background-dark shadow-2xl overflow-hidden rtl" dir="rtl">
-      <header className="sticky top-0 z-50 bg-surface-light/95 dark:bg-background-dark/95 backdrop-blur-md border-b border-slate-100 dark:border-slate-800 transition-colors">
-          <div className="flex items-center justify-between px-5 pt-12 pb-4">
+    <div className="relative flex min-h-screen w-full flex-col bg-background-light dark:bg-background-dark shadow-2xl overflow-hidden rtl pb-safe pt-safe" dir="rtl">
+      <header className="sticky top-0 z-50 bg-surface-light/95 dark:bg-background-dark/95 backdrop-blur-md border-b border-slate-100 dark:border-slate-800 transition-colors pt-safe">
+          <div className="flex items-center justify-between px-5 py-4">
             <div className="flex items-center gap-3">
               <button 
                 onClick={() => navigate(-1)}

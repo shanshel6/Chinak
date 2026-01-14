@@ -28,9 +28,9 @@ const DeleteAccountConfirm: React.FC = () => {
   };
 
   return (
-    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden max-w-md mx-auto bg-background-light dark:bg-background-dark shadow-2xl font-display text-slate-900 dark:text-white" dir="rtl">
+    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden bg-background-light dark:bg-background-dark shadow-2xl font-display text-slate-900 dark:text-white pb-safe pt-safe" dir="rtl">
       {/* Header */}
-      <header className="p-4 flex items-center gap-4">
+      <header className="p-4 flex items-center gap-4 pt-safe">
           <button 
             onClick={() => navigate(-1)}
             className="p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"

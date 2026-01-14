@@ -31,10 +31,10 @@ const CartEmpty: React.FC = () => {
   ];
 
   return (
-    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden pb-32 bg-background-light dark:bg-background-dark font-display text-text-primary-light dark:text-text-primary-dark antialiased" dir="rtl">
+    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden pb-32 bg-background-light dark:bg-background-dark font-display text-text-primary-light dark:text-text-primary-dark antialiased pt-safe" dir="rtl">
       {/* Top App Bar */}
-        <header className="sticky top-0 z-50 bg-background-light/90 dark:bg-background-dark/90 backdrop-blur-md border-b border-gray-200 dark:border-gray-800">
-          <div className="flex items-center justify-between p-4 pt-safe-top">
+        <header className="sticky top-0 z-50 bg-background-light/90 dark:bg-background-dark/90 backdrop-blur-md border-b border-gray-200 dark:border-gray-800 pt-safe">
+          <div className="flex items-center justify-between p-4 pt-4">
             <button 
               onClick={() => navigate(-1)}
               className="flex size-10 shrink-0 items-center justify-center rounded-full active:bg-gray-200 dark:active:bg-gray-800 transition-colors cursor-pointer text-text-primary-light dark:text-text-primary-dark"

@@ -5,8 +5,8 @@ import PageTransition from '../components/PageTransition';
 const Chat: React.FC = () => {
   return (
     <PageTransition>
-      <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden max-w-md mx-auto bg-background-light dark:bg-background-dark shadow-2xl font-display items-center justify-center p-6 text-center" dir="rtl">
-        <div className="max-w-md w-full bg-white dark:bg-slate-800 p-8 rounded-[32px] shadow-xl border border-slate-100 dark:border-slate-700">
+      <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden bg-background-light dark:bg-background-dark font-display items-center justify-center p-6 text-center pb-safe pt-safe" dir="rtl">
+        <div className="w-full bg-white dark:bg-slate-800 p-8 rounded-[32px] shadow-xl border border-slate-100 dark:border-slate-700">
           <div className="size-20 bg-primary/10 text-primary rounded-full flex items-center justify-center mx-auto mb-6">
             <Construction size={40} />
           </div>

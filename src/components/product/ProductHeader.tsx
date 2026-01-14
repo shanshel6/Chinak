@@ -15,7 +15,7 @@ const ProductHeader: React.FC<ProductHeaderProps> = ({
   isWishlisted,
 }) => {
   return (
-    <header className="fixed top-0 max-w-md w-full z-20 flex items-center justify-between p-4 pt-12 transition-all duration-300">
+    <header className="fixed top-0 w-full z-20 flex items-center justify-between p-4 pt-[calc(env(safe-area-inset-top)+0.5rem)] transition-all duration-300">
       {/* Back Button */}
       <button 
         onClick={onBack}

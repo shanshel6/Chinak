@@ -663,7 +663,7 @@ const AdminDashboard: React.FC = () => {
 
       {showImportModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-2 sm:p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-300">
-          <div className="bg-white dark:bg-slate-900 w-full max-w-2xl max-h-[95vh] rounded-2xl sm:rounded-3xl shadow-2xl border border-slate-100 dark:border-slate-800 overflow-hidden animate-in zoom-in-95 duration-300 flex flex-col">
+          <div className="bg-white dark:bg-slate-900 w-full max-w-7xl max-h-[95vh] rounded-2xl sm:rounded-3xl shadow-2xl border border-slate-100 dark:border-slate-800 overflow-hidden animate-in zoom-in-95 duration-300 flex flex-col pt-safe pb-safe">
             <div className="p-4 sm:p-6 border-b border-slate-50 dark:border-slate-800 flex items-center justify-between shrink-0">
               <div>
                 <h3 className="text-lg sm:text-xl font-black text-slate-900 dark:text-white">استيراد المنتجات بالجملة</h3>
@@ -762,7 +762,7 @@ const AdminDashboard: React.FC = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 2xl:grid-cols-4 gap-6">
         {products.map((product) => (
           <ProductCard 
             key={product.id} 
@@ -930,8 +930,8 @@ const AdminDashboard: React.FC = () => {
       </div>
 
       {showCouponModal && (
-        <div className="fixed inset-0 z-[120] flex items-center justify-center p-2 sm:p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-300">
-          <div className="bg-white dark:bg-slate-900 w-full max-w-md max-h-[95vh] rounded-2xl sm:rounded-3xl shadow-2xl border border-slate-100 dark:border-slate-800 overflow-hidden animate-in zoom-in-95 duration-300 flex flex-col">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-2 sm:p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-300">
+          <div className="bg-white dark:bg-slate-900 w-full max-w-7xl max-h-[95vh] rounded-2xl sm:rounded-3xl shadow-2xl border border-slate-100 dark:border-slate-800 overflow-hidden animate-in zoom-in-95 duration-300 flex flex-col pt-safe pb-safe">
             <div className="p-4 sm:p-6 border-b border-slate-50 dark:border-slate-800 flex items-center justify-between shrink-0">
               <h3 className="text-lg sm:text-xl font-black text-slate-900 dark:text-white">
                 {selectedCoupon ? 'تعديل كوبون' : 'إضافة كوبون جديد'}
@@ -1161,7 +1161,7 @@ const AdminDashboard: React.FC = () => {
 
     return (
       <div className="fixed inset-0 z-[110] flex items-center justify-center p-2 sm:p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-300">
-        <div className="bg-white dark:bg-slate-900 w-full max-w-4xl max-h-[95vh] rounded-2xl sm:rounded-3xl shadow-2xl border border-slate-100 dark:border-slate-800 overflow-hidden animate-in zoom-in-95 duration-300 flex flex-col">
+        <div className="bg-white dark:bg-slate-900 w-full max-w-[95vw] lg:max-w-7xl max-h-[95vh] rounded-2xl sm:rounded-3xl shadow-2xl border border-slate-100 dark:border-slate-800 overflow-hidden animate-in zoom-in-95 duration-300 flex flex-col pt-safe pb-safe">
           {/* Modal Header */}
           <div className="p-4 sm:p-6 border-b border-slate-50 dark:border-slate-800 flex items-center justify-between shrink-0">
             <div>
@@ -1249,9 +1249,9 @@ const AdminDashboard: React.FC = () => {
                                 isThumbnail={true}
                               />
                               <div className="min-w-0">
-                                <p className="font-bold truncate max-w-[150px] sm:max-w-[200px]">{item.product?.name}</p>
+                                <p className="font-bold truncate lg:max-w-none">{item.product?.name}</p>
                                 {item.variant && (
-                                  <p className="text-[10px] text-slate-500 mt-0.5 truncate max-w-[150px] sm:max-w-[200px]">
+                                  <p className="text-[10px] text-slate-500 mt-0.5 truncate lg:max-w-none">
                                     {item.variant.combination}
                                   </p>
                                 )}
@@ -1515,7 +1515,7 @@ const AdminDashboard: React.FC = () => {
   );
 
   return (
-    <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-8">
+    <div className="w-full mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-8">
       {loading ? (
         <div className="flex flex-col items-center justify-center py-32 gap-6">
           <div className="w-12 h-12 border-4 border-primary/20 border-t-primary rounded-full animate-spin"></div>

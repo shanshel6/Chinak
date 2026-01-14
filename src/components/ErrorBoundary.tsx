@@ -27,7 +27,7 @@ class ErrorBoundary extends Component<Props, State> {
     if (this.state.hasError) {
       return (
         <div className="min-h-screen flex items-center justify-center bg-background-light dark:bg-background-dark p-6">
-          <div className="max-w-md w-full text-center space-y-6 animate-in fade-in zoom-in duration-300">
+          <div className="w-full max-w-7xl text-center space-y-6 animate-in fade-in zoom-in duration-300">
             <div className="flex justify-center">
               <div className="size-20 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
                 <AlertCircle className="text-red-600 dark:text-red-400" size={40} />
@@ -39,18 +39,20 @@ class ErrorBoundary extends Component<Props, State> {
                 واجهنا مشكلة تقنية غير متوقعة. يرجى محاولة إعادة تحميل الصفحة.
               </p>
             </div>
-            <button
-              onClick={() => window.location.reload()}
-              className="w-full py-4 bg-primary text-white rounded-2xl font-bold shadow-lg shadow-primary/20 active:scale-95 transition-transform"
-            >
-              إعادة تحميل الصفحة
-            </button>
-            <button
-              onClick={() => window.location.href = '/'}
-              className="w-full py-4 bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white rounded-2xl font-bold active:scale-95 transition-transform"
-            >
-              العودة للرئيسية
-            </button>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <button
+                onClick={() => window.location.reload()}
+                className="w-full py-4 bg-primary text-white rounded-2xl font-bold shadow-lg shadow-primary/20 active:scale-95 transition-transform"
+              >
+                إعادة تحميل الصفحة
+              </button>
+              <button
+                onClick={() => window.location.href = '/'}
+                className="w-full py-4 bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white rounded-2xl font-bold active:scale-95 transition-transform"
+              >
+                العودة للرئيسية
+              </button>
+            </div>
           </div>
         </div>
       );

@@ -48,9 +48,9 @@ const AdvancedSettings: React.FC = () => {
   } = useSettingsStore();
   
   return (
-    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden max-w-md mx-auto bg-background-light dark:bg-background-dark shadow-2xl font-display text-[#0d141b] dark:text-white antialiased" dir="rtl">
+    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden bg-background-light dark:bg-background-dark shadow-2xl font-display text-[#0d141b] dark:text-white antialiased pb-safe pt-safe" dir="rtl">
       {/* Top App Bar */}
-      <header className="sticky top-0 z-10 flex items-center justify-between px-4 py-3 bg-background-light/90 dark:bg-background-dark/90 backdrop-blur-md">
+      <header className="sticky top-0 z-10 flex items-center justify-between px-4 py-3 bg-background-light/90 dark:bg-background-dark/90 backdrop-blur-md pt-safe">
           {/* Back Button (RTL: Arrow points right) */}
           <button 
             onClick={() => navigate(-1)}

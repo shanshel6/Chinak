@@ -19,7 +19,7 @@ const CustomerSupport: React.FC = () => {
   const navigate = useNavigate();
 
   return (
-    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden max-w-md mx-auto bg-background-light dark:bg-background-dark shadow-2xl font-display text-slate-900 dark:text-white antialiased selection:bg-primary/30 rtl pb-10" dir="rtl">
+    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden bg-background-light dark:bg-background-dark font-display text-slate-900 dark:text-white antialiased selection:bg-primary/30 rtl pb-10 pb-safe pt-safe" dir="rtl">
         {/* Header / Navigation Bar */}
         <nav className="sticky top-0 z-50 bg-background-light/90 dark:bg-background-dark/90 backdrop-blur-md border-b border-slate-200/50 dark:border-slate-800/50 px-4 py-3">
           <div className="flex items-center justify-between">
@@ -139,37 +139,41 @@ const CustomerSupport: React.FC = () => {
           {/* FAQ Categories */}
           <section className="px-5 pb-6">
             <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-3 text-right">الأسئلة الشائعة</h3>
-            <div className="bg-white dark:bg-surface-dark rounded-2xl shadow-sm border border-slate-100 dark:border-slate-800 divide-y divide-slate-100 dark:divide-slate-800 overflow-hidden">
-              <FAQCategory 
-                icon={Truck} 
-                title="الشحن والتوصيل" 
-                subtitle="تتبع الشحنات، أوقات التسليم"
-                color="blue"
-              />
-              <FAQCategory 
-                icon={Wallet} 
-                title="الدفع والطلبات" 
-                subtitle="طرق الدفع، إلغاء الطلب"
-                color="blue"
-              />
-              <FAQCategory 
-                icon={Undo2} 
-                title="الاسترجاع والاستبدال" 
-                subtitle="سياسة الإرجاع، المبالغ المستردة"
-                color="orange"
-              />
-              <FAQCategory 
-                icon={Wallet} 
-                title="الجمارك والرسوم" 
-                subtitle="الضرائب، رسوم الاستيراد للعراق"
-                color="indigo"
-              />
-              <FAQCategory 
-                icon={UserCircle} 
-                title="الحساب والخصوصية" 
-                subtitle="إدارة الحساب، سياسة الخصوصية"
-                color="blue"
-              />
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="bg-white dark:bg-surface-dark rounded-2xl shadow-sm border border-slate-100 dark:border-slate-800 divide-y divide-slate-100 dark:divide-slate-800 overflow-hidden">
+                <FAQCategory 
+                  icon={Truck} 
+                  title="الشحن والتوصيل" 
+                  subtitle="تتبع الشحنات، أوقات التسليم"
+                  color="blue"
+                />
+                <FAQCategory 
+                  icon={Wallet} 
+                  title="الدفع والطلبات" 
+                  subtitle="طرق الدفع، إلغاء الطلب"
+                  color="blue"
+                />
+                <FAQCategory 
+                  icon={Undo2} 
+                  title="الاسترجاع والاستبدال" 
+                  subtitle="سياسة الإرجاع، المبالغ المستردة"
+                  color="orange"
+                />
+              </div>
+              <div className="bg-white dark:bg-surface-dark rounded-2xl shadow-sm border border-slate-100 dark:border-slate-800 divide-y divide-slate-100 dark:divide-slate-800 overflow-hidden">
+                <FAQCategory 
+                  icon={Wallet} 
+                  title="الجمارك والرسوم" 
+                  subtitle="الضرائب، رسوم الاستيراد للعراق"
+                  color="indigo"
+                />
+                <FAQCategory 
+                  icon={UserCircle} 
+                  title="الحساب والخصوصية" 
+                  subtitle="إدارة الحساب، سياسة الخصوصية"
+                  color="blue"
+                />
+              </div>
             </div>
           </section>
 

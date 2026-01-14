@@ -29,11 +29,15 @@ const LazyImage: React.FC<LazyImageProps> = ({
 }) => {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState(false);
+  const [failedProxy, setFailedProxy] = useState(false);
   const [isInView, setIsInView] = useState(priority);
   const imgRef = useRef<HTMLDivElement>(null);
 
   // Optimize URLs and handle fallbacks using a global image proxy (weserv.nl)
   const optimizedSrc = React.useMemo(() => {
+    // If proxy failed before, use original src
+    if (failedProxy) return src;
+
     // Aggressive optimization for thumbnails
     const finalWidth = isThumbnail ? Math.min(width, 250) : width;
     const finalQuality = isThumbnail ? Math.min(quality, 65) : quality;
@@ -68,7 +72,7 @@ const LazyImage: React.FC<LazyImageProps> = ({
       console.warn('LazyImage: Failed to optimize URL', src, e);
       return src;
     }
-  }, [src, width, height, quality, objectFit, isThumbnail]);
+  }, [src, width, height, quality, objectFit, isThumbnail, failedProxy]);
 
   useEffect(() => {
     if (priority || isInView) return;
@@ -91,13 +95,19 @@ const LazyImage: React.FC<LazyImageProps> = ({
   }, [priority, isInView]);
 
   const handleImageError = () => {
+    // If we haven't tried the original URL yet, try it now
+    if (!failedProxy && optimizedSrc !== src) {
+      console.warn(`LazyImage: Proxy failed for ${src}, falling back to original URL`);
+      setFailedProxy(true);
+      return;
+    }
+
+    // If original URL also fails, show error state
     setError(true);
-    // Try a reliable fallback if Unsplash fails
-    if (src.includes('unsplash.com')) {
-      // Use a more reliable placeholder service as fallback
+    
+    if (src && src.includes('unsplash.com')) {
       const fallbackUrl = `https://loremflickr.com/400/400/product?lock=${Math.floor(Math.random() * 1000)}`;
       console.warn(`LazyImage: Unsplash failed for ${src}, using fallback: ${fallbackUrl}`);
-      // We don't set src directly here, but we could set a fallback state
     }
   };
 
@@ -127,7 +137,6 @@ const LazyImage: React.FC<LazyImageProps> = ({
             src={optimizedSrc}
             alt={alt}
             loading={priority ? 'eager' : 'lazy'}
-            crossOrigin="anonymous"
             onLoad={() => setLoaded(true)}
             onError={handleImageError}
             className={`w-full h-full transition-opacity duration-500 ${loaded ? 'opacity-100' : 'opacity-0'}`}

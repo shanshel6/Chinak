@@ -259,7 +259,7 @@ const Home: React.FC = () => {
 
   if (loading && products.length === 0) {
     return (
-      <div className="relative flex min-h-screen w-full flex-col items-center justify-center max-w-md mx-auto bg-background-light dark:bg-background-dark shadow-2xl font-display text-text-primary-light dark:text-text-primary-dark antialiased" dir="rtl">
+      <div className="relative flex min-h-screen w-full flex-col items-center justify-center bg-background-light dark:bg-background-dark font-display text-text-primary-light dark:text-text-primary-dark antialiased pt-[calc(env(safe-area-inset-top)+1rem)]" dir="rtl">
         <div className="flex flex-col items-center gap-6 animate-in fade-in zoom-in duration-700">
           <div className="flex flex-col items-center gap-2">
             <div className="flex gap-1">
@@ -275,7 +275,7 @@ const Home: React.FC = () => {
   }
 
   return (
-    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden pb-24 mx-auto max-w-md bg-background-light dark:bg-background-dark shadow-2xl font-display text-slate-900 dark:text-white antialiased selection:bg-primary/30 rtl" dir="rtl">
+    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden pb-28 pb-safe bg-background-light dark:bg-background-dark font-display text-slate-900 dark:text-white antialiased selection:bg-primary/30 rtl pt-safe" dir="rtl">
       <HomeHeader 
         user={user}
         onNavigate={navigate}
@@ -314,7 +314,7 @@ const Home: React.FC = () => {
             </h2>
           </div>
           
-          <div className="grid grid-cols-2 gap-3 pb-6">
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3 md:gap-4 lg:gap-6 pb-6">
             {loading ? (
               Array(6).fill(0).map((_, i) => (
                 <div key={i} className="flex flex-col gap-2">

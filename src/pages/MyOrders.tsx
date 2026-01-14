@@ -151,17 +151,17 @@ const MyOrders: React.FC = () => {
   });
 
   if (loading) return (
-    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden max-w-md mx-auto bg-background-light dark:bg-background-dark shadow-2xl items-center justify-center">
+    <div className="relative flex min-h-screen w-full flex-col items-center justify-center bg-background-light dark:bg-background-dark shadow-2xl pb-safe pt-[calc(env(safe-area-inset-top)+1rem)]">
       <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
     </div>
   );
 
   return (
-    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden max-w-md mx-auto bg-background-light dark:bg-background-dark shadow-2xl font-display" dir="rtl">
+    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden bg-background-light dark:bg-background-dark shadow-2xl font-display pb-24 pb-safe pt-safe" dir="rtl">
       {/* Scrollable Area */}
       <div className="flex-1 flex flex-col">
         {/* Header Section */}
-        <div className="sticky top-0 z-50 bg-background-light/95 dark:bg-background-dark/95 backdrop-blur-md transition-colors border-b border-slate-100 dark:border-slate-800">
+        <div className="sticky top-0 z-50 bg-background-light/95 dark:bg-background-dark/95 backdrop-blur-md transition-colors border-b border-slate-100 dark:border-slate-800 pt-[calc(env(safe-area-inset-top)+0.5rem)]">
           <div className="flex items-center justify-between px-4 h-16">
             <button 
               onClick={() => navigate(-1)}
@@ -217,7 +217,7 @@ const MyOrders: React.FC = () => {
         </div>
 
         {/* Orders List Container */}
-        <div className="flex-1 flex flex-col gap-4 p-4 pb-24">
+        <div className="flex-1 p-4 pb-24">
           {filteredOrders.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-20 text-center" dir="rtl">
               <div className="size-24 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center text-slate-400 dark:text-slate-500 mb-6">
@@ -239,8 +239,9 @@ const MyOrders: React.FC = () => {
               </button>
             </div>
           ) : (
-            filteredOrders.map(order => (
-              <div key={order.id} className="flex flex-col bg-white dark:bg-slate-800 rounded-xl shadow-[0_2px_8px_rgba(0,0,0,0.04)] dark:shadow-none border border-slate-100 dark:border-slate-700 overflow-hidden">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {filteredOrders.map(order => (
+                <div key={order.id} className="flex flex-col bg-white dark:bg-slate-800 rounded-xl shadow-[0_2px_8px_rgba(0,0,0,0.04)] dark:shadow-none border border-slate-100 dark:border-slate-700 overflow-hidden">
                 {/* Card Header */}
                 <div className="flex justify-between items-start p-4 border-b border-slate-50 dark:border-slate-700/50">
                   <div className="flex flex-col gap-1">
@@ -343,16 +344,17 @@ const MyOrders: React.FC = () => {
                   </div>
                 </div>
               </div>
-            ))
-          )}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
+    </div>
 
       {/* Payment Modal */}
       {showPaymentModal && selectedOrder && (
         <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-300">
           <div 
-            className="w-full max-w-md bg-white dark:bg-slate-900 rounded-t-[2rem] sm:rounded-[2rem] shadow-2xl overflow-hidden animate-in slide-in-from-bottom duration-500 border-t sm:border border-slate-200 dark:border-slate-800 rtl flex flex-col max-h-[95vh]"
+            className="w-full max-w-7xl bg-white dark:bg-slate-900 rounded-t-[2rem] sm:rounded-[2rem] shadow-2xl overflow-hidden animate-in slide-in-from-bottom duration-500 border-t sm:border border-slate-200 dark:border-slate-800 rtl flex flex-col max-h-[95vh] pb-safe pt-safe"
             dir="rtl"
           >
             {/* Modal Handle (for mobile) */}

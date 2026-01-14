@@ -212,16 +212,16 @@ const EditAddress: React.FC = () => {
   };
 
   if (fetching) return (
-    <div className="relative flex min-h-screen w-full flex-col items-center justify-center max-w-md mx-auto bg-background-light dark:bg-background-dark shadow-2xl font-display text-text-primary-light dark:text-text-primary-dark antialiased" dir="rtl">
+    <div className="relative flex min-h-screen w-full flex-col items-center justify-center bg-background-light dark:bg-background-dark font-display text-text-primary-light dark:text-text-primary-dark antialiased pt-safe" dir="rtl">
       <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
     </div>
   );
 
   return (
-    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden max-w-md mx-auto bg-background-light dark:bg-background-dark shadow-2xl font-display text-text-primary-light dark:text-text-primary-dark antialiased pb-48" dir="rtl">
+    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden bg-background-light dark:bg-background-dark font-display text-text-primary-light dark:text-text-primary-dark antialiased pb-10 pb-safe pt-safe" dir="rtl">
       {/* Header */}
       <header className="sticky top-0 z-50 bg-surface-light/90 dark:bg-surface-dark/90 backdrop-blur-md border-b border-border-light dark:border-border-dark transition-colors duration-300">
-        <div className="flex items-center justify-between p-4 h-16">
+        <div className="flex items-center justify-between p-4 h-16 pt-safe">
           <button 
             onClick={() => navigate(-1)}
             className="flex items-center justify-center w-10 h-10 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors text-text-primary-light dark:text-text-primary-dark"
@@ -233,7 +233,7 @@ const EditAddress: React.FC = () => {
         </div>
       </header>
 
-      <main className="flex-1 w-full max-w-md mx-auto p-4 space-y-6">
+      <main className="flex-1 w-full p-4 space-y-6">
         <form onSubmit={handleSubmit} className="bg-surface-light dark:bg-surface-dark rounded-2xl p-5 shadow-soft border border-border-light dark:border-border-dark space-y-5 animate-[fadeIn_0.5s_ease-out]">
           {error && (
             <div className="p-3 bg-red-100 text-red-700 rounded-xl text-sm text-center">
@@ -241,152 +241,158 @@ const EditAddress: React.FC = () => {
             </div>
           )}
 
-          {/* Address Type */}
-          <div className="space-y-3">
-            <label className="text-sm font-bold text-text-secondary-light dark:text-text-secondary-dark px-1">نوع العنوان</label>
-            <div className="flex gap-3">
-              <button 
-                type="button"
-                onClick={() => setFormData({ ...formData, type: 'المنزل' })}
-                className={`flex-1 h-12 rounded-xl border-2 transition-all flex items-center justify-center gap-2 ${
-                  formData.type === 'المنزل' 
-                    ? 'border-primary bg-primary/5 text-primary font-bold' 
-                    : 'border-slate-100 dark:border-slate-800 text-slate-500 font-bold hover:border-primary/30'
-                }`}
-              >
-                <Home size={20} />
-                المنزل
-              </button>
-              <button 
-                type="button"
-                onClick={() => setFormData({ ...formData, type: 'العمل' })}
-                className={`flex-1 h-12 rounded-xl border-2 transition-all flex items-center justify-center gap-2 ${
-                  formData.type === 'العمل' 
-                    ? 'border-primary bg-primary/5 text-primary font-bold' 
-                    : 'border-slate-100 dark:border-slate-800 text-slate-500 font-bold hover:border-primary/30'
-                }`}
-              >
-                <Briefcase size={20} />
-                العمل
-              </button>
-            </div>
-          </div>
-
-          {/* Full Name */}
-          <div className="space-y-1.5">
-            <label className="text-sm font-bold text-text-secondary-light dark:text-text-secondary-dark px-1">الاسم الكامل</label>
-            <div className="relative flex items-center">
-              <User className="absolute right-3 text-slate-400" size={20} />
-              <input 
-                className="w-full h-12 pr-10 pl-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all placeholder:text-slate-400 text-sm" 
-                placeholder="مثال: أحمد محمد" 
-                type="text" 
-                value={formData.name}
-                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-              />
-            </div>
-          </div>
-
-          {/* Phone Number */}
-          <div className="space-y-1.5">
-            <label className="text-sm font-bold text-text-secondary-light dark:text-text-secondary-dark px-1">رقم الواتساب</label>
-            <div className="relative flex items-center">
-              <div className="absolute right-3 flex items-center gap-1.5 border-l border-slate-200 dark:border-slate-700 pl-2 ml-2 h-8">
-                <div className="relative group">
-                  <select 
-                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-                    value={formData.countryCode}
-                    onChange={(e) => setFormData({ ...formData, countryCode: e.target.value })}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="space-y-5">
+              {/* Address Type */}
+              <div className="space-y-3">
+                <label className="text-sm font-bold text-text-secondary-light dark:text-text-secondary-dark px-1">نوع العنوان</label>
+                <div className="flex gap-3">
+                  <button 
+                    type="button"
+                    onClick={() => setFormData({ ...formData, type: 'المنزل' })}
+                    className={`flex-1 h-12 rounded-xl border-2 transition-all flex items-center justify-center gap-2 ${
+                      formData.type === 'المنزل' 
+                        ? 'border-primary bg-primary/5 text-primary font-bold' 
+                        : 'border-slate-100 dark:border-slate-800 text-slate-500 font-bold hover:border-primary/30'
+                    }`}
                   >
-                    {countries.map((c) => (
-                      <option key={`${c.code}-${c.name}`} value={c.code}>{c.flag} {c.name} ({c.code})</option>
-                    ))}
-                  </select>
-                  <div className="flex items-center gap-1">
-                    <span className="text-lg">
-                      {countries.find(c => c.code === formData.countryCode)?.flag}
-                    </span>
-                    <span className="text-sm font-bold text-slate-600 dark:text-slate-400 ltr" dir="ltr">
-                      {formData.countryCode}
-                    </span>
-                    <ChevronDown size={16} className="text-slate-400" />
-                  </div>
+                    <Home size={20} />
+                    المنزل
+                  </button>
+                  <button 
+                    type="button"
+                    onClick={() => setFormData({ ...formData, type: 'العمل' })}
+                    className={`flex-1 h-12 rounded-xl border-2 transition-all flex items-center justify-center gap-2 ${
+                      formData.type === 'العمل' 
+                        ? 'border-primary bg-primary/5 text-primary font-bold' 
+                        : 'border-slate-100 dark:border-slate-800 text-slate-500 font-bold hover:border-primary/30'
+                    }`}
+                  >
+                    <Briefcase size={20} />
+                    العمل
+                  </button>
                 </div>
               </div>
-              <input 
-                className="w-full h-12 pr-[110px] pl-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all placeholder:text-slate-400 text-sm text-left font-bold" 
-                placeholder="7XX XXX XXXX" 
-                style={{ direction: 'ltr' }} 
-                type="tel" 
-                value={formData.phone}
-                onChange={(e) => {
-                  const val = e.target.value.replace(/\D/g, '');
-                  setFormData({ ...formData, phone: val });
-                }}
-              />
-            </div>
-          </div>
 
-          {/* City */}
-          <div className="space-y-1.5">
-            <label className="text-sm font-bold text-text-secondary-light dark:text-text-secondary-dark px-1">المحافظة</label>
-            <div className="relative">
-              <select 
-                className="w-full h-12 pr-4 pl-10 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 focus:border-primary focus:ring-1 focus:ring-primary outline-none appearance-none text-sm cursor-pointer"
-                value={formData.city}
-                onChange={(e) => setFormData({ ...formData, city: e.target.value })}
-              >
-                <option value="">اختر المحافظة</option>
-                <option value="بغداد">بغداد</option>
-                <option value="البصرة">البصرة</option>
-                <option value="نينوى">نينوى</option>
-                <option value="أربيل">أربيل</option>
-                <option value="النجف">النجف</option>
-                <option value="كربلاء">كربلاء</option>
-                <option value="ذي قار">ذي قار</option>
-                <option value="بابل">بابل</option>
-                <option value="السليمانية">السليمانية</option>
-                <option value="الأنبار">الأنبار</option>
-                <option value="ديالى">ديالى</option>
-                <option value="المثنى">المثنى</option>
-                <option value="القادسية">القادسية</option>
-                <option value="ميسان">ميسان</option>
-                <option value="واسط">واسط</option>
-                <option value="صلاح الدين">صلاح الدين</option>
-                <option value="دهوك">دهوك</option>
-                <option value="كركوك">كركوك</option>
-                <option value="حلبجة">حلبجة</option>
-              </select>
-              <ChevronDown size={20} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-            </div>
-          </div>
+              {/* Full Name */}
+              <div className="space-y-1.5">
+                <label className="text-sm font-bold text-text-secondary-light dark:text-text-secondary-dark px-1">الاسم الكامل</label>
+                <div className="relative flex items-center">
+                  <User className="absolute right-3 text-slate-400" size={20} />
+                  <input 
+                    className="w-full h-12 pr-10 pl-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all placeholder:text-slate-400 text-sm" 
+                    placeholder="مثال: أحمد محمد" 
+                    type="text" 
+                    value={formData.name}
+                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  />
+                </div>
+              </div>
 
-          {/* Detailed Address */}
-          <div className="space-y-1.5">
-            <label className="text-sm font-bold text-text-secondary-light dark:text-text-secondary-dark px-1">العنوان بالتفصيل</label>
-            <textarea 
-              className="w-full p-3 h-24 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 focus:border-primary focus:ring-1 focus:ring-primary outline-none resize-none text-sm placeholder:text-slate-400" 
-              placeholder="المنطقة، الشارع، رقم المنزل، أقرب نقطة دالة..."
-              value={formData.street}
-              onChange={(e) => setFormData({ ...formData, street: e.target.value })}
-            ></textarea>
-          </div>
-
-          {/* Default Address Toggle */}
-          <div className="flex items-center justify-between px-1 py-2">
-            <div className="flex flex-col">
-              <span className="text-sm font-bold">تعيين كعنوان افتراضي</span>
-              <span className="text-xs text-text-secondary-light dark:text-text-secondary-dark">سيتم استخدام هذا العنوان تلقائياً للطلبات القادمة</span>
+              {/* Phone Number */}
+              <div className="space-y-1.5">
+                <label className="text-sm font-bold text-text-secondary-light dark:text-text-secondary-dark px-1">رقم الواتساب</label>
+                <div className="relative flex items-center">
+                  <div className="absolute right-3 flex items-center gap-1.5 border-l border-slate-200 dark:border-slate-700 pl-2 ml-2 h-8">
+                    <div className="relative group">
+                      <select 
+                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                        value={formData.countryCode}
+                        onChange={(e) => setFormData({ ...formData, countryCode: e.target.value })}
+                      >
+                        {countries.map((c) => (
+                          <option key={`${c.code}-${c.name}`} value={c.code}>{c.flag} {c.name} ({c.code})</option>
+                        ))}
+                      </select>
+                      <div className="flex items-center gap-1">
+                        <span className="text-lg">
+                          {countries.find(c => c.code === formData.countryCode)?.flag}
+                        </span>
+                        <span className="text-sm font-bold text-slate-600 dark:text-slate-400 ltr" dir="ltr">
+                          {formData.countryCode}
+                        </span>
+                        <ChevronDown size={16} className="text-slate-400" />
+                      </div>
+                    </div>
+                  </div>
+                  <input 
+                    className="w-full h-12 pr-[110px] pl-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all placeholder:text-slate-400 text-sm text-left font-bold" 
+                    placeholder="7XX XXX XXXX" 
+                    style={{ direction: 'ltr' }} 
+                    type="tel" 
+                    value={formData.phone}
+                    onChange={(e) => {
+                      const val = e.target.value.replace(/\D/g, '');
+                      setFormData({ ...formData, phone: val });
+                    }}
+                  />
+                </div>
+              </div>
             </div>
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input 
-                type="checkbox" 
-                className="sr-only peer" 
-                checked={formData.isDefault}
-                onChange={(e) => setFormData({ ...formData, isDefault: e.target.checked })}
-              />
-              <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
-            </label>
+
+            <div className="space-y-5">
+              {/* City */}
+              <div className="space-y-1.5">
+                <label className="text-sm font-bold text-text-secondary-light dark:text-text-secondary-dark px-1">المحافظة</label>
+                <div className="relative">
+                  <select 
+                    className="w-full h-12 pr-4 pl-10 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 focus:border-primary focus:ring-1 focus:ring-primary outline-none appearance-none text-sm cursor-pointer"
+                    value={formData.city}
+                    onChange={(e) => setFormData({ ...formData, city: e.target.value })}
+                  >
+                    <option value="">اختر المحافظة</option>
+                    <option value="بغداد">بغداد</option>
+                    <option value="البصرة">البصرة</option>
+                    <option value="نينوى">نينوى</option>
+                    <option value="أربيل">أربيل</option>
+                    <option value="النجف">النجف</option>
+                    <option value="كربلاء">كربلاء</option>
+                    <option value="ذي قار">ذي قار</option>
+                    <option value="بابل">بابل</option>
+                    <option value="السليمانية">السليمانية</option>
+                    <option value="الأنبار">الأنبار</option>
+                    <option value="ديالى">ديالى</option>
+                    <option value="المثنى">المثنى</option>
+                    <option value="القادسية">القادسية</option>
+                    <option value="ميسان">ميسان</option>
+                    <option value="واسط">واسط</option>
+                    <option value="صلاح الدين">صلاح الدين</option>
+                    <option value="دهوك">دهوك</option>
+                    <option value="كركوك">كركوك</option>
+                    <option value="حلبجة">حلبجة</option>
+                  </select>
+                  <ChevronDown size={20} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                </div>
+              </div>
+
+              {/* Detailed Address */}
+              <div className="space-y-1.5">
+                <label className="text-sm font-bold text-text-secondary-light dark:text-text-secondary-dark px-1">العنوان بالتفصيل</label>
+                <textarea 
+                  className="w-full p-3 h-24 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 focus:border-primary focus:ring-1 focus:ring-primary outline-none resize-none text-sm placeholder:text-slate-400" 
+                  placeholder="المنطقة، الشارع، رقم المنزل، أقرب نقطة دالة..."
+                  value={formData.street}
+                  onChange={(e) => setFormData({ ...formData, street: e.target.value })}
+                ></textarea>
+              </div>
+
+              {/* Default Address Toggle */}
+              <div className="flex items-center justify-between px-1 py-2">
+                <div className="flex flex-col">
+                  <span className="text-sm font-bold">تعيين كعنوان افتراضي</span>
+                  <span className="text-xs text-text-secondary-light dark:text-text-secondary-dark">سيتم استخدام هذا العنوان تلقائياً للطلبات القادمة</span>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input 
+                    type="checkbox" 
+                    className="sr-only peer" 
+                    checked={formData.isDefault}
+                    onChange={(e) => setFormData({ ...formData, isDefault: e.target.checked })}
+                  />
+                  <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                </label>
+              </div>
+            </div>
           </div>
 
           {/* Update Button */}
@@ -399,7 +405,7 @@ const EditAddress: React.FC = () => {
               {loading ? (
                 <div className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
               ) : (
-                <span>تحديث العنوان</span>
+                <span>حفظ التعديلات</span>
               )}
             </button>
           </div>

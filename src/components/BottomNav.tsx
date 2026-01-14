@@ -27,7 +27,7 @@ const BottomNav: React.FC<BottomNavProps> = ({ className = '' }) => {
   };
 
   return (
-    <nav className={`fixed bottom-0 left-0 right-0 z-40 mx-auto max-w-md border-t border-slate-200 bg-white/95 px-6 pb-6 pt-2 backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/95 ${className}`}>
+    <nav className={`fixed bottom-0 left-0 right-0 z-40 w-full border-t border-slate-200 bg-white/95 px-6 pb-[calc(env(safe-area-inset-bottom)+1rem)] pt-3 backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/95 ${className}`}>
       <div className="flex items-center justify-between">
         {navItems.map((item) => {
           const active = isActive(item.path);

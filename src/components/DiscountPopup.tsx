@@ -100,10 +100,10 @@ const DiscountPopup: React.FC<DiscountPopupProps> = ({
             animate={{ y: 0 }}
             exit={{ y: '100%' }}
             transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-            className="fixed bottom-0 left-0 right-0 z-[101] bg-white dark:bg-slate-900 rounded-t-[32px] max-w-md mx-auto overflow-hidden shadow-2xl"
+            className="fixed bottom-0 left-0 right-0 z-[101] bg-white dark:bg-slate-900 rounded-t-[32px] w-full max-w-7xl mx-auto overflow-hidden shadow-2xl"
             dir="rtl"
           >
-            <div className="px-6 pt-4 pb-8">
+            <div className="px-6 pt-4 pb-8 pb-safe">
               {/* Handle */}
               <div className="w-12 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full mx-auto mb-6" />
 

@@ -34,9 +34,9 @@ const TermsOfService: React.FC = () => {
   ];
 
   return (
-    <div className="min-h-screen bg-background-light dark:bg-background-dark text-slate-900 dark:text-white font-display pb-10 max-w-md mx-auto shadow-2xl" dir="rtl">
+    <div className="min-h-screen bg-background-light dark:bg-background-dark text-slate-900 dark:text-white font-display pb-10 pb-safe shadow-2xl pt-safe" dir="rtl">
         {/* Header */}
-        <header className="sticky top-0 z-50 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md p-4 flex items-center gap-4 border-b border-slate-100 dark:border-slate-800">
+        <header className="sticky top-0 z-50 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md p-4 flex items-center gap-4 border-b border-slate-100 dark:border-slate-800 pt-safe">
           <button 
             onClick={() => navigate(-1)}
             className="p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
@@ -57,7 +57,7 @@ const TermsOfService: React.FC = () => {
             </p>
           </div>
 
-          <div className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {sections.map((section, index) => (
               <div 
                 key={index}

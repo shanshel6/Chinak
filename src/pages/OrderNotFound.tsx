@@ -7,9 +7,9 @@ const OrderNotFound: React.FC = () => {
   const navigate = useNavigate();
 
   return (
-    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden max-w-md mx-auto bg-background-light dark:bg-background-dark shadow-2xl font-display text-slate-900 dark:text-white antialiased transition-colors duration-200" dir="rtl">
+    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden bg-background-light dark:bg-background-dark shadow-2xl font-display text-slate-900 dark:text-white antialiased transition-colors duration-200 pt-safe" dir="rtl">
       {/* TopAppBar */}
-        <header className="sticky top-0 z-10 flex items-center justify-between bg-background-light/90 dark:bg-background-dark/90 backdrop-blur-md px-4 py-3">
+        <header className="sticky top-0 z-10 flex items-center justify-between bg-background-light/90 dark:bg-background-dark/90 backdrop-blur-md px-4 py-3 pt-safe">
           {/* Back Button (RTL: points right for 'back') */}
           <button 
             onClick={() => navigate(-1)}
@@ -50,7 +50,7 @@ const OrderNotFound: React.FC = () => {
           </div>
 
           {/* Search Field Section */}
-          <div className="w-full max-w-md space-y-6">
+          <div className="w-full max-w-7xl space-y-6">
             <label className="block group">
               <p className="text-slate-900 dark:text-slate-200 text-sm font-medium mb-2 pr-1">رقم الطلب</p>
               <div className="relative flex items-center">
@@ -73,7 +73,7 @@ const OrderNotFound: React.FC = () => {
         </main>
 
         {/* Footer / Secondary Action */}
-        <footer className="p-6 pb-24 w-full flex justify-center mt-auto">
+        <footer className="p-6 pb-24 pb-safe w-full flex justify-center mt-auto">
           <button 
             onClick={() => navigate('/support')}
             className="flex items-center gap-2 text-primary dark:text-blue-400 font-medium text-sm py-2 px-4 rounded-lg hover:bg-primary/10 transition-colors cursor-pointer"

@@ -142,16 +142,16 @@ const ReviewsAndRatings: React.FC = () => {
   const allPhotos = reviews.flatMap(r => r.images || []).slice(0, 8);
 
   if (loading) return (
-    <div className="min-h-screen bg-background-light dark:bg-background-dark flex items-center justify-center rtl" dir="rtl">
+    <div className="min-h-screen bg-background-light dark:bg-background-dark flex items-center justify-center rtl pb-safe" dir="rtl">
       <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
     </div>
   );
 
   return (
-    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden max-w-md mx-auto bg-background-light dark:bg-background-dark shadow-2xl font-display text-slate-900 dark:text-white antialiased pb-24 transition-colors duration-300" dir="rtl">
+    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden bg-background-light dark:bg-background-dark font-display text-slate-900 dark:text-white antialiased pb-24 pb-safe pt-safe" dir="rtl">
       {/* Top App Bar */}
-      <header className="sticky top-0 z-50 bg-surface-light/95 dark:bg-background-dark/95 backdrop-blur-md border-b border-slate-100 dark:border-slate-800 transition-colors">
-          <div className="flex items-center justify-between px-5 pt-12 pb-4">
+      <header className="sticky top-0 z-50 bg-surface-light/95 dark:bg-background-dark/95 backdrop-blur-md border-b border-slate-100 dark:border-slate-800 transition-colors pt-safe">
+          <div className="flex items-center justify-between px-5 pt-4 pb-4">
             <div className="flex items-center gap-3">
               <button 
                 onClick={() => navigate(-1)}
@@ -346,7 +346,7 @@ const ReviewsAndRatings: React.FC = () => {
         </main>
 
         {/* Bottom Action Bar */}
-        <div className="fixed bottom-20 left-0 right-0 p-5 bg-gradient-to-t from-background-light via-background-light to-transparent dark:from-background-dark dark:via-background-dark pt-10 z-50 max-w-md mx-auto">
+        <div className="fixed bottom-20 left-0 right-0 p-5 pb-safe bg-gradient-to-t from-background-light via-background-light to-transparent dark:from-background-dark dark:via-background-dark pt-10 z-50 w-full">
           {hasPurchased ? (
             <button 
               onClick={() => setShowReviewModal(true)}
@@ -368,7 +368,7 @@ const ReviewsAndRatings: React.FC = () => {
         {/* Review Modal */}
         {showReviewModal && (
           <div className="fixed inset-0 z-[100] flex items-end justify-center bg-black/60 backdrop-blur-sm transition-all duration-300">
-            <div className="w-full max-w-md bg-surface-light dark:bg-slate-900 rounded-t-[40px] p-8 animate-slide-up shadow-[0_-20px_50px_rgba(0,0,0,0.3)]">
+            <div className="w-full max-w-[95vw] lg:max-w-5xl bg-surface-light dark:bg-slate-900 rounded-t-[40px] p-8 pb-safe animate-slide-up shadow-[0_-20px_50px_rgba(0,0,0,0.3)]">
               <div className="flex items-center justify-between mb-8">
                 <h3 className="text-2xl font-black text-slate-900 dark:text-white">أكتب مراجعة</h3>
                 <button 

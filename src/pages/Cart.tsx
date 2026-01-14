@@ -136,7 +136,7 @@ const Cart: React.FC = () => {
 
   if (loading && cartItems.length === 0) {
     return (
-      <div className="relative flex min-h-screen w-full flex-col items-center justify-center max-w-md mx-auto bg-background-light dark:bg-background-dark shadow-2xl font-display text-text-primary-light dark:text-text-primary-dark antialiased" dir="rtl">
+      <div className="relative flex min-h-screen w-full flex-col items-center justify-center bg-background-light dark:bg-background-dark font-display text-text-primary-light dark:text-text-primary-dark antialiased" dir="rtl">
         <div className="flex flex-col items-center gap-6 animate-in fade-in zoom-in duration-700">
           <div className="flex flex-col items-center gap-2">
             <div className="flex gap-1">
@@ -153,7 +153,7 @@ const Cart: React.FC = () => {
 
   if (error) {
     return (
-      <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden max-w-md mx-auto bg-background-light dark:bg-background-dark shadow-2xl items-center justify-center p-4 text-text-primary-light dark:text-text-primary-dark font-display antialiased" dir="rtl">
+      <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden bg-background-light dark:bg-background-dark items-center justify-center p-4 text-text-primary-light dark:text-text-primary-dark font-display antialiased pt-safe" dir="rtl">
         <AlertCircle size={80} className="text-red-500 mb-4" />
         <h2 className="text-xl font-bold mb-2">عذراً، حدث خطأ</h2>
         <p className="text-slate-500 text-center mb-8">{error}</p>
@@ -169,7 +169,7 @@ const Cart: React.FC = () => {
 
   if (cartItems.length === 0) {
     return (
-      <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden max-w-md mx-auto bg-background-light dark:bg-background-dark shadow-2xl items-center justify-center p-6 text-center" dir="rtl">
+      <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden bg-background-light dark:bg-background-dark items-center justify-center p-6 text-center pt-safe" dir="rtl">
         <header className="absolute top-0 left-0 right-0 z-50 bg-transparent">
           <div className="flex items-center p-4 pt-safe-top">
             <button 
@@ -198,10 +198,10 @@ const Cart: React.FC = () => {
   }
 
   return (
-    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden max-w-md mx-auto bg-background-light dark:bg-background-dark shadow-2xl font-display text-text-primary-light dark:text-text-primary-dark antialiased pb-32" dir="rtl">
+    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden bg-background-light dark:bg-background-dark font-display text-text-primary-light dark:text-text-primary-dark antialiased pb-32 pt-safe" dir="rtl">
       {/* Top App Bar */}
-      <header className="sticky top-0 z-50 bg-background-light/90 dark:bg-background-dark/90 backdrop-blur-md border-b border-gray-200 dark:border-gray-800">
-        <div className="flex items-center justify-between p-4 pt-safe-top">
+      <header className="sticky top-0 z-50 bg-background-light/90 dark:bg-background-dark/90 backdrop-blur-md border-b border-gray-200 dark:border-gray-800 pt-[calc(env(safe-area-inset-top)+0.5rem)]">
+        <div className="flex items-center justify-between p-4">
           <div className="flex items-center gap-2">
             <button 
               onClick={() => navigate(-1)}
@@ -268,9 +268,9 @@ const Cart: React.FC = () => {
         </div>
       </header>
 
-      <main className="p-4 flex flex-col gap-6">
-        {/* Cart Items List */}
-        <div className="flex flex-col gap-4">
+      <main className="p-4 md:p-6 flex flex-col md:grid md:grid-cols-3 md:gap-8 items-start">
+        {/* Left Column: Cart Items List */}
+        <div className="flex flex-col gap-4 w-full md:col-span-2">
           {cartItems.map((item) => (
             <div 
               key={item.id} 
@@ -391,78 +391,80 @@ const Cart: React.FC = () => {
           ))}
         </div>
 
-        {/* Order Summary */}
-        <div className="p-5 rounded-2xl bg-white dark:bg-slate-800 shadow-sm ring-1 ring-slate-900/5 dark:ring-white/10 flex flex-col gap-4">
-          <div className="flex items-center justify-between">
-            <h3 className="text-base font-bold text-slate-800 dark:text-slate-100">ملخص الطلب</h3>
-            <button
-              onClick={() => setIsDiscountPopupOpen(true)}
-              className="relative text-xs font-bold text-primary flex items-center gap-1 bg-primary/10 px-3 py-1.5 rounded-lg active:scale-95 transition-all"
-            >
-              <Tag size={16} />
-              {appliedCoupon ? 'تغيير الكوبون' : 'إضافة كوبون'}
-              {!appliedCoupon && hasAvailableCoupons && (
-                <span className="absolute -top-1.5 -left-1.5 flex h-3 w-3">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-3 w-3 bg-primary"></span>
-                </span>
+        {/* Right Column: Summary */}
+        <div className="w-full md:sticky md:top-28 md:col-span-1">
+          <div className="p-5 rounded-2xl bg-white dark:bg-slate-800 shadow-sm ring-1 ring-slate-900/5 dark:ring-white/10 flex flex-col gap-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold text-slate-800 dark:text-slate-100">ملخص الطلب</h3>
+              <button
+                onClick={() => setIsDiscountPopupOpen(true)}
+                className="relative text-xs font-bold text-primary flex items-center gap-1 bg-primary/10 px-3 py-1.5 rounded-lg active:scale-95 transition-all"
+              >
+                <Tag size={16} />
+                {appliedCoupon ? 'تغيير الكوبون' : 'إضافة كوبون'}
+                {!appliedCoupon && hasAvailableCoupons && (
+                  <span className="absolute -top-1.5 -left-1.5 flex h-3 w-3">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-3 w-3 bg-primary"></span>
+                  </span>
+                )}
+              </button>
+            </div>
+            
+            <div className="flex flex-col gap-3">
+              <div className="flex justify-between text-sm">
+                <span className="text-slate-500 dark:text-slate-400">المجموع الفرعي</span>
+                <span className="font-bold">{subtotal.toLocaleString()} د.ع</span>
+              </div>
+
+              {appliedCoupon && (
+                <div className="flex justify-between items-center p-3 rounded-xl bg-green-50 dark:bg-green-900/20 border border-green-100 dark:border-green-800/30 animate-in slide-in-from-top-2 duration-300">
+                  <div className="flex items-center gap-2">
+                    <div className="size-8 rounded-full bg-green-100 dark:bg-green-800 flex items-center justify-center text-green-600 dark:text-green-400">
+                      <Tag size={16} />
+                    </div>
+                    <div className="flex flex-col">
+                      <span className="text-[10px] text-green-600/70 dark:text-green-400/70 font-bold uppercase">كوبون مفعّل</span>
+                      <span className="text-xs font-black text-green-700 dark:text-green-300">{appliedCoupon.code}</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="text-sm font-black text-green-600 dark:text-green-400">- {discountAmount.toLocaleString()} د.ع</span>
+                    <button 
+                      onClick={() => {
+                        setAppliedCoupon(null);
+                        showToast('تم إزالة الكوبون', 'info');
+                      }}
+                      className="size-7 rounded-lg bg-white dark:bg-slate-800 shadow-sm flex items-center justify-center text-rose-500 hover:bg-rose-50 transition-colors"
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                </div>
               )}
-            </button>
-          </div>
-          
-          <div className="flex flex-col gap-3">
-            <div className="flex justify-between text-sm">
-              <span className="text-slate-500 dark:text-slate-400">المجموع الفرعي</span>
-              <span className="font-bold">{subtotal.toLocaleString()} د.ع</span>
-            </div>
 
-            {appliedCoupon && (
-              <div className="flex justify-between items-center p-3 rounded-xl bg-green-50 dark:bg-green-900/20 border border-green-100 dark:border-green-800/30 animate-in slide-in-from-top-2 duration-300">
-                <div className="flex items-center gap-2">
-                  <div className="size-8 rounded-full bg-green-100 dark:bg-green-800 flex items-center justify-center text-green-600 dark:text-green-400">
-                    <Tag size={16} />
-                  </div>
-                  <div className="flex flex-col">
-                    <span className="text-[10px] text-green-600/70 dark:text-green-400/70 font-bold uppercase">كوبون مفعّل</span>
-                    <span className="text-xs font-black text-green-700 dark:text-green-300">{appliedCoupon.code}</span>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <span className="text-sm font-black text-green-600 dark:text-green-400">- {discountAmount.toLocaleString()} د.ع</span>
-                  <button 
-                    onClick={() => {
-                      setAppliedCoupon(null);
-                      showToast('تم إزالة الكوبون', 'info');
-                    }}
-                    className="size-7 rounded-lg bg-white dark:bg-slate-800 shadow-sm flex items-center justify-center text-rose-500 hover:bg-rose-50 transition-colors"
-                  >
-                    <X size={14} />
-                  </button>
-                </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-slate-500 dark:text-slate-400">الشحن الدولي</span>
+                <span className="font-medium text-orange-500">يحدد لاحقاً</span>
               </div>
-            )}
 
-            <div className="flex justify-between text-sm">
-              <span className="text-slate-500 dark:text-slate-400">الشحن الدولي</span>
-              <span className="font-medium text-orange-500">يحدد لاحقاً</span>
-            </div>
-
-            <div className="h-px bg-slate-100 dark:bg-slate-700 w-full my-1"></div>
-            <div className="flex flex-col gap-1">
-              <div className="flex justify-between text-base font-bold">
-                <span>الإجمالي الكلي</span>
-                <span className="text-primary">{total.toLocaleString()} د.ع</span>
+              <div className="h-px bg-slate-100 dark:bg-slate-700 w-full my-1"></div>
+              <div className="flex flex-col gap-1">
+                <div className="flex justify-between text-base font-bold">
+                  <span>الإجمالي الكلي</span>
+                  <span className="text-primary">{total.toLocaleString()} د.ع</span>
+                </div>
+                <p className="text-[10px] text-slate-400 text-right">
+                  * سيتم احتساب تكلفة الشحن الدولي ومشاركتها معك عبر واتساب
+                </p>
               </div>
-              <p className="text-[10px] text-slate-400 text-right">
-                * سيتم احتساب تكلفة الشحن الدولي ومشاركتها معك عبر واتساب
-              </p>
             </div>
           </div>
         </div>
       </main>
 
       {/* Sticky Footer Checkout Button */}
-      <div className="fixed bottom-0 left-0 right-0 z-40 mx-auto max-w-md bg-white/95 dark:bg-slate-900/95 border-t border-slate-200 dark:border-slate-800 p-4 pb-safe-bottom backdrop-blur-md">
+      <div className="fixed bottom-0 left-0 right-0 z-40 w-full bg-white/95 dark:bg-slate-900/95 border-t border-slate-200 dark:border-slate-800 p-4 pb-safe backdrop-blur-md">
         <button 
           onClick={() => navigate('/checkout/shipping')}
           className="w-full h-16 rounded-2xl bg-primary hover:bg-primary/90 active:scale-[0.98] transition-all text-white font-bold text-base shadow-lg shadow-primary/25 flex items-center justify-between px-6"

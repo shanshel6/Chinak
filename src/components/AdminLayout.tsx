@@ -132,7 +132,7 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
               <Home size={22} />
             </button>
             
-            <div className="relative max-w-md w-full hidden sm:block">
+            <div className="relative max-w-xl w-full hidden sm:block">
               <Search className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
               <input 
                 type="text"
@@ -150,7 +150,7 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
             
             <div className="flex items-center gap-3 pr-3 lg:pr-6 border-r border-slate-200 dark:border-slate-800">
               <div className="text-left hidden xs:block">
-                <p className="text-sm font-bold text-slate-900 dark:text-white truncate max-w-[100px]">{user?.name || 'الأدمن'}</p>
+                <p className="text-sm font-bold text-slate-900 dark:text-white truncate max-w-[150px] lg:max-w-none">{user?.name || 'الأدمن'}</p>
                 <p className="text-[10px] text-slate-500 font-medium uppercase tracking-wider">{user?.role || 'ADMIN'}</p>
               </div>
               <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary font-bold shrink-0">

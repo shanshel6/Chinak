@@ -35,7 +35,7 @@ const Onboarding: React.FC = () => {
   };
 
   return (
-    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden max-w-md mx-auto bg-background-light dark:bg-background-dark shadow-2xl font-display text-slate-900 dark:text-white antialiased selection:bg-primary/30 rtl" dir="rtl">
+    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden bg-background-light dark:bg-background-dark shadow-2xl font-display text-slate-900 dark:text-white antialiased selection:bg-primary/30 rtl pt-safe" dir="rtl">
       {/* Status Bar Area (Mock) - Optional for mobile feel, but let's keep it styled nicely */}
       <div className="w-full h-12 flex justify-between items-end px-6 pb-2 select-none z-20 absolute top-0 left-0 right-0 bg-gradient-to-b from-background-light/80 to-transparent dark:from-background-dark/80">
         <div className="text-xs font-bold text-slate-900 dark:text-white leading-none">9:41</div>

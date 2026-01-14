@@ -201,7 +201,7 @@ const ReviewsSection: React.FC<ReviewsSectionProps> = ({
       )}
 
       {/* Detailed Reviews from Users */}
-      <div className="space-y-6 mb-8">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
         {displayReviews.map((review, idx) => renderReviewCard(review, idx))}
         
         {/* If no real reviews but have summary comments, show them */}
@@ -219,7 +219,7 @@ const ReviewsSection: React.FC<ReviewsSectionProps> = ({
         ))}
 
         {loading && reviews.length > 0 && (
-          <div className="flex justify-center py-4">
+          <div className="col-span-full flex justify-center py-4">
             <div className="h-6 w-6 border-2 border-t-transparent border-primary rounded-full animate-spin"></div>
           </div>
         )}
@@ -241,7 +241,7 @@ const ReviewsSection: React.FC<ReviewsSectionProps> = ({
       {isAllReviewsModalOpen && (
         <div className="fixed inset-0 z-[110] bg-slate-950/40 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-6 animate-in fade-in duration-300">
           <div 
-            className="bg-background-light dark:bg-background-dark w-full max-w-md h-[85vh] sm:h-[80vh] rounded-t-[45px] sm:rounded-[45px] overflow-hidden flex flex-col shadow-2xl animate-in slide-in-from-bottom-full duration-500"
+            className="bg-background-light dark:bg-background-dark w-full max-w-[95vw] lg:max-w-7xl h-[85vh] sm:h-[80vh] rounded-t-[45px] sm:rounded-[45px] overflow-hidden flex flex-col shadow-2xl animate-in slide-in-from-bottom-full duration-500"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Modal Header */}
@@ -259,7 +259,7 @@ const ReviewsSection: React.FC<ReviewsSectionProps> = ({
             </div>
 
             {/* Modal Content */}
-            <div className="flex-1 overflow-y-auto p-6 space-y-6 no-scrollbar pb-12">
+            <div className="flex-1 overflow-y-auto p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 no-scrollbar pb-12">
               {reviews.map((review, idx) => renderReviewCard(review, idx))}
             </div>
           </div>
@@ -279,7 +279,7 @@ const ReviewsSection: React.FC<ReviewsSectionProps> = ({
             <X size={32} />
           </button>
           
-          <div className="relative w-full max-w-4xl h-[75vh] flex items-center justify-center">
+          <div className="relative w-full max-w-7xl h-[75vh] flex items-center justify-center">
             <LazyImage 
               src={selectedImage} 
               alt="Zoomed review" 

@@ -103,9 +103,9 @@ const VerifyOTP: React.FC = () => {
   const isLogin = (location.state as any)?.type === 'login';
 
   return (
-    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden max-w-md mx-auto bg-background-light dark:bg-background-dark shadow-2xl font-display text-slate-900 dark:text-white transition-colors duration-200 antialiased" dir="rtl">
+    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden bg-background-light dark:bg-background-dark shadow-2xl font-display text-slate-900 dark:text-white transition-colors duration-200 antialiased pt-safe" dir="rtl">
       {/* Header Section */}
-      <div className="flex flex-col items-center pt-16 pb-8 px-6">
+      <div className="flex flex-col items-center pt-12 pb-8 px-6 pt-safe">
           <div className="w-20 h-20 bg-primary/10 rounded-2xl flex items-center justify-center mb-6">
             <Smartphone className="text-primary" size={40} />
           </div>
@@ -164,7 +164,7 @@ const VerifyOTP: React.FC = () => {
         </form>
 
         {/* Footer */}
-        <div className="mt-auto py-8 flex justify-center items-center gap-2 text-base pb-10">
+        <div className="mt-auto py-8 flex justify-center items-center gap-2 text-base pb-10 pb-safe">
           <button 
             onClick={() => navigate('/login')} 
             className="text-slate-500 dark:text-slate-400 hover:text-primary transition-colors bg-transparent border-none cursor-pointer flex items-center gap-1"

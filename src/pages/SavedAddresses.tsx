@@ -78,7 +78,7 @@ const SavedAddresses: React.FC = () => {
   };
 
   if (loading) return (
-    <div className="relative flex min-h-screen w-full flex-col max-w-md mx-auto bg-background-light dark:bg-background-dark shadow-2xl font-display antialiased" dir="rtl">
+    <div className="relative flex min-h-screen w-full flex-col bg-background-light dark:bg-background-dark font-display antialiased" dir="rtl">
       <header className="sticky top-0 z-50 bg-surface-light dark:bg-surface-dark border-b border-border-light dark:border-border-dark px-4 h-16 flex items-center justify-between">
         <Skeleton variant="circle" className="w-10 h-10" />
         <Skeleton variant="text" className="w-32 h-6" />
@@ -93,9 +93,9 @@ const SavedAddresses: React.FC = () => {
   );
 
   return (
-    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden max-w-md mx-auto bg-background-light dark:bg-background-dark shadow-2xl font-display text-text-primary-light dark:text-text-primary-dark antialiased pb-24" dir="rtl">
+    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden bg-background-light dark:bg-background-dark font-display text-text-primary-light dark:text-text-primary-dark antialiased pb-24 pb-safe" dir="rtl">
       {/* Header */}
-      <header className="sticky top-0 z-50 bg-surface-light/90 dark:bg-surface-dark/90 backdrop-blur-md border-b border-border-light dark:border-border-dark transition-colors duration-300">
+      <header className="sticky top-0 z-50 bg-surface-light/90 dark:bg-surface-dark/90 backdrop-blur-md border-b border-border-light dark:border-border-dark transition-colors duration-300 pt-safe">
         <div className="flex items-center justify-between p-4 h-16">
           <button 
             onClick={() => navigate(-1)}
@@ -115,7 +115,7 @@ const SavedAddresses: React.FC = () => {
         </div>
       </header>
 
-      <main className="flex-1 w-full max-w-md mx-auto p-4 space-y-4">
+      <main className="flex-1 w-full p-4 space-y-4">
         {addresses.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
             <div className="w-20 h-20 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center text-slate-400">
@@ -133,16 +133,17 @@ const SavedAddresses: React.FC = () => {
             </button>
           </div>
         ) : (
-          addresses.map((addr) => (
-            <div 
-              key={addr.id}
-              onClick={() => handleSelect(addr)}
-              className={`relative p-5 rounded-2xl border-2 transition-all cursor-pointer ${
-                addr.isDefault 
-                  ? 'border-primary bg-primary/5 dark:bg-primary/10' 
-                  : 'border-slate-100 dark:border-slate-800 bg-surface-light dark:bg-surface-dark'
-              } hover:border-primary/50`}
-            >
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {addresses.map((addr) => (
+              <div 
+                key={addr.id}
+                onClick={() => handleSelect(addr)}
+                className={`relative p-5 rounded-2xl border-2 transition-all cursor-pointer ${
+                  addr.isDefault 
+                    ? 'border-primary bg-primary/5 dark:bg-primary/10' 
+                    : 'border-slate-100 dark:border-slate-800 bg-surface-light dark:bg-surface-dark'
+                } hover:border-primary/50`}
+              >
               {addr.isDefault && (
                 <div className="absolute top-4 left-4">
                   <span className="bg-primary text-white text-[10px] font-bold px-2 py-1 rounded-lg">الافتراضي</span>
@@ -204,7 +205,8 @@ const SavedAddresses: React.FC = () => {
                 </button>
               </div>
             </div>
-          ))
+          ))}
+          </div>
         )}
 
         {addresses.length > 0 && (

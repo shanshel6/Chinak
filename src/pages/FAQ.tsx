@@ -68,9 +68,9 @@ const FAQ: React.FC = () => {
   ];
 
   return (
-    <div className="relative flex min-h-screen w-full flex-col max-w-md mx-auto bg-background-light dark:bg-background-dark shadow-2xl overflow-hidden font-display" dir="rtl">
+    <div className="relative flex min-h-screen w-full flex-col bg-background-light dark:bg-background-dark shadow-2xl overflow-hidden font-display pb-safe pt-safe" dir="rtl">
       {/* Header */}
-      <header className="sticky top-0 z-50 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-100 dark:border-slate-800 px-4 h-16 flex items-center justify-between">
+      <header className="sticky top-0 z-50 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-100 dark:border-slate-800 px-4 h-16 flex items-center justify-between pt-safe">
           <button 
             onClick={() => navigate(-1)}
             className="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
@@ -93,7 +93,7 @@ const FAQ: React.FC = () => {
           </div>
 
           {/* Categories */}
-          <div className="flex gap-2 overflow-x-auto pb-4 mb-6 no-scrollbar">
+          <div className="flex gap-2 overflow-x-auto sm:flex-wrap pb-4 mb-6 no-scrollbar">
             {['الكل', 'الشحن', 'الدفع', 'الإرجاع', 'الحساب'].map((cat, i) => (
               <button 
                 key={i}

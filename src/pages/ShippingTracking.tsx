@@ -247,13 +247,13 @@ const ShippingTracking: React.FC = () => {
   };
 
   if (loading) return (
-    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden max-w-md mx-auto bg-background-light dark:bg-background-dark shadow-2xl items-center justify-center rtl" dir="rtl">
+    <div className="relative flex min-h-screen w-full flex-col items-center justify-center bg-background-light dark:bg-background-dark shadow-2xl font-display text-text-primary-light dark:text-text-primary-dark antialiased pb-safe pt-safe" dir="rtl">
       <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
     </div>
   );
 
   if (!order) return (
-    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden max-w-md mx-auto bg-background-light dark:bg-background-dark shadow-2xl items-center justify-center p-4 text-center rtl" dir="rtl">
+    <div className="relative flex min-h-screen w-full flex-col items-center justify-center p-4 text-center rtl pb-safe pt-safe" dir="rtl">
       <h2 className="text-xl font-bold mb-2">{t('tracking.order_not_found')}</h2>
       <button onClick={() => navigate('/orders')} className="text-primary font-bold">{t('tracking.back_to_orders')}</button>
     </div>
@@ -262,7 +262,7 @@ const ShippingTracking: React.FC = () => {
   const firstItem = order.items?.[0]?.product;
 
   return (
-    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden max-w-md mx-auto bg-background-light dark:bg-background-dark shadow-2xl font-display text-slate-900 dark:text-slate-100 antialiased selection:bg-primary/30 rtl" dir="rtl">
+    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden bg-background-light dark:bg-background-dark shadow-2xl font-display text-slate-900 dark:text-slate-100 antialiased selection:bg-primary/30 rtl pb-safe pt-safe" dir="rtl">
       <style>{`
         @keyframes pulse-ring {
             0% { transform: scale(0.33); }
@@ -310,129 +310,136 @@ const ShippingTracking: React.FC = () => {
           </button>
         </header>
 
-        {/* Scrollable Content */}
-        <div className="flex-1 flex flex-col gap-6 p-4 pb-10">
-          {/* Need Payment Action Card */}
-          {(order.status === 'NEED_PAYMENT' || order.status === 'AWAITING_PAYMENT') && (
-            <div className="flex flex-col gap-4 bg-purple-50 dark:bg-purple-900/20 rounded-2xl p-5 border border-purple-200 dark:border-purple-800 shadow-sm animate-pulse-subtle">
-              <div className="flex items-start gap-4">
-                <div className="size-12 rounded-full bg-purple-500 flex items-center justify-center text-white shrink-0 shadow-lg shadow-purple-500/30">
-                  <CreditCard size={28} />
+        {/* Main Content Container */}
+        <div className="flex-1 w-full px-4 pb-32">
+          <div className="md:grid md:grid-cols-2 md:gap-8 md:items-start md:pt-8">
+            {/* Left Column: Tracking Status and Events */}
+            <div className="flex flex-col gap-6">
+              {/* Need Payment Action Card */}
+              {(order.status === 'NEED_PAYMENT' || order.status === 'AWAITING_PAYMENT') && (
+                <div className="flex flex-col gap-4 bg-purple-50 dark:bg-purple-900/20 rounded-2xl p-5 border border-purple-200 dark:border-purple-800 shadow-sm animate-pulse-subtle">
+                  <div className="flex items-start gap-4">
+                    <div className="size-12 rounded-full bg-purple-500 flex items-center justify-center text-white shrink-0 shadow-lg shadow-purple-500/30">
+                      <CreditCard size={28} />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <h3 className="text-purple-900 dark:text-purple-300 text-lg font-bold">
+                        {order.status === 'AWAITING_PAYMENT' ? 'بانتظار الدفع' : t('status.need_payment')}
+                      </h3>
+                      <p className="text-purple-700 dark:text-purple-400 text-sm leading-relaxed">
+                        {order.status === 'AWAITING_PAYMENT' ? 'يرجى إتمام عملية الدفع لتأكيد طلبك وبدء التجهيز.' : t('tracking.status_desc_need_payment')}
+                      </p>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={() => {
+                      setShowPaymentModal(true);
+                    }}
+                    className="w-full py-4 bg-purple-600 hover:bg-purple-700 text-white rounded-xl font-bold text-lg shadow-xl shadow-purple-600/30 transition-all active:scale-[0.98] flex items-center justify-center gap-3"
+                  >
+                    <Wallet size={24} />
+                    {t('tracking.pay_now')}
+                  </button>
                 </div>
-                <div className="flex flex-col gap-1">
-                  <h3 className="text-purple-900 dark:text-purple-300 text-lg font-bold">
-                    {order.status === 'AWAITING_PAYMENT' ? 'بانتظار الدفع' : t('status.need_payment')}
-                  </h3>
-                  <p className="text-purple-700 dark:text-purple-400 text-sm leading-relaxed">
-                    {order.status === 'AWAITING_PAYMENT' ? 'يرجى إتمام عملية الدفع لتأكيد طلبك وبدء التجهيز.' : t('tracking.status_desc_need_payment')}
-                  </p>
-                </div>
-              </div>
-              <button 
-                onClick={() => {
-                  setShowPaymentModal(true);
-                }}
-                className="w-full py-4 bg-purple-600 hover:bg-purple-700 text-white rounded-xl font-bold text-lg shadow-xl shadow-purple-600/30 transition-all active:scale-[0.98] flex items-center justify-center gap-3"
-              >
-                <Wallet size={24} />
-                {t('tracking.pay_now')}
-              </button>
-            </div>
-          )}
+              )}
 
-          {/* Order Summary Card */}
-          <div className="flex items-stretch justify-between gap-4 rounded-xl bg-white dark:bg-slate-800 p-4 shadow-sm border border-slate-100 dark:border-slate-700/50 transition-colors">
-            <div className="flex flex-[2_2_0px] flex-col justify-between gap-3">
-              <div className="flex flex-col gap-1">
-                <p className="text-slate-900 dark:text-white text-base font-bold leading-tight">
-                  {order.items.length > 1 ? t('tracking.order_id_with_qty', { id: order.id, count: order.items.length }) : firstItem?.name}
-                </p>
-                <p className="text-slate-500 dark:text-slate-400 text-xs font-normal leading-normal">{t('tracking.tracking_no')}: <span dir="ltr">#IQ-{order.id}-{new Date(order.createdAt).getTime().toString().slice(-6)}</span></p>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="bg-primary/10 text-primary text-xs font-semibold px-2 py-1 rounded-md">
-                  {t(`status.${order.status.toLowerCase()}`)}
-                </span>
-              </div>
-            </div>
-            <div className="w-24 h-24 rounded-lg overflow-hidden shrink-0 border border-slate-100 dark:border-slate-700">
-              <LazyImage 
-                src={firstItem?.image} 
-                alt={firstItem?.name} 
-                className="w-full h-full" 
-              />
-            </div>
-          </div>
-
-
-          {/* Estimated Delivery */}
-          {(order.status === 'SHIPPED' || order.status === 'DELIVERED') && (
-            <div className="flex items-center gap-4 bg-white dark:bg-slate-800 rounded-xl p-4 shadow-sm border border-slate-100 dark:border-slate-700/50">
-              <div className="flex items-center justify-center rounded-full bg-primary/10 text-primary shrink-0 size-12">
-                <Calendar size={24} />
-              </div>
-              <div className="flex flex-col justify-center">
-                <p className="text-slate-500 dark:text-slate-400 text-sm font-normal leading-normal">{t('tracking.expected_arrival')}</p>
-                <p className="text-slate-900 dark:text-white text-lg font-bold leading-normal">
-                  {(() => {
-                    const baseDate = order.shippedAt ? new Date(order.shippedAt) : 
-                                     order.updatedAt ? new Date(order.updatedAt) :
-                                     new Date(new Date(order.createdAt).getTime() + 24 * 60 * 60 * 1000);
-                    const arrivalDate = new Date(baseDate.getTime());
-                    if (order.shippingMethod === 'air') {
-                      arrivalDate.setDate(arrivalDate.getDate() + 12);
-                    } else if (order.shippingMethod === 'sea') {
-                      arrivalDate.setMonth(arrivalDate.getMonth() + 2);
-                    }
-                    return arrivalDate.toLocaleDateString('ar-IQ', { day: 'numeric', month: 'long' });
-                  })()}
-                </p>
-              </div>
-            </div>
-          )}
-
-          {/* Tracking Timeline */}
-          <h3 className="text-slate-900 dark:text-white text-lg font-bold px-1 pt-2">{t('tracking.route')}</h3>
-          
-          <div className="relative px-2 pb-6">
-            <div className="absolute top-2 bottom-0 right-[27px] w-0.5 bg-slate-200 dark:bg-slate-700 z-0"></div>
-
-            {order.status === 'CANCELLED' ? (
-              <div className="relative flex gap-6 pb-8 z-10">
-                <div className="relative shrink-0 flex flex-col items-center">
-                  <div className="size-10 rounded-full bg-red-500 flex items-center justify-center text-white shadow-lg shadow-red-500/30 z-10 relative">
-                    <XCircle size={20} />
+              {/* Order Summary Card */}
+              <div className="flex items-stretch justify-between gap-4 rounded-xl bg-white dark:bg-slate-800 p-4 shadow-sm border border-slate-100 dark:border-slate-700/50 transition-colors">
+                <div className="flex flex-[2_2_0px] flex-col justify-between gap-3">
+                  <div className="flex flex-col gap-1">
+                    <p className="text-slate-900 dark:text-white text-base font-bold leading-tight">
+                      {order.items.length > 1 ? t('tracking.order_id_with_qty', { id: order.id, count: order.items.length }) : firstItem?.name}
+                    </p>
+                    <p className="text-slate-500 dark:text-slate-400 text-xs font-normal leading-normal">{t('tracking.tracking_no')}: <span dir="ltr">#IQ-{order.id}-{new Date(order.createdAt).getTime().toString().slice(-6)}</span></p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="bg-primary/10 text-primary text-xs font-semibold px-2 py-1 rounded-md">
+                      {t(`status.${order.status.toLowerCase()}`)}
+                    </span>
                   </div>
                 </div>
-                <div className="flex flex-1 flex-col pt-1">
-                  <p className="text-red-600 dark:text-red-400 text-base font-bold">{t('status.cancelled')}</p>
-                  <p className="text-slate-500 dark:text-slate-400 text-sm mt-1">{t('tracking.cancelled_text')}</p>
+                <div className="w-24 h-24 rounded-lg overflow-hidden shrink-0 border border-slate-100 dark:border-slate-700">
+                  <LazyImage 
+                    src={firstItem?.image} 
+                    alt={firstItem?.name} 
+                    className="w-full h-full" 
+                  />
                 </div>
               </div>
-            ) : (
-              <div className="flex flex-col">
-                {order.trackingEvents?.map((event: any, idx: number) => (
-                  <div key={idx} className={`relative flex gap-6 pb-8 z-10 ${event.completed ? 'opacity-100' : 'opacity-40'}`}>
-                    <div className="relative shrink-0 flex flex-col items-center">
-          <div className={`size-10 rounded-full flex items-center justify-center text-white shadow-lg z-10 relative ${event.completed ? 'bg-primary shadow-primary/30' : event.status === 'OUT_FOR_DELIVERY' ? 'bg-amber-500 shadow-amber-500/30' : 'bg-slate-300 dark:bg-slate-600'}`}>
-            <event.icon size={20} />
-            {(idx === 0 && order.status !== 'DELIVERED' && order.status !== 'CANCELLED') && (
-              <div className={`pulse-ring ${event.status === 'OUT_FOR_DELIVERY' ? 'bg-amber-500' : 'bg-primary'}`}></div>
-            )}
-          </div>
-                    </div>
-                    <div className="flex flex-1 flex-col pt-1">
-                      <div className="flex justify-between items-start">
-                        <p className={`text-base font-bold ${event.status === 'OUT_FOR_DELIVERY' && order.status === 'SHIPPED' ? 'text-amber-600 dark:text-amber-400' : 'text-slate-900 dark:text-white'}`}>{event.title}</p>
-                        <span className="text-[10px] text-slate-400 font-medium">{event.date} - {event.time}</span>
+
+              {/* Estimated Delivery */}
+              {(order.status === 'SHIPPED' || order.status === 'DELIVERED') && (
+                <div className="flex items-center gap-4 bg-white dark:bg-slate-800 rounded-xl p-4 shadow-sm border border-slate-100 dark:border-slate-700/50">
+                  <div className="flex items-center justify-center rounded-full bg-primary/10 text-primary shrink-0 size-12">
+                    <Calendar size={24} />
+                  </div>
+                  <div className="flex flex-col justify-center">
+                    <p className="text-slate-500 dark:text-slate-400 text-sm font-normal leading-normal">{t('tracking.expected_arrival')}</p>
+                    <p className="text-slate-900 dark:text-white text-lg font-bold leading-normal">
+                      {(() => {
+                        const baseDate = order.shippedAt ? new Date(order.shippedAt) : 
+                                         order.updatedAt ? new Date(order.updatedAt) :
+                                         new Date(new Date(order.createdAt).getTime() + 24 * 60 * 60 * 1000);
+                        const arrivalDate = new Date(baseDate.getTime());
+                        if (order.shippingMethod === 'air') {
+                          arrivalDate.setDate(arrivalDate.getDate() + 12);
+                        } else if (order.shippingMethod === 'sea') {
+                          arrivalDate.setMonth(arrivalDate.getMonth() + 2);
+                        }
+                        return arrivalDate.toLocaleDateString('ar-IQ', { day: 'numeric', month: 'long' });
+                      })()}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Tracking Timeline */}
+              <div className="flex flex-col gap-4">
+                <h3 className="text-slate-900 dark:text-white text-lg font-bold px-1 pt-2">{t('tracking.route')}</h3>
+                <div className="relative px-2 pb-6">
+                  <div className="absolute top-2 bottom-0 right-[27px] w-0.5 bg-slate-200 dark:bg-slate-700 z-0"></div>
+
+                  {order.status === 'CANCELLED' ? (
+                    <div className="relative flex gap-6 pb-8 z-10">
+                      <div className="relative shrink-0 flex flex-col items-center">
+                        <div className="size-10 rounded-full bg-red-500 flex items-center justify-center text-white shadow-lg shadow-red-500/30 z-10 relative">
+                          <XCircle size={20} />
+                        </div>
                       </div>
-                      <p className="text-slate-500 dark:text-slate-400 text-sm mt-1 leading-relaxed">{event.description}</p>
+                      <div className="flex flex-1 flex-col pt-1">
+                        <p className="text-red-600 dark:text-red-400 text-base font-bold">{t('status.cancelled')}</p>
+                        <p className="text-slate-500 dark:text-slate-400 text-sm mt-1">{t('tracking.cancelled_text')}</p>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  ) : (
+                    <div className="flex flex-col">
+                      {order.trackingEvents?.map((event: any, idx: number) => (
+                        <div key={idx} className={`relative flex gap-6 pb-8 z-10 ${event.completed ? 'opacity-100' : 'opacity-40'}`}>
+                          <div className="relative shrink-0 flex flex-col items-center">
+                            <div className={`size-10 rounded-full flex items-center justify-center text-white shadow-lg z-10 relative ${event.completed ? 'bg-primary shadow-primary/30' : event.status === 'OUT_FOR_DELIVERY' ? 'bg-amber-500 shadow-amber-500/30' : 'bg-slate-300 dark:bg-slate-600'}`}>
+                              <event.icon size={20} />
+                              {(idx === 0 && order.status !== 'DELIVERED' && order.status !== 'CANCELLED') && (
+                                <div className={`pulse-ring ${event.status === 'OUT_FOR_DELIVERY' ? 'bg-amber-500' : 'bg-primary'}`}></div>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex flex-1 flex-col pt-1">
+                            <div className="flex justify-between items-start">
+                              <p className={`text-base font-bold ${event.status === 'OUT_FOR_DELIVERY' && order.status === 'SHIPPED' ? 'text-amber-600 dark:text-amber-400' : 'text-slate-900 dark:text-white'}`}>{event.title}</p>
+                              <span className="text-[10px] text-slate-400 font-medium">{event.date} - {event.time}</span>
+                            </div>
+                            <p className="text-slate-500 dark:text-slate-400 text-sm mt-1 leading-relaxed">{event.description}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
-            )}
-          </div>
+            </div>
+
+            {/* Right Column: Order Details and Support */}
+            <div className="flex flex-col gap-6">
 
           {/* Order Items Section */}
           <div className="flex flex-col gap-4 mt-2">
@@ -595,12 +602,14 @@ const ShippingTracking: React.FC = () => {
             )}
           </div>
         </div>
+      </div>
+    </div>
 
       {/* Payment Modal */}
       {showPaymentModal && order && (
         <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-300">
           <div 
-            className="w-full max-w-md bg-white dark:bg-slate-900 rounded-t-[2rem] sm:rounded-[2rem] shadow-2xl overflow-hidden animate-in slide-in-from-bottom duration-500 border-t sm:border border-slate-200 dark:border-slate-800 rtl flex flex-col max-h-[95vh]"
+            className="w-full max-w-7xl bg-white dark:bg-slate-900 rounded-t-[2rem] sm:rounded-[2rem] shadow-2xl overflow-hidden animate-in slide-in-from-bottom duration-500 border-t sm:border border-slate-200 dark:border-slate-800 rtl flex flex-col max-h-[95vh] pb-safe pt-safe"
             dir="rtl"
           >
             {/* Modal Handle (for mobile) */}
@@ -783,7 +792,7 @@ const ShippingTracking: React.FC = () => {
         </div>
       )}
     </div>
-  );
+);
 };
 
 export default ShippingTracking;

@@ -94,7 +94,7 @@ const CheckoutShipping: React.FC = () => {
   const selectedAddress = addresses.find(a => a.id === selectedAddressId);
 
   if (loading) return (
-    <div className="relative flex min-h-screen w-full flex-col items-center justify-center max-w-md mx-auto bg-background-light dark:bg-background-dark shadow-2xl font-display text-text-primary-light dark:text-text-primary-dark antialiased" dir="rtl">
+    <div className="relative flex min-h-screen w-full flex-col items-center justify-center bg-background-light dark:bg-background-dark shadow-2xl font-display text-text-primary-light dark:text-text-primary-dark antialiased" dir="rtl">
       <div className="flex flex-col items-center gap-6 animate-in fade-in zoom-in duration-700">
         <div className="flex flex-col items-center gap-2">
           <div className="flex gap-1">
@@ -109,9 +109,9 @@ const CheckoutShipping: React.FC = () => {
   );
 
   return (
-    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden max-w-md mx-auto bg-background-light dark:bg-background-dark shadow-2xl font-display text-text-primary-light dark:text-text-primary-dark antialiased pb-32" dir="rtl">
+    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden bg-background-light dark:bg-background-dark shadow-2xl font-display text-text-primary-light dark:text-text-primary-dark antialiased pb-32 pt-safe" dir="rtl">
       {/* Top App Bar */}
-      <div className="sticky top-0 z-50 flex items-center bg-background-light/90 dark:bg-background-dark/90 backdrop-blur-md p-4 pb-2 justify-between border-b border-slate-100 dark:border-slate-800">
+      <div className="sticky top-0 z-50 flex items-center bg-background-light/90 dark:bg-background-dark/90 backdrop-blur-md p-4 pb-2 justify-between border-b border-slate-100 dark:border-slate-800 pt-safe">
         <button 
           onClick={() => navigate(-1)}
           className="text-slate-900 dark:text-white flex size-10 shrink-0 items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
@@ -358,8 +358,8 @@ const CheckoutShipping: React.FC = () => {
       />
 
       {/* Footer CTA */}
-      <div className="fixed bottom-0 left-0 right-0 p-4 bg-surface-light dark:bg-surface-dark border-t border-border-light dark:border-border-dark z-40">
-        <div className="max-w-md mx-auto">
+      <div className="fixed bottom-0 left-0 right-0 p-4 pb-safe bg-surface-light dark:bg-surface-dark border-t border-border-light dark:border-border-dark z-40">
+        <div className="w-full mx-auto">
           <button 
             onClick={() => navigate('/checkout/payment-address')}
             disabled={!selectedAddressId}
@@ -378,7 +378,7 @@ const CheckoutShipping: React.FC = () => {
             className="absolute inset-0 bg-black/40 backdrop-blur-sm animate-in fade-in duration-300"
             onClick={() => setShowAddressSheet(false)}
           ></div>
-          <div className="relative w-full max-w-md bg-white dark:bg-slate-900 rounded-t-[32px] shadow-2xl animate-in slide-in-from-bottom duration-500 max-h-[85vh] overflow-hidden flex flex-col border-x border-t border-slate-100 dark:border-slate-800">
+          <div className="relative w-full bg-white dark:bg-slate-900 rounded-t-[32px] shadow-2xl animate-in slide-in-from-bottom duration-500 max-h-[85vh] overflow-hidden flex flex-col border-x border-t border-slate-100 dark:border-slate-800 pb-safe">
             {/* Handle Bar */}
             <div className="w-12 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full mx-auto mt-4 mb-2 shrink-0"></div>
             

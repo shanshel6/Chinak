@@ -17,7 +17,7 @@ const AddToCartBar: React.FC<AddToCartBarProps> = ({
   onGoToCart,
 }) => {
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-40 mx-auto max-w-md bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border-t border-slate-900/5 dark:border-white/10 px-6 py-4 pb-6 transition-colors shadow-[0_-4px_20px_rgba(0,0,0,0.05)]">
+    <div className="fixed bottom-0 left-0 right-0 z-40 w-full bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border-t border-slate-900/5 dark:border-white/10 px-6 py-4 pb-safe transition-colors shadow-[0_-4px_20px_rgba(0,0,0,0.05)]">
       <div className="flex items-center justify-between gap-4">
         <div className="flex flex-col min-w-[100px]">
           <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-1">السعر الإجمالي</span>

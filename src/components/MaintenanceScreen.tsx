@@ -12,7 +12,7 @@ const MaintenanceScreen: React.FC = () => {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-background-light dark:bg-background-dark p-6" dir="rtl">
-      <div className="max-w-md w-full text-center space-y-8 animate-in fade-in zoom-in duration-500">
+      <div className="w-full max-w-7xl text-center space-y-8 animate-in fade-in zoom-in duration-500">
         <div className="flex justify-center">
           <Logo size="lg" />
         </div>
