@@ -1,39 +1,53 @@
-# Use Node 20 slim as the base for a smaller image
-FROM node:20-slim
+# Build stage for frontend
+FROM node:20 AS frontend-builder
+WORKDIR /app
 
+# Copy root package files
+COPY package*.json ./
+RUN npm install
+
+# Copy ONLY necessary frontend files explicitly to avoid any context issues
+COPY index.html ./
+COPY vite.config.ts ./
+COPY tsconfig*.json ./
+COPY tailwind.config.js ./
+COPY postcss.config.js ./
+COPY public/ ./public/
+COPY src/ ./src/
+
+# Verify index.html is exactly where Vite expects it
+RUN ls -la index.html
+
+# Build the frontend - this generates the 'dist' folder
+RUN npm run build
+
+# Production stage
+FROM node:20-slim
 # Install system dependencies for Prisma and Sharp
 RUN apt-get update && apt-get install -y \
     openssl \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Create app directory
 WORKDIR /app
 
-# Copy package files first for better caching
-COPY package*.json ./
-COPY server/package*.json ./server/
+# Copy backend dependencies and prisma schema first
+COPY server/package*.json ./
+COPY server/prisma ./prisma
 
-# Copy the rest of the application
-COPY . .
+# Install production dependencies
+RUN npm install --omit=dev
 
-# Move server files to root if they are in the server folder
-RUN if [ -f "server/package.json" ]; then \
-    echo "Consolidating server files..."; \
-    cp -r server/* . && cp -r server/.[!.]* . || true; \
-    fi
-
-# Remove non-server files to save space
-RUN rm -rf src public android android-studio .vscode supabase 2>/dev/null || true
-
-# Install dependencies
-# We need devDependencies for 'prisma' during the build
-RUN npm install
-
-# Generate Prisma client
+# Explicitly generate prisma client
 RUN npx prisma generate
 
-# Hugging Face Spaces uses port 7860 by default
+# Copy backend source files
+COPY server/ .
+
+# Copy built frontend assets from builder stage
+COPY --from=frontend-builder /app/dist ./dist
+
+# Hugging Face Spaces environment
 ENV PORT=7860
 ENV NODE_ENV=production
 EXPOSE 7860

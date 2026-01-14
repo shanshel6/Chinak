@@ -5,8 +5,6 @@ server/.env
 .git
 android
 ios
-src
-public
 *.md
 Dockerfile
 .dockerignore

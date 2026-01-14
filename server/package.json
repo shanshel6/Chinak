@@ -35,10 +35,10 @@
     "socket.io": "^4.8.3",
     "sqlite": "^5.1.1",
     "sqlite3": "^5.1.7",
-    "undici": "^7.18.2"
+    "undici": "^7.18.2",
+    "prisma": "^6.19.1"
   },
   "devDependencies": {
-    "nodemon": "^3.1.11",
-    "prisma": "^6.19.1"
+    "nodemon": "^3.1.11"
   }
 }

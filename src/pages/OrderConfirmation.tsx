@@ -4,7 +4,7 @@ import { useNotificationStore } from '../store/useNotificationStore';
 import { fetchProducts } from '../services/api';
 import LazyImage from '../components/LazyImage';
 
-import { X, CheckCircle2, ReceiptText, Truck, Headset } from 'lucide-react';
+import { X, CheckCircle2, Truck, Headset } from 'lucide-react';
 
 const OrderConfirmation: React.FC = () => {
   const navigate = useNavigate();

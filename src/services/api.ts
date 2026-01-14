@@ -1171,7 +1171,7 @@ export async function fetchOrders() {
 }
 
 export async function fetchOrderById(id: number | string) {
-  return request(`/orders/${id}?_t=${Date.now()}`);
+  return request(`/orders/${id}?_t=${Date.now()}`, { skipMaintenanceTrigger: true });
 }
 
 export async function confirmOrderPayment(id: number | string) {

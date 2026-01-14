@@ -296,6 +296,10 @@ app.use(compression());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
+// Serve static files from the 'dist' directory
+const distPath = path.join(__dirname, 'dist');
+app.use(express.static(distPath));
+
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
@@ -2298,11 +2302,6 @@ app.get('/api/admin/reports/abandoned-carts', authenticateToken, isAdmin, async 
     console.error('Failed to fetch abandoned carts:', error);
     res.status(500).json({ error: 'Failed to fetch abandoned carts' });
   }
-});
-
-// Root route
-app.get('/', (req, res) => {
-  res.send('E-commerce API is running...');
 });
 
 // Products routes
@@ -4959,6 +4958,21 @@ app.post('/api/messages', authenticateToken, async (req, res) => {
     res.status(201).json(message);
   } catch (error) {
     res.status(500).json({ error: 'Failed to send message' });
+  }
+});
+
+// Catch-all route for SPA - MUST be after all API routes
+app.get('/*any', (req, res) => {
+  // Check if the request is for an API route - if so, don't serve index.html
+  if (req.path.startsWith('/api/')) {
+    return res.status(404).json({ error: 'API route not found' });
+  }
+  
+  const indexPath = path.join(distPath, 'index.html');
+  if (fs.existsSync(indexPath)) {
+    res.sendFile(indexPath);
+  } else {
+    res.send('E-commerce API is running... (Frontend build not found)');
   }
 });
 
