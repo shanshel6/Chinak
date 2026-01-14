@@ -7,32 +7,30 @@ export const getBaseDomain = () => {
   const envApiUrl = import.meta.env.VITE_API_URL;
   if (envApiUrl) return envApiUrl;
 
-  // 2. Check for Capacitor/Mobile environment
+  // 2. Production Fallback (Always use for production builds)
+  if (import.meta.env.PROD) {
+    return 'https://shanshal66-my-shop-backend.hf.space';
+  }
+
+  // 3. Check for Capacitor/Mobile environment
   const isCapacitor = window.hasOwnProperty('Capacitor');
   
-  // 3. Mobile Development Logic
+  // 4. Mobile Development Logic
   if (isCapacitor || window.location.hostname !== 'localhost') {
-    // If we're on a real device or emulator, localhost won't work for the backend
     // If the hostname is an IP, use it
     if (/^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(window.location.hostname)) {
       return `http://${window.location.hostname}:5000`;
     }
     
-    // For Android emulators, 10.0.2.2 points to the host machine
-    // We can't easily detect if it's an emulator here, but we can try to use the current IP
-    // if we are running in a local network.
-    
-    // Fallback for mobile: try the common local IP range or a known host IP
-    // Note: 192.168.2.200 is the current machine IP found via ipconfig
+    // Fallback for mobile development: 192.168.2.200 is the current machine IP
     return 'http://192.168.2.200:5000';
   }
 
-  // 4. Default local development
+  // 5. Default local development
   if (window.location.hostname === 'localhost') {
     return 'http://localhost:5000';
   }
 
-  // 5. Production Fallback
   return 'https://shanshal66-my-shop-backend.hf.space';
 };
 

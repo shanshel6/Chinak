@@ -34,11 +34,166 @@ const Login: React.FC = () => {
     { code: '+973', name: 'البحرين', flag: '🇧🇭' },
     { code: '+968', name: 'عمان', flag: '🇴🇲' },
     { code: '+962', name: 'الأردن', flag: '🇯🇴' },
+    { code: '+961', name: 'لبنان', flag: '🇱🇧' },
+    { code: '+963', name: 'سوريا', flag: '🇸🇾' },
+    { code: '+970', name: 'فلسطين', flag: '🇵🇸' },
+    { code: '+20', name: 'مصر', flag: '🇪🇬' },
+    { code: '+212', name: 'المغرب', flag: '🇲🇦' },
+    { code: '+213', name: 'الجزائر', flag: '🇩🇿' },
+    { code: '+216', name: 'تونس', flag: '🇹🇳' },
+    { code: '+218', name: 'ليبيا', flag: '🇱🇾' },
+    { code: '+249', name: 'السودان', flag: '🇸🇩' },
+    { code: '+967', name: 'اليمن', flag: '🇾🇪' },
+    { code: '+222', name: 'موريتانيا', flag: '🇲🇷' },
+    { code: '+252', name: 'الصومال', flag: '🇸🇴' },
+    { code: '+253', name: 'جيبوتي', flag: '🇩🇯' },
+    { code: '+269', name: 'جزر القمر', flag: '🇰🇲' },
     { code: '+90', name: 'تركيا', flag: '🇹🇷' },
+    { code: '+98', name: 'إيران', flag: '🇮🇷' },
+    { code: '+1', name: 'أمريكا', flag: '🇺🇸' },
+    { code: '+1', name: 'كندا', flag: '🇨🇦' },
+    { code: '+44', name: 'بريطانيا', flag: '🇬🇧' },
+    { code: '+33', name: 'فرنسا', flag: '🇫🇷' },
+    { code: '+49', name: 'ألمانيا', flag: '🇩🇪' },
+    { code: '+39', name: 'إيطاليا', flag: '🇮🇹' },
+    { code: '+34', name: 'إسبانيا', flag: '🇪🇸' },
+    { code: '+31', name: 'هولندا', flag: '🇳🇱' },
+    { code: '+32', name: 'بلجيكا', flag: '🇧🇪' },
+    { code: '+41', name: 'سويسرا', flag: '🇨🇭' },
+    { code: '+43', name: 'النمسا', flag: '🇦🇹' },
+    { code: '+46', name: 'السويد', flag: '🇸🇪' },
+    { code: '+47', name: 'النرويج', flag: '🇳🇴' },
+    { code: '+45', name: 'الدنمارك', flag: '🇩🇰' },
+    { code: '+358', name: 'فنلندا', flag: '🇫🇮' },
+    { code: '+351', name: 'البرتغال', flag: '🇵🇹' },
+    { code: '+30', name: 'اليونان', flag: '🇬🇷' },
+    { code: '+7', name: 'روسيا', flag: '🇷🇺' },
+    { code: '+380', name: 'أوكرانيا', flag: '🇺🇦' },
+    { code: '+48', name: 'بولندا', flag: '🇵🇱' },
+    { code: '+40', name: 'رومانيا', flag: '🇷🇴' },
+    { code: '+36', name: 'المجر', flag: '🇭🇺' },
+    { code: '+420', name: 'التشيك', flag: '🇨🇿' },
     { code: '+86', name: 'الصين', flag: '🇨🇳' },
+    { code: '+81', name: 'اليابان', flag: '🇯🇵' },
+    { code: '+82', name: 'كوريا الجنوبية', flag: '🇰🇷' },
+    { code: '+91', name: 'الهند', flag: '🇮🇳' },
+    { code: '+92', name: 'باكستان', flag: '🇵🇰' },
+    { code: '+62', name: 'إندونيسيا', flag: '🇮🇩' },
+    { code: '+60', name: 'ماليزيا', flag: '🇲🇾' },
+    { code: '+65', name: 'سنغافورة', flag: '🇸🇬' },
+    { code: '+66', name: 'تايلاند', flag: '🇹🇭' },
+    { code: '+84', name: 'فيتنام', flag: '🇻🇳' },
+    { code: '+63', name: 'الفلبين', flag: '🇵🇭' },
+    { code: '+61', name: 'أستراليا', flag: '🇦🇺' },
+    { code: '+64', name: 'نيوزيلندا', flag: '🇳🇿' },
+    { code: '+55', name: 'البرازيل', flag: '🇧🇷' },
+    { code: '+54', name: 'الأرجنتين', flag: '🇦🇷' },
+    { code: '+56', name: 'تشيلي', flag: '🇨🇱' },
+    { code: '+57', name: 'كولومبيا', flag: '🇨🇴' },
+    { code: '+51', name: 'بيرو', flag: '🇵🇪' },
+    { code: '+58', name: 'فنزويلا', flag: '🇻🇪' },
+    { code: '+52', name: 'المكسيك', flag: '🇲🇽' },
+    { code: '+27', name: 'جنوب أفريقيا', flag: '🇿🇦' },
+    { code: '+234', name: 'نيجيريا', flag: '🇳🇬' },
+    { code: '+251', name: 'إثيوبيا', flag: '🇪🇹' },
+    { code: '+254', name: 'كينيا', flag: '🇰🇪' },
+    { code: '+255', name: 'تنزانيا', flag: '🇹🇿' },
+    { code: '+233', name: 'غانا', flag: '🇬🇭' },
+    { code: '+221', name: 'السنغال', flag: '🇸🇳' },
+    { code: '+93', name: 'أفغانستان', flag: '🇦🇫' },
+    { code: '+355', name: 'ألبانيا', flag: '🇦🇱' },
+    { code: '+376', name: 'أندورا', flag: '🇦🇩' },
+    { code: '+244', name: 'أنغولا', flag: '🇦🇴' },
+    { code: '+374', name: 'أرمينيا', flag: '🇦🇲' },
+    { code: '+994', name: 'أذربيجان', flag: '🇦🇿' },
+    { code: '+880', name: 'بنغلاديش', flag: '🇧🇩' },
+    { code: '+375', name: 'بيلاروسيا', flag: '🇧🇾' },
+    { code: '+359', name: 'بلغاريا', flag: '🇧🇬' },
+    { code: '+855', name: 'كمبوديا', flag: '🇰🇭' },
+    { code: '+237', name: 'الكاميرون', flag: '🇨🇲' },
+    { code: '+506', name: 'كوستاريكا', flag: '🇨🇷' },
+    { code: '+385', name: 'كرواتيا', flag: '🇭🇷' },
+    { code: '+357', name: 'قبرص', flag: '🇨🇾' },
+    { code: '+593', name: 'الإكوادور', flag: '🇪🇨' },
+    { code: '+372', name: 'إستونيا', flag: '🇪🇪' },
+    { code: '+995', name: 'جورجيا', flag: '🇬🇪' },
+    { code: '+502', name: 'غواتيمالا', flag: '🇬🇹' },
+    { code: '+354', name: 'آيسلندا', flag: '🇮🇸' },
+    { code: '+353', name: 'أيرلندا', flag: '🇮🇪' },
+    { code: '+996', name: 'قيرغيزستان', flag: '🇰🇬' },
+    { code: '+371', name: 'لاتفيا', flag: '🇱🇻' },
+    { code: '+370', name: 'ليتوانيا', flag: '🇱🇹' },
+    { code: '+352', name: 'لوكسمبورغ', flag: '🇱🇺' },
+    { code: '+389', name: 'مقدونيا', flag: '🇲🇰' },
+    { code: '+356', name: 'مالطا', flag: '🇲🇹' },
+    { code: '+373', name: 'مولدوفا', flag: '🇲🇩' },
+    { code: '+377', name: 'موناكو', flag: '🇲🇨' },
+    { code: '+976', name: 'منغوليا', flag: '🇲🇳' },
+    { code: '+382', name: 'الجبل الأسود', flag: '🇲🇪' },
+    { code: '+977', name: 'نيبال', flag: '🇳🇵' },
+    { code: '+505', name: 'نيكاراغوا', flag: '🇳🇮' },
+    { code: '+507', name: 'بنما', flag: '🇵🇦' },
+    { code: '+595', name: 'باراغواي', flag: '🇵🇾' },
+    { code: '+381', name: 'صربيا', flag: '🇷🇸' },
+    { code: '+421', name: 'سلوفاكيا', flag: '🇸🇰' },
+    { code: '+386', name: 'سلوفينيا', flag: '🇸🇮' },
+    { code: '+94', name: 'سريلانكا', flag: '🇱🇰' },
+    { code: '+992', name: 'طاجيكستان', flag: '🇹🇯' },
+    { code: '+993', name: 'تركمانستان', flag: '🇹🇲' },
+    { code: '+598', name: 'أوروغواي', flag: '🇺🇾' },
+    { code: '+998', name: 'أوزبكستان', flag: '🇺🇿' },
   ];
 
-  const fullPhone = `${countryCode}${phoneNumber}`;
+  // Test accounts for Google Play reviewers
+  const TEST_ACCOUNTS = {
+    reviewer: { 
+      phone: '+1234567890', 
+      password: 'reviewer123',
+      name: 'Google Play Reviewer',
+      email: 'reviewer@example.com'
+    },
+    admin_reviewer: { 
+      phone: '+1987654321', 
+      password: 'adminreview456',
+      name: 'Admin Reviewer',
+      email: 'admin@example.com'
+    }
+  };
+
+  // Check if phone number matches test accounts
+  const isTestAccount = (phone: string) => {
+    const normalizedPhone = normalizePhone(phone);
+    return Object.values(TEST_ACCOUNTS).some(account => 
+      normalizePhone(account.phone) === normalizedPhone
+    );
+  };
+
+  // Handle test account login
+  const handleTestAccountLogin = async (phone: string) => {
+    const normalizedPhone = normalizePhone(phone);
+    const testAccount = Object.values(TEST_ACCOUNTS).find(account => 
+      normalizePhone(account.phone) === normalizedPhone
+    );
+
+    if (testAccount) {
+      // Simulate successful login for test accounts
+      setAuth({
+        user: {
+          id: 'reviewer-' + Date.now(),
+          phone: testAccount.phone,
+          name: testAccount.name,
+          email: testAccount.email,
+          role: testAccount.phone.includes('1987654321') ? 'admin' : 'user'
+        },
+        token: 'test-token-' + Date.now()
+      });
+      
+      showToast('تم تسجيل الدخول كمراجع تجريبي', 'success');
+      navigate('/');
+      return true;
+    }
+    return false;
+  };
 
   const normalizePhone = (phone: string) => {
     if (!phone) return '';
@@ -69,7 +224,16 @@ const Login: React.FC = () => {
   };
 
   const handlePhoneSubmit = async () => {
+    const fullPhone = countryCode + phoneNumber;
     const normalizedPhone = normalizePhone(fullPhone);
+
+    // Check if this is a test account for Google Play reviewers
+    if (isTestAccount(fullPhone)) {
+      const success = await handleTestAccountLogin(fullPhone);
+      if (success) {
+        return; // Test account login successful, exit early
+      }
+    }
 
     if (step === 'phone') {
       if (!phoneNumber) {
@@ -280,8 +444,8 @@ const Login: React.FC = () => {
                         dir="ltr"
                       >
                         {countries.map((c) => (
-                          <option key={c.code} value={c.code}>
-                            {c.flag} {c.code}
+                          <option key={`${c.code}-${c.name}`} value={c.code}>
+                            {c.flag} {c.name} ({c.code})
                           </option>
                         ))}
                       </select>
