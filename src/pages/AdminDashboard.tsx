@@ -1243,17 +1243,43 @@ const AdminDashboard: React.FC = () => {
                           <td className="px-4 py-4">
                             <div className="flex items-center gap-3">
                               <LazyImage 
-                                src={item.product?.image} 
+                                src={item.variant?.image || item.product?.image} 
                                 alt={item.product?.name} 
                                 className="w-10 h-10 sm:w-12 sm:h-12 rounded-lg object-cover bg-slate-100 shrink-0"
                                 isThumbnail={true}
                               />
                               <div className="min-w-0">
                                 <p className="font-bold truncate lg:max-w-none">{item.product?.name}</p>
-                                {item.variant && (
-                                  <p className="text-[10px] text-slate-500 mt-0.5 truncate lg:max-w-none">
-                                    {item.variant.combination}
-                                  </p>
+                                {item.variant && item.variant.combination && (
+                                  <div className="flex flex-wrap gap-1 mt-1">
+                                    {(() => {
+                                      try {
+                                        const combination = typeof item.variant.combination === 'string' 
+                                          ? JSON.parse(item.variant.combination) 
+                                          : item.variant.combination;
+                                        
+                                        if (!combination || Object.keys(combination).length === 0) {
+                                          return (
+                                            <span className="text-[9px] bg-slate-200/50 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700/50">
+                                              {String(item.variant.combination)}
+                                            </span>
+                                          );
+                                        }
+
+                                        return Object.entries(combination).map(([key, value]) => (
+                                          <span key={key} className="text-[9px] bg-slate-200/50 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700/50">
+                                            {key}: {String(value)}
+                                          </span>
+                                        ));
+                                      } catch (e) {
+                                        return (
+                                          <span className="text-[9px] bg-slate-200/50 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700/50">
+                                            {String(item.variant.combination)}
+                                          </span>
+                                        );
+                                      }
+                                    })()}
+                                  </div>
                                 )}
                               </div>
                             </div>

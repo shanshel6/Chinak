@@ -132,7 +132,7 @@ function MainLayout() {
                        !noBottomNavPaths.some(path => location.pathname.startsWith(path));
 
   return (
-    <div className="w-full min-h-screen bg-white dark:bg-slate-900 shadow-xl relative flex flex-col pt-2">
+    <div className="w-full min-h-screen bg-white dark:bg-slate-900 shadow-xl relative flex flex-col pt-[env(safe-area-inset-top,0.5rem)]">
       <div className="flex-1 flex flex-col relative">
         <ErrorBoundary>
           <AnimatedRoutes />

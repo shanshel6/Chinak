@@ -441,11 +441,15 @@ const ProductDetails: React.FC = () => {
             totalReviews={allReviews.length}
           />
 
-          <ProductOptions 
-            options={product.options || []}
-            selectedOptions={selectedOptions}
-            onOptionSelect={(name, val) => setSelectedOptions(prev => ({ ...prev, [name]: val }))}
-          />
+          {product.options && product.options.length > 0 && (
+            <div className="mb-6 p-4 bg-white dark:bg-slate-800/40 rounded-2xl border border-slate-100 dark:border-white/5 shadow-sm">
+              <ProductOptions 
+                options={product.options}
+                selectedOptions={selectedOptions}
+                onOptionSelect={(name, val) => setSelectedOptions(prev => ({ ...prev, [name]: val }))}
+              />
+            </div>
+          )}
 
           {/* Store Evaluation & Reviews Summary Section (Right below options) */}
           {(product.reviewsCountShown || product.storeEvaluation) && (

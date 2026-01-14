@@ -303,7 +303,7 @@ const Cart: React.FC = () => {
                 }}
               >
                 <LazyImage 
-                  src={item.product.image} 
+                  src={item.variant?.image || item.product.image} 
                   alt={item.product.name} 
                   className="w-full h-full" 
                 />
@@ -326,14 +326,25 @@ const Cart: React.FC = () => {
                             ? JSON.parse(item.variant.combination) 
                             : item.variant.combination;
                           
-                          return Object.entries(combination || {}).map(([key, value]) => (
-                            <span key={key} className="text-[10px] bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 px-1.5 py-0.5 rounded">
-                              {key}: {value as string}
+                          if (!combination || Object.keys(combination).length === 0) {
+                            return (
+                              <span className="text-[9px] bg-slate-200/50 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700/50">
+                                {String(item.variant.combination)}
+                              </span>
+                            );
+                          }
+
+                          return Object.entries(combination).map(([key, value]) => (
+                            <span key={key} className="text-[9px] bg-slate-200/50 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700/50">
+                              {key}: {String(value)}
                             </span>
                           ));
                         } catch (e) {
-                          console.error('Error parsing variant combination:', e);
-                          return null;
+                          return (
+                            <span className="text-[9px] bg-slate-200/50 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700/50">
+                              {String(item.variant.combination)}
+                            </span>
+                          );
                         }
                       })()}
                     </div>

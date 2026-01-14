@@ -117,15 +117,69 @@ const OrderConfirmation: React.FC = () => {
 
             {/* Order Summary Card */}
             <div className="w-full bg-white dark:bg-[#1A2633] rounded-xl shadow-sm border border-slate-100 dark:border-slate-800 p-5 mb-8">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-primary/10 text-primary">
-                  <ReceiptText size={20} />
-                </div>
-                <div className="text-right">
-                  <p className="text-sm text-slate-500">رقم الطلب</p>
-                  <p className="font-bold text-slate-900 dark:text-white">#{order?.id || '---'}</p>
-                </div>
+              <div className="flex justify-between gap-x-6 py-3 border-b border-slate-100 dark:border-slate-700">
+                <p className="text-slate-500 dark:text-slate-400 text-sm font-normal">رقم الطلب</p>
+                <p className="font-bold text-slate-900 dark:text-white">#{order?.id || '---'}</p>
               </div>
+
+              {/* Order Items List */}
+              {order?.items && order.items.length > 0 && (
+                <div className="flex flex-col gap-3 py-4 border-b border-slate-100 dark:border-slate-700">
+                  <p className="text-slate-500 dark:text-slate-400 text-sm font-normal mb-1">المنتجات</p>
+                  {order.items.map((item: any, idx: number) => (
+                    <div key={idx} className="flex items-center gap-3">
+                      <div className="relative size-12 shrink-0 rounded-lg overflow-hidden border border-slate-100 dark:border-slate-700 bg-slate-50 dark:bg-slate-900">
+                        <LazyImage 
+                          src={item.variant?.image || item.product?.image} 
+                          alt={item.product?.name}
+                          className="w-full h-full"
+                        />
+                        <div className="absolute top-0 right-0 bg-primary text-white text-[8px] font-black px-1 rounded-bl-md">
+                          {item.quantity}x
+                        </div>
+                      </div>
+                      <div className="flex flex-1 flex-col min-w-0">
+                        <p className="text-xs font-bold text-slate-900 dark:text-white truncate">{item.product?.name}</p>
+                        {item.variant && item.variant.combination && (
+                          <div className="flex flex-wrap gap-1 mt-0.5">
+                            {(() => {
+                              try {
+                                const combination = typeof item.variant.combination === 'string' 
+                                  ? JSON.parse(item.variant.combination) 
+                                  : item.variant.combination;
+                                
+                                if (!combination || Object.keys(combination).length === 0) {
+                                  return (
+                                    <span className="text-[9px] bg-slate-200/50 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700/50">
+                                      {String(item.variant.combination)}
+                                    </span>
+                                  );
+                                }
+
+                                return Object.entries(combination).map(([key, value]) => (
+                                  <span key={key} className="text-[9px] bg-slate-200/50 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700/50">
+                                    {key}: {String(value)}
+                                  </span>
+                                ));
+                              } catch (e) {
+                                return (
+                                  <span className="text-[9px] bg-slate-200/50 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700/50">
+                                    {String(item.variant.combination)}
+                                  </span>
+                                );
+                              }
+                            })()}
+                          </div>
+                        )}
+                      </div>
+                      <div className="text-xs font-bold text-slate-900 dark:text-white shrink-0">
+                        {(item.price * item.quantity).toLocaleString()} د.ع
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
               <div className="flex justify-between gap-x-6 py-3 border-b border-slate-100 dark:border-slate-700">
                 <p className="text-slate-500 dark:text-slate-400 text-sm font-normal">طريقة الدفع</p>
                 <p className="text-[#0d141b] dark:text-white text-sm font-bold text-left">

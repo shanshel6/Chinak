@@ -23,21 +23,22 @@ const ProductOptions: React.FC<ProductOptionsProps> = ({
     <div className="mb-6 space-y-6">
       {options.map((option) => {
         const values = typeof option.values === 'string' ? JSON.parse(option.values) : option.values;
-        // Detect informational headers
+        // Detect informational headers - Only if it has NO selectable values or is specifically named
         const isInformational = 
-           option.name === '免费服务' || 
+           (option.name === '免费服务' || 
            option.name === 'خدمات مجانية' || 
            option.name === 'خدمة مجانية' || 
-           option.name === 'Free Service';
+           option.name === 'Free Service') && 
+           (!values || values.length === 0);
 
         return (
           <div key={option.id} className="space-y-3">
             <h3 className="text-slate-900 dark:text-white text-sm font-black flex items-center gap-2">
               {option.name}
-              {!isInformational && <span className="text-[10px] text-slate-400 font-normal">(اختر واحد)</span>}
+              {!isInformational && values && values.length > 0 && <span className="text-[10px] text-slate-400 font-normal">(اختر واحد)</span>}
             </h3>
             <div className="flex flex-wrap gap-2">
-              {values.map((val: any) => {
+              {values && values.map((val: any) => {
                 const valString = typeof val === 'object' ? (val.value || val.name || JSON.stringify(val)) : String(val);
                 return (
                   <div

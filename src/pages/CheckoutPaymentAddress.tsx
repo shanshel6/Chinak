@@ -372,6 +372,61 @@ const CheckoutPaymentAddress: React.FC = () => {
         <section className="space-y-3 animate-[fadeIn_0.7s_ease-out]">
           <h3 className="text-lg font-bold tracking-tight">ملخص الطلب</h3>
           <div className="bg-slate-50 dark:bg-slate-800/30 rounded-[32px] p-5 border border-slate-100 dark:border-slate-800 space-y-3">
+            {/* Items List */}
+            <div className="flex flex-col gap-3 mb-4 pb-4 border-b border-slate-200 dark:border-slate-700/50">
+              {cartItems.map((item, idx) => (
+                <div key={idx} className="flex items-center gap-3">
+                  <div className="relative size-12 shrink-0 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900">
+                    <img 
+                      src={item.variant?.image || item.product?.image} 
+                      alt={item.product?.name}
+                      className="w-full h-full object-cover"
+                    />
+                    <div className="absolute top-0 right-0 bg-primary text-white text-[8px] font-black px-1 rounded-bl-md">
+                      {item.quantity}x
+                    </div>
+                  </div>
+                  <div className="flex flex-1 flex-col min-w-0">
+                    <p className="text-xs font-bold text-slate-900 dark:text-white truncate">{item.product?.name}</p>
+                    {item.variant && item.variant.combination && (
+                      <div className="flex flex-wrap gap-1 mt-0.5">
+                        {(() => {
+                          try {
+                            const combination = typeof item.variant.combination === 'string' 
+                              ? JSON.parse(item.variant.combination) 
+                              : item.variant.combination;
+                            
+                            if (!combination || Object.keys(combination).length === 0) {
+                              return (
+                                <span className="text-[9px] bg-slate-200/50 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700/50">
+                                  {String(item.variant.combination)}
+                                </span>
+                              );
+                            }
+
+                            return Object.entries(combination).map(([key, value]) => (
+                              <span key={key} className="text-[9px] bg-slate-200/50 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700/50">
+                                {key}: {String(value)}
+                              </span>
+                            ));
+                          } catch (e) {
+                            return (
+                              <span className="text-[9px] bg-slate-200/50 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700/50">
+                                {String(item.variant.combination)}
+                              </span>
+                            );
+                          }
+                        })()}
+                      </div>
+                    )}
+                  </div>
+                  <div className="text-xs font-bold text-slate-900 dark:text-white shrink-0">
+                    {((item.variant?.price || item.product.price) * item.quantity).toLocaleString()} د.ع
+                  </div>
+                </div>
+              ))}
+            </div>
+
             <div className="flex justify-between items-center text-sm">
               <span className="text-slate-500 font-medium">قيمة المنتجات ({cartItems.reduce((acc, item) => acc + item.quantity, 0)} قطع)</span>
               <span className="font-bold text-slate-700 dark:text-slate-300">{subtotal.toLocaleString()} د.ع</span>

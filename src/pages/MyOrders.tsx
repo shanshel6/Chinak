@@ -256,14 +256,53 @@ const MyOrders: React.FC = () => {
                   </div>
                 </div>
                 {/* Product Thumbnails */}
-                <div className="flex gap-3 px-4 py-3 overflow-x-auto no-scrollbar items-center">
+                <div className="flex flex-col gap-3 px-4 py-3">
                   {order.items.map((item: any, idx: number) => (
-                    <div key={idx} className="relative size-16 shrink-0 rounded-lg overflow-hidden border border-slate-100 dark:border-slate-700 bg-slate-50 dark:bg-slate-900">
-                      <LazyImage 
-                        src={item.product.image} 
-                        alt={item.product.name}
-                        className="w-full h-full"
-                      />
+                    <div key={idx} className="flex items-center gap-3">
+                      <div className="relative size-12 shrink-0 rounded-lg overflow-hidden border border-slate-100 dark:border-slate-700 bg-slate-50 dark:bg-slate-900">
+                        <LazyImage 
+                          src={item.variant?.image || item.product.image} 
+                          alt={item.product.name}
+                          className="w-full h-full"
+                        />
+                      </div>
+                      <div className="flex flex-1 flex-col min-w-0">
+                        <p className="text-sm font-bold text-slate-900 dark:text-white truncate">{item.product.name}</p>
+                        {item.variant && item.variant.combination && (
+                          <div className="flex flex-wrap gap-1 mt-0.5">
+                            {(() => {
+                              try {
+                                const combination = typeof item.variant.combination === 'string' 
+                                  ? JSON.parse(item.variant.combination) 
+                                  : item.variant.combination;
+                                
+                                if (!combination || Object.keys(combination).length === 0) {
+                                  return (
+                                    <span className="text-[9px] bg-slate-200/50 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700/50">
+                                      {String(item.variant.combination)}
+                                    </span>
+                                  );
+                                }
+
+                                return Object.entries(combination).map(([key, value]) => (
+                                  <span key={key} className="text-[9px] bg-slate-200/50 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700/50">
+                                    {key}: {String(value)}
+                                  </span>
+                                ));
+                              } catch (e) {
+                                return (
+                                  <span className="text-[9px] bg-slate-200/50 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700/50">
+                                    {String(item.variant.combination)}
+                                  </span>
+                                );
+                              }
+                            })()}
+                          </div>
+                        )}
+                        <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
+                          {t('tracking.qty')}: {item.quantity} • {(item.price || item.product.price).toLocaleString()} {t('common.iqd')}
+                        </p>
+                      </div>
                     </div>
                   ))}
                 </div>

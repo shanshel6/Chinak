@@ -449,13 +449,45 @@ const ShippingTracking: React.FC = () => {
                 <div key={idx} className="flex items-center gap-4 bg-white dark:bg-slate-800 p-3 rounded-xl shadow-sm border border-slate-100 dark:border-slate-700/50">
                   <div className="size-16 shrink-0 rounded-lg overflow-hidden bg-slate-100 dark:bg-slate-900 border border-slate-100 dark:border-slate-700">
                     <LazyImage 
-                      src={item.product.image} 
+                      src={item.variant?.image || item.product.image} 
                       alt={item.product.name}
                       className="w-full h-full"
                     />
                   </div>
                   <div className="flex flex-1 flex-col gap-1">
                     <p className="text-sm font-bold text-slate-900 dark:text-white line-clamp-1">{item.product.name}</p>
+                    {item.variant && item.variant.combination && (
+                      <div className="flex flex-wrap gap-1 mt-0.5">
+                        {(() => {
+                          try {
+                            const combination = typeof item.variant.combination === 'string' 
+                              ? JSON.parse(item.variant.combination) 
+                              : item.variant.combination;
+                            
+                            if (!combination || Object.keys(combination).length === 0) {
+                              return (
+                                <span className="text-[9px] bg-slate-200/50 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700/50">
+                                  {String(item.variant.combination)}
+                                </span>
+                              );
+                            }
+
+                            return Object.entries(combination).map(([key, value]) => (
+                              <span key={key} className="text-[9px] bg-slate-200/50 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700/50">
+                                {key}: {String(value)}
+                              </span>
+                            ));
+                          } catch (e) {
+                            // Fallback for non-JSON combination strings
+                            return (
+                              <span className="text-[9px] bg-slate-200/50 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700/50">
+                                {String(item.variant.combination)}
+                              </span>
+                            );
+                          }
+                        })()}
+                      </div>
+                    )}
                     <p className="text-xs text-slate-500 dark:text-slate-400">{t('tracking.qty')}: {item.quantity}</p>
                     <p className="text-sm font-bold text-primary">{item.price.toLocaleString()} {t('common.iqd')}</p>
                   </div>
