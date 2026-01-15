@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import { useCartStore } from '../store/useCartStore';
 import { Home, ShoppingBag, ShoppingCart, Heart, User } from 'lucide-react';
 

@@ -3,8 +3,6 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { performCacheMaintenance, searchProducts } from '../services/api';
 import { useWishlistStore } from '../store/useWishlistStore';
 import { useCartStore } from '../store/useCartStore';
-import { useAuthStore } from '../store/useAuthStore';
-import { useToastStore } from '../store/useToastStore';
 import { usePageCacheStore } from '../store/usePageCacheStore';
 import SearchHeader from '../components/search/SearchHeader';
 import SearchSuggestions from '../components/search/SearchSuggestions';
@@ -28,8 +26,7 @@ const SearchResults: React.FC = () => {
   const location = useLocation();
   const wishlistItems = useWishlistStore((state) => state.items);
   const toggleWishlist = useWishlistStore((state) => state.toggleWishlist);
-  const cartItems = useCartStore((state) => state.items);
-  const cartCount = cartItems.reduce((acc, item) => acc + item.quantity, 0);
+  const cartCount = useCartStore((state) => state.items.length);
 
   const isProductInWishlist = (productId: number) => wishlistItems.some(item => String(item.productId) === String(productId));
   
@@ -220,8 +217,7 @@ const SearchResults: React.FC = () => {
     setFilteredProducts(result);
   }, [activeFilter, sortBy, products]);
 
-  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
-  const showToast = useToastStore((state) => state.showToast);
+
 
 
 

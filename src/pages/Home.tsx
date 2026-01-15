@@ -4,7 +4,6 @@ import { fetchProducts } from '../services/api';
 import { useWishlistStore } from '../store/useWishlistStore';
 import { useAuthStore } from '../store/useAuthStore';
 import { useNotificationStore } from '../store/useNotificationStore';
-import { useToastStore } from '../store/useToastStore';
 import { usePageCacheStore } from '../store/usePageCacheStore';
 import Skeleton from '../components/Skeleton';
 import { useTranslation } from 'react-i18next';
@@ -30,8 +29,6 @@ const Home: React.FC = () => {
   const wishlistItems = useWishlistStore((state) => state.items);
   const toggleWishlist = useWishlistStore((state) => state.toggleWishlist);
   const user = useAuthStore((state) => state.user);
-  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
-  const showToast = useToastStore((state) => state.showToast);
   const unreadNotificationsCount = useNotificationStore((state) => state.unreadCount);
 
   const { 
