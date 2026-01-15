@@ -72,6 +72,10 @@ model Product {
   embedding         Unsupported("vector(384)")? // Using 384 for sentence-transformers/all-MiniLM-L6-v2
   clickCount        Int              @default(0)
   conversionRate    Float            @default(0)
+  weight            Float?           // in kg
+  length            Float?           // in cm
+  width             Float?           // in cm
+  height            Float?           // in cm
   cartItems         CartItem[]
   orderItems        OrderItem[]
   images            ProductImage[]
@@ -166,6 +170,9 @@ model StoreSettings {
   contactEmail String?
   contactPhone String?
   currency     String   @default("د.ع")
+  airShippingRate    Float    @default(15400)
+  seaShippingRate    Float    @default(182000)
+  airShippingMinFloor Float   @default(5000)
   socialLinks  String   @default("{}")
   footerText   String?
   updatedAt    DateTime @updatedAt

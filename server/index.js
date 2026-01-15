@@ -19,6 +19,7 @@ import axios from 'axios';
 import { fileURLToPath } from 'url';
 import prisma from './prismaClient.js';
 import { processProductAI, hybridSearch } from './services/aiService.js';
+import { calculateOrderShipping } from './services/shippingService.js';
 import { setupLinkCheckerCron, checkAllProductLinks } from './services/linkCheckerService.js';
 import { createClient } from '@supabase/supabase-js';
 
@@ -2524,6 +2525,12 @@ app.post('/api/products/bulk', authenticateToken, isAdmin, hasPermission('manage
         const cleanVal = String(val).replace(/[^\d.]/g, '');
         return parseFloat(cleanVal) || 0;
       };
+
+      const parseNum = (val) => {
+        if (val === undefined || val === null || val === '') return null;
+        const cleanVal = String(val).replace(/[^\d.]/g, '');
+        return parseFloat(cleanVal) || null;
+      };
       
       const rawPrice = parsePrice(p.price) || parsePrice(p.general_price) || parsePrice(p.basePriceRMB) || 0;
       const price = rawPrice * 1.1; // 10% margin
@@ -2613,6 +2620,10 @@ app.post('/api/products/bulk', authenticateToken, isAdmin, hasPermission('manage
         reviewsCountShown: p.reviewsCountShown || null,
         videoUrl: p.videoUrl || null,
         options: processedOptions,
+        weight: parseNum(p.weight || p['重量'] || p.grossWeight),
+        length: parseNum(p.length || p['长'] || p['长度']),
+        width: parseNum(p.width || p['宽'] || p['宽度']),
+        height: parseNum(p.height || p['高'] || p['高度']),
         images: imageUrls.map((url, index) => ({
           url: url,
           order: index,
@@ -2637,7 +2648,8 @@ app.post('/api/products', authenticateToken, isAdmin, hasPermission('manage_prod
     const { 
       name, chineseName, description, price, basePriceRMB, image, 
       isFeatured, isActive, status, purchaseUrl, videoUrl, 
-      specs, storeEvaluation, reviewsCountShown, images, detailImages 
+      specs, storeEvaluation, reviewsCountShown, images, detailImages,
+      weight, length, width, height
     } = req.body;
     
     // Process main images (gallery)
@@ -2709,6 +2721,10 @@ app.post('/api/products', authenticateToken, isAdmin, hasPermission('manage_prod
         specs: specs && typeof specs === 'object' ? JSON.stringify(specs) : (specs || null),
         storeEvaluation: storeEvaluation && typeof storeEvaluation === 'object' ? JSON.stringify(storeEvaluation) : (storeEvaluation || null),
         reviewsCountShown: reviewsCountShown || null,
+        weight: weight ? parseFloat(weight) : null,
+        length: length ? parseFloat(length) : null,
+        width: width ? parseFloat(width) : null,
+        height: height ? parseFloat(height) : null,
         images: [
           ...imageUrls.map((url, i) => ({ url, order: i, type: 'GALLERY' })),
           ...detailImageUrls.map((url, i) => ({ url, order: i, type: 'DETAIL' }))
@@ -2732,6 +2748,10 @@ app.post('/api/products', authenticateToken, isAdmin, hasPermission('manage_prod
         specs: specs && typeof specs === 'object' ? JSON.stringify(specs) : (specs || null),
         storeEvaluation: storeEvaluation && typeof storeEvaluation === 'object' ? JSON.stringify(storeEvaluation) : (storeEvaluation || null),
         reviewsCountShown: reviewsCountShown || null,
+        weight: weight ? parseFloat(weight) : null,
+        length: length ? parseFloat(length) : null,
+        width: width ? parseFloat(width) : null,
+        height: height ? parseFloat(height) : null,
         images: {
           create: [
             ...imageUrls.map((url, i) => ({
@@ -2987,6 +3007,10 @@ app.post('/api/admin/products/bulk-import', authenticateToken, isAdmin, hasPermi
             videoUrl: p.videoUrl ? p.videoUrl.replace(/[`"']/g, '').trim() : null,
             status: 'DRAFT',
             isActive: false,
+            weight: p.weight ? parseFloat(p.weight) : (p.shipping_weight ? parseFloat(p.shipping_weight) : null),
+            length: p.length ? parseFloat(p.length) : (p.shipping_length ? parseFloat(p.shipping_length) : null),
+            width: p.width ? parseFloat(p.width) : (p.shipping_width ? parseFloat(p.shipping_width) : null),
+            height: p.height ? parseFloat(p.height) : (p.shipping_height ? parseFloat(p.shipping_height) : null),
             specs: specs && typeof specs === 'object' ? JSON.stringify(specs) : specs,
             storeEvaluation: p.storeEvaluation && typeof p.storeEvaluation === 'object' ? JSON.stringify(p.storeEvaluation) : (p.storeEvaluation || null),
             reviewsCountShown: p.reviewsCountShown || null,
@@ -3379,7 +3403,11 @@ app.post('/api/admin/products/bulk-create', authenticateToken, isAdmin, hasPermi
           isActive: rawProductData.isActive !== undefined ? rawProductData.isActive : true,
           specs: rawProductData.specs || '',
           storeEvaluation: rawProductData.storeEvaluation || null,
-          reviewsCountShown: rawProductData.reviewsCountShown || null
+          reviewsCountShown: rawProductData.reviewsCountShown || null,
+          weight: rawProductData.weight ? parseFloat(rawProductData.weight) : null,
+          length: rawProductData.length ? parseFloat(rawProductData.length) : null,
+          width: rawProductData.width ? parseFloat(rawProductData.width) : null,
+          height: rawProductData.height ? parseFloat(rawProductData.height) : null
         };
         
         // Create the product
@@ -3911,7 +3939,8 @@ app.put('/api/products/:id', authenticateToken, isAdmin, hasPermission('manage_p
     const { 
       name, chineseName, price, basePriceRMB, description, image, 
       isFeatured, isActive, status, purchaseUrl, videoUrl, 
-      specs, images, detailImages, storeEvaluation, reviewsCountShown 
+      specs, images, detailImages, storeEvaluation, reviewsCountShown,
+      weight, length, width, height
     } = req.body;
     
     // Handle main image conversion if needed
@@ -3959,7 +3988,11 @@ app.put('/api/products/:id', authenticateToken, isAdmin, hasPermission('manage_p
       status: status !== undefined ? status : undefined,
       specs: specs !== undefined ? (specs && typeof specs === 'object' ? JSON.stringify(specs) : specs) : undefined,
       storeEvaluation: storeEvaluation !== undefined ? (storeEvaluation && typeof storeEvaluation === 'object' ? JSON.stringify(storeEvaluation) : storeEvaluation) : undefined,
-      reviewsCountShown: reviewsCountShown !== undefined ? reviewsCountShown : undefined
+      reviewsCountShown: reviewsCountShown !== undefined ? reviewsCountShown : undefined,
+      weight: weight !== undefined ? (weight === '' ? null : parseFloat(weight)) : undefined,
+      length: length !== undefined ? (length === '' ? null : parseFloat(length)) : undefined,
+      width: width !== undefined ? (width === '' ? null : parseFloat(width)) : undefined,
+      height: height !== undefined ? (height === '' ? null : parseFloat(height)) : undefined
     };
 
     // Remove undefined fields
@@ -4082,6 +4115,55 @@ app.post('/api/admin/products/bulk-status', authenticateToken, isAdmin, hasPermi
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: 'Failed to bulk update products' });
+  }
+});
+
+// ADMIN: Trigger AI dimension estimation for products without them
+app.post('/api/admin/products/estimate-dimensions', authenticateToken, isAdmin, hasPermission('manage_products'), async (req, res) => {
+  try {
+    const { productIds } = req.body;
+    
+    // If no specific IDs provided, find all products with missing physical data
+    let productsToProcess = [];
+    if (!productIds || !Array.isArray(productIds) || productIds.length === 0) {
+      productsToProcess = await prisma.product.findMany({
+        where: {
+          OR: [
+            { weight: null },
+            { length: null },
+            { width: null },
+            { height: null }
+          ]
+        },
+        select: { id: true }
+      });
+    } else {
+      productsToProcess = productIds.map(id => ({ id: safeParseId(id) }));
+    }
+
+    console.log(`[AI Dimensions] Processing ${productsToProcess.length} products...`);
+    
+    // Process in background to avoid timeout
+    (async () => {
+      for (const p of productsToProcess) {
+        try {
+          await processProductAI(p.id);
+          // Small delay to be safe with rate limits
+          await new Promise(r => setTimeout(r, 1000));
+        } catch (err) {
+          console.error(`[AI Dimensions] Failed for product ${p.id}:`, err.message);
+        }
+      }
+      console.log(`[AI Dimensions] Completed processing ${productsToProcess.length} products.`);
+    })();
+
+    res.json({ 
+      success: true, 
+      message: `Started AI estimation for ${productsToProcess.length} products in background.` 
+    });
+  } catch (error) {
+    console.error('[AI Dimensions] Error:', error);
+    res.status(500).json({ error: 'Failed to trigger AI estimation' });
   }
 });
 
@@ -4413,8 +4495,8 @@ app.post('/api/orders', authenticateToken, async (req, res) => {
       }
     }
 
-    // 4. Shipping Fee is always free
-    const shippingFee = 0;
+    // 4. Calculate Shipping Fee
+    const shippingFee = await calculateOrderShipping(cartItems, shippingMethod);
 
     // 5. Calculate Final Total
     const total = subtotal - discountAmount + shippingFee;
@@ -4432,6 +4514,7 @@ app.post('/api/orders', authenticateToken, async (req, res) => {
           status: 'PENDING',
           shippingMethod,
           paymentMethod,
+          internationalShippingFee: shippingFee,
           items: {
             create: cartItems.map(item => ({
               productId: item.productId,
@@ -4831,11 +4914,43 @@ app.get('/api/settings', async (req, res) => {
 
 app.put('/api/admin/settings', authenticateToken, isAdmin, hasPermission('manage_settings'), async (req, res) => {
   try {
-    const { storeName, contactEmail, contactPhone, currency, socialLinks, footerText } = req.body;
+    const { 
+      storeName, 
+      contactEmail, 
+      contactPhone, 
+      currency, 
+      socialLinks, 
+      footerText,
+      airShippingRate,
+      seaShippingRate,
+      airShippingMinFloor
+    } = req.body;
+    
     const settings = await prisma.storeSettings.upsert({
       where: { id: 1 },
-      update: { storeName, contactEmail, contactPhone, currency, socialLinks, footerText },
-      create: { id: 1, storeName, contactEmail, contactPhone, currency, socialLinks, footerText }
+      update: { 
+        storeName, 
+        contactEmail, 
+        contactPhone, 
+        currency, 
+        socialLinks: typeof socialLinks === 'object' ? JSON.stringify(socialLinks) : socialLinks, 
+        footerText,
+        airShippingRate: parseFloat(airShippingRate),
+        seaShippingRate: parseFloat(seaShippingRate),
+        airShippingMinFloor: parseFloat(airShippingMinFloor)
+      },
+      create: { 
+        id: 1, 
+        storeName, 
+        contactEmail, 
+        contactPhone, 
+        currency, 
+        socialLinks: typeof socialLinks === 'object' ? JSON.stringify(socialLinks) : socialLinks, 
+        footerText,
+        airShippingRate: parseFloat(airShippingRate) || 15400,
+        seaShippingRate: parseFloat(seaShippingRate) || 182000,
+        airShippingMinFloor: parseFloat(airShippingMinFloor) || 5000
+      }
     });
     res.json(settings);
   } catch (error) {

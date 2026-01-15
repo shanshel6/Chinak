@@ -70,6 +70,50 @@ async function generateEmbedding(text) {
 }
 
 /**
+ * Estimate weight and dimensions for a product using SiliconFlow
+ */
+export async function estimateProductPhysicals(product) {
+  try {
+    const { siliconflow } = getClients();
+    
+    const prompt = `Estimate the physical dimensions and weight for the following product.
+    Product: ${product.name}
+    Description: ${product.description || ''}
+    Specs: ${product.specs || ''}
+    
+    Return ONLY a valid JSON object with:
+    1. 'weight': Number (in kg)
+    2. 'length': Number (in cm)
+    3. 'width': Number (in cm)
+    4. 'height': Number (in cm)
+    
+    Be realistic based on common shipping standards. 
+    If you're not sure, provide a reasonable average for that category of product.
+    Return ONLY JSON, no markdown.`;
+
+    const response = await siliconflow.chat.completions.create({
+      model: 'deepseek-ai/DeepSeek-V3',
+      messages: [{ role: 'user', content: prompt }],
+      response_format: { type: 'json_object' }
+    });
+
+    const text = response.choices[0].message.content.trim();
+    const cleanJson = text.replace(/^```json\s*/, '').replace(/\s*```$/, '').trim();
+    const data = JSON.parse(cleanJson);
+    
+    return {
+      weight: parseFloat(data.weight) || 0.5,
+      length: parseFloat(data.length) || 10,
+      width: parseFloat(data.width) || 10,
+      height: parseFloat(data.height) || 10
+    };
+  } catch (error) {
+    console.error('[AI Debug] Physical estimation error:', error.message);
+    return null;
+  }
+}
+
+/**
  * Auto-Tagging Pipeline using SiliconFlow (Free/Low-cost Tier)
  * Triggers when a product is added or updated.
  */
@@ -135,14 +179,39 @@ export async function processProductAI(productId) {
     // 3. Update Product in Database
     console.log(`[AI Debug] Saving AI metadata and embedding for product ${productId}...`);
     
+    // 4. Estimate Physical Dimensions if missing
+    let physicalUpdate = '';
+    if (!product.weight || !product.length || !product.width || !product.height) {
+      console.log(`[AI Debug] Estimating physical dimensions for product ${productId}...`);
+      try {
+        const physicals = await estimateProductPhysicals({
+          name: product.name,
+          description: product.description,
+          specs: product.specs
+        });
+        
+        if (physicals) {
+          if (!product.weight && physicals.weight) physicalUpdate += `, weight = ${physicals.weight}`;
+          if (!product.length && physicals.length) physicalUpdate += `, length = ${physicals.length}`;
+          if (!product.width && physicals.width) physicalUpdate += `, width = ${physicals.width}`;
+          if (!product.height && physicals.height) physicalUpdate += `, height = ${physicals.height}`;
+        }
+      } catch (physErr) {
+        console.warn(`[AI Debug] Physical estimation failed for product ${productId}:`, physErr.message);
+      }
+    }
+
     // Use raw SQL to update the vector field
     const vectorStr = `[${embedding.join(',')}]`;
-    await prisma.$executeRaw`
+    const query = `
       UPDATE "Product" 
-      SET "aiMetadata" = ${JSON.stringify(aiMetadata)}::jsonb, 
-          "embedding" = ${vectorStr}::vector 
-      WHERE "id" = ${productId}
+      SET "aiMetadata" = $1::jsonb, 
+          "embedding" = $2::vector 
+          ${physicalUpdate}
+      WHERE "id" = $3
     `;
+    
+    await prisma.$executeRawUnsafe(query, JSON.stringify(aiMetadata), vectorStr, productId);
 
     console.log(`[AI Debug] Successfully processed product ${productId}`);
     return aiMetadata;

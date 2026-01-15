@@ -19,9 +19,15 @@ import {
   Edit2,
   Trash2,
   Settings,
-  X
+  X,
+  Plane,
+  Waves,
+  Save,
+  Truck,
+  Share2,
+  Sparkles
 } from 'lucide-react';
-import { useLocation, Routes, Route } from 'react-router-dom';
+import { useLocation, Routes, Route, useNavigate } from 'react-router-dom';
 import { 
   fetchAdminStats, 
   fetchAdminUsers, 
@@ -39,9 +45,13 @@ import {
   deleteProduct,
   bulkDeleteProducts,
   bulkPublishProducts,
+  bulkCreateProducts,
   updateOrderStatus,
   updateOrderInternationalFee,
-  updateProductPrice
+  updateProductPrice,
+  fetchSettings,
+  updateSettings,
+  estimateDimensions
 } from '../services/api';
 import { localProductService } from '../services/localProductService';
 import { useToastStore } from '../store/useToastStore';
@@ -83,8 +93,28 @@ const AdminDashboard: React.FC = () => {
   const [importText, setImportText] = useState('');
   const [editingPriceId, setEditingPriceId] = useState<number | string | null>(null);
   const [tempPrice, setTempPrice] = useState('');
-  const [showProductEditor, setShowProductEditor] = useState(false);
-  const [editingProductId, setEditingProductId] = useState<number | string | null>(null);
+  const showProductEditor = useState(false)[0];
+  const setShowProductEditor = useState(false)[1];
+  const editingProductId = useState<number | string | null>(null)[0];
+  const setEditingProductId = useState<number | string | null>(null)[1];
+  
+  const [storeSettings, setStoreSettings] = useState({
+    airShippingRate: 15400,
+    seaShippingRate: 182000,
+    airShippingMinFloor: 5000,
+    currency: 'د.ع',
+    storeName: '',
+    contactEmail: '',
+    contactPhone: '',
+    footerText: '',
+    socialLinks: {
+      facebook: '',
+      instagram: '',
+      whatsapp: '',
+      telegram: ''
+    }
+  });
+  const [isSavingSettings, setIsSavingSettings] = useState(false);
   
   // Pagination State
   const [currentPage, setCurrentPage] = useState(1);
@@ -248,12 +278,31 @@ const AdminDashboard: React.FC = () => {
     
     try {
       const token = getAuthToken();
-      await bulkPublishProducts(selectedProducts, token);
+      const localDraftIds = selectedProducts.filter(id => String(id).startsWith('local-'));
+      const serverProductIds = selectedProducts.filter(id => !String(id).startsWith('local-'));
+      
+      // 1. Publish server products (existing ones that were DRAFT status on server)
+      if (serverProductIds.length > 0) {
+        await bulkPublishProducts(serverProductIds.map(id => Number(id)), token);
+      }
+      
+      // 2. Create local drafts on server
+      if (localDraftIds.length > 0) {
+        const localDraftsData = products.filter(p => localDraftIds.includes(p.id));
+        await bulkCreateProducts(localDraftsData, token);
+        
+        // Remove from local storage after successful server creation
+        const existingDrafts = JSON.parse(localStorage.getItem('product_drafts') || '[]');
+        const updatedDrafts = existingDrafts.filter((d: any) => !localDraftIds.includes(d.id));
+        localStorage.setItem('product_drafts', JSON.stringify(updatedDrafts));
+      }
+
       showToast('تم نشر المنتجات بنجاح', 'success');
       setSelectedProducts([]);
       loadData(currentPage, true);
-    } catch (error) {
-      showToast('فشل نشر المنتجات المختارة', 'error');
+    } catch (error: any) {
+      console.error('Bulk publish error:', error);
+      showToast(`فشل نشر المنتجات المختارة: ${error.message || 'خطأ'}`, 'error');
     }
   };
 
@@ -471,6 +520,18 @@ const AdminDashboard: React.FC = () => {
         setCoupons(data || []);
         setTotalPages(1);
         setTotalItems(data.length || 0);
+      } else if (activeTab === 'settings') {
+        const data = await fetchSettings();
+        if (data) {
+          setStoreSettings({
+            ...storeSettings,
+            ...data,
+            airShippingRate: data.airShippingRate || 15400,
+            seaShippingRate: data.seaShippingRate || 182000,
+            airShippingMinFloor: data.airShippingMinFloor || 5000,
+            socialLinks: typeof data.socialLinks === 'string' ? JSON.parse(data.socialLinks) : (data.socialLinks || storeSettings.socialLinks)
+          });
+        }
       }
     } catch (error: any) {
       console.error('[AdminDashboard] Error loading admin data:', error);
@@ -500,6 +561,20 @@ const AdminDashboard: React.FC = () => {
       loadData(currentPage, true);
     } catch (error) {
       showToast('فشل تحديث الرتبة', 'error');
+    }
+  };
+
+  const handleSaveSettings = async () => {
+    setIsSavingSettings(true);
+    try {
+      const token = getAuthToken();
+      await updateSettings(storeSettings, token);
+      showToast('تم حفظ الإعدادات بنجاح', 'success');
+    } catch (error) {
+      console.error('Failed to save settings:', error);
+      showToast('فشل حفظ الإعدادات', 'error');
+    } finally {
+      setIsSavingSettings(false);
     }
   };
 
@@ -755,6 +830,22 @@ const AdminDashboard: React.FC = () => {
             className="px-6 py-3.5 bg-primary text-white rounded-2xl text-sm font-bold shadow-lg shadow-primary/25 hover:scale-105 transition-all"
           >
             بحث
+          </button>
+          <button 
+            onClick={async () => {
+              try {
+                const token = getAuthToken();
+                const res = await estimateDimensions(undefined, token);
+                showToast(res.message, 'success');
+              } catch (error) {
+                showToast('فشل تشغيل تقدير الذكاء الاصطناعي', 'error');
+              }
+            }}
+            title="تقدير أبعاد المنتجات بالذكاء الاصطناعي"
+            className="px-5 py-3.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl text-slate-600 dark:text-slate-400 hover:bg-slate-50 transition-all flex items-center gap-2"
+          >
+            <Sparkles size={20} className="text-primary" />
+            <span className="hidden sm:inline text-xs">تقدير الأبعاد</span>
           </button>
           <button className="px-5 py-3.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl text-slate-600 dark:text-slate-400 hover:bg-slate-50 transition-all">
             <Filter size={20} />
@@ -1570,10 +1661,223 @@ const AdminDashboard: React.FC = () => {
           <Route path="orders" element={renderOrders()} />
           <Route path="coupons" element={renderCoupons()} />
           <Route path="settings" element={
-            <div className="p-12 text-center bg-white dark:bg-slate-900 rounded-3xl border border-dashed border-slate-200 dark:border-slate-800">
-              <Settings className="mx-auto mb-4 text-slate-300" size={48} />
-              <h3 className="text-xl font-black mb-2">إعدادات النظام</h3>
-              <p className="text-slate-500">قريباً... ستتمكن من التحكم في إعدادات المتجر من هنا</p>
+            <div className="space-y-8 animate-in fade-in duration-500">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-2xl font-black text-slate-900 dark:text-white">إعدادات النظام</h2>
+                  <p className="text-slate-500 text-sm mt-1">التحكم في أسعار الشحن ومعلومات المتجر</p>
+                </div>
+                <button
+                  onClick={handleSaveSettings}
+                  disabled={isSavingSettings}
+                  className="px-8 py-3.5 bg-primary text-white rounded-2xl font-black shadow-lg shadow-primary/25 hover:scale-105 active:scale-95 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {isSavingSettings ? (
+                    <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                  ) : (
+                    <Save size={20} />
+                  )}
+                  حفظ التغييرات
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                {/* Shipping Rates Settings */}
+                <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 sm:p-8 border border-slate-100 dark:border-slate-800 shadow-sm">
+                  <div className="flex items-center gap-3 mb-8">
+                    <div className="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center text-primary">
+                      <Truck size={24} />
+                    </div>
+                    <h3 className="text-lg font-black">إعدادات تكاليف الشحن الدولي</h3>
+                  </div>
+
+                  <div className="space-y-6">
+                    <div>
+                      <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2 flex items-center gap-2">
+                        <Plane size={16} className="text-blue-500" />
+                        سعر الشحن الجوي (لكل 1 كجم)
+                      </label>
+                      <div className="relative">
+                        <input
+                          type="number"
+                          value={storeSettings.airShippingRate}
+                          onChange={(e) => setStoreSettings({...storeSettings, airShippingRate: parseFloat(e.target.value) || 0})}
+                          className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl py-4 px-6 font-black text-lg focus:ring-2 focus:ring-primary/20 outline-none transition-all"
+                        />
+                        <span className="absolute left-6 top-1/2 -translate-y-1/2 font-bold text-slate-400">د.ع</span>
+                      </div>
+                      <p className="text-[10px] text-slate-400 mt-2 font-medium">سيتم حساب الشحن الجوي بناءً على الوزن الفعلي فقط.</p>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2 flex items-center gap-2">
+                        <Plane size={16} className="text-blue-500" />
+                        الحد الأدنى لتكلفة الشحن الجوي
+                      </label>
+                      <div className="relative">
+                        <input
+                          type="number"
+                          value={storeSettings.airShippingMinFloor}
+                          onChange={(e) => setStoreSettings({...storeSettings, airShippingMinFloor: parseFloat(e.target.value) || 0})}
+                          className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl py-4 px-6 font-black text-lg focus:ring-2 focus:ring-primary/20 outline-none transition-all"
+                        />
+                        <span className="absolute left-6 top-1/2 -translate-y-1/2 font-bold text-slate-400">د.ع</span>
+                      </div>
+                      <p className="text-[10px] text-slate-400 mt-2 font-medium">أقل مبلغ يتم احتسابه لأي طرد مشحون جوياً.</p>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2 flex items-center gap-2">
+                        <Waves size={16} className="text-cyan-500" />
+                        سعر الشحن البحري (لكل 1 CBM)
+                      </label>
+                      <div className="relative">
+                        <input
+                          type="number"
+                          value={storeSettings.seaShippingRate}
+                          onChange={(e) => setStoreSettings({...storeSettings, seaShippingRate: parseFloat(e.target.value) || 0})}
+                          className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl py-4 px-6 font-black text-lg focus:ring-2 focus:ring-primary/20 outline-none transition-all"
+                        />
+                        <span className="absolute left-6 top-1/2 -translate-y-1/2 font-bold text-slate-400">د.ع</span>
+                      </div>
+                      <p className="text-[10px] text-slate-400 mt-2 font-medium">سيتم حساب الشحن البحري بناءً على حجم الطرد (CBM) فقط.</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* General Settings */}
+                <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 sm:p-8 border border-slate-100 dark:border-slate-800 shadow-sm">
+                  <div className="flex items-center gap-3 mb-8">
+                    <div className="w-12 h-12 rounded-2xl bg-blue-500/10 flex items-center justify-center text-blue-500">
+                      <Settings size={24} />
+                    </div>
+                    <h3 className="text-lg font-black">معلومات المتجر العامة</h3>
+                  </div>
+
+                  <div className="space-y-6">
+                    <div>
+                      <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">اسم المتجر</label>
+                      <input
+                        type="text"
+                        value={storeSettings.storeName}
+                        onChange={(e) => setStoreSettings({...storeSettings, storeName: e.target.value})}
+                        className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl py-4 px-6 font-bold focus:ring-2 focus:ring-primary/20 outline-none transition-all"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">رقم الهاتف</label>
+                        <input
+                          type="text"
+                          value={storeSettings.contactPhone}
+                          onChange={(e) => setStoreSettings({...storeSettings, contactPhone: e.target.value})}
+                          className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl py-4 px-6 font-bold focus:ring-2 focus:ring-primary/20 outline-none transition-all"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">البريد الإلكتروني</label>
+                        <input
+                          type="email"
+                          value={storeSettings.contactEmail}
+                          onChange={(e) => setStoreSettings({...storeSettings, contactEmail: e.target.value})}
+                          className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl py-4 px-6 font-bold focus:ring-2 focus:ring-primary/20 outline-none transition-all"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">العملة الافتراضية</label>
+                      <input
+                        type="text"
+                        value={storeSettings.currency}
+                        onChange={(e) => setStoreSettings({...storeSettings, currency: e.target.value})}
+                        className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl py-4 px-6 font-bold focus:ring-2 focus:ring-primary/20 outline-none transition-all"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">نص أسفل الصفحة (Footer)</label>
+                      <textarea
+                        value={storeSettings.footerText}
+                        onChange={(e) => setStoreSettings({...storeSettings, footerText: e.target.value})}
+                        rows={3}
+                        className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl py-4 px-6 font-bold focus:ring-2 focus:ring-primary/20 outline-none transition-all resize-none"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Social Links Settings */}
+                <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 sm:p-8 border border-slate-100 dark:border-slate-800 shadow-sm">
+                  <div className="flex items-center gap-3 mb-8">
+                    <div className="w-12 h-12 rounded-2xl bg-purple-500/10 flex items-center justify-center text-purple-500">
+                      <Share2 size={24} />
+                    </div>
+                    <h3 className="text-lg font-black">روابط التواصل الاجتماعي</h3>
+                  </div>
+
+                  <div className="space-y-6">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">فيسبوك (Facebook)</label>
+                        <input
+                          type="text"
+                          placeholder="https://facebook.com/..."
+                          value={storeSettings.socialLinks.facebook}
+                          onChange={(e) => setStoreSettings({
+                            ...storeSettings, 
+                            socialLinks: { ...storeSettings.socialLinks, facebook: e.target.value }
+                          })}
+                          className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl py-4 px-6 font-bold focus:ring-2 focus:ring-primary/20 outline-none transition-all"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">إنستغرام (Instagram)</label>
+                        <input
+                          type="text"
+                          placeholder="https://instagram.com/..."
+                          value={storeSettings.socialLinks.instagram}
+                          onChange={(e) => setStoreSettings({
+                            ...storeSettings, 
+                            socialLinks: { ...storeSettings.socialLinks, instagram: e.target.value }
+                          })}
+                          className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl py-4 px-6 font-bold focus:ring-2 focus:ring-primary/20 outline-none transition-all"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">واتساب (WhatsApp)</label>
+                        <input
+                          type="text"
+                          placeholder="+964..."
+                          value={storeSettings.socialLinks.whatsapp}
+                          onChange={(e) => setStoreSettings({
+                            ...storeSettings, 
+                            socialLinks: { ...storeSettings.socialLinks, whatsapp: e.target.value }
+                          })}
+                          className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl py-4 px-6 font-bold focus:ring-2 focus:ring-primary/20 outline-none transition-all"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">تيليجرام (Telegram)</label>
+                        <input
+                          type="text"
+                          placeholder="https://t.me/..."
+                          value={storeSettings.socialLinks.telegram}
+                          onChange={(e) => setStoreSettings({
+                            ...storeSettings, 
+                            socialLinks: { ...storeSettings.socialLinks, telegram: e.target.value }
+                          })}
+                          className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl py-4 px-6 font-bold focus:ring-2 focus:ring-primary/20 outline-none transition-all"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           } />
         </Routes>

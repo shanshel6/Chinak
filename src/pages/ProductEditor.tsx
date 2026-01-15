@@ -68,6 +68,10 @@ const ProductEditor: React.FC<ProductEditorProps> = ({ productId, onClose, onSuc
     status: 'PUBLISHED',
     purchaseUrl: '',
     videoUrl: '',
+    weight: '',
+    length: '',
+    width: '',
+    height: '',
     specs: {},
     images: [],
     detailImages: [],
@@ -152,7 +156,13 @@ const ProductEditor: React.FC<ProductEditorProps> = ({ productId, onClose, onSuc
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     const { name, value, type } = e.target as HTMLInputElement;
     const val = type === 'checkbox' ? (e.target as HTMLInputElement).checked : value;
-    setFormData((prev: any) => ({ ...prev, [name]: val }));
+    
+    setFormData((prev: any) => ({
+      ...prev,
+      [name]: (name === 'weight' || name === 'length' || name === 'width' || name === 'height') && value !== '' 
+        ? parseFloat(value) 
+        : val
+    }));
   };
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>, type: 'main' | 'gallery' | 'detail') => {
@@ -403,6 +413,64 @@ const ProductEditor: React.FC<ProductEditorProps> = ({ productId, onClose, onSuc
                   rows={6}
                   className="w-full bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-primary/20 focus:bg-white dark:focus:bg-slate-900 rounded-2xl px-5 py-4 outline-none transition-all font-medium resize-none"
                 />
+              </div>
+
+              {/* Shipping Dimensions Section */}
+              <div className="pt-6 border-t border-slate-100 dark:border-slate-800">
+                <h3 className="text-lg font-black text-slate-800 dark:text-white mb-6 flex items-center gap-2">
+                  <Layout size={20} className="text-primary" />
+                  أبعاد الشحن والوزن
+                </h3>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6">
+                  <div className="space-y-2">
+                    <label className="text-xs font-black text-slate-500 uppercase tracking-wider">الوزن (كجم)</label>
+                    <input 
+                      type="number"
+                      step="0.01"
+                      name="weight"
+                      value={formData.weight}
+                      onChange={handleInputChange}
+                      placeholder="0.5"
+                      className="w-full bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-primary/20 focus:bg-white dark:focus:bg-slate-900 rounded-xl px-4 py-3 outline-none transition-all font-bold"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-black text-slate-500 uppercase tracking-wider">الطول (سم)</label>
+                    <input 
+                      type="number"
+                      name="length"
+                      value={formData.length}
+                      onChange={handleInputChange}
+                      placeholder="10"
+                      className="w-full bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-primary/20 focus:bg-white dark:focus:bg-slate-900 rounded-xl px-4 py-3 outline-none transition-all font-bold"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-black text-slate-500 uppercase tracking-wider">العرض (سم)</label>
+                    <input 
+                      type="number"
+                      name="width"
+                      value={formData.width}
+                      onChange={handleInputChange}
+                      placeholder="10"
+                      className="w-full bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-primary/20 focus:bg-white dark:focus:bg-slate-900 rounded-xl px-4 py-3 outline-none transition-all font-bold"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-black text-slate-500 uppercase tracking-wider">الارتفاع (سم)</label>
+                    <input 
+                      type="number"
+                      name="height"
+                      value={formData.height}
+                      onChange={handleInputChange}
+                      placeholder="10"
+                      className="w-full bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-primary/20 focus:bg-white dark:focus:bg-slate-900 rounded-xl px-4 py-3 outline-none transition-all font-bold"
+                    />
+                  </div>
+                </div>
+                <p className="mt-4 text-xs text-slate-400 font-medium">
+                  * تستخدم هذه القيم لحساب تكاليف الشحن الدولي تلقائياً. إذا تركت فارغة، سيحاول النظام تقديرها باستخدام الذكاء الاصطناعي.
+                </p>
               </div>
 
               <div className="flex flex-wrap gap-8">
@@ -809,6 +877,67 @@ const ProductEditor: React.FC<ProductEditorProps> = ({ productId, onClose, onSuc
 
         {activeTab === 'details' && (
           <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            {/* Physical Dimensions Section */}
+            <div className="bg-white dark:bg-slate-900 p-6 md:p-8 rounded-3xl border border-slate-100 dark:border-slate-800 shadow-sm space-y-8">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary">
+                  <Layers size={20} />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black">الأبعاد والوزن (للشحن الدولي)</h3>
+                  <p className="text-xs text-slate-500">تستخدم هذه البيانات لحساب تكاليف الشحن الدولي تلقائياً</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="space-y-2">
+                  <label className="text-xs font-black text-slate-500 flex items-center gap-2">الوزن (كجم)</label>
+                  <input 
+                    type="number"
+                    name="weight"
+                    step="0.01"
+                    value={formData.weight || ''}
+                    onChange={handleInputChange}
+                    placeholder="0.00"
+                    className="w-full bg-slate-50 dark:bg-slate-800 border-none rounded-2xl px-5 py-4 outline-none font-bold"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-black text-slate-500 flex items-center gap-2">الطول (سم)</label>
+                  <input 
+                    type="number"
+                    name="length"
+                    value={formData.length || ''}
+                    onChange={handleInputChange}
+                    placeholder="0"
+                    className="w-full bg-slate-50 dark:bg-slate-800 border-none rounded-2xl px-5 py-4 outline-none font-bold"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-black text-slate-500 flex items-center gap-2">العرض (سم)</label>
+                  <input 
+                    type="number"
+                    name="width"
+                    value={formData.width || ''}
+                    onChange={handleInputChange}
+                    placeholder="0"
+                    className="w-full bg-slate-50 dark:bg-slate-800 border-none rounded-2xl px-5 py-4 outline-none font-bold"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-black text-slate-500 flex items-center gap-2">الارتفاع (سم)</label>
+                  <input 
+                    type="number"
+                    name="height"
+                    value={formData.height || ''}
+                    onChange={handleInputChange}
+                    placeholder="0"
+                    className="w-full bg-slate-50 dark:bg-slate-800 border-none rounded-2xl px-5 py-4 outline-none font-bold"
+                  />
+                </div>
+              </div>
+            </div>
+
             <div className="bg-white dark:bg-slate-900 p-6 md:p-8 rounded-3xl border border-slate-100 dark:border-slate-800 shadow-sm space-y-8">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-8">
                 <div className="space-y-2">

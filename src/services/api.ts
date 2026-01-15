@@ -895,10 +895,20 @@ export async function fetchSettings() {
   return request('/settings');
 }
 
-export async function updateSettings(settingsData: any) {
+export async function updateSettings(settingsData: any, token?: string | null) {
   return request('/admin/settings', {
     method: 'PUT',
     body: JSON.stringify(settingsData),
+    token
+  });
+}
+
+// Admin: AI Estimation
+export async function estimateDimensions(productIds?: (number | string)[], token?: string | null) {
+  return request('/admin/products/estimate-dimensions', {
+    method: 'POST',
+    body: JSON.stringify({ productIds }),
+    token
   });
 }
 
