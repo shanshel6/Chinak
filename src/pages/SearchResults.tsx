@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { performCacheMaintenance, searchProducts } from '../services/api';
 import { useWishlistStore } from '../store/useWishlistStore';
@@ -49,11 +49,30 @@ const SearchResults: React.FC = () => {
   const [products, setProducts] = useState<Product[]>(searchResults);
   const [filteredProducts, setFilteredProducts] = useState<Product[]>(searchResults);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [hasMore, setHasMore] = useState(true);
+  const [page, setPage] = useState(1);
+  const [totalResults, setTotalResults] = useState(0);
   const [activeFilter, setActiveFilter] = useState('all');
   const [sortBy, setSortBy] = useState<'none' | 'price_asc' | 'price_desc' | 'rating'>('none');
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
+
+  const observer = useRef<IntersectionObserver | null>(null);
+
+  const lastProductElementRef = useCallback((node: HTMLDivElement) => {
+    if (loading || loadingMore || !hasMore) return;
+    if (observer.current) observer.current.disconnect();
+    
+    observer.current = new IntersectionObserver(entries => {
+      if (entries[0].isIntersecting && hasMore && !loadingMore && !loading) {
+        setPage(prev => prev + 1);
+      }
+    });
+    
+    if (node) observer.current.observe(node);
+  }, [loading, loadingMore, hasMore]);
 
   const popularSearches = ['سماعات لاسلكية', 'آيفون 15', 'ساعة ذكية', 'أحذية رياضية', 'عطور رجالية'];
 
@@ -106,34 +125,72 @@ const SearchResults: React.FC = () => {
   }, [setSearchScrollPos]);
 
   useEffect(() => {
+    let isMounted = true;
     const performSearch = async () => {
       if (!searchQuery.trim()) {
         setProducts([]);
         setFilteredProducts([]);
         setError(null);
+        setHasMore(false);
         return;
       }
       
-      setLoading(true);
+      if (page === 1) setLoading(true);
+      else setLoadingMore(true);
+      
       setError(null);
       try {
-        const data = await searchProducts(searchQuery);
-        setProducts(data);
-        setFilteredProducts(data);
-        setSearchData(data, searchQuery);
-        if (data.length > 0 && searchQuery) {
-          addToRecentSearches(searchQuery);
+        const data = await searchProducts(searchQuery, page);
+        if (!isMounted) return;
+
+        const newProducts = data.products || [];
+        const total = data.total || 0;
+        const serverHasMore = data.hasMore !== undefined ? data.hasMore : newProducts.length === 20;
+
+        if (page === 1) {
+          setProducts(newProducts);
+          setFilteredProducts(newProducts);
+          setTotalResults(total);
+          setSearchData(newProducts, searchQuery);
+          if (newProducts.length > 0 && searchQuery) {
+            addToRecentSearches(searchQuery);
+          }
+        } else {
+          setProducts(prev => {
+            // Filter out any duplicates that might have been returned by the server
+            const existingIds = new Set(prev.map(p => p.id));
+            const uniqueNewProducts = newProducts.filter((p: Product) => !existingIds.has(p.id));
+            
+            const updated = [...prev, ...uniqueNewProducts];
+            setSearchData(updated, searchQuery);
+            return updated;
+          });
         }
+        
+        setHasMore(serverHasMore);
       } catch (err) {
+        if (!isMounted) return;
         console.error('Search failed:', err);
         setError('حدث خطأ أثناء البحث. يرجى المحاولة مرة أخرى.');
       } finally {
-        setLoading(false);
+        if (isMounted) {
+          setLoading(false);
+          setLoadingMore(false);
+        }
       }
     };
 
-    const timeoutId = setTimeout(performSearch, 500);
-    return () => clearTimeout(timeoutId);
+    const timeoutId = setTimeout(performSearch, page === 1 ? 500 : 0);
+    return () => {
+      isMounted = false;
+      clearTimeout(timeoutId);
+    };
+  }, [searchQuery, page]);
+
+  useEffect(() => {
+    // Reset page when search query changes
+    setPage(1);
+    setHasMore(true);
   }, [searchQuery]);
 
   useEffect(() => {
@@ -169,17 +226,30 @@ const SearchResults: React.FC = () => {
 
 
   return (
-    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden bg-background-light dark:bg-background-dark shadow-2xl font-display text-slate-900 dark:text-white antialiased selection:bg-primary/30 rtl pb-safe pt-safe" dir="rtl">
-        <SearchHeader 
-          query={searchQuery}
-          onQueryChange={setSearchQuery}
-          onBack={() => navigate(-1)}
-          onCartClick={() => navigate('/cart')}
-          cartCount={cartCount}
-          onFocus={() => setShowSuggestions(true)}
-          onClear={() => setSearchQuery('')}
-          onSubmit={() => setShowSuggestions(false)}
-        />
+    <div className="relative flex min-h-screen w-full flex-col bg-background-light dark:bg-background-dark font-display text-slate-900 dark:text-white antialiased selection:bg-primary/30 rtl overflow-visible" dir="rtl">
+         <div className="sticky top-0 z-50 w-full bg-background-light dark:bg-background-dark border-b border-slate-200/50 dark:border-slate-800/50 shadow-sm transition-all duration-300">
+           <div className="pt-1">
+             <SearchHeader 
+               query={searchQuery}
+             onQueryChange={setSearchQuery}
+             onBack={() => navigate('/')}
+             onCartClick={() => navigate('/cart')}
+             cartCount={cartCount}
+             onFocus={() => setShowSuggestions(true)}
+             onClear={() => setSearchQuery('')}
+               onSubmit={() => setShowSuggestions(false)}
+             />
+           </div>
+
+           <div className="pb-2">
+             <FilterSortStrip 
+               activeFilter={activeFilter}
+               sortBy={sortBy}
+               onFilterChange={setActiveFilter}
+               onSortChange={setSortBy}
+             />
+           </div>
+         </div>
 
         {showSuggestions && (searchQuery === '' || products.length === 0) && (
           <SearchSuggestions 
@@ -194,18 +264,11 @@ const SearchResults: React.FC = () => {
           />
         )}
 
-        <FilterSortStrip 
-          activeFilter={activeFilter}
-          sortBy={sortBy}
-          onFilterChange={setActiveFilter}
-          onSortChange={setSortBy}
-        />
-
-        <main className="flex-1 p-3 pb-24 overflow-y-auto">
+        <main className="flex-1 p-3 pb-12">
           {searchQuery && !loading && filteredProducts.length > 0 && (
             <div className="flex items-center justify-between mb-4 px-1">
               <h2 className="text-lg font-bold text-slate-900 dark:text-white">النتائج لـ "{searchQuery}"</h2>
-              <span className="text-sm text-slate-500">{filteredProducts.length} منتج</span>
+              <span className="text-sm text-slate-500">{totalResults || filteredProducts.length} منتج</span>
             </div>
           )}
 
@@ -244,17 +307,40 @@ const SearchResults: React.FC = () => {
           )}
 
           {!loading && !error && filteredProducts.length > 0 && (
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-              {filteredProducts.map((product) => (
-                <SearchProductCard 
-                  key={product.id}
-                  product={product}
-                  onNavigate={(id) => navigate(`/product?id=${id}`, { state: { initialProduct: product } })}
-                  onToggleWishlist={(p) => toggleWishlist(p.id, p)}
-                  isWishlisted={isProductInWishlist(product.id)}
-                />
-              ))}
-            </div>
+            <>
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                {filteredProducts.map((product, index) => (
+                  <div 
+                    key={`${product.id}-${index}`}
+                    ref={index === filteredProducts.length - 1 ? lastProductElementRef : null}
+                  >
+                    <SearchProductCard 
+                      product={product}
+                      onNavigate={(id) => navigate(`/product?id=${id}`, { state: { initialProduct: product } })}
+                      onToggleWishlist={(p) => toggleWishlist(p.id, p)}
+                      isWishlisted={isProductInWishlist(product.id)}
+                    />
+                  </div>
+                ))}
+              </div>
+
+              {loadingMore && (
+                <div className="flex flex-col items-center justify-center py-6 gap-3">
+                  <div className="flex items-center gap-3 px-6 py-3 rounded-2xl bg-white dark:bg-slate-800 shadow-xl shadow-slate-200/50 dark:shadow-none border border-slate-100 dark:border-slate-700 animate-pulse">
+                    <div className="h-5 w-5 border-2 border-t-transparent border-primary rounded-full animate-spin"></div>
+                    <span className="text-sm font-black text-slate-900 dark:text-white">جاري تحميل المزيد...</span>
+                  </div>
+                </div>
+              )}
+              
+              {!loadingMore && !hasMore && filteredProducts.length > 0 && (
+                <div className="flex flex-col items-center justify-center py-8 gap-3">
+                  <div className="h-px w-12 bg-slate-200 dark:bg-slate-700"></div>
+                  <p className="text-sm font-bold text-slate-400 dark:text-slate-500">وصلت إلى نهاية النتائج</p>
+                  <div className="h-px w-12 bg-slate-200 dark:bg-slate-700"></div>
+                </div>
+              )}
+            </>
           )}
         </main>
 

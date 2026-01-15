@@ -3493,16 +3493,26 @@ app.get('/api/products/:id', async (req, res) => {
 // Search products
 app.get('/api/search', async (req, res) => {
   try {
-    const { q } = req.query;
+    const { q, page = 1, limit = 20 } = req.query;
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
+
     if (!q || typeof q !== 'string') {
-      return res.json([]);
+      return res.json({ products: [], total: 0 });
     }
 
     // Use AI Hybrid Search if API keys are available
     if (process.env.SILICONFLOW_API_KEY && process.env.HUGGINGFACE_API_KEY) {
       try {
         const results = await hybridSearch(q);
-        return res.json(results);
+        // Apply pagination to AI results too
+        const paginatedResults = results.slice(skip, skip + limitNum);
+        return res.json({ 
+          products: paginatedResults, 
+          total: results.length,
+          hasMore: skip + limitNum < results.length
+        });
       } catch (aiError) {
         console.error('AI Search failed, falling back to keyword search:', aiError);
       }
@@ -3870,10 +3880,23 @@ app.get('/api/search', async (req, res) => {
 
     const sortedProducts = scoredProducts
       .filter(p => p.searchScore > 0)
-      .sort((a, b) => b.searchScore - a.searchScore)
-      .slice(0, 50);
+      .sort((a, b) => {
+        // Primary sort by score
+        if (b.searchScore !== a.searchScore) {
+          return b.searchScore - a.searchScore;
+        }
+        // Secondary stable sort by ID to prevent duplicates across pages
+        return b.id - a.id;
+      });
 
-    res.json(sortedProducts);
+    const total = sortedProducts.length;
+    const paginatedProducts = sortedProducts.slice(skip, skip + limitNum);
+
+    res.json({ 
+      products: paginatedProducts, 
+      total,
+      hasMore: skip + limitNum < total
+    });
   } catch (error) {
     console.error('Search error:', error);
     res.status(500).json({ error: 'Search failed' });

@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { useCartStore } from '../store/useCartStore';
 import { Home, ShoppingBag, ShoppingCart, Heart, User } from 'lucide-react';
 
@@ -12,6 +12,49 @@ const BottomNav: React.FC<BottomNavProps> = ({ className = '' }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const cartItemsCount = useCartStore((state) => state.getTotalItems());
+  const [isVisible, setIsVisible] = useState(true);
+  const lastScrollY = useRef(0);
+  const scrollThreshold = 20; // Increased threshold for "not right away" feel
+
+  useEffect(() => {
+    // Only apply hide/show on scroll for the Home page as requested
+    if (location.pathname !== '/') {
+      setIsVisible(true);
+      return;
+    }
+
+    const handleScroll = () => {
+      const currentScrollY = window.scrollY;
+      
+      // Calculate the difference between current and last scroll position
+      const diff = currentScrollY - lastScrollY.current;
+
+      // Always show at the very top
+      if (currentScrollY < 50) {
+        setIsVisible(true);
+        lastScrollY.current = currentScrollY;
+        return;
+      }
+
+      // Don't do anything if we haven't scrolled past the threshold
+      if (Math.abs(diff) < scrollThreshold) {
+        return;
+      }
+
+      if (diff > 0) {
+        // Scrolling down - hide
+        setIsVisible(false);
+      } else {
+        // Scrolling up - show
+        setIsVisible(true);
+      }
+      
+      lastScrollY.current = currentScrollY;
+    };
+
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, [location.pathname]);
 
   const navItems = [
     { id: 'home', label: 'الرئيسية', icon: Home, path: '/' },
@@ -27,7 +70,17 @@ const BottomNav: React.FC<BottomNavProps> = ({ className = '' }) => {
   };
 
   return (
-    <nav className={`fixed bottom-0 left-0 right-0 z-40 w-full border-t border-slate-200 bg-white/95 px-6 pb-[calc(env(safe-area-inset-bottom)+1.25rem)] pt-3 backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/95 ${className}`}>
+    <motion.nav 
+      initial={{ y: 0 }}
+      animate={{ y: isVisible ? 0 : 120 }}
+      transition={{ 
+        type: 'spring',
+        stiffness: 300,
+        damping: 30,
+        mass: 0.8
+      }}
+      className={`fixed bottom-0 left-0 right-0 z-40 w-full border-t border-slate-200 bg-white/95 px-6 pb-[calc(env(safe-area-inset-bottom)+1.25rem)] pt-3 backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/95 ${className}`}
+    >
       <div className="mx-auto flex max-w-lg items-center justify-between">
         {navItems.map((item) => {
           const active = isActive(item.path);
@@ -74,7 +127,7 @@ const BottomNav: React.FC<BottomNavProps> = ({ className = '' }) => {
           );
         })}
       </div>
-    </nav>
+    </motion.nav>
   );
 };
 

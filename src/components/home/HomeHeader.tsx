@@ -16,7 +16,7 @@ const HomeHeader: React.FC<HomeHeaderProps> = ({
   const { t } = useTranslation();
 
   return (
-    <header className="sticky top-0 z-30 flex items-center justify-between bg-background-light/90 dark:bg-background-dark/90 backdrop-blur-md px-4 py-4 transition-colors pt-safe">
+    <header className="flex items-center justify-between bg-background-light dark:bg-background-dark px-4 py-4 pt-safe transition-colors">
       <div className="flex items-center gap-3">
         <div className="flex flex-col items-start gap-0.5">
           <div className="flex items-center gap-1 text-primary">

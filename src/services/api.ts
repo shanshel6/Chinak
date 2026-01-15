@@ -688,8 +688,8 @@ export async function fetchProductById(id: number | string) {
   return request(`/products/${id}`, { skipCache: true });
 }
 
-export async function searchProducts(query: string) {
-  return request(`/search?q=${encodeURIComponent(query)}`);
+export async function searchProducts(query: string, page = 1, limit = 20) {
+  return request(`/search?q=${encodeURIComponent(query)}&page=${page}&limit=${limit}`);
 }
 
 // Admin: Products

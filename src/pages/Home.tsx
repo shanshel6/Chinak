@@ -70,7 +70,12 @@ const Home: React.FC = () => {
     under5k: '', 
   };
 
+  const activeRequestRef = useRef<string | null>(null);
+
   const loadData = async (pageNum: number, categoryId: string, isInitial = false, retryCount = 0) => {
+    const requestId = `${categoryId}-${pageNum}-${Date.now()}`;
+    activeRequestRef.current = requestId;
+
     if (isInitial) setLoading(true);
     else setLoadingMore(true);
 
@@ -81,20 +86,30 @@ const Home: React.FC = () => {
       
       const prodsRes = await fetchProducts(pageNum, 10, searchTerm, maxPrice);
 
+      // Only proceed if this is still the active request for this category
+      if (activeRequestRef.current !== requestId) return;
+
       const newProducts = prodsRes.products || [];
       
       if (isInitial) {
         setProducts(newProducts);
         setHomeData(newProducts, pageNum, categoryId);
       } else {
-        const updatedProducts = [...products, ...newProducts];
-        setProducts(updatedProducts);
-        setHomeData(updatedProducts, pageNum, categoryId);
+        setProducts(prev => {
+          // Filter out any duplicates that might have been returned by the server
+          const existingIds = new Set(prev.map(p => p.id));
+          const uniqueNewProducts = newProducts.filter((p: Product) => !existingIds.has(p.id));
+          
+          const updated = [...prev, ...uniqueNewProducts];
+          setHomeData(updated, pageNum, categoryId);
+          return updated;
+        });
       }
       
       setHasMore(newProducts.length === 10);
       
     } catch (err: any) {
+      if (activeRequestRef.current !== requestId) return;
       console.error('Error loading data:', err);
       
       // Auto-retry for initial load failures up to 2 times
@@ -107,8 +122,7 @@ const Home: React.FC = () => {
 
       setError(err.message || t('common.error_loading'));
     } finally {
-      // Only set loading to false if we're not retrying
-      if (!isInitial || retryCount >= 2 || !error) {
+      if (activeRequestRef.current === requestId) {
         setLoading(false);
         setLoadingMore(false);
       }
@@ -144,11 +158,11 @@ const Home: React.FC = () => {
   }, [setHomeScrollPos]);
 
   const lastProductElementRef = useCallback((node: HTMLDivElement) => {
-    if (loading || loadingMore) return;
+    if (loading || loadingMore || !hasMore) return;
     if (observer.current) observer.current.disconnect();
     
     observer.current = new IntersectionObserver(entries => {
-      if (entries[0].isIntersecting && hasMore) {
+      if (entries[0].isIntersecting && hasMore && !loadingMore && !loading) {
         setPage(prevPage => {
           const nextPage = prevPage + 1;
           loadData(nextPage, selectedCategoryId);
@@ -249,16 +263,22 @@ const Home: React.FC = () => {
   }
 
   return (
-    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden pb-28 pb-safe bg-background-light dark:bg-background-dark font-display text-slate-900 dark:text-white antialiased selection:bg-primary/30 rtl pt-safe" dir="rtl">
+    <div className="relative flex min-h-screen w-full flex-col pb-28 pb-safe bg-background-light dark:bg-background-dark font-display text-slate-900 dark:text-white antialiased selection:bg-primary/30 rtl" dir="rtl">
       <HomeHeader 
         user={user}
         onNavigate={navigate}
         unreadNotificationsCount={unreadNotificationsCount}
       />
 
-        <SearchBar 
-          onNavigate={navigate} 
-        />
+      <div className="sticky top-0 z-30 w-full bg-background-light dark:bg-background-dark border-b border-slate-200/50 dark:border-slate-800/50 shadow-sm transition-all duration-300">
+        <div className="pt-safe">
+          <div className="pt-1">
+            <SearchBar 
+              onNavigate={navigate} 
+            />
+          </div>
+        </div>
+      </div>
 
         <CategoryTabs 
           categories={categories}
@@ -288,9 +308,46 @@ const Home: React.FC = () => {
             </h2>
           </div>
           
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3 md:gap-4 lg:gap-6 pb-6">
-            {loading ? (
-              Array(6).fill(0).map((_, i) => (
+          {!loading && !error && products.length > 0 && (
+            <>
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3 md:gap-4 lg:gap-6 pb-6">
+                {products.map((product, index) => (
+                  <div 
+                    key={`${product.id}-${index}`}
+                    ref={index === products.length - 1 ? lastProductElementRef : null}
+                  >
+                    <ProductCard 
+                      product={product}
+                      onNavigate={(id) => navigate(`/product?id=${id}`, { state: { initialProduct: product } })}
+                      onAddToWishlist={handleAddToWishlist}
+                      isProductInWishlist={isProductInWishlist}
+                    />
+                  </div>
+                ))}
+              </div>
+
+              {loadingMore && (
+                <div className="flex flex-col items-center justify-center py-6 gap-3">
+                  <div className="flex items-center gap-3 px-6 py-3 rounded-2xl bg-white dark:bg-slate-800 shadow-xl shadow-slate-200/50 dark:shadow-none border border-slate-100 dark:border-slate-700 animate-pulse">
+                    <div className="h-5 w-5 border-2 border-t-transparent border-primary rounded-full animate-spin"></div>
+                    <span className="text-sm font-black text-slate-900 dark:text-white">جاري تحميل المزيد...</span>
+                  </div>
+                </div>
+              )}
+              
+              {!loadingMore && !hasMore && products.length > 0 && (
+                <div className="flex flex-col items-center justify-center py-8 gap-3">
+                  <div className="h-px w-12 bg-slate-200 dark:bg-slate-700"></div>
+                  <p className="text-sm font-bold text-slate-400 dark:text-slate-500">وصلت إلى نهاية النتائج</p>
+                  <div className="h-px w-12 bg-slate-200 dark:bg-slate-700"></div>
+                </div>
+              )}
+            </>
+          )}
+
+          {loading && (
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3 md:gap-4 lg:gap-6 pb-6">
+              {Array(6).fill(0).map((_, i) => (
                 <div key={i} className="flex flex-col gap-2">
                   <Skeleton className="aspect-[3/4] w-full rounded-2xl shadow-sm" />
                   <div className="px-1 space-y-2">
@@ -298,38 +355,7 @@ const Home: React.FC = () => {
                     <Skeleton variant="text" className="h-4 w-2/3" />
                   </div>
                 </div>
-              ))
-            ) : (
-              products.map((product, index) => (
-                <div 
-                  key={`${product.id}-${index}`}
-                  ref={index === products.length - 1 ? lastProductElementRef : null}
-                >
-                  <ProductCard 
-                    product={product}
-                    onNavigate={(id) => navigate(`/product?id=${id}`, { state: { initialProduct: product } })}
-                    onAddToWishlist={handleAddToWishlist}
-                    isProductInWishlist={isProductInWishlist}
-                  />
-                </div>
-              ))
-            )}
-          </div>
-
-          {loadingMore && (
-            <div className="flex flex-col items-center justify-center py-6 gap-3">
-              <div className="flex items-center gap-3 px-6 py-3 rounded-2xl bg-white dark:bg-slate-800 shadow-xl shadow-slate-200/50 dark:shadow-none border border-slate-100 dark:border-slate-700 animate-pulse">
-                <div className="h-5 w-5 border-2 border-t-transparent border-primary rounded-full animate-spin"></div>
-                <span className="text-sm font-black text-slate-900 dark:text-white">جاري تحميل المزيد...</span>
-              </div>
-            </div>
-          )}
-          
-          {!loading && !loadingMore && !hasMore && products.length > 0 && (
-            <div className="flex flex-col items-center justify-center py-8 gap-3">
-              <div className="h-px w-12 bg-slate-200 dark:bg-slate-700"></div>
-              <p className="text-sm font-bold text-slate-400 dark:text-slate-500">وصلت إلى نهاية النتائج</p>
-              <div className="h-px w-12 bg-slate-200 dark:bg-slate-700"></div>
+              ))}
             </div>
           )}
 

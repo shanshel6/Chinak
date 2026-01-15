@@ -37,7 +37,7 @@ const ProfileHeader: React.FC<ProfileHeaderProps> = ({
   const { t } = useTranslation();
 
   return (
-    <div className="flex flex-col items-center pt-6 pb-6 px-4 bg-surface-light dark:bg-surface-dark mb-4 shadow-sm border-b border-slate-100 dark:border-slate-800">
+    <div className="flex flex-col items-center pt-safe pb-6 px-4 bg-surface-light dark:bg-surface-dark mb-4 shadow-sm border-b border-slate-100 dark:border-slate-800">
       <div className="relative mb-4 group cursor-pointer">
         <div 
           className="bg-center bg-no-repeat aspect-square bg-cover rounded-full h-24 w-24 border-4 border-slate-50 dark:border-slate-700 shadow-sm transition-transform group-hover:scale-105 flex items-center justify-center bg-slate-100 dark:bg-slate-800 overflow-hidden"

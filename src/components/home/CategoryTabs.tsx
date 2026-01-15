@@ -21,7 +21,7 @@ const CategoryTabs: React.FC<CategoryTabsProps> = ({
   onHoverCategory
 }) => {
   return (
-    <div className="sticky top-0 z-20 bg-background-light/80 dark:bg-background-dark/80 backdrop-blur-md">
+    <div className="bg-background-light dark:bg-background-dark">
       <div className="flex overflow-x-auto scrollbar-hide py-3 px-4 gap-3">
         {categories.map((category) => {
           const Icon = category.icon;

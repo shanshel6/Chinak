@@ -125,14 +125,14 @@ function MainLayout() {
     '/order-confirmation', '/addresses/add', '/addresses/edit', '/reviews',
     '/customer-support', '/contact-us', '/privacy-policy', '/terms-of-service',
     '/advanced-settings', '/delete-account', '/order-not-found', '/cart/empty',
-    '/faq', '/cart'
+    '/faq', '/cart', '/search'
   ];
   
   const showBottomNav = !noBottomNavPaths.includes(location.pathname) && 
                        !noBottomNavPaths.some(path => location.pathname.startsWith(path));
 
   return (
-    <div className="w-full min-h-screen bg-white dark:bg-slate-900 shadow-xl relative flex flex-col pt-[env(safe-area-inset-top,0.5rem)]">
+    <div className="w-full min-h-screen bg-white dark:bg-slate-900 shadow-xl relative flex flex-col">
       <div className="flex-1 flex flex-col relative">
         <ErrorBoundary>
           <AnimatedRoutes />
