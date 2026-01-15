@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import { fetchProducts } from '../services/api';
 import { useWishlistStore } from '../store/useWishlistStore';
 import { useAuthStore } from '../store/useAuthStore';
-import { useCartStore } from '../store/useCartStore';
 import { useNotificationStore } from '../store/useNotificationStore';
 import { useToastStore } from '../store/useToastStore';
 import { usePageCacheStore } from '../store/usePageCacheStore';
@@ -32,7 +31,6 @@ const Home: React.FC = () => {
   const toggleWishlist = useWishlistStore((state) => state.toggleWishlist);
   const user = useAuthStore((state) => state.user);
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
-  const addItem = useCartStore((state) => state.addItem);
   const showToast = useToastStore((state) => state.showToast);
   const unreadNotificationsCount = useNotificationStore((state) => state.unreadCount);
 
@@ -231,31 +229,7 @@ const Home: React.FC = () => {
     toggleWishlist(product.id, product);
   };
 
-  const handleAddToCart = async (e: React.MouseEvent, productId: number) => {
-    e.stopPropagation();
-    if (!isAuthenticated) {
-      showToast('يرجى تسجيل الدخول أولاً لإضافة منتجات إلى السلة', 'info');
-      navigate('/login');
-      return;
-    }
-    
-    const product = products.find(p => p.id === productId);
-    if (!product) return;
 
-    // Optimistic UI update
-    showToast('تمت إضافة المنتج إلى السلة', 'success');
-
-    try {
-      await addItem(productId, 1, undefined, {
-        id: product.id,
-        name: product.name,
-        price: product.price,
-        image: product.image
-      });
-    } catch (err: any) {
-      showToast('فشل في إضافة المنتج للسلة', 'error');
-    }
-  };
 
   if (loading && products.length === 0) {
     return (
@@ -335,7 +309,6 @@ const Home: React.FC = () => {
                     product={product}
                     onNavigate={(id) => navigate(`/product?id=${id}`, { state: { initialProduct: product } })}
                     onAddToWishlist={handleAddToWishlist}
-                    onAddToCart={handleAddToCart}
                     isProductInWishlist={isProductInWishlist}
                   />
                 </div>

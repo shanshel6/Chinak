@@ -1,5 +1,5 @@
 import React from 'react';
-import { Heart, Star, Plus } from 'lucide-react';
+import { Heart, Star } from 'lucide-react';
 import LazyImage from '../LazyImage';
 
 interface Product {
@@ -14,7 +14,6 @@ interface SearchProductCardProps {
   onNavigate: (id: number) => void;
   onToggleWishlist: (product: Product) => void;
   isWishlisted: boolean;
-  onAddToCart: (product: Product) => void;
 }
 
 const SearchProductCard: React.FC<SearchProductCardProps> = ({
@@ -22,7 +21,6 @@ const SearchProductCard: React.FC<SearchProductCardProps> = ({
   onNavigate,
   onToggleWishlist,
   isWishlisted,
-  onAddToCart,
 }) => {
   return (
     <div 
@@ -66,20 +64,11 @@ const SearchProductCard: React.FC<SearchProductCardProps> = ({
           <span className="text-xs font-bold text-slate-700 dark:text-slate-300 pt-0.5">4.8</span>
           <span className="text-[10px] text-slate-400 pt-0.5">(128)</span>
         </div>
-        <div className="flex items-center justify-between">
+        <div className="flex items-center">
           <div className="flex flex-col">
             <span className="text-base font-bold text-primary">{product.price.toLocaleString()} د.ع</span>
             <span className="text-[10px] text-slate-400 line-through">{(product.price * 1.2).toLocaleString()} د.ع</span>
           </div>
-          <button 
-            onClick={(e) => {
-              e.stopPropagation();
-              onAddToCart(product);
-            }}
-            className="w-8 h-8 flex items-center justify-center rounded-lg bg-primary text-white shadow-lg shadow-primary/20 active:scale-90 transition-transform"
-          >
-            <Plus size={20} />
-          </button>
         </div>
       </div>
     </div>

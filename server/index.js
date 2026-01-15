@@ -4419,7 +4419,14 @@ app.post('/api/orders', authenticateToken, async (req, res) => {
             }))
           }
         },
-        include: { items: true }
+        include: { 
+          items: {
+            include: {
+              product: true,
+              variant: true
+            }
+          } 
+        }
       });
 
       // Handle Coupon Usage Tracking

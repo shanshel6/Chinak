@@ -80,7 +80,57 @@ const ProductDetails: React.FC = () => {
   const [isAdding, setIsAdding] = useState(false);
   const [isAdded, setIsAdded] = useState(false);
   const [shouldRenderDetails, setShouldRenderDetails] = useState(false);
-  const [selectedOptions, setSelectedOptions] = useState<Record<string, string>>({});
+  const [selectedOptions, setSelectedOptions] = useState<Record<string, string>>(() => {
+    // Try to get initial options from navigation state or global cache
+    const initialProd = (location.state as any)?.initialProduct || (productId ? findProductInGlobalCache(productId) : null);
+    if (initialProd?.options?.length) {
+      const options: Record<string, string> = {};
+      initialProd.options.forEach((opt: any) => {
+        try {
+          const values = typeof opt.values === 'string' ? JSON.parse(opt.values) : opt.values;
+          if (Array.isArray(values) && values.length > 0) {
+            const firstVal = values[0];
+            options[opt.name] = typeof firstVal === 'object' 
+              ? (firstVal.value || firstVal.name || String(firstVal)) 
+              : String(firstVal);
+          }
+        } catch (e) {
+          // Ignore
+        }
+      });
+      return options;
+    }
+    return {};
+  });
+
+  // Effect to initialize options when product data arrives (if not already set)
+  useEffect(() => {
+    if (product?.options?.length) {
+      setSelectedOptions(prev => {
+        const newOptions = { ...prev };
+        let changed = false;
+
+        product.options!.forEach((opt: any) => {
+          if (!newOptions[opt.name]) {
+            try {
+              const values = typeof opt.values === 'string' ? JSON.parse(opt.values) : opt.values;
+              if (Array.isArray(values) && values.length > 0) {
+                const firstVal = values[0];
+                newOptions[opt.name] = typeof firstVal === 'object' 
+                  ? (firstVal.value || firstVal.name || String(firstVal)) 
+                  : String(firstVal);
+                changed = true;
+              }
+            } catch (e) {
+              // Ignore
+            }
+          }
+        });
+
+        return changed ? newOptions : prev;
+      });
+    }
+  }, [product]);
 
   // Defer rendering of heavy detail images
   useEffect(() => {
@@ -243,11 +293,33 @@ const ProductDetails: React.FC = () => {
     const loadData = async () => {
       if (!productId) return;
       
-      // If we have initial data, we can start rendering immediately
-      if (product) {
+      // Try to load initial data for immediate rendering
+      const initialData = (location.state as any)?.initialProduct || findProductInGlobalCache(productId);
+      
+      if (initialData) {
+        setProduct(initialData);
         setLoading(false);
+        
+        // Initialize options for the new product immediately
+        if (initialData.options?.length) {
+          const options: Record<string, string> = {};
+          initialData.options.forEach((opt: any) => {
+            try {
+              const values = typeof opt.values === 'string' ? JSON.parse(opt.values) : opt.values;
+              if (Array.isArray(values) && values.length > 0) {
+                const firstVal = values[0];
+                options[opt.name] = typeof firstVal === 'object' 
+                  ? (firstVal.value || firstVal.name || String(firstVal)) 
+                  : String(firstVal);
+              }
+            } catch (e) {}
+          });
+          setSelectedOptions(options);
+        } else {
+          setSelectedOptions({});
+        }
       } else {
-        // Try to load from cache first for instant feedback if no initial state
+        // Only if no initial data, try local storage cache
         const cacheKey = `/products/${productId}`;
         const cachedProduct = localStorage.getItem(`app_cache_${cacheKey}`);
         
@@ -256,11 +328,38 @@ const ProductDetails: React.FC = () => {
             const { data } = JSON.parse(cachedProduct);
             setProduct(data);
             setLoading(false);
+            
+            // Initialize options from cache
+            if (data.options?.length) {
+              const options: Record<string, string> = {};
+              data.options.forEach((opt: any) => {
+                try {
+                  const values = typeof opt.values === 'string' ? JSON.parse(opt.values) : opt.values;
+                  if (Array.isArray(values) && values.length > 0) {
+                    const firstVal = values[0];
+                    options[opt.name] = typeof firstVal === 'object' 
+                      ? (firstVal.value || firstVal.name || String(firstVal)) 
+                      : String(firstVal);
+                  }
+                } catch (e) {}
+              });
+              setSelectedOptions(options);
+            }
           } catch (e) {
             console.warn('Failed to parse cached product', e);
+            setProduct(null);
+            setLoading(true);
+            setSelectedOptions({});
           }
+        } else {
+          setProduct(null);
+          setLoading(true);
+          setSelectedOptions({});
         }
       }
+
+      setReviews([]);
+      setShouldRenderDetails(false);
 
       // 1. Fetch main product info first (high priority)
       const fetchMainProduct = async () => {
@@ -273,17 +372,6 @@ const ProductDetails: React.FC = () => {
             return { ...prev, ...productData };
           });
           
-          if (productData.options && productData.options.length > 0) {
-            const initialOptions: Record<string, string> = {};
-            productData.options.forEach((opt: any) => {
-              const values = typeof opt.values === 'string' ? JSON.parse(opt.values) : opt.values;
-              if (values && values.length > 0) {
-                const firstVal = values[0];
-                initialOptions[opt.name] = typeof firstVal === 'object' ? (firstVal.value || firstVal.name || JSON.stringify(firstVal)) : String(firstVal);
-              }
-            });
-            setSelectedOptions(initialOptions);
-          }
           setError(null);
         } catch (err) {
           console.error('Error fetching product info:', err);

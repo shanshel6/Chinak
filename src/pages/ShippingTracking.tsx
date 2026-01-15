@@ -259,7 +259,9 @@ const ShippingTracking: React.FC = () => {
     </div>
   );
 
-  const firstItem = order.items?.[0]?.product;
+  const firstItem = order.items?.[0];
+  const firstItemImage = firstItem?.variant?.image || firstItem?.product?.image;
+  const firstItemName = firstItem?.product?.name;
 
   return (
     <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden bg-background-light dark:bg-background-dark shadow-2xl font-display text-slate-900 dark:text-slate-100 antialiased selection:bg-primary/30 rtl pb-safe pt-safe" dir="rtl">
@@ -348,7 +350,7 @@ const ShippingTracking: React.FC = () => {
                 <div className="flex flex-[2_2_0px] flex-col justify-between gap-3">
                   <div className="flex flex-col gap-1">
                     <p className="text-slate-900 dark:text-white text-base font-bold leading-tight">
-                      {order.items.length > 1 ? t('tracking.order_id_with_qty', { id: order.id, count: order.items.length }) : firstItem?.name}
+                      {order.items.length > 1 ? t('tracking.order_id_with_qty', { id: order.id, count: order.items.length }) : firstItemName}
                     </p>
                     <p className="text-slate-500 dark:text-slate-400 text-xs font-normal leading-normal">{t('tracking.tracking_no')}: <span dir="ltr">#IQ-{order.id}-{new Date(order.createdAt).getTime().toString().slice(-6)}</span></p>
                   </div>
@@ -360,8 +362,8 @@ const ShippingTracking: React.FC = () => {
                 </div>
                 <div className="w-24 h-24 rounded-lg overflow-hidden shrink-0 border border-slate-100 dark:border-slate-700">
                   <LazyImage 
-                    src={firstItem?.image} 
-                    alt={firstItem?.name} 
+                    src={firstItemImage} 
+                    alt={firstItemName} 
                     className="w-full h-full" 
                   />
                 </div>

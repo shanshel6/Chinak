@@ -163,31 +163,10 @@ const SearchResults: React.FC = () => {
     setFilteredProducts(result);
   }, [activeFilter, sortBy, products]);
 
-  const addItem = useCartStore((state) => state.addItem);
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
   const showToast = useToastStore((state) => state.showToast);
 
-  const handleAddToCart = async (product: Product) => {
-    if (!isAuthenticated) {
-      showToast('يرجى تسجيل الدخول أولاً لإضافة منتجات إلى السلة', 'info');
-      navigate('/login');
-      return;
-    }
-    
-    // Optimistic UI update
-    showToast('تمت إضافة المنتج إلى السلة', 'success');
 
-    try {
-      await addItem(product.id, 1, undefined, {
-        id: product.id,
-        name: product.name,
-        price: product.price,
-        image: product.image
-      });
-    } catch (err) {
-      showToast('فشل في إضافة المنتج للسلة', 'error');
-    }
-  };
 
   return (
     <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden bg-background-light dark:bg-background-dark shadow-2xl font-display text-slate-900 dark:text-white antialiased selection:bg-primary/30 rtl pb-safe pt-safe" dir="rtl">
@@ -273,7 +252,6 @@ const SearchResults: React.FC = () => {
                   onNavigate={(id) => navigate(`/product?id=${id}`, { state: { initialProduct: product } })}
                   onToggleWishlist={(p) => toggleWishlist(p.id, p)}
                   isWishlisted={isProductInWishlist(product.id)}
-                  onAddToCart={handleAddToCart}
                 />
               ))}
             </div>

@@ -1,7 +1,7 @@
 import React, { useRef } from 'react';
 import LazyImage from '../LazyImage';
 import { fetchProductById, fetchProductReviews, checkProductPurchase } from '../../services/api';
-import { Heart, Plus } from 'lucide-react';
+import { Heart } from 'lucide-react';
 
 interface Product {
   id: number;
@@ -20,7 +20,6 @@ interface ProductCardProps {
   product: Product;
   onNavigate: (id: number) => void;
   onAddToWishlist: (e: React.MouseEvent, product: Product) => void;
-  onAddToCart: (e: React.MouseEvent, id: number) => void;
   isProductInWishlist: (id: number) => boolean;
 }
 
@@ -28,7 +27,6 @@ const ProductCard: React.FC<ProductCardProps> = ({
   product,
   onNavigate,
   onAddToWishlist,
-  onAddToCart,
   isProductInWishlist,
 }) => {
   const [_currentImageIndex, _setCurrentImageIndex] = React.useState(0);
@@ -132,21 +130,14 @@ const ProductCard: React.FC<ProductCardProps> = ({
         </h3>
         
         <div className="flex flex-col gap-1 mt-auto">
-          {/* Price & Add to Cart */}
-          <div className="flex items-center justify-between gap-1">
+          {/* Price */}
+          <div className="flex items-center gap-1">
             <div className="flex items-baseline gap-1">
               <span className="text-[15px] font-black text-primary">
                 {minPrice.toLocaleString()}
               </span>
               <span className="text-[10px] font-bold text-primary/70">د.ع</span>
             </div>
-            
-            <button 
-              onClick={(e) => onAddToCart(e, product.id)}
-              className="flex size-7 items-center justify-center rounded-lg bg-primary text-white shadow-lg shadow-primary/20 transition active:scale-90"
-            >
-              <Plus size={18} strokeWidth={3} />
-            </button>
           </div>
 
           {/* Sold & Rating info */}
