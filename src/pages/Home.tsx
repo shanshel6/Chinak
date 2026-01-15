@@ -21,6 +21,10 @@ interface Product {
   description: string;
   images?: { id: number; url: string; order: number; type?: string }[];
   purchaseUrl?: string;
+  weight?: number;
+  length?: number;
+  width?: number;
+  height?: number;
 }
 
 const Home: React.FC = () => {

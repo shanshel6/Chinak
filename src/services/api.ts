@@ -710,7 +710,17 @@ export async function updateProduct(id: number | string, productData: any, token
   if (typeof id === 'string' && id.startsWith('local-')) {
     // If user changed status to PUBLISHED, create on server and delete local
     if (productData.status === 'PUBLISHED') {
-      const { id: _, ...rest } = productData; // Remove local ID
+      const draft = localProductService.getDraftById(id);
+      if (!draft) {
+        throw new Error('لم يتم العثور على المسودة محلياً');
+      }
+      
+      // Merge draft data with updates
+      const fullProductData = { ...draft, ...productData };
+      
+      // Clean up for server (remove local-only fields)
+      const { id: _, isLocal: __, createdAt: ___, updatedAt: ____, ...rest } = fullProductData;
+      
       const result = await request('/products', {
         method: 'POST',
         body: JSON.stringify(rest),

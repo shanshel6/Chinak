@@ -8,7 +8,7 @@ import DiscountPopup from '../components/DiscountPopup';
 
 import { useCheckoutStore } from '../store/useCheckoutStore';
 
-import { AlertCircle, ShoppingCart, ArrowLeft, RefreshCw, Minus, Plus, Heart, Trash2, Tag, X, ArrowRight } from 'lucide-react';
+import { AlertCircle, ShoppingCart, ArrowLeft, RefreshCw, Minus, Plus, Heart, Trash2, Tag, X, ArrowRight, CheckCheck } from 'lucide-react';
 
 import { fetchCoupons } from '../services/api';
 
@@ -355,7 +355,7 @@ const Cart: React.FC = () => {
                       })()}
                     </div>
                   )}
-                  <p className="text-primary font-bold mt-1">{(item.variant?.price || item.product.price).toLocaleString()} د.ع</p>
+                  <p className="text-primary font-bold mt-1">{(item.price || item.variant?.price || item.product.price).toLocaleString()} د.ع</p>
                 </div>
                 {!isSelectMode && (
                   <div className="flex items-center justify-between">
@@ -462,7 +462,10 @@ const Cart: React.FC = () => {
 
               <div className="flex justify-between text-sm">
                 <span className="text-slate-500 dark:text-slate-400">الشحن الدولي</span>
-                <span className="font-medium text-orange-500">يحدد لاحقاً</span>
+                <div className="flex items-center gap-1.5 bg-green-500/10 text-green-600 px-2 py-0.5 rounded-lg text-[10px] font-black uppercase tracking-wider">
+                  <CheckCheck size={14} />
+                  <span>مجاني</span>
+                </div>
               </div>
 
               <div className="h-px bg-slate-100 dark:bg-slate-700 w-full my-1"></div>
@@ -472,7 +475,7 @@ const Cart: React.FC = () => {
                   <span className="text-primary">{total.toLocaleString()} د.ع</span>
                 </div>
                 <p className="text-[10px] text-slate-400 text-right">
-                  * سيتم احتساب تكلفة الشحن الدولي ومشاركتها معك عبر واتساب
+                  * شحن دولي مجاني لجميع الطلبات حالياً
                 </p>
               </div>
             </div>

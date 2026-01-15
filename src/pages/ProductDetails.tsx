@@ -1,10 +1,12 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
-import { fetchProductById, fetchProductReviews, checkProductPurchase, findProductInGlobalCache } from '../services/api';
+import { fetchProductById, fetchProductReviews, checkProductPurchase, findProductInGlobalCache, fetchSettings } from '../services/api';
 import { useWishlistStore } from '../store/useWishlistStore';
 import { useCartStore } from '../store/useCartStore';
 import { useAuthStore } from '../store/useAuthStore';
 import { useToastStore } from '../store/useToastStore';
+import { calculateShippingFee } from '../utils/shipping';
+import type { ShippingRates } from '../utils/shipping';
 import { Clipboard } from '@capacitor/clipboard';
 import LazyImage from '../components/LazyImage';
 import ProductHeader from '../components/product/ProductHeader';
@@ -43,6 +45,10 @@ interface Product {
   originalPrice?: number;
   reviewsCountShown?: string;
   storeEvaluation?: string;
+  weight?: number;
+  length?: number;
+  width?: number;
+  height?: number;
 }
 
 import { AlertCircle, Package, MessageSquareText, Store, Star } from 'lucide-react';
@@ -79,6 +85,40 @@ const ProductDetails: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [isAdding, setIsAdding] = useState(false);
   const [isAdded, setIsAdded] = useState(false);
+  const [isPurchaseAllowed, setIsPurchaseAllowed] = useState<boolean>(true);
+  const [shippingRates, setShippingRates] = useState<ShippingRates>({
+    airRate: 15400,
+    seaRate: 182000,
+    minFloor: 5000
+  });
+
+  useEffect(() => {
+    const loadSettings = async () => {
+      try {
+        const settings = await fetchSettings();
+        if (settings) {
+          setShippingRates({
+            airRate: settings.airShippingRate || 15400,
+            seaRate: settings.seaShippingRate || 182000,
+            minFloor: settings.airShippingMinFloor || 5000
+          });
+        }
+      } catch (e) {}
+    };
+    loadSettings();
+  }, []);
+
+  const shippingFee = useMemo(() => {
+    if (!product) return 0;
+    return calculateShippingFee(
+      product.weight,
+      product.length,
+      product.width,
+      product.height,
+      shippingRates
+    );
+  }, [product, shippingRates]);
+
   const [shouldRenderDetails, setShouldRenderDetails] = useState(false);
   const [selectedOptions, setSelectedOptions] = useState<Record<string, string>>(() => {
     // Try to get initial options from navigation state or global cache
@@ -450,10 +490,13 @@ const ProductDetails: React.FC = () => {
     showToast('تمت إضافة المنتج إلى السلة بنجاح', 'success');
 
     try {
+      const basePrice = currentVariant?.price || product.price || 0;
+      const finalPrice = basePrice + shippingFee;
+
       await addItem(product.id, 1, currentVariant?.id, {
         id: product.id,
         name: product.name,
-        price: currentVariant?.price || product.price,
+        price: finalPrice,
         image: currentVariant?.image || product.image,
         variant: currentVariant
       }, selectedOptions);
@@ -541,6 +584,10 @@ const ProductDetails: React.FC = () => {
             reviewsCountShown={product.reviewsCountShown}
             averageRating={averageRating}
             totalReviews={allReviews.length}
+            weight={product.weight}
+            length={product.length}
+            width={product.width}
+            height={product.height}
           />
 
           {product.options && product.options.length > 0 && (
@@ -706,12 +753,12 @@ const ProductDetails: React.FC = () => {
         </main>
 
         <AddToCartBar 
-          price={currentVariant?.price || product.price || 0}
-          onAddToCart={handleAddToCart}
-          isAdding={isAdding}
-          isAdded={isAdded}
-          onGoToCart={() => navigate('/cart')}
-        />
+            price={(currentVariant?.price || product.price || 0) + shippingFee}
+            onAddToCart={handleAddToCart}
+            isAdding={isAdding}
+            isAdded={isAdded}
+            onGoToCart={() => navigate('/cart')}
+          />
       </div>
     </div>
   );

@@ -58,3 +58,36 @@ export async function calculateOrderShipping(items, method = 'AIR') {
     return 0;
   }
 }
+
+/**
+ * Calculate shipping for a single product.
+ * Automatically chooses between AIR and SEA based on weight.
+ */
+export async function calculateProductShipping(product) {
+  try {
+    const settings = await prisma.storeSettings.findUnique({ where: { id: 1 } });
+    const airRate = settings?.airShippingRate || 15400;
+    const seaRate = settings?.seaShippingRate || 182000;
+    const airMin = settings?.airShippingMinFloor || 5000;
+
+    const weight = product.weight || 0.5;
+    const length = product.length || 10;
+    const width = product.width || 10;
+    const height = product.height || 10;
+
+    let fee = 0;
+    if (weight <= 1) {
+      // Air
+      const roundedWeight = Math.ceil(weight * 2) / 2;
+      fee = Math.max(roundedWeight * airRate, airMin);
+    } else {
+      // Sea
+      const cbm = (length * width * height) / 1000000;
+      fee = cbm * seaRate;
+    }
+
+    return Math.ceil(fee / 250) * 250;
+  } catch (error) {
+    return 0;
+  }
+}

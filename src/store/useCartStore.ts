@@ -14,6 +14,7 @@ interface CartItem {
   variantId?: number | string;
   selectedOptions?: string | any;
   quantity: number;
+  price?: number; // Inclusive price from server
   product: Product;
   variant?: {
     id: number | string;
@@ -291,8 +292,8 @@ export const useCartStore = create<CartState>((set, get) => ({
 
   getSubtotal: () => {
     return get().items.reduce((acc, item) => {
-      // Use variant price if available, otherwise use product price
-      const price = item.variant?.price || item.product.price;
+      // Use inclusive price if available, otherwise fallback to base prices
+      const price = item.price || item.variant?.price || item.product.price;
       return acc + (price * item.quantity);
     }, 0);
   },

@@ -210,14 +210,17 @@ export async function processProductAI(productId) {
           ${physicalUpdate}
       WHERE "id" = $3
     `;
-    
-    await prisma.$executeRawUnsafe(query, JSON.stringify(aiMetadata), vectorStr, productId);
 
+    console.log(`[AI Debug] Executing database update for product ${productId}...`);
+    await prisma.$executeRawUnsafe(query, JSON.stringify(aiMetadata), vectorStr, productId);
     console.log(`[AI Debug] Successfully processed product ${productId}`);
-    return aiMetadata;
   } catch (error) {
-    console.error(`[AI Debug] Error processing product ${productId}:`, error.message);
-    throw error;
+    console.error(`[AI Debug] Critical error in processProductAI for product ${productId}:`, error.message);
+    // Don't rethrow, as this is a background task and we've already logged it.
+    // However, in development, we might want to see the stack trace.
+    if (process.env.NODE_ENV !== 'production') {
+      console.error(error);
+    }
   }
 }
 

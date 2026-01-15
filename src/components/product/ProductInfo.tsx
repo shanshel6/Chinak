@@ -1,5 +1,7 @@
-import React from 'react';
-import { Video, Store, Star } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Video, Store, Star, Plane, Ship, Info } from 'lucide-react';
+import { fetchSettings } from '../../services/api';
+import { calculateShippingFee } from '../../utils/shipping';
 
 interface ProductInfoProps {
   price: number;
@@ -11,6 +13,10 @@ interface ProductInfoProps {
   reviewsCountShown?: string;
   averageRating?: string;
   totalReviews?: number;
+  weight?: number;
+  length?: number;
+  width?: number;
+  height?: number;
 }
 
 const ProductInfo: React.FC<ProductInfoProps> = ({
@@ -23,7 +29,54 @@ const ProductInfo: React.FC<ProductInfoProps> = ({
   reviewsCountShown,
   averageRating,
   totalReviews,
+  weight,
+  length,
+  width,
+  height,
 }) => {
+  const [airRate, setAirRate] = useState<number>(15400); 
+  const [seaRate, setSeaRate] = useState<number>(182000);
+  const [shippingMinFloor, setShippingMinFloor] = useState<number>(5000);
+  
+  useEffect(() => {
+    const loadSettings = async () => {
+      try {
+        const settings = await fetchSettings();
+        if (settings?.airShippingRate) setAirRate(settings.airShippingRate);
+        if (settings?.seaShippingRate) setSeaRate(settings.seaShippingRate);
+        if (settings?.airShippingMinFloor) setShippingMinFloor(settings.airShippingMinFloor);
+      } catch (error) {
+        console.error('Failed to load shipping rates:', error);
+      }
+    };
+    loadSettings();
+  }, []);
+
+  const shippingFees = React.useMemo(() => {
+    if (!weight && !length && !width && !height) return null;
+    
+    const fee = calculateShippingFee(weight, length, width, height, {
+      airRate,
+      seaRate,
+      minFloor: shippingMinFloor
+    });
+
+    const defaultMethod = (weight || 0.5) <= 1 ? 'AIR' : 'SEA';
+
+    return { 
+      total: fee,
+      defaultMethod
+    };
+  }, [weight, length, width, height, airRate, seaRate, shippingMinFloor]);
+
+  // Use default method based on weight
+  const activeMethod = shippingFees?.defaultMethod || 'AIR';
+  
+  const totalPrice = React.useMemo(() => {
+    if (!shippingFees) return price;
+    return price + shippingFees.total;
+  }, [price, shippingFees]);
+
   const parsedEvaluation = React.useMemo(() => {
     if (!storeEvaluation) return null;
     try {
@@ -42,11 +95,11 @@ const ProductInfo: React.FC<ProductInfoProps> = ({
       <div className="flex items-center justify-between mb-2">
         <div className="flex flex-col">
           <h1 className="text-primary text-2xl font-black tracking-tight drop-shadow-sm">
-            {price > 0 ? `${price.toLocaleString()} د.ع` : 'السعر عند الطلب'}
+            {totalPrice > 0 ? `${totalPrice.toLocaleString()} د.ع` : 'السعر عند الطلب'}
           </h1>
           {originalPrice && originalPrice > price && (
             <span className="text-slate-400 text-sm line-through">
-              {originalPrice.toLocaleString()} د.ع
+              {(originalPrice + (totalPrice - price)).toLocaleString()} د.ع
             </span>
           )}
         </div>

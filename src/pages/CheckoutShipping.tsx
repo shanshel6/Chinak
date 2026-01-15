@@ -51,6 +51,13 @@ const CheckoutShipping: React.FC = () => {
         setCartItems(cartData || []);
         setAddresses(addressData || []);
         
+        // Determine shipping method based on cart items
+        if (cartData && cartData.length > 0) {
+          // If any item is > 1kg, default to sea, otherwise air
+          const hasHeavyItem = cartData.some((item: any) => (item.product?.weight || 0.5) > 1);
+          setShippingMethod(hasHeavyItem ? 'sea' : 'air');
+        }
+        
         // If no address selected in store, pick default or first
         if (!selectedAddressId && addressData && addressData.length > 0) {
           const defaultAddr = addressData.find((a: any) => a.isDefault) || addressData[0];
@@ -72,7 +79,8 @@ const CheckoutShipping: React.FC = () => {
   const subtotal = (cartItems || []).reduce((acc, item) => {
     // Check if item and product exist before accessing price
     if (!item || !item.product) return acc;
-    const price = item.variant?.price || item.product.price || 0;
+    // Use inclusive price if available, otherwise fallback to base prices
+    const price = item.price || item.variant?.price || item.product.price || 0;
     return acc + (price * (item.quantity || 0));
   }, 0);
 
@@ -220,15 +228,16 @@ const CheckoutShipping: React.FC = () => {
           <h3 className="text-lg font-bold">طريقة التوصيل</h3>
           <div className="flex flex-col gap-4">
             {/* Air Shipping */}
-            <label className="group relative cursor-pointer">
+            <label className={`group relative transition-all ${shippingMethod === 'air' ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`}>
               <input 
                 checked={shippingMethod === 'air'} 
                 onChange={() => setShippingMethod('air')}
+                disabled={shippingMethod !== 'air'}
                 className="peer sr-only" 
                 name="shipping_method" 
                 type="radio" 
               />
-              <div className="flex items-center gap-4 rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4 transition-all hover:border-primary/50 shadow-sm peer-checked:border-primary peer-checked:bg-primary/5">
+              <div className={`flex items-center gap-4 rounded-xl border-2 bg-white dark:bg-slate-800 p-4 transition-all shadow-sm ${shippingMethod === 'air' ? 'border-primary bg-primary/5' : 'border-slate-200 dark:border-slate-700'}`}>
                 <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-blue-50 dark:bg-blue-900/30 text-primary">
                   <Plane size={24} />
                 </div>
@@ -249,15 +258,16 @@ const CheckoutShipping: React.FC = () => {
             </label>
 
             {/* Sea Shipping */}
-            <label className="group relative cursor-pointer">
+            <label className={`group relative transition-all ${shippingMethod === 'sea' ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`}>
               <input 
                 checked={shippingMethod === 'sea'} 
                 onChange={() => setShippingMethod('sea')}
+                disabled={shippingMethod !== 'sea'}
                 className="peer sr-only" 
                 name="shipping_method" 
                 type="radio" 
               />
-              <div className="flex items-center gap-4 rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4 transition-all hover:border-primary/50 shadow-sm peer-checked:border-primary peer-checked:bg-primary/5">
+              <div className={`flex items-center gap-4 rounded-xl border-2 bg-white dark:bg-slate-800 p-4 transition-all shadow-sm ${shippingMethod === 'sea' ? 'border-primary bg-primary/5' : 'border-slate-200 dark:border-slate-700'}`}>
                 <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-teal-50 dark:bg-teal-900/30 text-teal-600 dark:text-teal-400">
                   <Ship size={24} />
                 </div>
@@ -336,7 +346,7 @@ const CheckoutShipping: React.FC = () => {
                   )}
                 </div>
                 <div className="text-xs font-bold text-slate-900 dark:text-white shrink-0">
-                  {((item.variant?.price || item.product?.price || 0) * item.quantity).toLocaleString()} د.ع
+                  {((item.price || item.variant?.price || item.product?.price || 0) * item.quantity).toLocaleString()} د.ع
                 </div>
               </div>
             ))}
@@ -385,23 +395,12 @@ const CheckoutShipping: React.FC = () => {
             </div>
           </div>
 
-          <div className="flex justify-between items-start text-sm border-t border-slate-200 dark:border-slate-700 pt-3">
+          <div className="flex justify-between items-center text-sm border-t border-slate-200 dark:border-slate-700 pt-3">
             <span className="text-slate-500 dark:text-slate-400">الشحن الدولي</span>
-            <div className="flex flex-col items-end gap-1">
-              <span className="font-bold text-amber-600 dark:text-amber-500">يُحدد لاحقاً</span>
-              <p className="text-[10px] text-slate-400 dark:text-slate-500 text-right leading-tight max-w-[150px]">
-                سيتم تزويدك بتكلفة الشحن الدولي عبر الواتساب للموافقة عليها قبل الشحن.
-              </p>
+            <div className="flex items-center gap-1.5 bg-green-500/10 text-green-600 px-2 py-0.5 rounded-lg text-[10px] font-black uppercase tracking-wider">
+              <CheckCheck size={14} />
+              <span>مجاني</span>
             </div>
-          </div>
-          <div className="flex flex-col gap-1.5 pt-1">
-            <div className="flex justify-between items-center text-sm">
-              <span className="text-slate-500 dark:text-slate-400">الشحن الدولي</span>
-              <span className="font-bold text-primary italic text-[10px]">تُحدد لاحقاً</span>
-            </div>
-            <p className="text-[11px] text-primary/80 font-bold leading-tight bg-primary/5 p-2 rounded-xl border border-primary/10">
-              ستصلك رسالة عبر الواتساب خلال ساعة واحدة تتضمن تكلفة الشحن الدولي
-            </p>
           </div>
           <div className="border-t border-slate-200 dark:border-slate-700 pt-3 flex justify-between items-center">
             <span className="font-bold">المجموع الكلي</span>

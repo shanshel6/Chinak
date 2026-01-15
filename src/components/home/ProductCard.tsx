@@ -1,7 +1,8 @@
-import React, { useRef } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import LazyImage from '../LazyImage';
-import { fetchProductById, fetchProductReviews, checkProductPurchase } from '../../services/api';
+import { fetchProductById, fetchProductReviews, checkProductPurchase, fetchSettings } from '../../services/api';
 import { Heart } from 'lucide-react';
+import { calculateShippingFee } from '../../utils/shipping';
 
 interface Product {
   id: number;
@@ -14,6 +15,10 @@ interface Product {
   variants?: any[];
   reviewsCountShown?: number;
   isFeatured?: boolean;
+  weight?: number;
+  length?: number;
+  width?: number;
+  height?: number;
 }
 
 interface ProductCardProps {
@@ -78,6 +83,39 @@ const ProductCard: React.FC<ProductCardProps> = ({
     }
   };
 
+  const [airRate, setAirRate] = useState<number>(15400);
+  const [seaRate, setSeaRate] = useState<number>(182000);
+  const [minFloor, setMinFloor] = useState<number>(5000);
+
+  useEffect(() => {
+    const loadRates = async () => {
+      try {
+        const settings = await fetchSettings();
+        if (settings?.airShippingRate) setAirRate(settings.airShippingRate);
+        if (settings?.seaShippingRate) setSeaRate(settings.seaShippingRate);
+        if (settings?.airShippingMinFloor) setMinFloor(settings.airShippingMinFloor);
+      } catch (e) {}
+    };
+    loadRates();
+  }, []);
+
+  const totalPrice = React.useMemo(() => {
+    const base = minPrice;
+    const shipping = calculateShippingFee(
+      product.weight,
+      product.length,
+      product.width,
+      product.height,
+      {
+        airRate,
+        seaRate,
+        minFloor
+      }
+    );
+
+    return base + shipping;
+  }, [minPrice, product.weight, product.length, product.width, product.height, airRate, seaRate, minFloor]);
+
   return (
     <div 
       onClick={() => onNavigate(product.id)}
@@ -134,7 +172,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
           <div className="flex items-center gap-1">
             <div className="flex items-baseline gap-1">
               <span className="text-[15px] font-black text-primary">
-                {minPrice.toLocaleString()}
+                {totalPrice.toLocaleString()}
               </span>
               <span className="text-[10px] font-bold text-primary/70">د.ع</span>
             </div>

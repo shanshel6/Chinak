@@ -427,7 +427,7 @@ const CheckoutPaymentAddress: React.FC = () => {
                     )}
                   </div>
                   <div className="text-xs font-bold text-slate-900 dark:text-white shrink-0">
-                    {((item.variant?.price || item.product.price) * item.quantity).toLocaleString()} د.ع
+                    {((item.price || item.variant?.price || item.product.price) * item.quantity).toLocaleString()} د.ع
                   </div>
                 </div>
               ))}
@@ -461,25 +461,22 @@ const CheckoutPaymentAddress: React.FC = () => {
                 <span>مجاني</span>
               </div>
             </div>
-            <div className="flex flex-col gap-1.5 pt-1">
-              <div className="flex justify-between items-center text-sm">
-                <span className="text-slate-500 font-medium">الشحن الدولي</span>
-                <span className="font-bold text-primary italic text-[10px]">تُحدد لاحقاً</span>
+            <div className="flex justify-between items-center text-sm">
+              <span className="text-slate-500 font-medium">الشحن الدولي</span>
+              <div className="flex items-center gap-1.5 bg-green-500/10 text-green-600 px-2 py-0.5 rounded-lg text-[10px] font-black uppercase tracking-wider">
+                <CheckCheck size={14} />
+                <span>مجاني</span>
               </div>
-              <p className="text-[11px] text-primary/80 font-bold leading-tight bg-primary/5 p-2 rounded-xl border border-primary/10">
-                ستصلك رسالة عبر الواتساب خلال ساعة واحدة تتضمن تكلفة الشحن الدولي
-              </p>
             </div>
             <div className="pt-4 border-t border-dashed border-slate-200 dark:border-slate-700 flex justify-between items-center">
-              <span className="font-black text-base text-slate-900 dark:text-white">المجموع (قبل الشحن الدولي)</span>
+              <span className="font-black text-base text-slate-900 dark:text-white">المجموع الكلي</span>
               <div className="text-right">
                 <span className="block text-2xl font-black text-primary tracking-tight">{total.toLocaleString()} د.ع</span>
-                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">+ أجور الشحن الدولي</span>
               </div>
             </div>
 
             <p className="text-[10px] text-slate-400 font-medium leading-relaxed bg-slate-100 dark:bg-slate-800/50 p-3 rounded-2xl">
-              * يمكنك إلغاء طلبك واسترداد كامل المبلغ إذا لم توافق على تكلفة الشحن الدولي التي سيتم تزويدك بها لاحقاً.
+              * سيتم شحن طلبك فوراً وتزويدك برقم التتبع عبر الواتساب فور توفره.
             </p>
           </div>
         </section>

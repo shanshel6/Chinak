@@ -19,7 +19,7 @@ import axios from 'axios';
 import { fileURLToPath } from 'url';
 import prisma from './prismaClient.js';
 import { processProductAI, hybridSearch } from './services/aiService.js';
-import { calculateOrderShipping } from './services/shippingService.js';
+import { calculateOrderShipping, calculateProductShipping } from './services/shippingService.js';
 import { setupLinkCheckerCron, checkAllProductLinks } from './services/linkCheckerService.js';
 import { createClient } from '@supabase/supabase-js';
 
@@ -46,6 +46,40 @@ if (fs.existsSync(envPath)) {
 const supabaseUrl = process.env.SUPABASE_URL || 'https://puxjtecjxfjldwxiwzrk.supabase.co';
 const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InB1eGp0ZWNqeGZqbGR3eGl3enJrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc5NDEyNjMsImV4cCI6MjA4MzUxNzI2M30.r9TxaSGhOEWeb3RP_BEsHGQ1GOBpI0-mkU0XdW3FEOc';
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
+
+// --- Global Helpers ---
+
+const safeParseFloat = (val) => {
+  if (val === null || val === undefined || val === '') return null;
+  const parsed = parseFloat(val);
+  return isNaN(parsed) ? null : parsed;
+};
+
+// Robust numeric extractor for strings like "300 جرام" or "15.5 cm"
+const extractNumber = (val) => {
+  if (val === null || val === undefined || val === '') return null;
+  if (typeof val === 'number') return val;
+  
+  const str = String(val);
+  // Matches the first sequence of digits and decimals
+  const match = str.match(/(\d+\.?\d*)/);
+  if (match) {
+    const parsed = parseFloat(match[1]);
+    
+    // Convert grams to kg if "gram" or "جرام" is present
+    if ((str.includes('جرام') || str.toLowerCase().includes('gram')) && !str.toLowerCase().includes('kg')) {
+      return parsed / 1000;
+    }
+    
+    return isNaN(parsed) ? null : parsed;
+  }
+  return null;
+};
+
+const cleanStr = (s) => {
+  if (!s || typeof s !== 'string') return s || '';
+  return s.replace(/\bempty\b/gi, '').trim();
+};
 
 const app = express();
 const httpServer = createServer(app);
@@ -2475,11 +2509,6 @@ app.post('/api/products/bulk', authenticateToken, isAdmin, hasPermission('manage
   };
 
   // Helper to clean strings and remove the word 'empty'
-  const cleanStr = (s) => {
-    if (!s || typeof s !== 'string') return s || '';
-    return s.replace(/\bempty\b/gi, '').trim();
-  };
-
   // Standardize option names
   const fieldMapping = {
     'size': 'المقاس',
@@ -2526,10 +2555,18 @@ app.post('/api/products/bulk', authenticateToken, isAdmin, hasPermission('manage
         return parseFloat(cleanVal) || 0;
       };
 
-      const parseNum = (val) => {
+      const parseNum = (val, isWeight = false) => {
         if (val === undefined || val === null || val === '') return null;
-        const cleanVal = String(val).replace(/[^\d.]/g, '');
-        return parseFloat(cleanVal) || null;
+        let cleanVal = String(val).replace(/[^\d.]/g, '');
+        let num = parseFloat(cleanVal);
+        if (isNaN(num)) return null;
+        
+        // If the value is > 100 and it's weight, it's likely in grams (e.g. 300 means 300g)
+        // Convert to kg (300g -> 0.3kg)
+        if (isWeight && num > 100) {
+          num = num / 1000;
+        }
+        return num;
       };
       
       const rawPrice = parsePrice(p.price) || parsePrice(p.general_price) || parsePrice(p.basePriceRMB) || 0;
@@ -2620,7 +2657,7 @@ app.post('/api/products/bulk', authenticateToken, isAdmin, hasPermission('manage
         reviewsCountShown: p.reviewsCountShown || null,
         videoUrl: p.videoUrl || null,
         options: processedOptions,
-        weight: parseNum(p.weight || p['重量'] || p.grossWeight),
+        weight: parseNum(p.weight || p['重量'] || p.grossWeight, true),
         length: parseNum(p.length || p['长'] || p['长度']),
         width: parseNum(p.width || p['宽'] || p['宽度']),
         height: parseNum(p.height || p['高'] || p['高度']),
@@ -2649,7 +2686,7 @@ app.post('/api/products', authenticateToken, isAdmin, hasPermission('manage_prod
       name, chineseName, description, price, basePriceRMB, image, 
       isFeatured, isActive, status, purchaseUrl, videoUrl, 
       specs, storeEvaluation, reviewsCountShown, images, detailImages,
-      weight, length, width, height
+      weight, length, width, height, options, variants, aiMetadata
     } = req.body;
     
     // Process main images (gallery)
@@ -2721,10 +2758,10 @@ app.post('/api/products', authenticateToken, isAdmin, hasPermission('manage_prod
         specs: specs && typeof specs === 'object' ? JSON.stringify(specs) : (specs || null),
         storeEvaluation: storeEvaluation && typeof storeEvaluation === 'object' ? JSON.stringify(storeEvaluation) : (storeEvaluation || null),
         reviewsCountShown: reviewsCountShown || null,
-        weight: weight ? parseFloat(weight) : null,
-        length: length ? parseFloat(length) : null,
-        width: width ? parseFloat(width) : null,
-        height: height ? parseFloat(height) : null,
+        weight: safeParseFloat(weight),
+        length: safeParseFloat(length),
+        width: safeParseFloat(width),
+        height: safeParseFloat(height),
         images: [
           ...imageUrls.map((url, i) => ({ url, order: i, type: 'GALLERY' })),
           ...detailImageUrls.map((url, i) => ({ url, order: i, type: 'DETAIL' }))
@@ -2732,13 +2769,17 @@ app.post('/api/products', authenticateToken, isAdmin, hasPermission('manage_prod
       });
     }
 
+    if (!name) {
+      return res.status(400).json({ error: 'اسم المنتج مطلوب' });
+    }
+
     const product = await prisma.product.create({
       data: {
         name,
         chineseName,
         description,
-        price: parseFloat(price) * 1.1, // Added 10% margin
-        basePriceRMB: basePriceRMB ? parseFloat(basePriceRMB) : null,
+        price: (safeParseFloat(price) || 0) * 1.1, // Added 10% margin
+        basePriceRMB: safeParseFloat(basePriceRMB),
         image: mainImage,
         purchaseUrl,
         videoUrl,
@@ -2748,10 +2789,11 @@ app.post('/api/products', authenticateToken, isAdmin, hasPermission('manage_prod
         specs: specs && typeof specs === 'object' ? JSON.stringify(specs) : (specs || null),
         storeEvaluation: storeEvaluation && typeof storeEvaluation === 'object' ? JSON.stringify(storeEvaluation) : (storeEvaluation || null),
         reviewsCountShown: reviewsCountShown || null,
-        weight: weight ? parseFloat(weight) : null,
-        length: length ? parseFloat(length) : null,
-        width: width ? parseFloat(width) : null,
-        height: height ? parseFloat(height) : null,
+        weight: safeParseFloat(weight),
+        length: safeParseFloat(length),
+        width: safeParseFloat(width),
+        height: safeParseFloat(height),
+        aiMetadata: aiMetadata && typeof aiMetadata === 'object' ? JSON.stringify(aiMetadata) : (aiMetadata || null),
         images: {
           create: [
             ...imageUrls.map((url, i) => ({
@@ -2765,6 +2807,20 @@ app.post('/api/products', authenticateToken, isAdmin, hasPermission('manage_prod
               type: 'DETAIL'
             }))
           ]
+        },
+        options: {
+          create: (Array.isArray(options) ? options : []).map(opt => ({
+            name: opt.name || 'Unnamed Option',
+            values: Array.isArray(opt.values) ? JSON.stringify(opt.values) : (opt.values || '[]')
+          }))
+        },
+        variants: {
+          create: (Array.isArray(variants) ? variants : []).map(v => ({
+            combination: typeof v.options === 'object' ? JSON.stringify(v.options) : 
+                        (typeof v.combination === 'object' ? JSON.stringify(v.combination) : (v.combination || '{}')),
+            price: (safeParseFloat(v.price) || 0) * 1.1, // Added 10% margin to variants too
+            image: v.image || null
+          }))
         }
       }
     });
@@ -2794,13 +2850,6 @@ app.post('/api/admin/products/bulk-import', authenticateToken, isAdmin, hasPermi
       console.warn('[Bulk Import] No products provided in request');
       return res.status(400).json({ error: 'No products provided' });
     }
-
-    // Helper to clean strings and remove the word 'empty'
-    const cleanStr = (s) => {
-      if (!s || typeof s !== 'string') return s || '';
-      // Remove 'empty' case-insensitively, also handle Arabic if needed but user specified 'empty' word
-      return s.replace(/\bempty\b/gi, '').trim();
-    };
 
     // --- Duplicate Check ---
     const purchaseUrls = products.map(p => p.purchaseUrl).filter(url => !!url);
@@ -2994,6 +3043,23 @@ app.post('/api/admin/products/bulk-import', authenticateToken, isAdmin, hasPermi
           
           const mainImage = imageUrls.length > 0 ? imageUrls[0] : (typeof p.image === 'string' ? p.image.replace(/[`"']/g, '').trim() : '');
           
+          const basePriceRMB = extractNumber(p.basePriceRMB) || extractNumber(p.base_price) || 0;
+          
+          // Try to parse dimensions and weight using robust extractor
+          const weight = extractNumber(p.weight) || extractNumber(p.shipping_weight);
+          let length = extractNumber(p.length) || extractNumber(p.shipping_length);
+          let width = extractNumber(p.width) || extractNumber(p.shipping_width);
+          let height = extractNumber(p.height) || extractNumber(p.shipping_height);
+          
+          if (!length && !width && !height && p.dimensions && typeof p.dimensions === 'string') {
+            const dimMatch = p.dimensions.match(/(\d+(\.\d+)?)\s*[x*×]\s*(\d+(\.\d+)?)\s*[x*×]\s*(\d+(\.\d+)?)/i);
+            if (dimMatch) {
+              length = parseFloat(dimMatch[1]);
+              width = parseFloat(dimMatch[3]);
+              height = parseFloat(dimMatch[5]);
+            }
+          }
+
           // Return as a draft object instead of creating in database
           return {
             id: `local-${Date.now()}-${productIndex}-${Math.floor(Math.random() * 1000000)}`,
@@ -3001,25 +3067,27 @@ app.post('/api/admin/products/bulk-import', authenticateToken, isAdmin, hasPermi
             chineseName: chineseName,
             description: description,
             price: price,
-            basePriceRMB: parseFloat(String(p.basePriceRMB || 0).replace(/,/g, '')) || 0,
+            basePriceRMB: basePriceRMB,
             image: mainImage,
             purchaseUrl: p.purchaseUrl ? p.purchaseUrl.replace(/[`"']/g, '').trim() : (p.url ? p.url.replace(/[`"']/g, '').trim() : null),
             videoUrl: p.videoUrl ? p.videoUrl.replace(/[`"']/g, '').trim() : null,
             status: 'DRAFT',
             isActive: false,
-            weight: p.weight ? parseFloat(p.weight) : (p.shipping_weight ? parseFloat(p.shipping_weight) : null),
-            length: p.length ? parseFloat(p.length) : (p.shipping_length ? parseFloat(p.shipping_length) : null),
-            width: p.width ? parseFloat(p.width) : (p.shipping_width ? parseFloat(p.shipping_width) : null),
-            height: p.height ? parseFloat(p.height) : (p.shipping_height ? parseFloat(p.shipping_height) : null),
-            specs: specs && typeof specs === 'object' ? JSON.stringify(specs) : specs,
-            storeEvaluation: p.storeEvaluation && typeof p.storeEvaluation === 'object' ? JSON.stringify(p.storeEvaluation) : (p.storeEvaluation || null),
-            reviewsCountShown: p.reviewsCountShown || null,
-            images: [
-              ...imageUrls.map((url, i) => ({ url, order: i, type: 'GALLERY' })),
-              ...detailImageUrls.map((url, i) => ({ url, order: i, type: 'DETAIL' }))
-            ],
+            isFeatured: !!p.isFeatured,
+            isLocal: true,
+            specs: specs,
+            weight: weight,
+            length: length,
+            width: width,
+            height: height,
+            images: imageUrls.map((url, i) => ({ url, order: i, type: 'GALLERY' })),
+            detailImages: detailImageUrls.map((url, i) => ({ url, order: i, type: 'DETAIL' })),
             options: processedOptions,
-            isLocal: true
+            variants: (Array.isArray(p.variants_data) ? p.variants_data : []).map(v => ({
+              combination: typeof v.options === 'object' ? v.options : {},
+              price: (extractNumber(v.price) || 0) * 1.1,
+              image: v.image || null
+            }))
           };
         } catch (err) {
           console.error(`[Bulk Import] Error processing product at index ${productIndex}:`, err);
@@ -3043,7 +3111,14 @@ app.post('/api/admin/products/bulk-import', authenticateToken, isAdmin, hasPermi
       'PRODUCT'
     );
 
-    res.json({ success: true, count: drafts.length, drafts });
+    res.json({ 
+      success: true, 
+      count: drafts.length, 
+      imported: drafts.length,
+      skipped: products.length - uniqueProductsToImport.length,
+      failed: uniqueProductsToImport.length - drafts.length,
+      drafts 
+    });
   } catch (error) {
     console.error('[Bulk Import] Critical error:', error);
     res.status(500).json({ error: error.message || 'Failed to bulk import products' });
@@ -3515,6 +3590,30 @@ app.get('/api/products/:id', async (req, res) => {
     res.json(product);
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch product' });
+  }
+});
+
+// Check if user has purchased a product
+app.get('/api/products/:id/check-purchase', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.id;
+    
+    const orderItem = await prisma.orderItem.findFirst({
+      where: {
+        productId: safeParseId(id),
+        order: {
+          userId: userId,
+          // We allow reviews if the order is COMPLETED or SHIPPED or DELIVERED
+          status: { in: ['COMPLETED', 'SHIPPED', 'DELIVERED'] }
+        }
+      }
+    });
+
+    res.json({ purchased: !!orderItem });
+  } catch (error) {
+    console.error('Error checking purchase status:', error);
+    res.json({ purchased: false }); // Fallback to false on error
   }
 });
 
@@ -4323,13 +4422,30 @@ app.post('/api/cart', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Product ID is required' });
     }
 
-    const pId = safeParseId(productId);
-    const vId = variantId ? safeParseId(variantId) : null;
-    const sOptions = typeof selectedOptions === 'object' ? JSON.stringify(selectedOptions) : selectedOptions;
+    const pId = typeof productId === 'number' ? productId : parseInt(productId);
+    let vId = variantId ? (typeof variantId === 'number' ? variantId : parseInt(variantId)) : null;
+    if (isNaN(vId)) vId = null;
+    const qty = parseInt(quantity) || 1;
+    
+    const sOptions = typeof selectedOptions === 'object' ? JSON.stringify(selectedOptions) : (selectedOptions || null);
 
-    if (pId === null || pId === undefined) {
+    if (!pId || isNaN(pId)) {
       return res.status(400).json({ error: 'Invalid product ID' });
     }
+
+    const product = await prisma.product.findUnique({
+      where: { id: pId },
+      include: { variants: true }
+    });
+
+    if (!product) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
+
+    const variant = vId ? product.variants.find(v => v.id === vId) : null;
+    const basePrice = variant ? variant.price : product.price;
+    const shippingFee = await calculateProductShipping(product);
+    const inclusivePrice = basePrice + shippingFee;
 
     // Use a more robust approach since Prisma upsert doesn't like nulls in compound unique keys
     const existingItem = await prisma.cartItem.findFirst({
@@ -4337,7 +4453,7 @@ app.post('/api/cart', authenticateToken, async (req, res) => {
         userId,
         productId: pId,
         variantId: vId,
-        selectedOptions: sOptions || null
+        selectedOptions: sOptions
       }
     });
 
@@ -4345,7 +4461,9 @@ app.post('/api/cart', authenticateToken, async (req, res) => {
     if (existingItem) {
       cartItem = await prisma.cartItem.update({
         where: { id: existingItem.id },
-        data: { quantity: existingItem.quantity + quantity },
+        data: { 
+          quantity: existingItem.quantity + qty
+        },
         include: { 
           product: true,
           variant: true
@@ -4357,8 +4475,8 @@ app.post('/api/cart', authenticateToken, async (req, res) => {
           userId,
           productId: pId,
           variantId: vId,
-          selectedOptions: sOptions || null,
-          quantity
+          selectedOptions: sOptions,
+          quantity: qty
         },
         include: { 
           product: true,
@@ -4367,36 +4485,57 @@ app.post('/api/cart', authenticateToken, async (req, res) => {
       });
     }
     
+    // Update the price separately if the client supports it
+    try {
+      await prisma.cartItem.update({
+        where: { id: cartItem.id },
+        data: { price: inclusivePrice }
+      });
+      cartItem.price = inclusivePrice;
+    } catch (e) {
+      console.warn('Could not update price in DB, might be schema sync issue:', e.message);
+    }
+    
     res.json(cartItem);
   } catch (error) {
-    console.error('Add to cart error:', error);
-    res.status(500).json({ error: 'Failed to add to cart' });
+    console.error('Add to cart error details:', {
+      message: error.message,
+      stack: error.stack,
+      body: req.body,
+      userId: req.user?.id
+    });
+    res.status(500).json({ error: `Failed to add to cart: ${error.message}` });
   }
 });
 
 app.put('/api/cart/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
-    const { quantity } = req.body;
+    const qty = parseInt(req.body.quantity);
     const userId = req.user.id;
     
+    if (isNaN(qty)) {
+      return res.status(400).json({ error: 'Invalid quantity' });
+    }
+    
     // Ensure item belongs to user
+    const itemId = safeParseId(id);
     const existingItem = await prisma.cartItem.findUnique({
-      where: { id: safeParseId(id) }
+      where: { id: itemId }
     });
 
     if (!existingItem || existingItem.userId !== userId) {
       return res.status(403).json({ error: 'Forbidden' });
     }
 
-    if (quantity <= 0) {
-      await prisma.cartItem.delete({ where: { id: safeParseId(id) } });
+    if (qty <= 0) {
+      await prisma.cartItem.delete({ where: { id: itemId } });
       return res.json({ message: 'Item removed from cart' });
     }
 
     const cartItem = await prisma.cartItem.update({
-      where: { id: safeParseId(id) },
-      data: { quantity },
+      where: { id: itemId },
+      data: { quantity: qty },
       include: { 
         product: true,
         variant: true
@@ -4435,7 +4574,7 @@ app.delete('/api/cart/:id', authenticateToken, async (req, res) => {
 app.post('/api/orders', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.id;
-    const { addressId, shippingMethod = 'sea', paymentMethod = 'zain_cash', couponCode } = req.body;
+    const { addressId, shippingMethod = 'air', paymentMethod = 'zain_cash', couponCode } = req.body;
 
     // 1. Get cart items with variants
     const cartItems = await prisma.cartItem.findMany({
@@ -4450,13 +4589,23 @@ app.post('/api/orders', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Cart is empty' });
     }
 
-    // 2. Calculate subtotal
-    const subtotal = cartItems.reduce((sum, item) => {
-      const itemPrice = item.variant?.price || item.product.price;
-      return sum + (itemPrice * item.quantity);
+    // 2. Prepare items with inclusive prices
+    const processedItems = await Promise.all(cartItems.map(async (item) => {
+      let price = item.price;
+      if (!price) {
+        const basePrice = item.variant?.price || item.product.price;
+        const shippingFee = await calculateProductShipping(item.product);
+        price = basePrice + shippingFee;
+      }
+      return { ...item, price };
+    }));
+
+    // 3. Calculate subtotal using inclusive prices
+    const subtotal = processedItems.reduce((sum, item) => {
+      return sum + (item.price * item.quantity);
     }, 0);
 
-    // 3. Handle Coupon
+    // 4. Handle Coupon
     let discountAmount = 0;
     let couponId = null;
 
@@ -4495,11 +4644,8 @@ app.post('/api/orders', authenticateToken, async (req, res) => {
       }
     }
 
-    // 4. Calculate Shipping Fee
-    const shippingFee = await calculateOrderShipping(cartItems, shippingMethod);
-
-    // 5. Calculate Final Total
-    const total = subtotal - discountAmount + shippingFee;
+    // 5. Calculate Final Total (Shipping is already in subtotal)
+    const total = subtotal - discountAmount;
 
     // 6. Create order with items in a transaction
     const order = await prisma.$transaction(async (tx) => {
@@ -4514,14 +4660,14 @@ app.post('/api/orders', authenticateToken, async (req, res) => {
           status: 'PENDING',
           shippingMethod,
           paymentMethod,
-          internationalShippingFee: shippingFee,
+          internationalShippingFee: 0, // Fee is now included in item prices
           items: {
-            create: cartItems.map(item => ({
+            create: processedItems.map(item => ({
               productId: item.productId,
               variantId: item.variantId,
               selectedOptions: item.selectedOptions,
               quantity: item.quantity,
-              price: item.variant?.price || item.product.price
+              price: item.price
             }))
           }
         },

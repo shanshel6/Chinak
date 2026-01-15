@@ -1,5 +1,5 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
   binaryTargets = ["native", "debian-openssl-3.0.x"]
 }
 
@@ -9,32 +9,32 @@ datasource db {
 }
 
 model User {
-  id          Int            @id @default(autoincrement())
-  email       String?        @unique
-  phone       String?        @unique
-  supabaseId  String?        @unique
-  name        String?
-  password    String?
-  avatar      String?
-  role        String         @default("USER")
-  permissions String         @default("[]")
-  isVerified  Boolean        @default(false)
-  otpCode     String?
-  otpExpires  DateTime?
-  whatsappOtpCount Int           @default(0)
-  lastWhatsappOtpDate DateTime?
-  resetPasswordOTP String?
+  id                   Int            @id @default(autoincrement())
+  email                String?        @unique
+  name                 String?
+  password             String?
+  avatar               String?
+  role                 String         @default("USER")
+  permissions          String         @default("[]")
+  isVerified           Boolean        @default(false)
+  otpCode              String?
+  otpExpires           DateTime?
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
+  supabaseId           String?        @unique
+  phone                String?        @unique
+  lastWhatsappOtpDate  DateTime?
   resetPasswordExpires DateTime?
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
-  addresses   Address[]
-  cart        CartItem[]
-  messages    Message[]
-  orders      Order[]
-  reviews     Review[]
-  wishlist    WishlistItem[]
-  notifications Notification[]
-  couponUsages CouponUsage[]
+  resetPasswordOTP     String?
+  whatsappOtpCount     Int            @default(0)
+  addresses            Address[]
+  cart                 CartItem[]
+  couponUsages         CouponUsage[]
+  messages             Message[]
+  notifications        Notification[]
+  orders               Order[]
+  reviews              Review[]
+  wishlist             WishlistItem[]
 
   @@index([name])
 }
@@ -51,7 +51,7 @@ model Message {
 }
 
 model Product {
-  id                Int              @id @default(autoincrement())
+  id                Int                    @id @default(autoincrement())
   name              String
   chineseName       String?
   description       String?
@@ -59,23 +59,23 @@ model Product {
   basePriceRMB      Float?
   image             String
   purchaseUrl       String?
-  status            String           @default("PUBLISHED")
-  isFeatured        Boolean          @default(false)
-  isActive          Boolean          @default(true)
+  status            String                 @default("PUBLISHED")
+  isFeatured        Boolean                @default(false)
+  isActive          Boolean                @default(true)
   specs             String?
   storeEvaluation   String?
   reviewsCountShown String?
-  createdAt         DateTime         @default(now())
-  updatedAt         DateTime         @updatedAt
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
   videoUrl          String?
-  aiMetadata        Json?            // { extracted_tags: string[], synonyms: string[] }
-  embedding         Unsupported("vector(384)")? // Using 384 for sentence-transformers/all-MiniLM-L6-v2
-  clickCount        Int              @default(0)
-  conversionRate    Float            @default(0)
-  weight            Float?           // in kg
-  length            Float?           // in cm
-  width             Float?           // in cm
-  height            Float?           // in cm
+  aiMetadata        Json?
+  embedding         Unsupported("vector")?
+  clickCount        Int                    @default(0)
+  conversionRate    Float                  @default(0)
+  height            Float?
+  length            Float?
+  weight            Float?
+  width             Float?
   cartItems         CartItem[]
   orderItems        OrderItem[]
   images            ProductImage[]
@@ -137,17 +137,18 @@ model Address {
 }
 
 model CartItem {
-  id        Int             @id @default(autoincrement())
-  userId    Int
-  productId Int
-  variantId Int?
+  id              Int             @id @default(autoincrement())
+  userId          Int
+  productId       Int
+  variantId       Int?
+  quantity        Int             @default(1)
+  price           Float?          // Inclusive price (base + shipping)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
   selectedOptions String?
-  quantity  Int             @default(1)
-  createdAt DateTime        @default(now())
-  updatedAt DateTime        @updatedAt
-  product   Product         @relation(fields: [productId], references: [id])
-  user      User            @relation(fields: [userId], references: [id])
-  variant   ProductVariant? @relation(fields: [variantId], references: [id])
+  product         Product         @relation(fields: [productId], references: [id])
+  user            User            @relation(fields: [userId], references: [id])
+  variant         ProductVariant? @relation(fields: [variantId], references: [id])
 
   @@unique([userId, productId, variantId, selectedOptions])
 }
@@ -165,17 +166,17 @@ model Banner {
 }
 
 model StoreSettings {
-  id           Int      @id @default(autoincrement())
-  storeName    String   @default("My Store")
-  contactEmail String?
-  contactPhone String?
-  currency     String   @default("د.ع")
-  airShippingRate    Float    @default(15400)
-  seaShippingRate    Float    @default(182000)
-  airShippingMinFloor Float   @default(5000)
-  socialLinks  String   @default("{}")
-  footerText   String?
-  updatedAt    DateTime @updatedAt
+  id                  Int      @id @default(autoincrement())
+  storeName           String   @default("My Store")
+  contactEmail        String?
+  contactPhone        String?
+  currency            String   @default("د.ع")
+  socialLinks         String   @default("{}")
+  footerText          String?
+  updatedAt           DateTime @updatedAt
+  airShippingMinFloor Float    @default(5000)
+  airShippingRate     Float    @default(15400)
+  seaShippingRate     Float    @default(182000)
 }
 
 model AdminNotification {
@@ -191,7 +192,7 @@ model AdminNotification {
 model Notification {
   id          Int      @id @default(autoincrement())
   userId      Int
-  type        String   // 'order' | 'offer' | 'system' | 'wallet'
+  type        String
   icon        String
   title       String
   description String
@@ -217,23 +218,23 @@ model ActivityLog {
 }
 
 model Order {
-  id             Int         @id @default(autoincrement())
-  userId         Int
-  addressId      Int
-  total          Float
-  discountAmount Float       @default(0)
-  status                 String      @default("PENDING")
-  internalNote           String?
-  shippingMethod         String      @default("sea")
-  paymentMethod          String      @default("zain_cash")
-  internationalShippingFee Float     @default(0)
-  couponId               Int?
-  createdAt      DateTime    @default(now())
-  messages       Message[]
-  address        Address     @relation(fields: [addressId], references: [id])
-  coupon         Coupon?     @relation(fields: [couponId], references: [id])
-  user           User        @relation(fields: [userId], references: [id])
-  items          OrderItem[]
+  id                       Int         @id @default(autoincrement())
+  userId                   Int
+  addressId                Int
+  total                    Float
+  discountAmount           Float       @default(0)
+  status                   String      @default("PENDING")
+  internalNote             String?
+  shippingMethod           String      @default("air")
+  paymentMethod            String      @default("zain_cash")
+  internationalShippingFee Float       @default(0)
+  couponId                 Int?
+  createdAt                DateTime    @default(now())
+  messages                 Message[]
+  address                  Address     @relation(fields: [addressId], references: [id])
+  coupon                   Coupon?     @relation(fields: [couponId], references: [id])
+  user                     User        @relation(fields: [userId], references: [id])
+  items                    OrderItem[]
 
   @@index([userId])
   @@index([status])
@@ -241,32 +242,32 @@ model Order {
 }
 
 model Coupon {
-  id             Int      @id @default(autoincrement())
-  code           String   @unique
-  discountType   String   // 'PERCENTAGE' or 'FIXED'
+  id             Int           @id @default(autoincrement())
+  code           String        @unique
+  discountType   String
   discountValue  Float
-  minOrderAmount Float    @default(0)
+  minOrderAmount Float         @default(0)
   maxDiscount    Float?
-  startDate      DateTime @default(now())
+  startDate      DateTime      @default(now())
   endDate        DateTime
-  isActive       Boolean  @default(true)
-  isPublic       Boolean  @default(true) // true = public (once per user), false = private (one-time total)
-  usageLimit     Int?     // For private: total usage limit. For public: ignored or total limit.
-  usageCount     Int      @default(0)
-  maxUsage       Int?     // Legacy field, keeping for compatibility if needed
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-  orders         Order[]
+  isActive       Boolean       @default(true)
+  usageCount     Int           @default(0)
+  maxUsage       Int?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  isPublic       Boolean       @default(true)
+  usageLimit     Int?
   usedBy         CouponUsage[]
+  orders         Order[]
 }
 
 model CouponUsage {
-  id        Int      @id @default(autoincrement())
-  couponId  Int
-  userId    Int
-  usedAt    DateTime @default(now())
-  coupon    Coupon   @relation(fields: [couponId], references: [id])
-  user      User     @relation(fields: [userId], references: [id])
+  id       Int      @id @default(autoincrement())
+  couponId Int
+  userId   Int
+  usedAt   DateTime @default(now())
+  coupon   Coupon   @relation(fields: [couponId], references: [id])
+  user     User     @relation(fields: [userId], references: [id])
 
   @@unique([couponId, userId])
 }
@@ -283,16 +284,16 @@ model Review {
 }
 
 model OrderItem {
-  id        Int             @id @default(autoincrement())
-  orderId   Int
-  productId Int
-  variantId Int?
+  id              Int             @id @default(autoincrement())
+  orderId         Int
+  productId       Int
+  variantId       Int?
+  quantity        Int
+  price           Float
   selectedOptions String?
-  quantity  Int
-  price     Float
-  order     Order           @relation(fields: [orderId], references: [id])
-  product   Product         @relation(fields: [productId], references: [id])
-  variant   ProductVariant? @relation(fields: [variantId], references: [id])
+  order           Order           @relation(fields: [orderId], references: [id])
+  product         Product         @relation(fields: [productId], references: [id])
+  variant         ProductVariant? @relation(fields: [variantId], references: [id])
 }
 
 model WishlistItem {

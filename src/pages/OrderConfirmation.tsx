@@ -203,14 +203,9 @@ const OrderConfirmation: React.FC = () => {
                 <p className="text-slate-500 dark:text-slate-400 text-sm font-normal">التوصيل المحلي</p>
                 <p className="text-green-600 dark:text-green-400 text-sm font-bold">مجاني</p>
               </div>
-              <div className="flex flex-col gap-2 py-3 border-b border-slate-100 dark:border-slate-700">
-                <div className="flex justify-between gap-x-6">
-                  <p className="text-slate-500 dark:text-slate-400 text-sm font-normal">الشحن الدولي</p>
-                  <p className="text-primary italic text-[10px] font-bold">تُحدد لاحقاً</p>
-                </div>
-                <p className="text-[11px] text-primary/80 font-bold leading-tight bg-primary/5 p-2 rounded-xl border border-primary/10">
-                  ستصلك رسالة عبر الواتساب خلال ساعة واحدة تتضمن تكلفة الشحن الدولي
-                </p>
+              <div className="flex justify-between gap-x-6 py-3 border-b border-slate-100 dark:border-slate-700">
+                <p className="text-slate-500 dark:text-slate-400 text-sm font-normal">الشحن الدولي</p>
+                <p className="text-green-600 dark:text-green-400 text-sm font-bold">مجاني</p>
               </div>
               <div className="flex justify-between gap-x-6 pt-3"> 
                 <p className="text-slate-500 dark:text-slate-400 text-sm font-normal">التوصيل المتوقع</p> 
