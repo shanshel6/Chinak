@@ -12,6 +12,7 @@ interface CartItem {
   id: number | string;
   productId: number | string;
   variantId?: number | string;
+  selectedOptions?: string | any;
   quantity: number;
   product: Product;
   variant?: {
@@ -28,7 +29,7 @@ interface CartState {
   error: string | null;
   deletingIds: (number | string)[];
   fetchCart: (silent?: boolean) => Promise<void>;
-  addItem: (productId: number | string, quantity?: number, variantId?: number | string, productInfo?: { id: number | string; name: string; price: number; image: string; variant?: any }) => Promise<void>;
+  addItem: (productId: number | string, quantity?: number, variantId?: number | string, productInfo?: { id: number | string; name: string; price: number; image: string; variant?: any }, selectedOptions?: any) => Promise<void>;
   updateQuantity: (itemId: number | string, quantity: number) => Promise<void>;
   removeItem: (itemId: number | string) => Promise<void>;
   removeItems: (itemIds: (number | string)[]) => Promise<void>;
@@ -98,7 +99,7 @@ export const useCartStore = create<CartState>((set, get) => ({
     }
   },
 
-  addItem: async (productId, quantity = 1, variantId, productInfo) => {
+  addItem: async (productId, quantity = 1, variantId, productInfo, selectedOptions) => {
     const token = localStorage.getItem('auth_token');
     if (!token) {
       window.location.href = '/login';
@@ -106,10 +107,13 @@ export const useCartStore = create<CartState>((set, get) => ({
     }
 
     const { items } = get();
+    const sOptions = typeof selectedOptions === 'object' ? JSON.stringify(selectedOptions) : selectedOptions;
     
-    // Find if item exists
+    // Find if item exists - must match product, variant AND options
     const existingItem = items.find(item => 
-      item.productId === productId && item.variantId === variantId
+      String(item.productId) === String(productId) && 
+      String(item.variantId) === String(variantId) &&
+      (item.selectedOptions === sOptions || (!item.selectedOptions && !sOptions))
     );
 
     // 1. Optimistic Update
@@ -129,6 +133,7 @@ export const useCartStore = create<CartState>((set, get) => ({
         id: tempId,
         productId,
         variantId,
+        selectedOptions: sOptions,
         quantity,
         product: {
           id: productInfo.id,
@@ -143,13 +148,13 @@ export const useCartStore = create<CartState>((set, get) => ({
 
     // 2. Background API call
     try {
-      const response = await addToCart(productId, quantity, variantId);
+      const response = await addToCart(productId, quantity, variantId, selectedOptions);
       
       // If the server returned the new cart item, replace the temp one
       if (response && response.id) {
         set({
           items: get().items.map(item => 
-            (tempId && item.id === tempId) || (!existingItem && String(item.productId) === String(productId) && String(item.variantId) === String(variantId))
+            (tempId && item.id === tempId) || (!existingItem && String(item.productId) === String(productId) && String(item.variantId) === String(variantId) && (item.selectedOptions === sOptions))
               ? response 
               : item
           ),

@@ -388,18 +388,22 @@ const CheckoutPaymentAddress: React.FC = () => {
                   </div>
                   <div className="flex flex-1 flex-col min-w-0">
                     <p className="text-xs font-bold text-slate-900 dark:text-white truncate">{item.product?.name}</p>
-                    {item.variant && item.variant.combination && (
+                    {(item.variant && item.variant.combination || item.selectedOptions) && (
                       <div className="flex flex-wrap gap-1 mt-0.5">
                         {(() => {
                           try {
-                            const combination = typeof item.variant.combination === 'string' 
-                              ? JSON.parse(item.variant.combination) 
-                              : item.variant.combination;
+                            const combination = item.selectedOptions 
+                              ? (typeof item.selectedOptions === 'string' ? JSON.parse(item.selectedOptions) : item.selectedOptions)
+                              : (item.variant && typeof item.variant.combination === 'string' 
+                                ? JSON.parse(item.variant.combination) 
+                                : item.variant?.combination);
                             
                             if (!combination || Object.keys(combination).length === 0) {
+                              const rawCombination = item.selectedOptions || item.variant?.combination;
+                              if (!rawCombination) return null;
                               return (
                                 <span className="text-[9px] bg-slate-200/50 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700/50">
-                                  {String(item.variant.combination)}
+                                  {String(rawCombination)}
                                 </span>
                               );
                             }
@@ -410,9 +414,11 @@ const CheckoutPaymentAddress: React.FC = () => {
                               </span>
                             ));
                           } catch (e) {
+                            const rawCombination = item.selectedOptions || item.variant?.combination;
+                            if (!rawCombination) return null;
                             return (
                               <span className="text-[9px] bg-slate-200/50 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700/50">
-                                {String(item.variant.combination)}
+                                {String(rawCombination)}
                               </span>
                             );
                           }

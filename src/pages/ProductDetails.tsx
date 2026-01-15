@@ -327,8 +327,22 @@ const ProductDetails: React.FC = () => {
   useEffect(() => {
     if (product && product.variants && product.variants.length > 0) {
       const variant = product.variants.find((v: any) => {
-        const combination = typeof v.combination === 'string' ? JSON.parse(v.combination) : v.combination;
-        return Object.entries(selectedOptions).every(([key, value]) => combination[key] === value);
+        try {
+          const combination = typeof v.combination === 'string' ? JSON.parse(v.combination) : v.combination;
+          if (!combination) return false;
+          
+          // Case-insensitive and trimmed matching
+          return Object.entries(selectedOptions).every(([selKey, selVal]) => {
+            const matchKey = Object.keys(combination).find(k => 
+              k.toLowerCase().trim() === selKey.toLowerCase().trim()
+            );
+            if (!matchKey) return false;
+            return String(combination[matchKey]).toLowerCase().trim() === String(selVal).toLowerCase().trim();
+          });
+        } catch (e) {
+          console.error('Error matching variant:', e);
+          return false;
+        }
       });
       setCurrentVariant(variant || null);
     }
@@ -354,7 +368,7 @@ const ProductDetails: React.FC = () => {
         price: currentVariant?.price || product.price,
         image: currentVariant?.image || product.image,
         variant: currentVariant
-      });
+      }, selectedOptions);
     } catch (err) {
       // Rollback UI state if API fails
       setIsAdded(false);

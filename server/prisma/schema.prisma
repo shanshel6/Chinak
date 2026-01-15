@@ -137,6 +137,7 @@ model CartItem {
   userId    Int
   productId Int
   variantId Int?
+  selectedOptions String?
   quantity  Int             @default(1)
   createdAt DateTime        @default(now())
   updatedAt DateTime        @updatedAt
@@ -144,7 +145,7 @@ model CartItem {
   user      User            @relation(fields: [userId], references: [id])
   variant   ProductVariant? @relation(fields: [variantId], references: [id])
 
-  @@unique([userId, productId, variantId])
+  @@unique([userId, productId, variantId, selectedOptions])
 }
 
 model Banner {
@@ -279,6 +280,7 @@ model OrderItem {
   orderId   Int
   productId Int
   variantId Int?
+  selectedOptions String?
   quantity  Int
   price     Float
   order     Order           @relation(fields: [orderId], references: [id])

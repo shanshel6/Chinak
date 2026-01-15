@@ -1230,10 +1230,11 @@ const AdminDashboard: React.FC = () => {
                   <table className="w-full text-right text-xs sm:text-sm min-w-[600px]">
                     <thead className="bg-slate-50 dark:bg-slate-800/50 text-slate-500 text-[10px] font-black uppercase">
                       <tr>
-                        <th className="px-4 py-3">المنتج</th>
+                        <th className="px-4 py-3 text-right">المنتج</th>
+                        <th className="px-4 py-3 text-right">الاختيارات</th>
                         <th className="px-4 py-3 text-center">الكمية</th>
-                        <th className="px-4 py-3">السعر</th>
-                        <th className="px-4 py-3">الإجمالي</th>
+                        <th className="px-4 py-3 text-right">السعر</th>
+                        <th className="px-4 py-3 text-right">الإجمالي</th>
                         <th className="px-4 py-3 text-center">الرابط</th>
                       </tr>
                     </thead>
@@ -1250,39 +1251,50 @@ const AdminDashboard: React.FC = () => {
                               />
                               <div className="min-w-0">
                                 <p className="font-bold truncate lg:max-w-none">{item.product?.name}</p>
-                                {item.variant && item.variant.combination && (
-                                  <div className="flex flex-wrap gap-1 mt-1">
-                                    {(() => {
-                                      try {
-                                        const combination = typeof item.variant.combination === 'string' 
-                                          ? JSON.parse(item.variant.combination) 
-                                          : item.variant.combination;
-                                        
-                                        if (!combination || Object.keys(combination).length === 0) {
-                                          return (
-                                            <span className="text-[9px] bg-slate-200/50 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700/50">
-                                              {String(item.variant.combination)}
-                                            </span>
-                                          );
-                                        }
-
-                                        return Object.entries(combination).map(([key, value]) => (
-                                          <span key={key} className="text-[9px] bg-slate-200/50 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700/50">
-                                            {key}: {String(value)}
-                                          </span>
-                                        ));
-                                      } catch (e) {
-                                        return (
-                                          <span className="text-[9px] bg-slate-200/50 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700/50">
-                                            {String(item.variant.combination)}
-                                          </span>
-                                        );
-                                      }
-                                    })()}
-                                  </div>
-                                )}
                               </div>
                             </div>
+                          </td>
+                          <td className="px-4 py-4">
+                            {(item.variant && item.variant.combination || item.selectedOptions) && (
+                              <div className="flex flex-wrap gap-1">
+                                {(() => {
+                                  try {
+                                    const combination = item.selectedOptions 
+                                      ? (typeof item.selectedOptions === 'string' ? JSON.parse(item.selectedOptions) : item.selectedOptions)
+                                      : (item.variant && typeof item.variant.combination === 'string' 
+                                        ? JSON.parse(item.variant.combination) 
+                                        : item.variant?.combination);
+                                    
+                                    if (!combination || Object.keys(combination).length === 0) {
+                                      const rawCombination = item.selectedOptions || item.variant?.combination;
+                                      if (!rawCombination) return null;
+                                      return (
+                                        <span className="text-[9px] bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700">
+                                          {String(rawCombination)}
+                                        </span>
+                                      );
+                                    }
+
+                                    return Object.entries(combination).map(([key, value]) => (
+                                      <span key={key} className="text-[9px] bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700">
+                                        {key}: {String(value)}
+                                      </span>
+                                    ));
+                                  } catch (e) {
+                                    const rawCombination = item.selectedOptions || item.variant?.combination;
+                                    if (!rawCombination) return null;
+                                    return (
+                                      <span className="text-[9px] bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700">
+                                        {String(rawCombination)}
+                                      </span>
+                                    );
+                                  }
+                                })()}
+                              </div>
+                            )}
+                            {!item.variant && !item.selectedOptions && (
+                              <span className="text-slate-400 text-[10px]">منتج أساسي</span>
+                            )}
                           </td>
                           <td className="px-4 py-4 text-center font-bold">
                             {item.quantity}

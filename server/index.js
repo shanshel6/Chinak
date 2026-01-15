@@ -4212,7 +4212,7 @@ app.get('/api/cart', authenticateToken, async (req, res) => {
 app.post('/api/cart', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.id;
-    const { productId, quantity = 1, variantId } = req.body;
+    const { productId, quantity = 1, variantId, selectedOptions } = req.body;
     
     if (!productId) {
       return res.status(400).json({ error: 'Product ID is required' });
@@ -4220,6 +4220,7 @@ app.post('/api/cart', authenticateToken, async (req, res) => {
 
     const pId = safeParseId(productId);
     const vId = variantId ? safeParseId(variantId) : null;
+    const sOptions = typeof selectedOptions === 'object' ? JSON.stringify(selectedOptions) : selectedOptions;
 
     if (pId === null || pId === undefined) {
       return res.status(400).json({ error: 'Invalid product ID' });
@@ -4230,7 +4231,8 @@ app.post('/api/cart', authenticateToken, async (req, res) => {
       where: {
         userId,
         productId: pId,
-        variantId: vId
+        variantId: vId,
+        selectedOptions: sOptions || null
       }
     });
 
@@ -4250,6 +4252,7 @@ app.post('/api/cart', authenticateToken, async (req, res) => {
           userId,
           productId: pId,
           variantId: vId,
+          selectedOptions: sOptions || null,
           quantity
         },
         include: { 
@@ -4410,6 +4413,7 @@ app.post('/api/orders', authenticateToken, async (req, res) => {
             create: cartItems.map(item => ({
               productId: item.productId,
               variantId: item.variantId,
+              selectedOptions: item.selectedOptions,
               quantity: item.quantity,
               price: item.variant?.price || item.product.price
             }))

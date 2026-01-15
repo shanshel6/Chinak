@@ -1139,10 +1139,10 @@ export async function fetchCart() {
   return request('/cart');
 }
 
-export async function addToCart(productId: number | string, quantity: number = 1, variantId?: number | string) {
+export async function addToCart(productId: number | string, quantity: number = 1, variantId?: number | string, selectedOptions?: any) {
   return request('/cart', {
     method: 'POST',
-    body: JSON.stringify({ productId, quantity, variantId }),
+    body: JSON.stringify({ productId, quantity, variantId, selectedOptions }),
   });
 }
 
