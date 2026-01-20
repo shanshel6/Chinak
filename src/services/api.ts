@@ -64,8 +64,8 @@ const persistentCache = {
           localStorage.removeItem(CACHE_PREFIX + key);
         }
       }
-    } catch (e) {
-      console.warn('Cache retrieval error:', e);
+    } catch (_e) {
+      console.warn('Cache retrieval error:', _e);
     }
     return null;
   },
@@ -102,19 +102,13 @@ const persistentCache = {
           }
         });
 
-        // 2. Clear other non-critical persisted state if still needed
-        // (Zustand persist keys often look like 'checkout-storage', 'settings-storage', etc.)
-        const nonCriticalKeys = ['checkout-storage', 'recent_searches', 'sb-puxjtecjxfjldwxiwzrk-auth-token-code-verifier'];
-        nonCriticalKeys.forEach(k => localStorage.removeItem(k));
-        
-        // Try again after clearing
+        // 2. Try again (only if it's essential or small)
         try {
-          const serialized = JSON.stringify({ data: data, timestamp: Date.now() });
-          if (serialized.length < 50000) {
-            localStorage.setItem(CACHE_PREFIX + key, serialized);
-          }
-        } catch (retryError) {
-          // If it still fails, just give up on localStorage for this item
+          const timestamp = Date.now();
+          const serialized = JSON.stringify({ data, timestamp });
+          localStorage.setItem(CACHE_PREFIX + key, serialized);
+        } catch (_retryError) {
+          console.error('Final attempt to cache failed.');
         }
       } else {
         console.warn('Cache storage error:', e);
@@ -1178,10 +1172,17 @@ export async function removeFromCart(id: number | string) {
 }
 
 // Orders
-export async function placeOrder(addressId: number | string, paymentMethod: string, shippingMethod: string, couponCode?: string) {
+export async function calculateShipping(items: any[], method: string = 'sea') {
+  return request('/shipping/calculate', {
+    method: 'POST',
+    body: JSON.stringify({ items, method }),
+  });
+}
+
+export async function placeOrder(addressId: number | string, paymentMethod: string, shippingMethod: string, couponCode?: string, items?: any[]) {
   return request('/orders', {
     method: 'POST',
-    body: JSON.stringify({ addressId, paymentMethod, shippingMethod, couponCode }),
+    body: JSON.stringify({ addressId, paymentMethod, shippingMethod, couponCode, items }),
   });
 }
 

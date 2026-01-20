@@ -15,12 +15,12 @@ export interface LocalProduct {
   isLocal: boolean;
   purchaseUrl?: string;
   videoUrl?: string;
-  specs?: any;
-  storeEvaluation?: any;
-  options?: any[];
-  variants?: any[];
-  images?: any[];
-  detailImages?: any[];
+  specs?: unknown;
+  storeEvaluation?: unknown;
+  options?: unknown[];
+  variants?: unknown[];
+  images?: unknown[];
+  detailImages?: unknown[];
   createdAt: string;
   updatedAt: string;
 }
@@ -34,7 +34,7 @@ export const localProductService = {
       // Fix duplicated IDs and ensure uniqueness
       const seenIds = new Set();
       let hasChanged = false;
-      const fixedDrafts = drafts.map((d: any, index: number) => {
+      const fixedDrafts = drafts.map((d: { id?: string; options?: { id?: string }[] }, index: number) => {
         let draftChanged = false;
         const newDraft = { ...d };
 
@@ -48,7 +48,7 @@ export const localProductService = {
 
         // Fix missing IDs for options
         if (newDraft.options && Array.isArray(newDraft.options)) {
-          newDraft.options = newDraft.options.map((opt: any, optIdx: number) => {
+          newDraft.options = newDraft.options.map((opt: { id?: string }, optIdx: number) => {
             if (!opt.id) {
               hasChanged = true;
               draftChanged = true;
@@ -61,7 +61,7 @@ export const localProductService = {
           });
         }
 
-        return draftChanged ? newDraft : d;
+        return draftChanged ? (newDraft as LocalProduct) : (d as LocalProduct);
       });
 
       if (hasChanged) {
@@ -70,8 +70,8 @@ export const localProductService = {
         return fixedDrafts;
       }
       return drafts;
-    } catch (e) {
-      console.error('Failed to parse local drafts:', e);
+    } catch (_e) {
+      console.error('Failed to parse local drafts:', _e);
       return [];
     }
   },

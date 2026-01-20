@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { 
   ArrowRight, 
@@ -26,11 +26,7 @@ const SavedAddresses: React.FC = () => {
   const [addresses, setAddresses] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    loadAddresses();
-  }, []);
-
-  const loadAddresses = async () => {
+  const loadAddresses = useCallback(async () => {
     try {
       setLoading(true);
       const data = await fetchAddresses();
@@ -41,7 +37,11 @@ const SavedAddresses: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [showToast]);
+
+  useEffect(() => {
+    loadAddresses();
+  }, [loadAddresses]);
 
   const handleDelete = async (e: React.MouseEvent, id: number | string) => {
     e.stopPropagation();

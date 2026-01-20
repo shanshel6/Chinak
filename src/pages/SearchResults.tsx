@@ -82,13 +82,14 @@ const SearchResults: React.FC = () => {
 
   useEffect(() => {
     // If query in URL changes, update search query state
-    const q = queryParams.get('q');
+    const params = new URLSearchParams(location.search);
+    const q = params.get('q');
     if (q && q !== searchQuery) {
       setSearchQuery(q);
     }
-  }, [location.search]);
+  }, [location.search, searchQuery]);
 
-  const addToRecentSearches = (query: string) => {
+  const addToRecentSearches = useCallback((query: string) => {
     if (!query.trim()) return;
     const newRecent = [query, ...recentSearches.filter(s => s !== query)].slice(0, 5);
     setRecentSearches(newRecent);
@@ -98,7 +99,7 @@ const SearchResults: React.FC = () => {
       // If it fails, we just don't save the recent search, no big deal
       performCacheMaintenance();
     }
-  };
+  }, [recentSearches]);
 
   const clearRecentSearches = () => {
     setRecentSearches([]);
@@ -111,6 +112,8 @@ const SearchResults: React.FC = () => {
         window.scrollTo(0, searchScrollPos);
       }, 50);
     }
+    // Only run on initial mount to restore scroll position
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -182,7 +185,7 @@ const SearchResults: React.FC = () => {
       isMounted = false;
       clearTimeout(timeoutId);
     };
-  }, [searchQuery, page]);
+  }, [searchQuery, page, setSearchData, addToRecentSearches]);
 
   useEffect(() => {
     // Reset page when search query changes

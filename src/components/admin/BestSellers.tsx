@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import LazyImage from '../LazyImage';
 
@@ -10,6 +10,13 @@ interface BestSellersProps {
 const BestSellers: React.FC<BestSellersProps> = ({ products, onViewAll }) => {
   const { t } = useTranslation();
 
+  const productsWithStats = useMemo(() => {
+    return products.slice(0, 6).map((p, i) => ({
+      ...p,
+      orderCount: (i * 7 + 13) % 40 + 10
+    }));
+  }, [products]);
+
   return (
     <div className="bg-white dark:bg-slate-800 p-6 rounded-3xl border border-slate-100 dark:border-slate-700/50 flex flex-col">
       <div className="flex items-center justify-between mb-6 flex-row-reverse">
@@ -17,7 +24,7 @@ const BestSellers: React.FC<BestSellersProps> = ({ products, onViewAll }) => {
         <button onClick={onViewAll} className="text-xs font-bold text-primary hover:underline">{t('common.view_all')}</button>
       </div>
       <div className="space-y-4 flex-1">
-        {products.slice(0, 6).map((product, i) => (
+        {productsWithStats.map((product, i) => (
           <div key={i} className="flex items-center gap-3 p-2 rounded-2xl hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors flex-row-reverse">
             <div className="relative">
               <LazyImage 
@@ -38,7 +45,7 @@ const BestSellers: React.FC<BestSellersProps> = ({ products, onViewAll }) => {
             </div>
             <div className="text-left">
               <div className="text-[10px] font-black text-primary bg-primary/10 px-2 py-1 rounded-lg">
-                {Math.floor(Math.random() * 50) + 10} {t('dashboard.overview.orders_suffix')}
+                {product.orderCount} {t('dashboard.overview.orders_suffix')}
               </div>
             </div>
           </div>

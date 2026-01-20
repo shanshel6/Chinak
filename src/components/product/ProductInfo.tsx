@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Video, Store, Star, Plane, Ship, Info } from 'lucide-react';
+import { Video, Store, Star, Plane, Ship, Info as _Info } from 'lucide-react';
 import { fetchSettings } from '../../services/api';
 import { calculateShippingFee } from '../../utils/shipping';
 
@@ -17,6 +17,9 @@ interface ProductInfoProps {
   length?: number;
   width?: number;
   height?: number;
+  domesticShippingFee?: number;
+  airThreshold?: number;
+  seaThreshold?: number;
 }
 
 const ProductInfo: React.FC<ProductInfoProps> = ({
@@ -33,10 +36,15 @@ const ProductInfo: React.FC<ProductInfoProps> = ({
   length,
   width,
   height,
+  domesticShippingFee: _domesticShippingFee,
+  airThreshold = 50000,
+  seaThreshold = 50000
 }) => {
   const [airRate, setAirRate] = useState<number>(15400); 
   const [seaRate, setSeaRate] = useState<number>(182000);
+  const [chinaDomesticRate, setChinaDomesticRate] = useState<number>(1500);
   const [shippingMinFloor, setShippingMinFloor] = useState<number>(5000);
+  const [thresholds, setThresholds] = useState({ air: airThreshold, sea: seaThreshold });
   
   useEffect(() => {
     const loadSettings = async () => {
@@ -44,13 +52,20 @@ const ProductInfo: React.FC<ProductInfoProps> = ({
         const settings = await fetchSettings();
         if (settings?.airShippingRate) setAirRate(settings.airShippingRate);
         if (settings?.seaShippingRate) setSeaRate(settings.seaShippingRate);
+        if (settings?.chinaDomesticShipping) setChinaDomesticRate(settings.chinaDomesticShipping);
         if (settings?.airShippingMinFloor) setShippingMinFloor(settings.airShippingMinFloor);
+        if (settings?.airShippingThreshold || settings?.seaShippingThreshold) {
+          setThresholds({
+            air: settings.airShippingThreshold || airThreshold,
+            sea: settings.seaShippingThreshold || seaThreshold
+          });
+        }
       } catch (error) {
         console.error('Failed to load shipping rates:', error);
       }
     };
     loadSettings();
-  }, []);
+  }, [airThreshold, seaThreshold]);
 
   const shippingFees = React.useMemo(() => {
     if (!weight && !length && !width && !height) return null;
@@ -58,24 +73,28 @@ const ProductInfo: React.FC<ProductInfoProps> = ({
     const fee = calculateShippingFee(weight, length, width, height, {
       airRate,
       seaRate,
+      chinaDomesticRate,
       minFloor: shippingMinFloor
-    });
+    }, price, 'SEA', 0, false); // Domestic fee is now included in price, applyMinimum is false for display
 
-    const defaultMethod = (weight || 0.5) <= 1 ? 'AIR' : 'SEA';
+    const activeMethod = 'SEA';
+    const threshold = thresholds.sea;
+    const isThresholdMet = price >= threshold;
 
     return { 
       total: fee,
-      defaultMethod
+      activeMethod,
+      threshold,
+      isThresholdMet
     };
-  }, [weight, length, width, height, airRate, seaRate, shippingMinFloor]);
+  }, [weight, length, width, height, airRate, seaRate, chinaDomesticRate, shippingMinFloor, price, thresholds]);
 
-  // Use default method based on weight
-  const activeMethod = shippingFees?.defaultMethod || 'AIR';
+  // Always default to SEA if no automatic selection
+  const activeMethod = shippingFees?.activeMethod || 'SEA';
   
   const totalPrice = React.useMemo(() => {
-    if (!shippingFees) return price;
-    return price + shippingFees.total;
-  }, [price, shippingFees]);
+    return price;
+  }, [price]);
 
   const parsedEvaluation = React.useMemo(() => {
     if (!storeEvaluation) return null;
@@ -141,6 +160,31 @@ const ProductInfo: React.FC<ProductInfoProps> = ({
       <h2 className="text-slate-900 dark:text-white text-xl font-bold leading-tight mt-3">{name}</h2>
       {chineseName && chineseName !== name && (
         <p className="text-slate-400 dark:text-slate-500 text-sm mt-1 font-medium">{chineseName}</p>
+      )}
+
+      {/* Shipping Details */}
+      {shippingFees && (
+        <div className="mt-4 p-3 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-slate-700">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <div className="p-1.5 bg-primary/10 text-primary rounded-lg">
+                {activeMethod === 'AIR' ? <Plane size={14} /> : <Ship size={14} />}
+              </div>
+              <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                شحن {activeMethod === 'AIR' ? 'جوي' : 'بحري'}
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              {shippingFees.total === 0 ? (
+                <span className="text-[10px] font-black text-green-600 bg-green-500/10 px-2 py-0.5 rounded-lg uppercase tracking-wider">مجاني</span>
+              ) : (
+                <span className="text-xs font-black text-primary">+{shippingFees.total.toLocaleString()} د.ع</span>
+              )}
+            </div>
+          </div>
+
+          {/* Threshold notice removed as per request */}
+        </div>
       )}
     </div>
   );

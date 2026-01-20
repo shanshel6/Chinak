@@ -14,6 +14,7 @@ import { fetchCoupons } from '../services/api';
 
 const Cart: React.FC = () => {
   const navigate = useNavigate();
+  const { appliedCoupon, setAppliedCoupon } = useCheckoutStore();
   const cartItems = useCartStore((state) => state.items);
   const loading = useCartStore((state) => state.isLoading);
   const error = useCartStore((state) => state.error);
@@ -21,32 +22,17 @@ const Cart: React.FC = () => {
   const removeItem = useCartStore((state) => state.removeItem);
   const removeItems = useCartStore((state) => state.removeItems);
   const fetchCart = useCartStore((state) => state.fetchCart);
-  const subtotal = useCartStore((state) => state.getSubtotal());
+  const subtotal = useCartStore((state) => state.getBaseSubtotal());
   const toggleWishlist = useWishlistStore((state) => state.toggleWishlist);
   const wishlistItems = useWishlistStore((state) => state.items);
   const showToast = useToastStore((state) => state.showToast);
   
-  const { appliedCoupon, setAppliedCoupon } = useCheckoutStore();
-
   const [isDiscountPopupOpen, setIsDiscountPopupOpen] = useState(false);
   const [selectedItems, setSelectedItems] = useState<(number | string)[]>([]);
   const [isSelectMode, setIsSelectMode] = useState(false);
   const [hasAvailableCoupons, setHasAvailableCoupons] = useState(false);
 
   const isProductInWishlist = (productId: number | string) => wishlistItems.some(item => item.productId === productId);
-
-  useEffect(() => {
-    // Perform a silent fetch if we already have items to avoid full-screen spinner
-    fetchCart(cartItems.length > 0);
-    checkAvailableCoupons();
-  }, [fetchCart]);
-
-  useEffect(() => {
-    if (appliedCoupon && appliedCoupon.minOrderAmount && subtotal < appliedCoupon.minOrderAmount) {
-      setAppliedCoupon(null);
-      showToast(`تم إزالة الكوبون لأن المجموع أقل من ${appliedCoupon.minOrderAmount.toLocaleString()} د.ع`, 'info');
-    }
-  }, [subtotal, appliedCoupon, setAppliedCoupon, showToast]);
 
   const checkAvailableCoupons = async () => {
     try {
@@ -56,6 +42,22 @@ const Cart: React.FC = () => {
       console.error('Failed to fetch coupons:', err);
     }
   };
+
+  useEffect(() => {
+    // Perform a silent fetch if we already have items to avoid full-screen spinner
+    const initCart = async () => {
+      await fetchCart(cartItems.length > 0);
+      await checkAvailableCoupons();
+    };
+    initCart();
+  }, [fetchCart, cartItems.length]);
+
+  useEffect(() => {
+    if (appliedCoupon && appliedCoupon.minOrderAmount && subtotal < appliedCoupon.minOrderAmount) {
+      setAppliedCoupon(null);
+      showToast(`تم إزالة الكوبون لأن المجموع أقل من ${appliedCoupon.minOrderAmount.toLocaleString()} د.ع`, 'info');
+    }
+  }, [subtotal, appliedCoupon, setAppliedCoupon, showToast]);
 
   const toggleItemSelection = (itemId: number | string) => {
     setSelectedItems(prev => 
@@ -116,13 +118,19 @@ const Cart: React.FC = () => {
 
   const discountAmount = appliedCoupon ? (
     appliedCoupon.discountType === 'PERCENTAGE' 
-      ? Math.min(
-          (subtotal * (appliedCoupon.discountValue / 100)), 
-          appliedCoupon.maxDiscount || Infinity
-        )
-      : appliedCoupon.discountValue
+    ? Math.min(
+        (subtotal * (appliedCoupon.discountValue / 100)), 
+        appliedCoupon.maxDiscount || Infinity
+      )
+    : appliedCoupon.discountValue
   ) : 0;
-  const total = subtotal - discountAmount;
+  
+  // Total in cart page only includes products - discount
+  // International shipping fees are shown in checkout page as requested
+  const total = Math.max(0, subtotal - discountAmount);
+  const MIN_ORDER_THRESHOLD = 50000;
+  const isUnderThreshold = subtotal < MIN_ORDER_THRESHOLD;
+  const amountNeeded = MIN_ORDER_THRESHOLD - subtotal;
 
   // Function to refresh cart
   const handleRefresh = async () => {
@@ -137,8 +145,8 @@ const Cart: React.FC = () => {
   if (loading && cartItems.length === 0) {
     return (
       <div className="relative flex min-h-screen w-full flex-col items-center justify-center bg-background-light dark:bg-background-dark font-display text-text-primary-light dark:text-text-primary-dark antialiased" dir="rtl">
-        <div className="flex flex-col items-center gap-6 animate-in fade-in zoom-in duration-700">
-          <div className="flex flex-col items-center gap-2">
+          <div className="flex flex-col items-center gap-6 animate-in fade-in zoom-in duration-700">
+            <div className="flex flex-col items-center gap-2">
             <div className="flex gap-1">
               <div className="w-2 h-2 rounded-full bg-primary animate-bounce [animation-delay:-0.3s]"></div>
               <div className="w-2 h-2 rounded-full bg-primary animate-bounce [animation-delay:-0.15s]"></div>
@@ -355,7 +363,14 @@ const Cart: React.FC = () => {
                       })()}
                     </div>
                   )}
-                  <p className="text-primary font-bold mt-1">{(item.price || item.variant?.price || item.product.price).toLocaleString()} د.ع</p>
+                  {(() => {
+                    const basePrice = item.variant?.price || item.product.price;
+                    return (
+                      <p className="text-primary font-bold mt-1">
+                        {basePrice.toLocaleString()} د.ع
+                      </p>
+                    );
+                  })()}
                 </div>
                 {!isSelectMode && (
                   <div className="flex items-center justify-between">
@@ -426,9 +441,9 @@ const Cart: React.FC = () => {
                   </span>
                 )}
               </button>
-            </div>
-            
-            <div className="flex flex-col gap-3">
+          </div>
+          
+          <div className="flex flex-col gap-3">
               <div className="flex justify-between text-sm">
                 <span className="text-slate-500 dark:text-slate-400">المجموع الفرعي</span>
                 <span className="font-bold">{subtotal.toLocaleString()} د.ع</span>
@@ -460,8 +475,8 @@ const Cart: React.FC = () => {
                 </div>
               )}
 
-              <div className="flex justify-between text-sm">
-                <span className="text-slate-500 dark:text-slate-400">الشحن الدولي</span>
+              <div className="flex justify-between text-sm items-center">
+                <span className="text-slate-500 dark:text-slate-400">التوصيل المحلي</span>
                 <div className="flex items-center gap-1.5 bg-green-500/10 text-green-600 px-2 py-0.5 rounded-lg text-[10px] font-black uppercase tracking-wider">
                   <CheckCheck size={14} />
                   <span>مجاني</span>
@@ -474,9 +489,6 @@ const Cart: React.FC = () => {
                   <span>الإجمالي الكلي</span>
                   <span className="text-primary">{total.toLocaleString()} د.ع</span>
                 </div>
-                <p className="text-[10px] text-slate-400 text-right">
-                  * شحن دولي مجاني لجميع الطلبات حالياً
-                </p>
               </div>
             </div>
           </div>
@@ -484,18 +496,41 @@ const Cart: React.FC = () => {
       </main>
 
       {/* Sticky Footer Checkout Button */}
-      <div className="fixed bottom-0 left-0 right-0 z-40 w-full bg-white/95 dark:bg-slate-900/95 border-t border-slate-200 dark:border-slate-800 p-4 pb-safe backdrop-blur-md">
+      <div className="fixed bottom-0 left-0 right-0 z-40 w-full bg-white/95 dark:bg-slate-900/95 border-t border-slate-200 dark:border-slate-800 p-4 pb-safe backdrop-blur-md flex flex-col gap-3">
+        {isUnderThreshold && (
+          <div className="w-full bg-amber-500/10 dark:bg-amber-500/20 border border-amber-500/30 rounded-2xl p-4 flex items-center justify-between animate-pulse">
+            <div className="flex items-center gap-3">
+              <div className="size-10 rounded-full bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-lg shadow-amber-500/20">
+                <AlertCircle size={24} />
+              </div>
+              <div className="flex flex-col">
+                <span className="text-sm font-black text-amber-700 dark:text-amber-400">تحتاج إضافة المزيد لإكمال الطلب</span>
+                <span className="text-[10px] text-amber-600/70 dark:text-amber-400/70 font-bold uppercase tracking-wider">الحد الأدنى للطلب هو 50,000 د.ع</span>
+              </div>
+            </div>
+            <div className="text-right">
+              <span className="block text-lg font-black text-amber-600 dark:text-amber-400">{amountNeeded.toLocaleString()} د.ع</span>
+              <span className="text-[9px] text-amber-500/50 font-black uppercase">متبقي</span>
+            </div>
+          </div>
+        )}
+
         <button 
-          onClick={() => navigate('/checkout/shipping')}
-          className="w-full h-16 rounded-2xl bg-primary hover:bg-primary/90 active:scale-[0.98] transition-all text-white font-bold text-base shadow-lg shadow-primary/25 flex items-center justify-between px-6"
+          onClick={() => !isUnderThreshold && navigate('/checkout/shipping')}
+          disabled={isUnderThreshold}
+          className={`w-full h-16 rounded-2xl transition-all text-white font-bold text-base shadow-lg flex items-center justify-between px-6 ${
+            isUnderThreshold 
+              ? 'bg-slate-300 dark:bg-slate-700 cursor-not-allowed grayscale' 
+              : 'bg-primary hover:bg-primary/90 active:scale-[0.98] shadow-primary/25'
+          }`}
         >
           <div className="flex flex-col items-start leading-tight">
             <span className="text-[10px] opacity-80 font-bold uppercase tracking-wider">إجمالي الدفع</span>
             <span className="text-xl font-black">{total.toLocaleString()} د.ع</span>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-lg">إتمام الشراء</span>
-            <ArrowRight size={22} />
+            <span className="text-lg">{isUnderThreshold ? 'أضف المزيد للطلب' : 'إتمام الشراء'}</span>
+            <ArrowRight size={22} className={isUnderThreshold ? 'opacity-30' : ''} />
           </div>
         </button>
       </div>

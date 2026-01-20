@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
   ShoppingBag, 
@@ -64,16 +64,9 @@ const Profile: React.FC = () => {
       setEditPhone(prev => prev || user.phone || '');
       setEditAvatar(prev => prev || user.avatar || '');
     }
-  }, [user?.id]); // Only run when user ID changes
+  }, [user]); // Run when user object changes
 
-  useEffect(() => {
-    if (user?.id) {
-      loadData();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id]); // Only run once when user ID is available
-
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       console.log('[Profile] Starting data load...');
       const results = await Promise.allSettled([
@@ -106,7 +99,13 @@ const Profile: React.FC = () => {
       if (err.stack) console.error('[Profile] Error stack:', err.stack);
       showToast(t('common.error_loading'), 'error');
     }
-  };
+  }, [updateUser, showToast, t]);
+
+  useEffect(() => {
+    if (user?.id) {
+      loadData();
+    }
+  }, [user?.id, loadData]);
 
   const handleLogout = () => {
     logout();

@@ -5,8 +5,8 @@ import { useWishlistStore } from '../store/useWishlistStore';
 import { useCartStore } from '../store/useCartStore';
 import { useAuthStore } from '../store/useAuthStore';
 import { useToastStore } from '../store/useToastStore';
-import { calculateShippingFee } from '../utils/shipping';
-import type { ShippingRates } from '../utils/shipping';
+import { calculateShippingFee as _calculateShippingFee } from '../utils/shipping';
+import type { ShippingRates } from '../types/shipping';
 import { Clipboard } from '@capacitor/clipboard';
 import LazyImage from '../components/LazyImage';
 import ProductHeader from '../components/product/ProductHeader';
@@ -49,6 +49,7 @@ interface Product {
   length?: number;
   width?: number;
   height?: number;
+  domesticShippingFee?: number;
 }
 
 import { AlertCircle, Package, MessageSquareText, Store, Star } from 'lucide-react';
@@ -85,11 +86,14 @@ const ProductDetails: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [isAdding, setIsAdding] = useState(false);
   const [isAdded, setIsAdded] = useState(false);
-  const [isPurchaseAllowed, setIsPurchaseAllowed] = useState<boolean>(true);
-  const [shippingRates, setShippingRates] = useState<ShippingRates>({
+  const [_isPurchaseAllowed, _setIsPurchaseAllowed] = useState<boolean>(true);
+  const [shouldRenderDetails, setShouldRenderDetails] = useState(false);
+  const [shippingRates, setShippingRates] = useState<ShippingRates & { airThreshold?: number, seaThreshold?: number }>({
     airRate: 15400,
     seaRate: 182000,
-    minFloor: 5000
+    minFloor: 5000,
+    airThreshold: 50000,
+    seaThreshold: 50000
   });
 
   useEffect(() => {
@@ -100,7 +104,9 @@ const ProductDetails: React.FC = () => {
           setShippingRates({
             airRate: settings.airShippingRate || 15400,
             seaRate: settings.seaShippingRate || 182000,
-            minFloor: settings.airShippingMinFloor || 5000
+            minFloor: settings.airShippingMinFloor || 5000,
+            airThreshold: settings.airShippingThreshold || 30000,
+            seaThreshold: settings.seaShippingThreshold || 150000
           });
         }
       } catch (e) {}
@@ -108,18 +114,6 @@ const ProductDetails: React.FC = () => {
     loadSettings();
   }, []);
 
-  const shippingFee = useMemo(() => {
-    if (!product) return 0;
-    return calculateShippingFee(
-      product.weight,
-      product.length,
-      product.width,
-      product.height,
-      shippingRates
-    );
-  }, [product, shippingRates]);
-
-  const [shouldRenderDetails, setShouldRenderDetails] = useState(false);
   const [selectedOptions, setSelectedOptions] = useState<Record<string, string>>(() => {
     // Try to get initial options from navigation state or global cache
     const initialProd = (location.state as any)?.initialProduct || (productId ? findProductInGlobalCache(productId) : null);
@@ -142,6 +136,8 @@ const ProductDetails: React.FC = () => {
     }
     return {};
   });
+
+  const [currentVariant, setCurrentVariant] = useState<any>(null);
 
   // Effect to initialize options when product data arrives (if not already set)
   useEffect(() => {
@@ -181,7 +177,7 @@ const ProductDetails: React.FC = () => {
       return () => clearTimeout(timer);
     }
   }, [loading]);
-  const [currentVariant, setCurrentVariant] = useState<any>(null);
+
   const cartItems = useCartStore((state) => state.items);
 
   // Extract review summary and actual specs from the specs string
@@ -316,7 +312,7 @@ const ProductDetails: React.FC = () => {
       return acc;
     }, []);
     return uniqueImages.sort((a, b) => a.order - b.order);
-  }, [product]);
+  }, [product, currentVariant?.image]);
 
   const detailImages = useMemo(() => {
     if (!product || !Array.isArray(product.images)) return [];
@@ -415,7 +411,11 @@ const ProductDetails: React.FC = () => {
           setError(null);
         } catch (err) {
           console.error('Error fetching product info:', err);
-          if (!product) setError('حدث خطأ أثناء تحميل بيانات المنتج.');
+          // Use a functional state update to check if we have any product data
+          setProduct(current => {
+            if (!current) setError('حدث خطأ أثناء تحميل بيانات المنتج.');
+            return current;
+          });
         } finally {
           setLoading(false);
         }
@@ -450,7 +450,7 @@ const ProductDetails: React.FC = () => {
     };
     
     loadData();
-  }, [productId]);
+  }, [productId, location.state, isAuthenticated, showToast]);
 
   useEffect(() => {
     if (product && product.variants && product.variants.length > 0) {
@@ -490,15 +490,17 @@ const ProductDetails: React.FC = () => {
     showToast('تمت إضافة المنتج إلى السلة بنجاح', 'success');
 
     try {
-      const basePrice = currentVariant?.price || product.price || 0;
-      const finalPrice = basePrice + shippingFee;
-
       await addItem(product.id, 1, currentVariant?.id, {
         id: product.id,
         name: product.name,
-        price: finalPrice,
+        price: currentVariant?.price || product.price || 0,
         image: currentVariant?.image || product.image,
-        variant: currentVariant
+        variant: currentVariant,
+        weight: product.weight,
+        length: product.length,
+        width: product.width,
+        height: product.height,
+        domesticShippingFee: product.domesticShippingFee
       }, selectedOptions);
     } catch (err) {
       // Rollback UI state if API fails
@@ -588,6 +590,9 @@ const ProductDetails: React.FC = () => {
             length={product.length}
             width={product.width}
             height={product.height}
+            domesticShippingFee={product.domesticShippingFee}
+            airThreshold={shippingRates.airThreshold}
+            seaThreshold={shippingRates.seaThreshold}
           />
 
           {product.options && product.options.length > 0 && (
@@ -753,7 +758,7 @@ const ProductDetails: React.FC = () => {
         </main>
 
         <AddToCartBar 
-            price={(currentVariant?.price || product.price || 0) + shippingFee}
+            price={currentVariant?.price || product.price || 0}
             onAddToCart={handleAddToCart}
             isAdding={isAdding}
             isAdded={isAdded}

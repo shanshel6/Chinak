@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { 
   Check, 
@@ -47,7 +47,19 @@ const ProductCard: React.FC<ProductCardProps> = ({
   const [isEditingPrice, setIsEditingPrice] = useState(false);
   const [isEditingName, setIsEditingName] = useState(false);
   const [tempPrice, setTempPrice] = useState(product.price.toString());
+  const [prevProductPrice, setPrevProductPrice] = useState(product.price);
   const [tempProductName, setTempProductName] = useState(product.name);
+  const [prevProductName, setPrevProductName] = useState(product.name);
+
+  if (product.price !== prevProductPrice) {
+    setPrevProductPrice(product.price);
+    setTempPrice(product.price.toString());
+  }
+
+  if (product.name !== prevProductName) {
+    setPrevProductName(product.name);
+    setTempProductName(product.name);
+  }
   const [editingOptionId, setEditingOptionId] = useState<string | null>(null);
   const [editingValue, setEditingValue] = useState<{ optionId: string, index: number } | null>(null);
   const [editingName, setEditingName] = useState<string | null>(null);
@@ -59,10 +71,6 @@ const ProductCard: React.FC<ProductCardProps> = ({
   const minPrice = variantPrices.length > 0 ? Math.min(...variantPrices) : product.price;
   const maxPrice = variantPrices.length > 0 ? Math.max(...variantPrices) : product.price;
   const hasPriceRange = minPrice !== maxPrice;
-
-  useEffect(() => {
-    setTempPrice(product.price.toString());
-  }, [product.price]);
 
   const handlePriceSubmit = () => {
     const newPrice = parseFloat(tempPrice);

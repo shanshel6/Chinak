@@ -16,7 +16,9 @@ async function updatePrices() {
     console.log(`Found ${products.length} products to update.`);
     let updatedCount = 0;
     for (const product of products) {
-      const newPrice = product.price * 1.1;
+      // Logic changed: Don't just add 10% to whatever is there.
+      // This script is now intended for manual price adjustments if needed.
+      const newPrice = product.price; // Keep price as is by default
       await prisma.product.update({
         where: { id: product.id },
         data: { price: newPrice }
@@ -32,7 +34,7 @@ async function updatePrices() {
     console.log(`Found ${variants.length} variants to update.`);
     let updatedVariantsCount = 0;
     for (const variant of variants) {
-      const newPrice = variant.price * 1.1;
+      const newPrice = variant.price; // Keep price as is
       await prisma.productVariant.update({
         where: { id: variant.id },
         data: { price: newPrice }

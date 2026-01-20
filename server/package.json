@@ -21,6 +21,7 @@
     "@supabase/supabase-js": "^2.90.1",
     "axios": "^1.13.2",
     "bcryptjs": "^3.0.3",
+    "cheerio": "^1.1.2",
     "compression": "^1.8.1",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
@@ -31,12 +32,16 @@
     "node-fetch": "^3.3.2",
     "nodemailer": "^7.0.12",
     "openai": "^6.15.0",
+    "prisma": "^6.19.1",
+    "puppeteer": "^24.35.0",
+    "puppeteer-core": "^24.35.0",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
     "sharp": "^0.34.5",
     "socket.io": "^4.8.3",
     "sqlite": "^5.1.1",
     "sqlite3": "^5.1.7",
-    "undici": "^7.18.2",
-    "prisma": "^6.19.1"
+    "undici": "^7.18.2"
   },
   "devDependencies": {
     "nodemon": "^3.1.11"

@@ -13,13 +13,19 @@ const BottomNav: React.FC<BottomNavProps> = ({ className = '' }) => {
   const location = useLocation();
   const cartItemsCount = useCartStore((state) => state.getTotalItems());
   const [isVisible, setIsVisible] = useState(true);
+  const [prevPathname, setPrevPathname] = useState(location.pathname);
+
+  if (location.pathname !== prevPathname) {
+    setPrevPathname(location.pathname);
+    setIsVisible(true);
+  }
+
   const lastScrollY = useRef(0);
   const scrollThreshold = 20; // Increased threshold for "not right away" feel
 
   useEffect(() => {
     // Only apply hide/show on scroll for the Home page as requested
     if (location.pathname !== '/') {
-      setIsVisible(true);
       return;
     }
 

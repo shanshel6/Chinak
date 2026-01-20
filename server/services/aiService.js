@@ -3,8 +3,10 @@ dns.setDefaultResultOrder('ipv4first');
 
 import { HfInference } from '@huggingface/inference';
 import OpenAI from 'openai';
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import { ProxyAgent, setGlobalDispatcher } from 'undici';
 import prisma from '../prismaClient.js';
+import axios from 'axios';
 
 // Setup the proxy dispatcher globally for undici (used by native fetch in Node 18+)
 // Only use proxy in local development if explicitly requested via environment variable
@@ -20,6 +22,7 @@ if (process.env.USE_AI_PROXY === 'true' || (process.env.NODE_ENV !== 'production
 // Initialize clients lazily
 let hf = null;
 let siliconflow = null;
+let genAI = null;
 
 function getClients() {
   if (!hf) {
@@ -41,8 +44,17 @@ function getClients() {
     });
     console.log(`[AI Debug] SiliconFlow initialized (OpenAI-compatible)`);
   }
+
+  if (!genAI) {
+    if (!process.env.GEMINI_API_KEY) {
+      console.warn('[AI Debug] GEMINI_API_KEY is missing. Vision AI will be disabled.');
+    } else {
+      genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+      console.log(`[AI Debug] Gemini AI initialized`);
+    }
+  }
   
-  return { hf, siliconflow };
+  return { hf, siliconflow, genAI };
 }
 
 /**
@@ -70,10 +82,65 @@ async function generateEmbedding(text) {
 }
 
 /**
- * Estimate weight and dimensions for a product using SiliconFlow
+ * Analyze product image using Gemini Vision (Free Tier)
+ */
+async function visionAnalyzeImage(imageUrl, productName) {
+  try {
+    const { genAI } = getClients();
+    if (!genAI || !imageUrl) return null;
+
+    console.log(`[AI Debug] Analyzing image for ${productName}: ${imageUrl}`);
+    
+    // Fetch image data
+    const response = await axios.get(imageUrl, { responseType: 'arraybuffer' });
+    const imageParts = [
+      {
+        inlineData: {
+          data: Buffer.from(response.data).toString("base64"),
+          mimeType: response.headers["content-type"],
+        },
+      },
+    ];
+
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const prompt = `Analyze this product image: "${productName}". 
+    Estimate its physical weight (in kg) and dimensions (length, width, height in cm).
+    Look for any visible size markings, scale comparison, or standard product sizes.
+    Return ONLY a valid JSON object with:
+    { "weight": number, "length": number, "width": number, "height": number }`;
+
+    const result = await model.generateContent([prompt, ...imageParts]);
+    const responseText = result.response.text();
+    const cleanJson = responseText.replace(/^```json\s*/, '').replace(/\s*```$/, '').trim();
+    return JSON.parse(cleanJson);
+  } catch (error) {
+    console.error('[AI Debug] Vision analysis failed:', error.message);
+    return null;
+  }
+}
+
+/**
+ * Estimate weight and dimensions for a product using Vision AI -> Text AI
  */
 export async function estimateProductPhysicals(product) {
   try {
+    // 1. Try Vision AI first (Moderate Accuracy)
+    if (product.image) {
+      console.log(`[AI Debug] Attempting Vision AI for ${product.name}...`);
+      const visionResult = await visionAnalyzeImage(product.image, product.name);
+      if (visionResult && (visionResult.weight || visionResult.length)) {
+        console.log(`[AI Debug] Vision AI success for ${product.name}`);
+        return {
+          weight: parseFloat(visionResult.weight) || 0.5,
+          length: parseFloat(visionResult.length) || 10,
+          width: parseFloat(visionResult.width) || 10,
+          height: parseFloat(visionResult.height) || 10
+        };
+      }
+    }
+
+    // 3. Fallback to Text-based estimation (DeepSeek)
+    console.log(`[AI Debug] Falling back to text-based estimation for ${product.name}...`);
     const { siliconflow } = getClients();
     
     const prompt = `Estimate the physical dimensions and weight for the following product.
@@ -187,7 +254,9 @@ export async function processProductAI(productId) {
         const physicals = await estimateProductPhysicals({
           name: product.name,
           description: product.description,
-          specs: product.specs
+          specs: product.specs,
+          purchaseUrl: product.purchaseUrl,
+          image: product.image
         });
         
         if (physicals) {

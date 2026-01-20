@@ -27,6 +27,22 @@ interface Product {
   height?: number;
 }
 
+const categories = [
+  { id: 'all', name: 'الكل', icon: Grid2X2 },
+  { id: 'electronics', name: 'إلكترونيات', icon: Smartphone },
+  { id: 'fashion', name: 'أزياء', icon: Shirt },
+  { id: 'new', name: 'جديدنا', icon: Sparkles },
+  { id: 'under5k', name: 'أقل من 5,000 د.ع', icon: Banknote },
+];
+
+const categoryToSearchTerm: Record<string, string> = {
+  all: '',
+  electronics: 'إلكترونيات أجهزة ذكية electronics tech',
+  fashion: 'ملابس أزياء موضة fashion clothes',
+  new: 'جديد وصل حديثاً new arrivals',
+  under5k: '', 
+};
+
 const Home: React.FC = () => {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -53,27 +69,11 @@ const Home: React.FC = () => {
   const [hasMore, setHasMore] = useState(true);
   const [selectedCategoryId, setSelectedCategoryId] = useState(homeCategoryId);
   const observer = useRef<IntersectionObserver | null>(null);
-  const [, setPage] = useState(homePage);
-
-  const categories = [
-    { id: 'all', name: 'الكل', icon: Grid2X2 },
-    { id: 'electronics', name: 'إلكترونيات', icon: Smartphone },
-    { id: 'fashion', name: 'أزياء', icon: Shirt },
-    { id: 'new', name: 'جديدنا', icon: Sparkles },
-    { id: 'under5k', name: 'أقل من 5,000 د.ع', icon: Banknote },
-  ];
-
-  const categoryToSearchTerm: Record<string, string> = {
-    all: '',
-    electronics: 'إلكترونيات أجهزة ذكية electronics tech',
-    fashion: 'ملابس أزياء موضة fashion clothes',
-    new: 'جديد وصل حديثاً new arrivals',
-    under5k: '', 
-  };
+  const [_page, setPage] = useState(homePage);
 
   const activeRequestRef = useRef<string | null>(null);
 
-  const loadData = async (pageNum: number, categoryId: string, isInitial = false, retryCount = 0) => {
+  const loadData = useCallback(async (pageNum: number, categoryId: string, isInitial = false, retryCount = 0) => {
     const requestId = `${categoryId}-${pageNum}-${Date.now()}`;
     activeRequestRef.current = requestId;
 
@@ -128,7 +128,7 @@ const Home: React.FC = () => {
         setLoadingMore(false);
       }
     }
-  };
+  }, [setHomeData, t]);
 
   useEffect(() => {
     // Only load if we don't have products or if the category has changed
@@ -143,7 +143,7 @@ const Home: React.FC = () => {
         window.scrollTo(0, homeScrollPos);
       }, 50);
     }
-  }, [selectedCategoryId]);
+  }, [selectedCategoryId, homeCategoryId, products.length, loadData, homeScrollPos, setPage]);
 
   // Save scroll position on unmount
   useEffect(() => {
@@ -173,7 +173,7 @@ const Home: React.FC = () => {
     });
     
     if (node) observer.current.observe(node);
-  }, [loading, loadingMore, hasMore, selectedCategoryId]);
+  }, [loading, loadingMore, hasMore, selectedCategoryId, loadData]);
 
   const handleSelectCategory = (id: string) => {
     setSelectedCategoryId(id);
@@ -235,7 +235,7 @@ const Home: React.FC = () => {
         clearTimeout(handle);
       }
     };
-  }, [loading, products.length, selectedCategoryId]);
+  }, [loading, products.length, selectedCategoryId, loadData]);
 
   const isProductInWishlist = (productId: number) => wishlistItems.some(item => String(item.productId) === String(productId));
 

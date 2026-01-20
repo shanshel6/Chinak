@@ -47,7 +47,7 @@ async function main() {
             name: name,
             chineseName: chineseName,
             description: description,
-            price: (parseFloat(p.price) || 0) * 1.1, // Added 10% margin
+            price: (parseFloat(p.price) || 0) * 1.1, // 10% profit markup
             basePriceRMB: parseFloat(p.basePriceRMB) || 0,
             image: p.image || '',
             purchaseUrl: p.purchaseUrl,

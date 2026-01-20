@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { fetchMe, logout as apiLogout, performCacheMaintenance } from '../services/api';
+import { useCartStore } from './useCartStore';
 
 interface User {
   id: string; 
@@ -33,21 +34,26 @@ export const useAuthStore = create<AuthState>((set) => ({
       const trimmedToken = token?.trim();
       localStorage.setItem('auth_token', trimmedToken);
       set({ token: trimmedToken, user, isAuthenticated: true, isLoading: false });
-    } catch (e) {
+    } catch (_e) {
       // If setting token fails, perform emergency cleanup
       performCacheMaintenance();
       try {
         const trimmedToken = token?.trim();
         localStorage.setItem('auth_token', trimmedToken);
         set({ token: trimmedToken, user, isAuthenticated: true, isLoading: false });
-      } catch (retryError) {
+      } catch (_retryError) {
         console.error('Critical: Failed to save auth token even after cleanup');
       }
     }
   },
 
   logout: async () => {
-    await apiLogout();
+    try {
+      await apiLogout();
+    } catch (_e) {
+      // ignore
+    }
+    useCartStore.getState().clearCart();
     set({ user: null, token: null, isAuthenticated: false, isLoading: false });
   },
 
@@ -73,7 +79,7 @@ export const useAuthStore = create<AuthState>((set) => ({
         isAuthenticated: true, 
         isLoading: false 
       });
-    } catch (error) {
+    } catch (_error) {
       localStorage.removeItem('auth_token');
       set({ user: null, token: null, isAuthenticated: false, isLoading: false });
     }

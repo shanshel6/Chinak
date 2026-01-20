@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { TrendingUp } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, CartesianGrid, XAxis, YAxis, Tooltip } from 'recharts';
@@ -10,11 +10,11 @@ interface ProductPerformanceProps {
 const ProductPerformance: React.FC<ProductPerformanceProps> = ({ products }) => {
   const { t } = useTranslation();
 
-  const data = products.slice(0, 8).map(p => ({
+  const data = useMemo(() => products.slice(0, 8).map((p, i) => ({
     name: p.name.length > 15 ? p.name.substring(0, 15) + '...' : p.name,
-    orders: Math.floor(Math.random() * 50) + 10,
-    revenue: p.price * (Math.floor(Math.random() * 10) + 1)
-  }));
+    orders: (i * 7 + 13) % 40 + 10,
+    revenue: p.price * ((i * 3 + 5) % 9 + 1)
+  })), [products]);
 
   return (
     <div className="lg:col-span-2 bg-white dark:bg-slate-800 p-6 rounded-3xl border border-slate-100 dark:border-slate-700/50 flex flex-col">

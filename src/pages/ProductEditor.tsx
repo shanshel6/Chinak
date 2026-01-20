@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   Save, 
   Plus, 
@@ -72,6 +72,8 @@ const ProductEditor: React.FC<ProductEditorProps> = ({ productId, onClose, onSuc
     length: '',
     width: '',
     height: '',
+    domesticShippingFee: 0,
+    isPriceCombined: false,
     specs: {},
     images: [],
     detailImages: [],
@@ -82,13 +84,7 @@ const ProductEditor: React.FC<ProductEditorProps> = ({ productId, onClose, onSuc
   const [options, setOptions] = useState<ProductOption[]>([]);
   const [variants, setVariants] = useState<ProductVariant[]>([]);
 
-  useEffect(() => {
-    if (isEdit) {
-      loadProduct();
-    }
-  }, [productId]);
-
-  const loadProduct = async () => {
+  const loadProduct = useCallback(async () => {
     console.log('Loading product with ID:', productId);
     if (!productId) {
       console.error('No ID provided for product editing');
@@ -151,7 +147,13 @@ const ProductEditor: React.FC<ProductEditorProps> = ({ productId, onClose, onSuc
     } finally {
       setLoading(false);
     }
-  };
+  }, [productId, showToast, onClose]);
+
+  useEffect(() => {
+    if (isEdit) {
+      loadProduct();
+    }
+  }, [isEdit, loadProduct]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     const { name, value, type } = e.target as HTMLInputElement;
@@ -159,7 +161,7 @@ const ProductEditor: React.FC<ProductEditorProps> = ({ productId, onClose, onSuc
     
     setFormData((prev: any) => ({
       ...prev,
-      [name]: (name === 'weight' || name === 'length' || name === 'width' || name === 'height') && value !== '' 
+      [name]: (name === 'weight' || name === 'length' || name === 'width' || name === 'height' || name === 'domesticShippingFee') && value !== '' 
         ? parseFloat(value) 
         : val
     }));
@@ -196,6 +198,7 @@ const ProductEditor: React.FC<ProductEditorProps> = ({ productId, onClose, onSuc
       const productData = {
         ...formData,
         price: parseFloat(formData.price) || 0,
+        isPriceCombined: formData.isPriceCombined,
         basePriceRMB: formData.basePriceRMB ? parseFloat(formData.basePriceRMB) : null,
         reviewsCountShown: parseInt(formData.reviewsCountShown) || 0,
         images: [
@@ -468,6 +471,33 @@ const ProductEditor: React.FC<ProductEditorProps> = ({ productId, onClose, onSuc
                     />
                   </div>
                 </div>
+
+                <div className="pt-4 space-y-2">
+                  <label className="text-xs font-black text-slate-500 uppercase tracking-wider">سعر التوصيل داخل الصين (د.ع)</label>
+                  <input 
+                    type="number"
+                    name="domesticShippingFee"
+                    value={formData.domesticShippingFee}
+                    onChange={handleInputChange}
+                    placeholder="0"
+                    className="w-full bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-primary/20 focus:bg-white dark:focus:bg-slate-900 rounded-xl px-4 py-3 outline-none transition-all font-bold"
+                  />
+                  <p className="text-[10px] text-slate-400 font-medium">هذا السعر يضاف مباشرة إلى تكلفة الشحن النهائية لكل قطعة من هذا المنتج.</p>
+                </div>
+
+                <div className="pt-4 flex items-center gap-3 cursor-pointer group">
+                  <div 
+                    onClick={() => setFormData((prev: any) => ({ ...prev, isPriceCombined: !prev.isPriceCombined }))}
+                    className={`w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all ${formData.isPriceCombined ? 'bg-primary border-primary' : 'border-slate-300 group-hover:border-primary/50'}`}
+                  >
+                    {formData.isPriceCombined && <Plus size={16} className="text-white" />}
+                  </div>
+                  <div onClick={() => setFormData((prev: any) => ({ ...prev, isPriceCombined: !prev.isPriceCombined }))}>
+                    <span className="text-sm font-bold">السعر المعروض نهائي (يتضمن الربح 10%)</span>
+                    <p className="text-[10px] text-slate-400 font-medium">إذا تم تفعيله، لن يقوم النظام بإضافة 10% ربح عند النشر.</p>
+                  </div>
+                </div>
+
                 <p className="mt-4 text-xs text-slate-400 font-medium">
                   * تستخدم هذه القيم لحساب تكاليف الشحن الدولي تلقائياً. إذا تركت فارغة، سيحاول النظام تقديرها باستخدام الذكاء الاصطناعي.
                 </p>

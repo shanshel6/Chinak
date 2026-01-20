@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   Users, 
   Package, 
@@ -27,7 +27,7 @@ import {
   Share2,
   Sparkles
 } from 'lucide-react';
-import { useLocation, Routes, Route, useNavigate } from 'react-router-dom';
+import { useLocation, Routes, Route, useNavigate as _useNavigate } from 'react-router-dom';
 import { 
   fetchAdminStats, 
   fetchAdminUsers, 
@@ -116,6 +116,9 @@ const AdminDashboard: React.FC = () => {
   });
   const [isSavingSettings, setIsSavingSettings] = useState(false);
   
+  // Determine active tab from path
+  const activeTab = location.pathname === '/admin' ? 'stats' : location.pathname.split('/').pop() || 'stats';
+
   // Pagination State
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
@@ -123,23 +126,128 @@ const AdminDashboard: React.FC = () => {
   const ITEMS_PER_PAGE = 20;
   const PRODUCTS_PER_PAGE = 21;
 
-  const getLimit = () => activeTab === 'products' ? PRODUCTS_PER_PAGE : ITEMS_PER_PAGE;
+  const getLimit = useCallback(() => activeTab === 'products' ? PRODUCTS_PER_PAGE : ITEMS_PER_PAGE, [activeTab]);
 
-  const getAuthToken = () => {
+  const getAuthToken = useCallback(() => {
     let token = useAuthStore.getState().token;
     if (!token) {
       token = localStorage.getItem('auth_token');
     }
     return token;
-  };
+  }, []);
 
-  // Determine active tab from path
-  const activeTab = location.pathname === '/admin' ? 'stats' : location.pathname.split('/').pop() || 'stats';
+  const loadData = useCallback(async (page = currentPage, silent = false) => {
+    if (!silent) setLoading(true);
+    const limit = getLimit();
+    
+    // Get token from store or localStorage
+    let token = useAuthStore.getState().token;
+    if (!token) {
+      token = localStorage.getItem('auth_token');
+    }
+    
+    console.log('[AdminDashboard] Loading data...', { 
+      activeTab, 
+      page, 
+      limit, 
+      hasToken: !!token,
+      tokenLength: token?.length || 0
+    });
+
+    if (!token) {
+      console.warn('[AdminDashboard] No auth token found!');
+      // Give it one more try after a short delay, maybe it's a race condition
+      await new Promise(resolve => setTimeout(resolve, 500));
+      token = useAuthStore.getState().token || localStorage.getItem('auth_token');
+      
+      if (!token) {
+        showToast('يرجى تسجيل الدخول للوصول إلى لوحة التحكم', 'error');
+        setLoading(false);
+        return;
+      }
+    }
+
+    try {
+      if (activeTab === 'stats') {
+        const data = await fetchAdminStats(token);
+        console.log('[AdminDashboard] Stats loaded successfully');
+        setStats(data);
+      } else if (activeTab === 'users') {
+        const data = await fetchAdminUsers(page, limit, searchTerm, token);
+        setUsers(data.users || []);
+        setTotalPages(data.totalPages || 1);
+        setTotalItems(data.total || 0);
+      } else if (activeTab === 'products') {
+        const data = await fetchAdminProducts(page, limit, searchTerm, token);
+        let allProducts = data.products || [];
+        
+        // Add local drafts if we are on the first page
+        if (page === 1) {
+          const drafts = localProductService.getAllDrafts();
+          const filteredDrafts = searchTerm 
+            ? drafts.filter(d => 
+                d.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                (d.chineseName && d.chineseName.toLowerCase().includes(searchTerm.toLowerCase()))
+              )
+            : drafts;
+          
+          // Filter out any server products that might have the same ID as a draft (shouldn't happen with local- prefix)
+          const draftIds = new Set(filteredDrafts.map(d => d.id));
+          const uniqueServerProducts = allProducts.filter((p: any) => !draftIds.has(p.id));
+          
+          allProducts = [...filteredDrafts, ...uniqueServerProducts];
+        }
+
+        setProducts(allProducts);
+        const localDraftsCount = localProductService.getAllDrafts().length;
+        const total = (data.total || 0) + localDraftsCount;
+        setTotalItems(total);
+        setTotalPages(Math.ceil(total / limit));
+      } else if (activeTab === 'orders') {
+        const data = await fetchAdminOrders({ 
+          page, 
+          limit: limit,
+          search: searchTerm 
+        }, token);
+        setOrders(data.orders || []);
+        setTotalPages(data.totalPages || 1);
+        setTotalItems(data.total || 0);
+      } else if (activeTab === 'coupons') {
+        const data = await fetchAdminCoupons(token);
+        setCoupons(data || []);
+        setTotalPages(1);
+        setTotalItems(data.length || 0);
+      } else if (activeTab === 'settings') {
+        const data = await fetchSettings();
+        if (data) {
+          setStoreSettings(prev => ({
+            ...prev,
+            ...data,
+            airShippingRate: data.airShippingRate || 15400,
+            seaShippingRate: data.seaShippingRate || 182000,
+            airShippingMinFloor: data.airShippingMinFloor || 5000,
+            socialLinks: typeof data.socialLinks === 'string' ? JSON.parse(data.socialLinks) : (data.socialLinks || prev.socialLinks)
+          }));
+        }
+      }
+    } catch (error: any) {
+      console.error('[AdminDashboard] Error loading admin data:', error);
+      const errorMsg = error.message || 'فشل تحميل البيانات';
+      showToast(`${errorMsg} (تحقق من الاتصال بالسيرفر)`, 'error');
+      
+      // If it's an auth error, maybe redirect?
+      if (error.status === 401 || error.status === 403) {
+        // window.location.href = '/login';
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [activeTab, currentPage, getLimit, searchTerm, showToast]);
 
   useEffect(() => {
     setCurrentPage(1); // Reset page when tab changes
     loadData(1);
-  }, [activeTab]);
+  }, [activeTab, loadData]);
 
   const handlePasteImport = async () => {
     if (!importText.trim()) return;
@@ -292,9 +400,9 @@ const AdminDashboard: React.FC = () => {
         await bulkCreateProducts(localDraftsData, token);
         
         // Remove from local storage after successful server creation
-        const existingDrafts = JSON.parse(localStorage.getItem('product_drafts') || '[]');
-        const updatedDrafts = existingDrafts.filter((d: any) => !localDraftIds.includes(d.id));
-        localStorage.setItem('product_drafts', JSON.stringify(updatedDrafts));
+        localDraftIds.forEach(id => {
+          localProductService.deleteDraft(String(id));
+        });
       }
 
       showToast('تم نشر المنتجات بنجاح', 'success');
@@ -436,114 +544,6 @@ const AdminDashboard: React.FC = () => {
       loadData(currentPage, true);
     } catch (error) {
       showToast('فشل تحديث رسوم الشحن', 'error');
-    }
-  };
-
-  const loadData = async (page = currentPage, silent = false) => {
-    if (!silent) setLoading(true);
-    const limit = getLimit();
-    
-    // Get token from store or localStorage
-    let token = useAuthStore.getState().token;
-    if (!token) {
-      token = localStorage.getItem('auth_token');
-    }
-    
-    console.log('[AdminDashboard] Loading data...', { 
-      activeTab, 
-      page, 
-      limit, 
-      hasToken: !!token,
-      tokenLength: token?.length || 0
-    });
-
-    if (!token) {
-      console.warn('[AdminDashboard] No auth token found!');
-      // Give it one more try after a short delay, maybe it's a race condition
-      await new Promise(resolve => setTimeout(resolve, 500));
-      token = useAuthStore.getState().token || localStorage.getItem('auth_token');
-      
-      if (!token) {
-        showToast('يرجى تسجيل الدخول للوصول إلى لوحة التحكم', 'error');
-        setLoading(false);
-        return;
-      }
-    }
-
-    try {
-      if (activeTab === 'stats') {
-        const data = await fetchAdminStats(token);
-        console.log('[AdminDashboard] Stats loaded successfully');
-        setStats(data);
-      } else if (activeTab === 'users') {
-        const data = await fetchAdminUsers(page, limit, searchTerm, token);
-        setUsers(data.users || []);
-        setTotalPages(data.totalPages || 1);
-        setTotalItems(data.total || 0);
-      } else if (activeTab === 'products') {
-        const data = await fetchAdminProducts(page, limit, searchTerm, token);
-        let allProducts = data.products || [];
-        
-        // Add local drafts if we are on the first page
-        if (page === 1) {
-          const drafts = localProductService.getAllDrafts();
-          const filteredDrafts = searchTerm 
-            ? drafts.filter(d => 
-                d.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                (d.chineseName && d.chineseName.toLowerCase().includes(searchTerm.toLowerCase()))
-              )
-            : drafts;
-          
-          // Filter out any server products that might have the same ID as a draft (shouldn't happen with local- prefix)
-          const draftIds = new Set(filteredDrafts.map(d => d.id));
-          const uniqueServerProducts = allProducts.filter((p: any) => !draftIds.has(p.id));
-          
-          allProducts = [...filteredDrafts, ...uniqueServerProducts];
-        }
-
-        setProducts(allProducts);
-        const localDraftsCount = localProductService.getAllDrafts().length;
-        const total = (data.total || 0) + localDraftsCount;
-        setTotalItems(total);
-        setTotalPages(Math.ceil(total / limit));
-      } else if (activeTab === 'orders') {
-        const data = await fetchAdminOrders({ 
-          page, 
-          limit: limit,
-          search: searchTerm 
-        }, token);
-        setOrders(data.orders || []);
-        setTotalPages(data.totalPages || 1);
-        setTotalItems(data.total || 0);
-      } else if (activeTab === 'coupons') {
-        const data = await fetchAdminCoupons(token);
-        setCoupons(data || []);
-        setTotalPages(1);
-        setTotalItems(data.length || 0);
-      } else if (activeTab === 'settings') {
-        const data = await fetchSettings();
-        if (data) {
-          setStoreSettings({
-            ...storeSettings,
-            ...data,
-            airShippingRate: data.airShippingRate || 15400,
-            seaShippingRate: data.seaShippingRate || 182000,
-            airShippingMinFloor: data.airShippingMinFloor || 5000,
-            socialLinks: typeof data.socialLinks === 'string' ? JSON.parse(data.socialLinks) : (data.socialLinks || storeSettings.socialLinks)
-          });
-        }
-      }
-    } catch (error: any) {
-      console.error('[AdminDashboard] Error loading admin data:', error);
-      const errorMsg = error.message || 'فشل تحميل البيانات';
-      showToast(`${errorMsg} (تحقق من الاتصال بالسيرفر)`, 'error');
-      
-      // If it's an auth error, maybe redirect?
-      if (error.message?.includes('401') || error.message?.includes('Authentication')) {
-        console.warn('[AdminDashboard] Auth error detected, checking session...');
-      }
-    } finally {
-      setLoading(false);
     }
   };
 

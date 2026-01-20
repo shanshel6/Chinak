@@ -23,9 +23,9 @@ const ProductDescription: React.FC<ProductDescriptionProps> = ({
         .map(([k, v]) => `${k}${v}`)
         .join('')
         .toLowerCase()
-        .replace(/[\s\:\-\.\,]+/g, '');
+        .replace(/[\s:\-.,]+/g, '');
     }
-    return str?.toLowerCase().replace(/[\s\:\-\.\,]+/g, '') || '';
+    return str?.toLowerCase().replace(/[\s:\-.,]+/g, '') || '';
   };
   
   const normalizedSpecs = hasSpecs ? normalize(specs!) : '';

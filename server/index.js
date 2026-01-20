@@ -2339,6 +2339,21 @@ app.get('/api/admin/reports/abandoned-carts', authenticateToken, isAdmin, async 
   }
 });
 
+app.post('/api/shipping/calculate', authenticateToken, async (req, res) => {
+  try {
+    const { items, method = 'air' } = req.body;
+    if (!items || !Array.isArray(items)) {
+      return res.status(400).json({ error: 'Items are required' });
+    }
+    
+    const shippingInfo = await calculateOrderShipping(items, method);
+    res.json(shippingInfo);
+  } catch (error) {
+    console.error('Shipping calculation error:', error);
+    res.status(500).json({ error: 'Failed to calculate shipping' });
+  }
+});
+
 // Products routes
 app.get('/api/products', async (req, res) => {
   try {
@@ -2569,8 +2584,9 @@ app.post('/api/products/bulk', authenticateToken, isAdmin, hasPermission('manage
         return num;
       };
       
-      const rawPrice = parsePrice(p.price) || parsePrice(p.general_price) || parsePrice(p.basePriceRMB) || 0;
-      const price = rawPrice * 1.1; // 10% margin
+      const domesticShippingFee = parsePrice(p.domestic_shipping_fee || p.domesticShippingFee) || 0;
+      const rawPrice = parsePrice(p.general_price) || parsePrice(p.price) || parsePrice(p.basePriceRMB) || 0;
+      const price = (rawPrice + domesticShippingFee) * 1.1; // (Original + Domestic) + 10% profit markup
 
       // Process options
       let rawOptions = [];
@@ -2657,10 +2673,21 @@ app.post('/api/products/bulk', authenticateToken, isAdmin, hasPermission('manage
         reviewsCountShown: p.reviewsCountShown || null,
         videoUrl: p.videoUrl || null,
         options: processedOptions,
+        variants: (Array.isArray(p.variants_data) ? p.variants_data : []).map(v => {
+          const variantRawPrice = parsePrice(v.price) || rawPrice;
+          return {
+            combination: typeof v.options === 'object' ? v.options : {},
+            price: (variantRawPrice + domesticShippingFee) * 1.1, // (Variant Price + Domestic) + 10% profit markup
+            isPriceCombined: true,
+            image: v.image || null
+          };
+        }),
         weight: parseNum(p.weight || p['重量'] || p.grossWeight, true),
         length: parseNum(p.length || p['长'] || p['长度']),
         width: parseNum(p.width || p['宽'] || p['宽度']),
         height: parseNum(p.height || p['高'] || p['高度']),
+        domesticShippingFee,
+        isPriceCombined: true,
         images: imageUrls.map((url, index) => ({
           url: url,
           order: index,
@@ -2686,7 +2713,7 @@ app.post('/api/products', authenticateToken, isAdmin, hasPermission('manage_prod
       name, chineseName, description, price, basePriceRMB, image, 
       isFeatured, isActive, status, purchaseUrl, videoUrl, 
       specs, storeEvaluation, reviewsCountShown, images, detailImages,
-      weight, length, width, height, options, variants, aiMetadata
+      weight, length, width, height, domesticShippingFee, options, variants, aiMetadata
     } = req.body;
     
     // Process main images (gallery)
@@ -2762,6 +2789,7 @@ app.post('/api/products', authenticateToken, isAdmin, hasPermission('manage_prod
         length: safeParseFloat(length),
         width: safeParseFloat(width),
         height: safeParseFloat(height),
+        domesticShippingFee: safeParseFloat(domesticShippingFee),
         images: [
           ...imageUrls.map((url, i) => ({ url, order: i, type: 'GALLERY' })),
           ...detailImageUrls.map((url, i) => ({ url, order: i, type: 'DETAIL' }))
@@ -2773,12 +2801,15 @@ app.post('/api/products', authenticateToken, isAdmin, hasPermission('manage_prod
       return res.status(400).json({ error: 'اسم المنتج مطلوب' });
     }
 
+    const domesticFee = safeParseFloat(domesticShippingFee) || 0;
+    const isPriceCombined = req.body.isPriceCombined === true;
+    
     const product = await prisma.product.create({
       data: {
         name,
         chineseName,
         description,
-        price: (safeParseFloat(price) || 0) * 1.1, // Added 10% margin
+        price: isPriceCombined ? (safeParseFloat(price) || 0) : ((safeParseFloat(price) || 0) + domesticFee) * 1.1,
         basePriceRMB: safeParseFloat(basePriceRMB),
         image: mainImage,
         purchaseUrl,
@@ -2793,6 +2824,7 @@ app.post('/api/products', authenticateToken, isAdmin, hasPermission('manage_prod
         length: safeParseFloat(length),
         width: safeParseFloat(width),
         height: safeParseFloat(height),
+        domesticShippingFee: domesticFee,
         aiMetadata: aiMetadata && typeof aiMetadata === 'object' ? JSON.stringify(aiMetadata) : (aiMetadata || null),
         images: {
           create: [
@@ -2818,7 +2850,7 @@ app.post('/api/products', authenticateToken, isAdmin, hasPermission('manage_prod
           create: (Array.isArray(variants) ? variants : []).map(v => ({
             combination: typeof v.options === 'object' ? JSON.stringify(v.options) : 
                         (typeof v.combination === 'object' ? JSON.stringify(v.combination) : (v.combination || '{}')),
-            price: (safeParseFloat(v.price) || 0) * 1.1, // Added 10% margin to variants too
+            price: (v.isPriceCombined || isPriceCombined) ? (safeParseFloat(v.price) || 0) : ((safeParseFloat(v.price) || 0) + domesticFee) * 1.1,
             image: v.image || null
           }))
         }
@@ -2921,9 +2953,10 @@ app.post('/api/admin/products/bulk-import', authenticateToken, isAdmin, hasPermi
             return parseFloat(cleanVal) || 0;
           };
           
-          const rawPrice = parsePrice(p.price) || parsePrice(p.general_price) || parsePrice(p.basePriceRMB) || 0;
-          const price = rawPrice * 1.1; // Added 10% margin
-          console.log(`[Bulk Import] Processing product ${productIndex + 1}/${uniqueProductsToImport.length}: "${p.name?.substring(0, 30)}...", price=${price} (original=${rawPrice})`);
+          const domesticFee = parsePrice(p.domestic_shipping_fee) || 0;
+          const rawPrice = parsePrice(p.general_price) || parsePrice(p.price) || parsePrice(p.basePriceRMB) || 0;
+          const price = (rawPrice + domesticFee) * 1.1; // (Original + Domestic) + 10% profit markup
+          console.log(`[Bulk Import] Processing product ${productIndex + 1}/${uniqueProductsToImport.length}: "${p.name?.substring(0, 30)}...", price=${price} (original=${rawPrice}, domestic=${domesticFee})`);
           
           // Use original names/descriptions without translation and clean 'empty'
           const name = cleanStr(p.name) || cleanStr(p.product_name) || `Draft ${Date.now()}`;
@@ -3067,6 +3100,7 @@ app.post('/api/admin/products/bulk-import', authenticateToken, isAdmin, hasPermi
             chineseName: chineseName,
             description: description,
             price: price,
+            isPriceCombined: true,
             basePriceRMB: basePriceRMB,
             image: mainImage,
             purchaseUrl: p.purchaseUrl ? p.purchaseUrl.replace(/[`"']/g, '').trim() : (p.url ? p.url.replace(/[`"']/g, '').trim() : null),
@@ -3080,14 +3114,19 @@ app.post('/api/admin/products/bulk-import', authenticateToken, isAdmin, hasPermi
             length: length,
             width: width,
             height: height,
+            domesticShippingFee: domesticFee,
             images: imageUrls.map((url, i) => ({ url, order: i, type: 'GALLERY' })),
             detailImages: detailImageUrls.map((url, i) => ({ url, order: i, type: 'DETAIL' })),
             options: processedOptions,
-            variants: (Array.isArray(p.variants_data) ? p.variants_data : []).map(v => ({
-              combination: typeof v.options === 'object' ? v.options : {},
-              price: (extractNumber(v.price) || 0) * 1.1,
-              image: v.image || null
-            }))
+            variants: (Array.isArray(p.variants_data) ? p.variants_data : []).map(v => {
+              const variantRawPrice = parsePrice(v.price) || rawPrice;
+              return {
+                combination: typeof v.options === 'object' ? v.options : {},
+                price: (variantRawPrice + domesticFee) * 1.1, // (Variant Price + Domestic) + 10% profit markup
+                isPriceCombined: true,
+                image: v.image || null
+              };
+            })
           };
         } catch (err) {
           console.error(`[Bulk Import] Error processing product at index ${productIndex}:`, err);
@@ -3440,9 +3479,16 @@ app.post('/api/admin/products/bulk-create', authenticateToken, isAdmin, hasPermi
         const processedImages = [];
         for (let j = 0; j < product.images.length; j++) {
           let img = product.images[j];
-          if (img && (img.startsWith('data:') || img.length > 1000)) {
+          let url = typeof img === 'string' ? img : img?.url;
+          
+          if (url && (url.startsWith('data:') || url.length > 1000)) {
             try {
-              img = await convertToWebP(img);
+              url = await convertToWebP(url);
+              if (typeof img === 'string') {
+                img = url;
+              } else {
+                img.url = url;
+              }
             } catch (err) {
               console.error(`Failed to convert secondary image ${j} for ${product.name}:`, err);
             }
@@ -3461,15 +3507,29 @@ app.post('/api/admin/products/bulk-create', authenticateToken, isAdmin, hasPermi
     // Added explicit timeout for large bulk operations (60 seconds)
     await prisma.$transaction(async (tx) => {
       for (const p of processedProducts) {
-        const { options = [], variants = [], images = [], ...rawProductData } = p;
+        // Exclude local-only fields and relational fields
+        const { 
+          id, 
+          productId,
+          isLocal, 
+          createdAt, 
+          updatedAt, 
+          options = [], 
+          variants = [], 
+          images = [], 
+          ...rawProductData 
+        } = p;
+        
+        const domesticFee = safeParseFloat(rawProductData.domesticShippingFee) || 0;
+        const isPriceCombined = rawProductData.isPriceCombined === true;
         
         // Pick only valid Prisma fields to avoid "Unknown arg" errors
         const productData = {
           name: rawProductData.name || 'Untitled Product',
           chineseName: rawProductData.chineseName || null,
           description: rawProductData.description || '',
-          price: parseFloat(rawProductData.price || 0) * 1.1, // Added 10% margin
-          basePriceRMB: rawProductData.basePriceRMB ? parseFloat(rawProductData.basePriceRMB) : null,
+          price: isPriceCombined ? (safeParseFloat(rawProductData.price) || 0) : ((safeParseFloat(rawProductData.price) || 0) + domesticFee) * 1.1,
+          basePriceRMB: safeParseFloat(rawProductData.basePriceRMB),
           image: rawProductData.image || (images && images[0]) || '',
           purchaseUrl: rawProductData.purchaseUrl || null,
           videoUrl: rawProductData.videoUrl || null,
@@ -3479,10 +3539,11 @@ app.post('/api/admin/products/bulk-create', authenticateToken, isAdmin, hasPermi
           specs: rawProductData.specs || '',
           storeEvaluation: rawProductData.storeEvaluation || null,
           reviewsCountShown: rawProductData.reviewsCountShown || null,
-          weight: rawProductData.weight ? parseFloat(rawProductData.weight) : null,
-          length: rawProductData.length ? parseFloat(rawProductData.length) : null,
-          width: rawProductData.width ? parseFloat(rawProductData.width) : null,
-          height: rawProductData.height ? parseFloat(rawProductData.height) : null
+          weight: safeParseFloat(rawProductData.weight),
+          length: safeParseFloat(rawProductData.length),
+          width: safeParseFloat(rawProductData.width),
+          height: safeParseFloat(rawProductData.height),
+          domesticShippingFee: domesticFee
         };
         
         // Create the product
@@ -3492,37 +3553,52 @@ app.post('/api/admin/products/bulk-create', authenticateToken, isAdmin, hasPermi
 
         // Create secondary images if they exist
         if (images && Array.isArray(images) && images.length > 0) {
-          await tx.productImage.createMany({
-            data: images.map((url, index) => ({
-              productId: product.id,
-              url: url,
-              order: index,
-              type: 'GALLERY'
-            }))
-          });
+          const processedImages = images.map((img, index) => {
+            const url = typeof img === 'string' ? img : img.url;
+            const type = typeof img === 'object' ? (img.type || 'GALLERY') : 'GALLERY';
+            const order = typeof img === 'object' ? (img.order !== undefined ? img.order : index) : index;
+            return { url, type, order };
+          }).filter(img => img.url && typeof img.url === 'string' && img.url.length > 0);
+
+          if (processedImages.length > 0) {
+            await tx.productImage.createMany({
+              data: processedImages.map(img => ({
+                productId: product.id,
+                url: img.url,
+                order: img.order,
+                type: img.type
+              }))
+            });
+          }
         }
 
         // Create options
         if (options && Array.isArray(options) && options.length > 0) {
-          await tx.productOption.createMany({
-            data: options.map(opt => ({
-              productId: product.id,
-              name: opt.name,
-              values: typeof opt.values === 'string' ? opt.values : JSON.stringify(opt.values)
-            }))
-          });
+          const validOptions = options.filter(opt => opt && opt.name);
+          if (validOptions.length > 0) {
+            await tx.productOption.createMany({
+              data: validOptions.map(opt => ({
+                productId: product.id,
+                name: opt.name,
+                values: typeof opt.values === 'string' ? opt.values : JSON.stringify(opt.values || [])
+              }))
+            });
+          }
         }
 
         // Create variants
         if (variants && Array.isArray(variants) && variants.length > 0) {
-          await tx.productVariant.createMany({
-            data: variants.map(v => ({
-              productId: product.id,
-              combination: typeof v.combination === 'string' ? v.combination : JSON.stringify(v.combination),
-              price: v.price ? (parseFloat(v.price) * 1.1) : (product.price || 0), // Added 10% margin to variant price if provided, else use product price (which already has margin)
-              image: v.image || product.image || ''
-            }))
-          });
+          const validVariants = variants.filter(v => v && v.combination);
+          if (validVariants.length > 0) {
+            await tx.productVariant.createMany({
+              data: validVariants.map(v => ({
+                productId: product.id,
+                combination: typeof v.combination === 'string' ? v.combination : JSON.stringify(v.combination),
+                price: v.price ? ( (v.isPriceCombined || isPriceCombined) ? (safeParseFloat(v.price) || 0) : ((safeParseFloat(v.price) || 0) + domesticFee) * 1.1 ) : product.price,
+                image: v.image || product.image || ''
+              }))
+            });
+          }
         }
 
         createdResults.push(product);
@@ -4039,7 +4115,7 @@ app.put('/api/products/:id', authenticateToken, isAdmin, hasPermission('manage_p
       name, chineseName, price, basePriceRMB, description, image, 
       isFeatured, isActive, status, purchaseUrl, videoUrl, 
       specs, images, detailImages, storeEvaluation, reviewsCountShown,
-      weight, length, width, height
+      weight, length, width, height, domesticShippingFee
     } = req.body;
     
     // Handle main image conversion if needed
@@ -4091,7 +4167,8 @@ app.put('/api/products/:id', authenticateToken, isAdmin, hasPermission('manage_p
       weight: weight !== undefined ? (weight === '' ? null : parseFloat(weight)) : undefined,
       length: length !== undefined ? (length === '' ? null : parseFloat(length)) : undefined,
       width: width !== undefined ? (width === '' ? null : parseFloat(width)) : undefined,
-      height: height !== undefined ? (height === '' ? null : parseFloat(height)) : undefined
+      height: height !== undefined ? (height === '' ? null : parseFloat(height)) : undefined,
+      domesticShippingFee: domesticShippingFee !== undefined ? (domesticShippingFee === '' ? null : parseFloat(domesticShippingFee)) : undefined
     };
 
     // Remove undefined fields
@@ -4443,9 +4520,6 @@ app.post('/api/cart', authenticateToken, async (req, res) => {
     }
 
     const variant = vId ? product.variants.find(v => v.id === vId) : null;
-    const basePrice = variant ? variant.price : product.price;
-    const shippingFee = await calculateProductShipping(product);
-    const inclusivePrice = basePrice + shippingFee;
 
     // Use a more robust approach since Prisma upsert doesn't like nulls in compound unique keys
     const existingItem = await prisma.cartItem.findFirst({
@@ -4457,12 +4531,15 @@ app.post('/api/cart', authenticateToken, async (req, res) => {
       }
     });
 
+    const currentPrice = variant ? variant.price : product.price;
+
     let cartItem;
     if (existingItem) {
       cartItem = await prisma.cartItem.update({
         where: { id: existingItem.id },
         data: { 
-          quantity: existingItem.quantity + qty
+          quantity: existingItem.quantity + qty,
+          price: currentPrice
         },
         include: { 
           product: true,
@@ -4476,24 +4553,14 @@ app.post('/api/cart', authenticateToken, async (req, res) => {
           productId: pId,
           variantId: vId,
           selectedOptions: sOptions,
-          quantity: qty
+          quantity: qty,
+          price: currentPrice
         },
         include: { 
           product: true,
           variant: true
         }
       });
-    }
-    
-    // Update the price separately if the client supports it
-    try {
-      await prisma.cartItem.update({
-        where: { id: cartItem.id },
-        data: { price: inclusivePrice }
-      });
-      cartItem.price = inclusivePrice;
-    } catch (e) {
-      console.warn('Could not update price in DB, might be schema sync issue:', e.message);
     }
     
     res.json(cartItem);
@@ -4574,38 +4641,65 @@ app.delete('/api/cart/:id', authenticateToken, async (req, res) => {
 app.post('/api/orders', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.id;
-    const { addressId, shippingMethod = 'air', paymentMethod = 'zain_cash', couponCode } = req.body;
+    const { addressId, shippingMethod = 'air', paymentMethod = 'zain_cash', couponCode, items: bodyItems } = req.body;
 
-    // 1. Get cart items with variants
-    const cartItems = await prisma.cartItem.findMany({
-      where: { userId },
-      include: { 
-        product: true,
-        variant: true 
-      }
-    });
+    // 1. Get cart items with variants (prefer bodyItems if provided, else fallback to DB)
+    let cartItems;
+    if (bodyItems && Array.isArray(bodyItems) && bodyItems.length > 0) {
+      // If items are passed in body, we need to ensure they have product/variant data
+      // For security and data integrity, we should ideally fetch the latest prices from DB
+      cartItems = await Promise.all(bodyItems.map(async (item) => {
+        const product = await prisma.product.findUnique({ where: { id: parseInt(item.productId) } });
+        let variant = null;
+        if (item.variantId) {
+          variant = await prisma.productVariant.findUnique({ where: { id: parseInt(item.variantId) } });
+        }
+        return {
+          ...item,
+          productId: parseInt(item.productId),
+          variantId: item.variantId ? parseInt(item.variantId) : null,
+          product,
+          variant
+        };
+      }));
+    } else {
+      cartItems = await prisma.cartItem.findMany({
+        where: { userId },
+        include: { 
+          product: true,
+          variant: true 
+        }
+      });
+    }
 
-    if (cartItems.length === 0) {
+    if (!cartItems || cartItems.length === 0) {
       return res.status(400).json({ error: 'Cart is empty' });
     }
 
-    // 2. Prepare items with inclusive prices
-    const processedItems = await Promise.all(cartItems.map(async (item) => {
-      let price = item.price;
-      if (!price) {
-        const basePrice = item.variant?.price || item.product.price;
-        const shippingFee = await calculateProductShipping(item.product);
-        price = basePrice + shippingFee;
-      }
+    // 2. Prepare items with correct prices
+    const processedItems = cartItems.map(item => {
+      const price = item.variant?.price || item.product.price || 0;
       return { ...item, price };
-    }));
+    });
 
-    // 3. Calculate subtotal using inclusive prices
+    // 3. Calculate international shipping fee for the entire order
+    const shippingInfo = await calculateOrderShipping(processedItems, shippingMethod);
+    
+    // Check minimum order thresholds
+    if (!shippingInfo.isThresholdMet) {
+      return res.status(400).json({ 
+        error: `الحد الأدنى للطلب للشحن ${shippingMethod === 'air' ? 'الجوي' : 'البحري'} هو ${shippingInfo.threshold.toLocaleString()} د.ع. مجموع طلبك الحالي هو ${shippingInfo.subtotal.toLocaleString()} د.ع.`
+      });
+    }
+
+    const internationalShippingFee = shippingInfo.fee;
+
+    // 4. Calculate subtotal using item prices
     const subtotal = processedItems.reduce((sum, item) => {
       return sum + (item.price * item.quantity);
     }, 0);
 
-    // 4. Handle Coupon
+    // 5. Handle Coupon
     let discountAmount = 0;
     let couponId = null;
 
@@ -4644,8 +4738,8 @@ app.post('/api/orders', authenticateToken, async (req, res) => {
       }
     }
 
-    // 5. Calculate Final Total (Shipping is already in subtotal)
-    const total = subtotal - discountAmount;
+    // 6. Calculate Final Total
+    const total = subtotal + internationalShippingFee - discountAmount;
 
     // 6. Create order with items in a transaction
     const order = await prisma.$transaction(async (tx) => {
@@ -4660,7 +4754,7 @@ app.post('/api/orders', authenticateToken, async (req, res) => {
           status: 'PENDING',
           shippingMethod,
           paymentMethod,
-          internationalShippingFee: 0, // Fee is now included in item prices
+          internationalShippingFee,
           items: {
             create: processedItems.map(item => ({
               productId: item.productId,
@@ -5069,7 +5163,9 @@ app.put('/api/admin/settings', authenticateToken, isAdmin, hasPermission('manage
       footerText,
       airShippingRate,
       seaShippingRate,
-      airShippingMinFloor
+      airShippingMinFloor,
+      airShippingThreshold,
+      seaShippingThreshold
     } = req.body;
     
     const settings = await prisma.storeSettings.upsert({
@@ -5083,7 +5179,9 @@ app.put('/api/admin/settings', authenticateToken, isAdmin, hasPermission('manage
         footerText,
         airShippingRate: parseFloat(airShippingRate),
         seaShippingRate: parseFloat(seaShippingRate),
-        airShippingMinFloor: parseFloat(airShippingMinFloor)
+        airShippingMinFloor: parseFloat(airShippingMinFloor),
+        airShippingThreshold: parseFloat(airShippingThreshold),
+        seaShippingThreshold: parseFloat(seaShippingThreshold)
       },
       create: { 
         id: 1, 
@@ -5095,7 +5193,9 @@ app.put('/api/admin/settings', authenticateToken, isAdmin, hasPermission('manage
         footerText,
         airShippingRate: parseFloat(airShippingRate) || 15400,
         seaShippingRate: parseFloat(seaShippingRate) || 182000,
-        airShippingMinFloor: parseFloat(airShippingMinFloor) || 5000
+        airShippingMinFloor: parseFloat(airShippingMinFloor) || 5000,
+        airShippingThreshold: parseFloat(airShippingThreshold) || 30000,
+        seaShippingThreshold: parseFloat(seaShippingThreshold) || 150000
       }
     });
     res.json(settings);

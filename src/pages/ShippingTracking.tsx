@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { 
   ChevronLeft, 
@@ -78,50 +78,7 @@ const ShippingTracking: React.FC = () => {
     }
   };
 
-  useEffect(() => {
-    if (orderId) {
-      loadOrder(orderId);
-      
-      // Real-time tracking updates
-      connectSocket();
-      
-      const handleOrderUpdate = (data: any) => {
-        console.log('Order status update received:', data);
-        if (String(data.id || data.orderId) === String(orderId)) {
-          loadOrder(orderId);
-          showToast(t('tracking.status_updated_live'), 'info');
-        }
-      };
-
-      // Listen for both the specific and general update events
-      socket.on(`order_status_updated_${orderId}`, handleOrderUpdate);
-      socket.on('order_status_update', handleOrderUpdate);
-
-      return () => {
-        socket.off(`order_status_updated_${orderId}`, handleOrderUpdate);
-        socket.off('order_status_update', handleOrderUpdate);
-      };
-    }
-  }, [orderId]);
-
-  const loadOrder = async (id: number | string) => {
-    try {
-      const data = await fetchOrderById(id);
-      // Enhance order with mock tracking events for realism
-      const enhancedOrder = {
-        ...data,
-        trackingEvents: generateTrackingEvents(data)
-      };
-      setOrder(enhancedOrder);
-    } catch (err) {
-      console.error('Failed to load order:', err);
-      showToast(t('tracking.order_load_error'), 'error');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const generateTrackingEvents = (order: any) => {
+  const generateTrackingEvents = useCallback((order: any) => {
     const events = [];
     const date = new Date(order.createdAt);
     const lang = 'ar-IQ';
@@ -142,14 +99,14 @@ const ShippingTracking: React.FC = () => {
     });
     
     // 2. Awaiting Payment
-    if (currentStatusIndex >= 1 || order.internationalShippingFee > 0) {
+    if (currentStatusIndex >= 1) {
       const isPaid = currentStatusIndex >= 2;
       const payDate = new Date(date.getTime() + 4 * 60 * 60 * 1000);
       
       events.push({
         status: 'AWAITING_PAYMENT',
-        title: isPaid ? "تم دفع تكاليف الشحن" : t('status.awaiting_payment'),
-        description: isPaid ? "تم استلام مبلغ الشحن الدولي بنجاح." : t('tracking.status_desc_awaiting_payment'),
+        title: isPaid ? t('status.paid') : t('status.awaiting_payment'),
+        description: isPaid ? t('tracking.status_desc_paid') : t('tracking.status_desc_awaiting_payment'),
         time: payDate.toLocaleTimeString(lang, { hour: '2-digit', minute: '2-digit' }),
         date: payDate.toLocaleDateString(lang, { day: 'numeric', month: 'long' }),
         completed: isPaid,
@@ -228,7 +185,50 @@ const ShippingTracking: React.FC = () => {
     }
 
     return events.reverse(); // Newest first
-  };
+  }, [t]);
+
+  const loadOrder = useCallback(async (id: number | string) => {
+    try {
+      const data = await fetchOrderById(id);
+      // Enhance order with mock tracking events for realism
+      const enhancedOrder = {
+        ...data,
+        trackingEvents: generateTrackingEvents(data)
+      };
+      setOrder(enhancedOrder);
+    } catch (err) {
+      console.error('Failed to load order:', err);
+      showToast(t('tracking.order_load_error'), 'error');
+    } finally {
+      setLoading(false);
+    }
+  }, [showToast, t, generateTrackingEvents]);
+
+  useEffect(() => {
+    if (orderId) {
+      loadOrder(orderId);
+      
+      // Real-time tracking updates
+      connectSocket();
+      
+      const handleOrderUpdate = (data: any) => {
+        console.log('Order status update received:', data);
+        if (String(data.id || data.orderId) === String(orderId)) {
+          loadOrder(orderId);
+          showToast(t('tracking.status_updated_live'), 'info');
+        }
+      };
+
+      // Listen for both the specific and general update events
+      socket.on(`order_status_updated_${orderId}`, handleOrderUpdate);
+      socket.on('order_status_update', handleOrderUpdate);
+
+      return () => {
+        socket.off(`order_status_updated_${orderId}`, handleOrderUpdate);
+        socket.off('order_status_update', handleOrderUpdate);
+      };
+    }
+  }, [orderId, loadOrder, showToast, t]);
 
   const handleCancelOrder = async () => {
     if (!order || !window.confirm(t('dashboard.orders.cancel_confirm'))) return;
@@ -519,16 +519,9 @@ const ShippingTracking: React.FC = () => {
                 <span>-{order.discountAmount.toLocaleString()} {t('common.iqd')}</span>
               </div>
             )}
-            {order.internationalShippingFee > 0 && (
-              <div className="flex justify-between items-center text-sm text-purple-600 dark:text-purple-400 font-bold">
-                <span>{t('tracking.international_shipping')}</span>
-                <span>+{order.internationalShippingFee.toLocaleString()} {t('common.iqd')}</span>
-              </div>
-            )}
-            <div className="h-px bg-slate-100 dark:bg-slate-700 my-1"></div>
             <div className="flex justify-between items-center">
               <span className="text-base font-bold text-slate-900 dark:text-white">{t('tracking.total')}</span>
-              <span className="text-lg font-bold text-primary">{(order.total + (order.internationalShippingFee || 0)).toLocaleString()} {t('common.iqd')}</span>
+              <span className="text-lg font-bold text-primary">{order.total.toLocaleString()} {t('common.iqd')}</span>
             </div>
           </div>
 
@@ -684,7 +677,7 @@ const ShippingTracking: React.FC = () => {
                   <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-5 border border-slate-100 dark:border-slate-800 text-center">
                     <p className="text-sm text-slate-500 mb-1">المبلغ المطلوب دفعه</p>
                     <div className="text-3xl font-black text-primary font-sans tracking-tight">
-                      {(order.total + (order.internationalShippingFee || 0)).toLocaleString()} <span className="text-sm">د.ع</span>
+                      {order.total.toLocaleString()} <span className="text-sm">د.ع</span>
                     </div>
                   </div>
 

@@ -76,6 +76,7 @@ model Product {
   length            Float?
   weight            Float?
   width             Float?
+  domesticShippingFee Float?
   cartItems         CartItem[]
   orderItems        OrderItem[]
   images            ProductImage[]
@@ -177,6 +178,9 @@ model StoreSettings {
   airShippingMinFloor Float    @default(5000)
   airShippingRate     Float    @default(15400)
   seaShippingRate     Float    @default(182000)
+  airShippingThreshold Float    @default(30000)
+  seaShippingThreshold Float    @default(50000)
+  chinaDomesticShipping Float    @default(1500)
 }
 
 model AdminNotification {

@@ -52,7 +52,7 @@ const GlobalSearch: React.FC<GlobalSearchProps> = ({
           .trim();
 
     const normalizedQuery = normalize(query);
-    const cleanQuery = query.replace(/[\\\/.,()!?;:]/g, ' ');
+    const cleanQuery = query.replace(/[\\/.,()!?;:]/g, ' ');
     const normalizedCleanQuery = normalize(cleanQuery);
     const keywords = normalizedCleanQuery.split(/\s+/).filter(k => k.length > 1);
     

@@ -92,15 +92,9 @@ const Invoice = forwardRef<HTMLDivElement, InvoiceProps>(({ order, settings }, r
               <span className="font-bold">-{order.discountAmount.toLocaleString()} {settings?.currency}</span>
             </div>
           )}
-          {order.internationalShippingFee > 0 && (
-            <div className="flex justify-between text-sm text-blue-600">
-              <span className="font-bold">تكاليف شحن دولي:</span>
-              <span className="font-bold">+{order.internationalShippingFee.toLocaleString()} {settings?.currency}</span>
-            </div>
-          )}
           <div className="flex justify-between text-lg border-t border-slate-100 pt-3">
             <span className="font-black text-slate-900">الإجمالي:</span>
-            <span className="font-black text-primary">{(order.total + (order.internationalShippingFee || 0)).toLocaleString()} {settings?.currency}</span>
+            <span className="font-black text-primary">{order.total.toLocaleString()} {settings?.currency}</span>
           </div>
         </div>
       </div>

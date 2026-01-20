@@ -73,12 +73,14 @@ async function bulkImport(filePath) {
       });
 
       if (!product) {
+        const domesticFee = parseFloat(p.domestic_shipping_fee || p.domesticShippingFee) || 0;
+        const rawPrice = parseFloat(p.general_price) || parseFloat(p.price) || parseFloat(p.basePriceRMB) || 0;
         product = await prisma.product.create({
           data: {
             name: name,
             chineseName: p.chineseName,
             description: p.description,
-            price: (parseFloat(p.price) || 0) * 1.1, // Added 10% margin
+            price: (rawPrice + domesticFee) * 1.1, // (Original + Domestic) + 10% profit markup
             basePriceRMB: parseFloat(p.basePriceRMB) || 0,
             image: p.image || '',
             purchaseUrl: p.purchaseUrl,
@@ -88,7 +90,8 @@ async function bulkImport(filePath) {
             specs: p.specs,
             storeEvaluation: p.storeEvaluation,
             reviewsCountShown: p.reviewsCountShown,
-            videoUrl: p.videoUrl
+            videoUrl: p.videoUrl,
+            domesticShippingFee: domesticFee
           }
         });
         results.imported++;

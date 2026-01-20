@@ -46,7 +46,7 @@ const OrderConfirmation: React.FC = () => {
         type: 'order',
         icon: 'check_circle',
         title: 'تم استلام طلبك! 🎉',
-        description: `شكراً لتسوقك معنا. طلبك رقم #${order.id} قيد المراجعة الآن وسيتم تجهيزه للشحن قريباً. ستصلك رسالة عبر الواتساب قريباً بالتفاصيل.`,
+        description: `شكراً لتسوقك معنا. طلبك رقم #${order.id} بمبلغ ${order.total.toLocaleString()} د.ع قيد المراجعة الآن وسيتم تجهيزه للشحن قريباً. ستصلك رسالة عبر الواتساب قريباً بالتفاصيل.`,
         color: 'green',
         link: `/shipping-tracking?id=${order.id}`
       });
@@ -139,23 +139,23 @@ const OrderConfirmation: React.FC = () => {
                         </div>
                       </div>
                       <div className="flex flex-1 flex-col min-w-0">
-                        <p className="text-xs font-bold text-slate-900 dark:text-white truncate">{item.product?.name}</p>
-                        {(item.variant && item.variant.combination || item.selectedOptions) && (
+                        <p className="text-xs font-bold text-slate-900 dark:text-white truncate">{item.product?.name || item.name || 'منتج'}</p>
+                        {( (item.variant && item.variant.combination) || item.selectedOptions || item.combination) && (
                           <div className="flex flex-wrap gap-1 mt-0.5">
                             {(() => {
                               try {
                                 const combination = item.selectedOptions 
                                   ? (typeof item.selectedOptions === 'string' ? JSON.parse(item.selectedOptions) : item.selectedOptions)
-                                  : (item.variant && typeof item.variant.combination === 'string' 
-                                    ? JSON.parse(item.variant.combination) 
-                                    : item.variant?.combination);
+                                  : (item.variant && item.variant.combination
+                                    ? (typeof item.variant.combination === 'string' ? JSON.parse(item.variant.combination) : item.variant.combination)
+                                    : (typeof item.combination === 'string' ? JSON.parse(item.combination) : item.combination));
                                 
                                 if (!combination || Object.keys(combination).length === 0) {
-                                  const rawCombination = item.selectedOptions || item.variant?.combination;
+                                  const rawCombination = item.selectedOptions || item.variant?.combination || item.combination;
                                   if (!rawCombination) return null;
                                   return (
                                     <span className="text-[9px] bg-slate-200/50 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700/50">
-                                      {String(rawCombination)}
+                                      {typeof rawCombination === 'string' ? rawCombination : JSON.stringify(rawCombination)}
                                     </span>
                                   );
                                 }
@@ -166,11 +166,11 @@ const OrderConfirmation: React.FC = () => {
                                   </span>
                                 ));
                               } catch (e) {
-                                const rawCombination = item.selectedOptions || item.variant?.combination;
+                                const rawCombination = item.selectedOptions || item.variant?.combination || item.combination;
                                 if (!rawCombination) return null;
                                 return (
                                   <span className="text-[9px] bg-slate-200/50 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700/50">
-                                    {String(rawCombination)}
+                                    {typeof rawCombination === 'string' ? rawCombination : JSON.stringify(rawCombination)}
                                   </span>
                                 );
                               }
@@ -179,7 +179,7 @@ const OrderConfirmation: React.FC = () => {
                         )}
                       </div>
                       <div className="text-xs font-bold text-slate-900 dark:text-white shrink-0">
-                        {(item.price * item.quantity).toLocaleString()} د.ع
+                        {((item.price || item.variant?.price || item.product?.price || 0) * item.quantity).toLocaleString()} د.ع
                       </div>
                     </div>
                   ))}
@@ -196,16 +196,28 @@ const OrderConfirmation: React.FC = () => {
                 </p>
               </div>
               <div className="flex justify-between gap-x-6 py-3 border-b border-slate-100 dark:border-slate-700">
-                <p className="text-slate-500 dark:text-slate-400 text-sm font-normal">المبلغ الإجمالي</p>
-                <p className="text-[#0d141b] dark:text-white text-sm font-bold text-left">{typeof order?.total === 'number' ? order.total.toLocaleString() : '0'} د.ع</p>
+                <p className="text-slate-500 dark:text-slate-400 text-sm font-normal">مجموع المنتجات</p>
+                <p className="text-[#0d141b] dark:text-white text-sm font-bold text-left">
+                  {( order?.subtotal || (order?.total || 0) + (order?.discountAmount || 0) ).toLocaleString()} د.ع
+                </p>
               </div>
               <div className="flex justify-between gap-x-6 py-3 border-b border-slate-100 dark:border-slate-700">
                 <p className="text-slate-500 dark:text-slate-400 text-sm font-normal">التوصيل المحلي</p>
                 <p className="text-green-600 dark:text-green-400 text-sm font-bold">مجاني</p>
               </div>
-              <div className="flex justify-between gap-x-6 py-3 border-b border-slate-100 dark:border-slate-700">
-                <p className="text-slate-500 dark:text-slate-400 text-sm font-normal">الشحن الدولي</p>
-                <p className="text-green-600 dark:text-green-400 text-sm font-bold">مجاني</p>
+              {order?.discountAmount > 0 && (
+                <div className="flex justify-between gap-x-6 py-3 border-b border-slate-100 dark:border-slate-700">
+                  <p className="text-slate-500 dark:text-slate-400 text-sm font-normal">الخصم</p>
+                  <p className="text-green-600 dark:text-green-400 text-sm font-bold">
+                    - {order.discountAmount.toLocaleString()} د.ع
+                  </p>
+                </div>
+              )}
+              <div className="flex justify-between gap-x-6 py-3 border-b border-slate-100 dark:border-slate-700 bg-primary/5 -mx-5 px-5">
+                <p className="text-primary text-sm font-black">المبلغ الإجمالي</p>
+                <p className="text-primary text-base font-black text-left">
+                  {(order?.total || 0).toLocaleString()} د.ع
+                </p>
               </div>
               <div className="flex justify-between gap-x-6 pt-3"> 
                 <p className="text-slate-500 dark:text-slate-400 text-sm font-normal">التوصيل المتوقع</p> 

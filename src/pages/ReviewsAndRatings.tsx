@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { 
   ArrowRight, 
@@ -36,15 +36,7 @@ const ReviewsAndRatings: React.FC = () => {
   const [sortBy, setSortBy] = useState<'newest' | 'highest' | 'lowest'>('newest');
   const [hasPurchased, setHasPurchased] = useState(false);
 
-  useEffect(() => {
-    if (productId) {
-      const id = parseInt(productId);
-      loadReviews(id);
-      checkPurchaseStatus(id);
-    }
-  }, [productId]);
-
-  const loadReviews = async (id: number) => {
+  const loadReviews = useCallback(async (id: number) => {
     try {
       setLoading(true);
       const data = await fetchProductReviews(id);
@@ -55,9 +47,9 @@ const ReviewsAndRatings: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [showToast]);
 
-  const checkPurchaseStatus = async (id: number) => {
+  const checkPurchaseStatus = useCallback(async (id: number) => {
     try {
       const data = await checkProductPurchase(id);
       setHasPurchased(data.purchased);
@@ -65,7 +57,15 @@ const ReviewsAndRatings: React.FC = () => {
       console.error('Failed to check purchase status:', err);
       setHasPurchased(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    if (productId) {
+      const id = parseInt(productId);
+      loadReviews(id);
+      checkPurchaseStatus(id);
+    }
+  }, [productId, loadReviews, checkPurchaseStatus]);
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;

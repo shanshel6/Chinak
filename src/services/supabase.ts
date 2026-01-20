@@ -8,7 +8,7 @@ const customStorage = {
   getItem: (key: string) => {
     try {
       return localStorage.getItem(key);
-    } catch (e) {
+    } catch (_e) {
       return null;
     }
   },
@@ -31,7 +31,7 @@ const customStorage = {
         // 2. Try again
         try {
           localStorage.setItem(key, value);
-        } catch (retryError) {
+        } catch (_retryError) {
           // If still fails, clear everything EXCEPT the key we are trying to set
           console.error('Critical storage failure. Clearing almost everything.');
           Object.keys(localStorage).forEach(k => {
@@ -41,7 +41,7 @@ const customStorage = {
           });
           try {
             localStorage.setItem(key, value);
-          } catch (lastError) {
+          } catch (_lastError) {
             console.error('Failed to save essential auth token.');
           }
         }
@@ -51,7 +51,9 @@ const customStorage = {
   removeItem: (key: string) => {
     try {
       localStorage.removeItem(key);
-    } catch (e) {}
+    } catch (_e) {
+      // ignore
+    }
   }
 };
 
