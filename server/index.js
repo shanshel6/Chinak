@@ -95,9 +95,20 @@ const calculateBulkImportPrice = (rawPrice, domesticFee, weight, explicitMethod)
   }
 
   if (method === 'air') {
-    // Air: Remove 10% profit, add 90% markup (Shipping fee will be 0 in cart)
-    const price = (rawPrice + domesticFee) * 1.9;
-    return Math.ceil(price / 250) * 250;
+    // Air Pricing logic:
+    // If weight is explicitly provided: (Base Price + 15% profit) + ((weight + 0.1) * 15400) + Domestic Shipping
+    // If weight is NOT provided: (Base Price * 1.9) + Domestic Shipping
+    
+    const weightVal = extractNumber(weight);
+    if (weightVal !== null && weightVal !== undefined && weightVal > 0) {
+      const shippingCost = (weightVal + 0.1) * 15400;
+      const price = ((rawPrice * 1.15) + shippingCost + domesticFee);
+      return Math.ceil(price / 250) * 250;
+    } else {
+      // Default to 90% markup if weight is missing
+      const price = (rawPrice * 1.9) + domesticFee;
+      return Math.ceil(price / 250) * 250;
+    }
   } else {
     // Sea: Add 15% profit markup as per request (Shipping fee will be calculated in cart and also marked up by 15%)
     const price = (rawPrice + domesticFee) * 1.15;

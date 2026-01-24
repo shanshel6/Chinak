@@ -39,9 +39,19 @@ export function getAdjustedPrice(basePrice, weight, length, width, height, selec
 
   // 2. Apply markup for selected method + domestic fee
   if (method === 'AIR') {
-    // Air Price: (Base Price + 90% Base Price) + Domestic Shipping
-    const airPrice = (originalPrice * 1.9) + domesticFee;
-    return Math.ceil(airPrice / 250) * 250;
+    // Air Pricing logic:
+    // If weight is explicitly provided: (Base Price + 15% profit) + ((weight + 0.1) * 15400) + Domestic Shipping
+    // If weight is NOT provided: (Base Price * 1.9) + Domestic Shipping
+    
+    if (weightInKg !== undefined && weightInKg !== null && weightInKg > 0) {
+      const shippingCost = (weightInKg + 0.1) * 15400;
+      const airPrice = (originalPrice * 1.15) + shippingCost + domesticFee;
+      return Math.ceil(airPrice / 250) * 250;
+    } else {
+      // Default to 90% markup if weight is missing
+      const airPrice = (originalPrice * 1.9) + domesticFee;
+      return Math.ceil(airPrice / 250) * 250;
+    }
   } else {
     // Sea Price: (Base Price + 15% Base Price) + Domestic Shipping
     const seaPrice = (originalPrice * 1.15) + domesticFee;

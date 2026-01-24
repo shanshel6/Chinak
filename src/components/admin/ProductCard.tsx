@@ -54,10 +54,16 @@ const ProductCard: React.FC<ProductCardProps> = ({
   const { t } = useTranslation();
   const [isEditingPrice, setIsEditingPrice] = useState(false);
   const [isEditingName, setIsEditingName] = useState(false);
+  const [isEditingWeight, setIsEditingWeight] = useState(false);
+  const [isEditingSize, setIsEditingSize] = useState(false);
   const [tempPrice, setTempPrice] = useState(product.price.toString());
   const [prevProductPrice, setPrevProductPrice] = useState(product.price);
   const [tempProductName, setTempProductName] = useState(product.name);
   const [prevProductName, setPrevProductName] = useState(product.name);
+  const [tempWeight, setTempWeight] = useState(product.weight?.toString() || '');
+  const [tempSize, setTempSize] = useState(`${product.length || 0}x${product.width || 0}x${product.height || 0}`);
+  const [prevProductWeight, setPrevProductWeight] = useState(product.weight);
+  const [prevProductSize, setPrevProductSize] = useState(`${product.length || 0}x${product.width || 0}x${product.height || 0}`);
 
   if (product.price !== prevProductPrice) {
     setPrevProductPrice(product.price);
@@ -68,6 +74,38 @@ const ProductCard: React.FC<ProductCardProps> = ({
     setPrevProductName(product.name);
     setTempProductName(product.name);
   }
+
+  if (product.weight !== prevProductWeight) {
+    setPrevProductWeight(product.weight);
+    setTempWeight(product.weight?.toString() || '');
+  }
+
+  const currentSize = `${product.length || 0}x${product.width || 0}x${product.height || 0}`;
+  if (currentSize !== prevProductSize) {
+    setPrevProductSize(currentSize);
+    setTempSize(currentSize);
+  }
+
+  const handleWeightSubmit = () => {
+    const newWeight = parseFloat(tempWeight);
+    if (!isNaN(newWeight) && newWeight !== product.weight) {
+      onUpdateStatus(product.id, { weight: newWeight });
+    }
+    setIsEditingWeight(false);
+  };
+
+  const handleSizeSubmit = () => {
+    const parts = tempSize.toLowerCase().split('x');
+    if (parts.length === 3) {
+      const length = parseFloat(parts[0]);
+      const width = parseFloat(parts[1]);
+      const height = parseFloat(parts[2]);
+      if (!isNaN(length) && !isNaN(width) && !isNaN(height)) {
+        onUpdateStatus(product.id, { length, width, height });
+      }
+    }
+    setIsEditingSize(false);
+  };
   const [editingOptionId, setEditingOptionId] = useState<string | null>(null);
   const [editingValue, setEditingValue] = useState<{ optionId: string, index: number } | null>(null);
   const [editingName, setEditingName] = useState<string | null>(null);
@@ -390,6 +428,58 @@ const ProductCard: React.FC<ProductCardProps> = ({
           <div className="flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400 mb-2 flex-row-reverse">
             <Package size={14} />
             <span className="truncate">#{product.id}</span>
+          </div>
+
+          {/* Weight and Size Fields */}
+          <div className="flex flex-wrap items-center justify-end gap-3 mb-2 flex-row-reverse">
+            {/* Weight Field */}
+            <div className="flex items-center gap-1">
+              <span className="text-[10px] font-bold text-slate-400">الوزن:</span>
+              {isEditingWeight && product.status === 'DRAFT' ? (
+                <input
+                  type="text"
+                  value={tempWeight}
+                  onChange={(e) => setTempWeight(e.target.value)}
+                  onBlur={handleWeightSubmit}
+                  onKeyDown={(e) => e.key === 'Enter' && handleWeightSubmit()}
+                  autoFocus
+                  className="w-16 px-1 py-0.5 text-[10px] font-bold text-right bg-white dark:bg-slate-700 border border-primary rounded-md outline-none"
+                />
+              ) : (
+                <span 
+                  className={`text-[10px] font-bold text-slate-700 dark:text-slate-200 ${product.status === 'DRAFT' ? 'cursor-pointer hover:text-primary' : ''}`}
+                  onDoubleClick={() => product.status === 'DRAFT' && setIsEditingWeight(true)}
+                  title={product.status === 'DRAFT' ? 'نقر مزدوج لتعديل الوزن' : ''}
+                >
+                  {product.weight || 0} كغم
+                </span>
+              )}
+            </div>
+
+            {/* Size Field */}
+            <div className="flex items-center gap-1">
+              <span className="text-[10px] font-bold text-slate-400">المقاس:</span>
+              {isEditingSize && product.status === 'DRAFT' ? (
+                <input
+                  type="text"
+                  value={tempSize}
+                  onChange={(e) => setTempSize(e.target.value)}
+                  onBlur={handleSizeSubmit}
+                  onKeyDown={(e) => e.key === 'Enter' && handleSizeSubmit()}
+                  autoFocus
+                  placeholder="LxWxH"
+                  className="w-24 px-1 py-0.5 text-[10px] font-bold text-right bg-white dark:bg-slate-700 border border-primary rounded-md outline-none"
+                />
+              ) : (
+                <span 
+                  className={`text-[10px] font-bold text-slate-700 dark:text-slate-200 ${product.status === 'DRAFT' ? 'cursor-pointer hover:text-primary' : ''}`}
+                  onDoubleClick={() => product.status === 'DRAFT' && setIsEditingSize(true)}
+                  title={product.status === 'DRAFT' ? 'نقر مزدوج لتعديل المقاس (L x W x H)' : ''}
+                >
+                  {product.length || 0}x{product.width || 0}x{product.height || 0}
+                </span>
+              )}
+            </div>
           </div>
           <div className="flex items-center justify-between flex-row-reverse mb-2">
             <div className="flex flex-col items-end">
