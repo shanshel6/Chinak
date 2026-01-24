@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Search, ShoppingCart, SearchCode, Keyboard } from 'lucide-react';
 import LazyImage from './LazyImage';
+import { calculateInclusivePrice } from '../utils/shipping';
+import { fetchSettings } from '../services/api';
 
 interface GlobalSearchProps {
   isOpen: boolean;
@@ -25,6 +27,28 @@ const GlobalSearch: React.FC<GlobalSearchProps> = ({
     orders: any[];
     users: any[];
   }>({ products: [], orders: [], users: [] });
+  const [rates, setRates] = useState({
+    airRate: 15400,
+    seaRate: 182000,
+    minFloor: 0
+  });
+
+  useEffect(() => {
+    const loadRates = async () => {
+      try {
+        const settings = await fetchSettings();
+        if (settings) {
+          setRates({
+            airRate: settings.airShippingRate || 15400,
+            seaRate: settings.seaShippingRate || 182000,
+            minFloor: 0
+          });
+        }
+      } catch (e) {}
+    };
+    loadRates();
+  }, []);
+
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -165,7 +189,18 @@ const GlobalSearch: React.FC<GlobalSearchProps> = ({
                       />
                       <div className="flex-1">
                         <p className="font-bold">{product.name}</p>
-                        <p className="text-[10px] text-slate-500">#{product.id} • {product.price.toLocaleString()} د.ع</p>
+                        <p className="text-[10px] text-slate-500">
+                          #{product.id} • {
+                            calculateInclusivePrice(
+                              product.price,
+                              product.weight,
+                              product.length,
+                              product.width,
+                              product.height,
+                              rates
+                            ).toLocaleString()
+                          } د.ع
+                        </p>
                       </div>
                     </button>
                   ))}
@@ -191,7 +226,7 @@ const GlobalSearch: React.FC<GlobalSearchProps> = ({
                       </div>
                       <div className="flex-1">
                         <p className="font-bold">طلب #{order.id}</p>
-                        <p className="text-[10px] text-slate-500">{order.user?.name} • {order.total.toLocaleString()} د.ع</p>
+                        <p className="text-[10px] text-slate-500">{order.user?.name} • {(Math.ceil(order.total / 250) * 250).toLocaleString()} د.ع</p>
                       </div>
                       <span className="text-[9px] font-black px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-500 uppercase">
                         {order.status}

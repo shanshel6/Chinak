@@ -1,7 +1,9 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { TrendingUp } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, CartesianGrid, XAxis, YAxis, Tooltip } from 'recharts';
+import { calculateInclusivePrice } from '../../utils/shipping';
+import { fetchSettings } from '../../services/api';
 
 interface ProductPerformanceProps {
   products: any[];
@@ -9,12 +11,38 @@ interface ProductPerformanceProps {
 
 const ProductPerformance: React.FC<ProductPerformanceProps> = ({ products }) => {
   const { t } = useTranslation();
+  const [rates, setRates] = useState<any>({
+    airRate: 15400,
+    seaRate: 182000,
+    minFloor: 0
+  });
 
-  const data = useMemo(() => products.slice(0, 8).map((p, i) => ({
-    name: p.name.length > 15 ? p.name.substring(0, 15) + '...' : p.name,
-    orders: (i * 7 + 13) % 40 + 10,
-    revenue: p.price * ((i * 3 + 5) % 9 + 1)
-  })), [products]);
+  useEffect(() => {
+    const loadRates = async () => {
+      try {
+        const settings = await fetchSettings();
+        if (settings) {
+          setRates({
+            airRate: settings.airShippingRate || 15400,
+            seaRate: settings.seaShippingRate || 182000,
+            minFloor: 0
+          });
+        }
+      } catch (error) {
+        console.error('Failed to load shipping rates:', error);
+      }
+    };
+    loadRates();
+  }, []);
+
+  const data = useMemo(() => products.slice(0, 8).map((p, i) => {
+    const inclusivePrice = calculateInclusivePrice(p.price, p.weight, p.length, p.width, p.height, rates);
+    return {
+      name: p.name.length > 15 ? p.name.substring(0, 15) + '...' : p.name,
+      orders: (i * 7 + 13) % 40 + 10,
+      revenue: inclusivePrice * ((i * 3 + 5) % 9 + 1)
+    };
+  }), [products, rates]);
 
   return (
     <div className="lg:col-span-2 bg-white dark:bg-slate-800 p-6 rounded-3xl border border-slate-100 dark:border-slate-700/50 flex flex-col">

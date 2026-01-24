@@ -11,6 +11,52 @@ const __dirname = path.dirname(__filename);
 // Explicitly load .env from the server root
 dotenv.config({ path: path.join(__dirname, '../.env') });
 
+const extractNumber = (val) => {
+  if (val === null || val === undefined || val === '') return null;
+  if (typeof val === 'number') return val;
+  
+  const str = String(val);
+  // Matches the first sequence of digits and decimals
+  const match = str.match(/(\d+\.?\d*)/);
+  if (match) {
+    const parsed = parseFloat(match[1]);
+    
+    // If unit is grams, or if no unit is specified but the number is large (> 10), assume grams and convert to kg
+    const isGramUnit = (str.includes('جرام') || str.toLowerCase().includes('gram')) && !str.toLowerCase().includes('kg');
+    const isLikelyGrams = !str.toLowerCase().includes('kg') && parsed > 10;
+    
+    if (isGramUnit || isLikelyGrams) {
+      return parsed / 1000;
+    }
+    
+    return isNaN(parsed) ? null : parsed;
+  }
+  return null;
+};
+
+const calculateBulkImportPrice = (rawPrice, domesticFee, weight, explicitMethod) => {
+  const weightInKg = extractNumber(weight) || 0.5; // Default 0.5kg if missing
+  
+  let method = explicitMethod?.toLowerCase();
+  
+  if (!method) {
+    // Default logic matching frontend: < 2kg is AIR, >= 2kg is SEA
+    method = (weightInKg > 0 && weightInKg < 2) ? 'air' : 'sea';
+  }
+
+  const domestic = domesticFee || 0;
+
+  if (method === 'air') {
+    // Air Price: (Base Price * 1.9) + Domestic Shipping
+    // Shipping fee in cart will be 0
+    return Math.ceil(((rawPrice * 1.9) + domestic) / 250) * 250;
+  } else {
+    // Sea Price: (Base Price * 1.15) + Domestic Shipping
+    // Shipping fee will be calculated in cart separately
+    return Math.ceil(((rawPrice * 1.15) + domestic) / 250) * 250;
+  }
+};
+
 async function bulkImport(filePath) {
   console.log(`Starting bulk import from: ${filePath}`);
 
@@ -75,13 +121,15 @@ async function bulkImport(filePath) {
       if (!product) {
         const domesticFee = parseFloat(p.domestic_shipping_fee || p.domesticShippingFee) || 0;
         const rawPrice = parseFloat(p.general_price) || parseFloat(p.price) || parseFloat(p.basePriceRMB) || 0;
+        const price = calculateBulkImportPrice(rawPrice, domesticFee, p.weight, p.shippingMethod);
+
         product = await prisma.product.create({
           data: {
             name: name,
             chineseName: p.chineseName,
             description: p.description,
-            price: (rawPrice + domesticFee) * 1.1, // (Original + Domestic) + 10% profit markup
-            basePriceRMB: parseFloat(p.basePriceRMB) || 0,
+            price: price, // Now uses 90% markup for Air items
+            basePriceRMB: rawPrice,
             image: p.image || '',
             purchaseUrl: p.purchaseUrl,
             status: 'PUBLISHED',

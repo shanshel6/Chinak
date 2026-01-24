@@ -72,8 +72,8 @@ const Invoice = forwardRef<HTMLDivElement, InvoiceProps>(({ order, settings }, r
                 <p className="text-xs text-slate-400">{item.product?.id}</p>
               </td>
               <td className="py-4 text-center font-bold text-slate-600">{item.quantity}</td>
-              <td className="py-4 text-left font-bold text-slate-600">{item.price.toLocaleString()} {settings?.currency}</td>
-              <td className="py-4 text-left font-black text-slate-800">{(item.price * item.quantity).toLocaleString()} {settings?.currency}</td>
+              <td className="py-4 text-left font-bold text-slate-600">{(Math.ceil(item.price / 250) * 250).toLocaleString()} {settings?.currency}</td>
+              <td className="py-4 text-left font-black text-slate-800">{(Math.ceil(item.price / 250) * 250 * item.quantity).toLocaleString()} {settings?.currency}</td>
             </tr>
           ))}
         </tbody>
@@ -84,7 +84,7 @@ const Invoice = forwardRef<HTMLDivElement, InvoiceProps>(({ order, settings }, r
         <div className="w-64 space-y-3">
           <div className="flex justify-between text-sm">
             <span className="text-slate-400 font-bold">المجموع الفرعي:</span>
-            <span className="font-bold text-slate-600">{(order.total + (order.discountAmount || 0)).toLocaleString()} {settings?.currency}</span>
+            <span className="font-bold text-slate-600">{order.items.reduce((acc: number, item: any) => acc + (Math.ceil(item.price / 250) * 250 * item.quantity), 0).toLocaleString()} {settings?.currency}</span>
           </div>
           {order.discountAmount > 0 && (
             <div className="flex justify-between text-sm text-rose-500">
@@ -94,7 +94,7 @@ const Invoice = forwardRef<HTMLDivElement, InvoiceProps>(({ order, settings }, r
           )}
           <div className="flex justify-between text-lg border-t border-slate-100 pt-3">
             <span className="font-black text-slate-900">الإجمالي:</span>
-            <span className="font-black text-primary">{order.total.toLocaleString()} {settings?.currency}</span>
+            <span className="font-black text-primary">{(Math.ceil(order.total / 250) * 250).toLocaleString()} {settings?.currency}</span>
           </div>
         </div>
       </div>

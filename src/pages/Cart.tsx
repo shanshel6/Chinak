@@ -5,24 +5,32 @@ import { useWishlistStore } from '../store/useWishlistStore';
 import { useToastStore } from '../store/useToastStore';
 import LazyImage from '../components/LazyImage';
 import DiscountPopup from '../components/DiscountPopup';
+import { calculateInclusivePrice } from '../utils/shipping';
 
 import { useCheckoutStore } from '../store/useCheckoutStore';
 
-import { AlertCircle, ShoppingCart, ArrowLeft, RefreshCw, Minus, Plus, Heart, Trash2, Tag, X, ArrowRight, CheckCheck } from 'lucide-react';
+import { AlertCircle, ShoppingCart, ArrowLeft, RefreshCw, Minus, Plus, Heart, Trash2, Tag, X, ArrowRight, CheckCheck, Truck } from 'lucide-react';
 
 import { fetchCoupons } from '../services/api';
 
 const Cart: React.FC = () => {
   const navigate = useNavigate();
-  const { appliedCoupon, setAppliedCoupon } = useCheckoutStore();
-  const cartItems = useCartStore((state) => state.items);
+  const { appliedCoupon, setAppliedCoupon, setShippingMethod: setCheckoutShippingMethod } = useCheckoutStore();
+  const allCartItems = useCartStore((state) => state.items);
+  const [activeTab, setActiveTab] = useState<'air' | 'sea'>('air');
+  
+  const cartItems = allCartItems.filter(item => item.shippingMethod === activeTab);
+  
   const loading = useCartStore((state) => state.isLoading);
   const error = useCartStore((state) => state.error);
   const updateQuantity = useCartStore((state) => state.updateQuantity);
   const removeItem = useCartStore((state) => state.removeItem);
   const removeItems = useCartStore((state) => state.removeItems);
   const fetchCart = useCartStore((state) => state.fetchCart);
-  const subtotal = useCartStore((state) => state.getBaseSubtotal());
+  const fetchRates = useCartStore((state) => state.fetchRates);
+  const rates = useCartStore((state) => state.rates);
+  const subtotal = useCartStore((state) => state.getSubtotal(activeTab)); // Filtered by tab
+  const baseSubtotal = useCartStore((state) => state.getBaseSubtotal(activeTab)); // Filtered by tab
   const toggleWishlist = useWishlistStore((state) => state.toggleWishlist);
   const wishlistItems = useWishlistStore((state) => state.items);
   const showToast = useToastStore((state) => state.showToast);
@@ -31,6 +39,9 @@ const Cart: React.FC = () => {
   const [selectedItems, setSelectedItems] = useState<(number | string)[]>([]);
   const [isSelectMode, setIsSelectMode] = useState(false);
   const [hasAvailableCoupons, setHasAvailableCoupons] = useState(false);
+
+  const airCount = allCartItems.filter(i => i.shippingMethod === 'air').length;
+  const seaCount = allCartItems.filter(i => i.shippingMethod === 'sea').length;
 
   const isProductInWishlist = (productId: number | string) => wishlistItems.some(item => item.productId === productId);
 
@@ -44,20 +55,36 @@ const Cart: React.FC = () => {
   };
 
   useEffect(() => {
-    // Perform a silent fetch if we already have items to avoid full-screen spinner
-    const initCart = async () => {
-      await fetchCart(cartItems.length > 0);
-      await checkAvailableCoupons();
-    };
-    initCart();
-  }, [fetchCart, cartItems.length]);
+    // Sync checkout store shipping method with cart active tab
+    setCheckoutShippingMethod(activeTab);
+  }, [activeTab, setCheckoutShippingMethod]);
 
   useEffect(() => {
-    if (appliedCoupon && appliedCoupon.minOrderAmount && subtotal < appliedCoupon.minOrderAmount) {
+    // If current tab is empty but the other has items, switch automatically
+    if (cartItems.length === 0 && allCartItems.length > 0) {
+      if (activeTab === 'air' && seaCount > 0) setActiveTab('sea');
+      else if (activeTab === 'sea' && airCount > 0) setActiveTab('air');
+    }
+  }, [allCartItems.length, cartItems.length, activeTab, airCount, seaCount]);
+
+  useEffect(() => {
+    // Perform a silent fetch if we already have items to avoid full-screen spinner
+    const initCart = async () => {
+      await Promise.all([
+        fetchCart(cartItems.length > 0),
+        fetchRates(),
+        checkAvailableCoupons()
+      ]);
+    };
+    initCart();
+  }, [fetchCart, fetchRates, cartItems.length]);
+
+  useEffect(() => {
+    if (appliedCoupon && appliedCoupon.minOrderAmount && baseSubtotal < appliedCoupon.minOrderAmount) {
       setAppliedCoupon(null);
       showToast(`تم إزالة الكوبون لأن المجموع أقل من ${appliedCoupon.minOrderAmount.toLocaleString()} د.ع`, 'info');
     }
-  }, [subtotal, appliedCoupon, setAppliedCoupon, showToast]);
+  }, [baseSubtotal, appliedCoupon, setAppliedCoupon, showToast]);
 
   const toggleItemSelection = (itemId: number | string) => {
     setSelectedItems(prev => 
@@ -119,7 +146,7 @@ const Cart: React.FC = () => {
   const discountAmount = appliedCoupon ? (
     appliedCoupon.discountType === 'PERCENTAGE' 
     ? Math.min(
-        (subtotal * (appliedCoupon.discountValue / 100)), 
+        (baseSubtotal * (appliedCoupon.discountValue / 100)), 
         appliedCoupon.maxDiscount || Infinity
       )
     : appliedCoupon.discountValue
@@ -127,10 +154,15 @@ const Cart: React.FC = () => {
   
   // Total in cart page only includes products - discount
   // International shipping fees are shown in checkout page as requested
-  const total = Math.max(0, subtotal - discountAmount);
-  const MIN_ORDER_THRESHOLD = 50000;
-  const isUnderThreshold = subtotal < MIN_ORDER_THRESHOLD;
-  const amountNeeded = MIN_ORDER_THRESHOLD - subtotal;
+  const total = Math.ceil(Math.max(0, subtotal - discountAmount) / 250) * 250;
+  
+  // Dynamic threshold based on active tab
+  const MIN_ORDER_THRESHOLD = activeTab === 'sea' ? 80000 : 30000;
+  
+  // Use subtotal (products + shipping - discount) for threshold logic 
+  // as per user requirement that selecting cheaper shipping should increase amount needed
+  const isUnderThreshold = total < MIN_ORDER_THRESHOLD;
+  const amountNeeded = MIN_ORDER_THRESHOLD - total;
 
   // Function to refresh cart
   const handleRefresh = async () => {
@@ -276,6 +308,42 @@ const Cart: React.FC = () => {
         </div>
       </header>
 
+      {/* Shipping Method Tabs */}
+      <div className="flex gap-2 p-4 bg-background-light dark:bg-background-dark sticky top-[calc(env(safe-area-inset-top)+4.5rem)] z-40 border-b border-slate-100 dark:border-white/5">
+        <button 
+          onClick={() => setActiveTab('air')}
+          className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-2xl font-bold transition-all ${
+            activeTab === 'air' 
+              ? 'bg-primary text-white shadow-lg shadow-primary/20 scale-[1.02]' 
+              : 'bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-100 dark:border-white/5'
+          }`}
+        >
+          <span className="text-lg">✈️</span>
+          <span>شحن جوي</span>
+          {airCount > 0 && (
+            <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${activeTab === 'air' ? 'bg-white text-primary' : 'bg-primary/10 text-primary'}`}>
+              {airCount}
+            </span>
+          )}
+        </button>
+        <button 
+          onClick={() => setActiveTab('sea')}
+          className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-2xl font-bold transition-all ${
+            activeTab === 'sea' 
+              ? 'bg-primary text-white shadow-lg shadow-primary/20 scale-[1.02]' 
+              : 'bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-100 dark:border-white/5'
+          }`}
+        >
+          <span className="text-lg">🚢</span>
+          <span>شحن بحري</span>
+          {seaCount > 0 && (
+            <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${activeTab === 'sea' ? 'bg-white text-primary' : 'bg-primary/10 text-primary'}`}>
+              {seaCount}
+            </span>
+          )}
+        </button>
+      </div>
+
       <main className="p-4 md:p-6 flex flex-col md:grid md:grid-cols-3 md:gap-8 items-start">
         {/* Left Column: Cart Items List */}
         <div className="flex flex-col gap-4 w-full md:col-span-2">
@@ -365,12 +433,34 @@ const Cart: React.FC = () => {
                   )}
                   {(() => {
                     const basePrice = item.variant?.price || item.product.price;
+                    const inclusivePrice = calculateInclusivePrice(
+                      basePrice,
+                      item.product.weight,
+                      item.product.length,
+                      item.product.width,
+                      item.product.height,
+                      rates,
+                      item.shippingMethod,
+                      item.product.domesticShippingFee || 0,
+                      item.product.basePriceRMB
+                    );
                     return (
-                      <p className="text-primary font-bold mt-1">
-                        {basePrice.toLocaleString()} د.ع
-                      </p>
+                      <div className="flex flex-col gap-0.5 mt-1">
+                        <div className="flex items-center gap-1 text-primary">
+                          <Truck size={12} className="opacity-70" />
+                          <p className="text-sm font-black">
+                            {inclusivePrice.toLocaleString()} د.ع
+                          </p>
+                        </div>
+                      </div>
                     );
                   })()}
+                  <div className="flex items-center gap-1 mt-1">
+                    <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500">طريقة الشحن:</span>
+                    <span className="text-[10px] font-black text-primary bg-primary/5 px-1.5 py-0.5 rounded">
+                      {item.shippingMethod === 'air' ? '✈️ شحن جوي' : '🚢 شحن بحري'}
+                    </span>
+                  </div>
                 </div>
                 {!isSelectMode && (
                   <div className="flex items-center justify-between">
@@ -476,6 +566,14 @@ const Cart: React.FC = () => {
               )}
 
               <div className="flex justify-between text-sm items-center">
+                <span className="text-slate-500 dark:text-slate-400">التوصيل الدولي</span>
+                <div className="flex items-center gap-1.5 bg-green-500/10 text-green-600 px-2 py-0.5 rounded-lg text-[10px] font-black uppercase tracking-wider">
+                  <CheckCheck size={14} />
+                  <span>مجاني</span>
+                </div>
+              </div>
+
+              <div className="flex justify-between text-sm items-center">
                 <span className="text-slate-500 dark:text-slate-400">التوصيل المحلي</span>
                 <div className="flex items-center gap-1.5 bg-green-500/10 text-green-600 px-2 py-0.5 rounded-lg text-[10px] font-black uppercase tracking-wider">
                   <CheckCheck size={14} />
@@ -505,7 +603,7 @@ const Cart: React.FC = () => {
               </div>
               <div className="flex flex-col">
                 <span className="text-sm font-black text-amber-700 dark:text-amber-400">تحتاج إضافة المزيد لإكمال الطلب</span>
-                <span className="text-[10px] text-amber-600/70 dark:text-amber-400/70 font-bold uppercase tracking-wider">الحد الأدنى للطلب هو 50,000 د.ع</span>
+                <span className="text-[10px] text-amber-600/70 dark:text-amber-400/70 font-bold uppercase tracking-wider">الحد الأدنى للطلب هو {MIN_ORDER_THRESHOLD.toLocaleString()} د.ع</span>
               </div>
             </div>
             <div className="text-right">

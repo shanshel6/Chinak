@@ -13,7 +13,6 @@ import {
   Home,
   Briefcase,
   Tag,
-  ChevronDown,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { fetchAddresses, placeOrder, fetchCoupons, confirmOrderPayment } from '../services/api';
@@ -31,25 +30,25 @@ const CheckoutPaymentAddress: React.FC = () => {
     setPaymentMethod,
     shippingMethod,
     appliedCoupon,
-    shippingFee,
+    shippingFee: _shippingFee,
     shippingInfo,
     resetCheckout
   } = useCheckoutStore();
 
   const [addresses, setAddresses] = useState<any[]>([]);
-  const cartItems = useCartStore((state) => state.items);
+  const allCartItems = useCartStore((state) => state.items);
+  const cartItems = allCartItems.filter(item => item.shippingMethod === shippingMethod);
   const fetchCart = useCartStore((state) => state.fetchCart);
-  const subtotal = useCartStore((state) => state.getBaseSubtotal());
-  const shippingTotal = useCartStore((state) => state.getShippingTotal(shippingMethod));
+  const subtotal = useCartStore((state) => state.getSubtotal(shippingMethod));
+  const baseSubtotal = useCartStore((state) => state.getBaseSubtotal(shippingMethod));
   const [loading, setLoading] = useState(true);
   const [isPlacingOrder, setIsPlacingOrder] = useState(false);
   const [paymentStep, setPaymentStep] = useState<'none' | 'processing' | 'verifying' | 'success'>('none');
   const [showAddressSheet, setShowAddressSheet] = useState(false);
   const [agreeToTerms, setAgreeToTerms] = useState(false);
   const [hasAvailableCoupons, setHasAvailableCoupons] = useState(false);
-  const [isPaymentMethodDropdownOpen, setIsPaymentMethodDropdownOpen] = useState(false);
   const [createdOrderId, setCreatedOrderId] = useState<number | string | null>(null);
-  const [orderedItems, setOrderedItems] = useState<any[]>([]);
+  const [_orderedItems, setOrderedItems] = useState<any[]>([]);
   const [snapshottedSubtotal, setSnapshottedSubtotal] = useState(0);
   const [snapshottedTotal, setSnapshottedTotal] = useState(0);
   const [snapshottedDiscount, setSnapshottedDiscount] = useState(0);
@@ -114,61 +113,42 @@ const CheckoutPaymentAddress: React.FC = () => {
     setSnapshottedSubtotal(currentSubtotal);
     setSnapshottedTotal(currentTotal);
     setSnapshottedDiscount(currentDiscount);
-    
+    setOrderedItems([...cartItems]);
+
+    setShowPaymentConfirmation(true);
+    return null;
+  };
+
+  const processOrderPlacement = async () => {
     setIsPlacingOrder(true);
+    setPaymentStep('processing');
     
     try {
-      // For electronic payments, create order and show confirmation popup
-      if (paymentMethod === 'zain_cash' || paymentMethod === 'super_key') {
-        if (!createdOrderId) {
-          setPaymentStep('processing');
-          const order = await placeOrder(
-            selectedAddressId, 
-            paymentMethod, 
-            shippingMethod, 
-            appliedCoupon?.code,
-            cartItems
-          );
-          setCreatedOrderId(order.id);
-          setOrderedItems([...cartItems]); // Snapshot current cart items
-          
-          // Clear cart in store after successful order creation
-          useCartStore.getState().clearCart();
-          await fetchCart();
-          
-          setPaymentStep('none');
-          setIsPlacingOrder(false);
-          setShowPaymentConfirmation(true);
-          return order;
-        } else {
-          // Order already created, just show the popup
-          setIsPlacingOrder(false);
-          setShowPaymentConfirmation(true);
-          return null;
-        }
-      }
-
-      // Cash on Delivery flow
-      setPaymentStep('processing');
-      await new Promise(resolve => setTimeout(resolve, 800));
-      
+      // Create the order
       const order = await placeOrder(
-        selectedAddressId, 
+        selectedAddressId!, 
         paymentMethod, 
         shippingMethod, 
         appliedCoupon?.code,
         cartItems
       );
       
-      const currentItems = [...cartItems]; // Snapshot current cart items
-      
-      // Clear cart in store after successful order
-      useCartStore.getState().clearCart();
+      const currentItems = [...cartItems];
+      setCreatedOrderId(order.id);
+
+      // If electronic payment, confirm it
+      if (paymentMethod === 'zain_cash' || paymentMethod === 'super_key') {
+        await confirmOrderPayment(order.id);
+        showToast('تم تأكيد الدفع والطلب بنجاح', 'success');
+      } else {
+        showToast("ستصلك رسالة عبر الواتساب بتفاصيل طلبك قريباً", 'success', 5000);
+      }
+
+      // Clear cart items for the ordered shipping method in store
+      useCartStore.getState().clearShippingMethodItems(shippingMethod);
       await fetchCart();
       
       setPaymentStep('success');
-      showToast("ستصلك رسالة عبر الواتساب بتفاصيل طلبك قريباً", 'success', 5000);
-      
       resetCheckout();
       
       setTimeout(() => {
@@ -177,11 +157,11 @@ const CheckoutPaymentAddress: React.FC = () => {
             state: { 
               order: {
                 ...order,
-                items: currentItems, // Pass snapshotted items to confirmation page
+                items: currentItems,
                 total: order.total || snapshottedTotal,
                 discountAmount: order.discountAmount || snapshottedDiscount,
                 subtotal: snapshottedSubtotal,
-                internationalShippingFee: (shippingInfo?.internationalFee || 0) // Explicitly pass the international fee
+                internationalShippingFee: (shippingInfo?.internationalFee || 0)
               } 
             }, 
             replace: true 
@@ -194,12 +174,9 @@ const CheckoutPaymentAddress: React.FC = () => {
       return order;
     } catch (err: any) {
       setPaymentStep('none');
+      setIsPlacingOrder(false);
       showToast(err.message || 'فشل في إتمام الطلب. يرجى المحاولة مرة أخرى.', 'error');
       return null;
-    } finally {
-      if (paymentMethod === 'cash') {
-        setIsPlacingOrder(false);
-      }
     }
   };
 
@@ -207,12 +184,14 @@ const CheckoutPaymentAddress: React.FC = () => {
   const discountAmount = appliedCoupon ? (
     appliedCoupon.discountType === 'PERCENTAGE' 
     ? Math.min(
-        (subtotal * (appliedCoupon.discountValue / 100)), 
+        (baseSubtotal * (appliedCoupon.discountValue / 100)), 
         appliedCoupon.maxDiscount || Infinity
       )
     : appliedCoupon.discountValue
   ) : 0;
-  const total = subtotal - discountAmount + (shippingInfo?.fee || shippingFee || shippingTotal);
+  
+  // subtotal already includes shippingTotal from getSubtotal()
+  const total = Math.ceil(Math.max(0, subtotal - discountAmount) / 250) * 250;
 
   const selectedAddress = addresses.find(a => a.id === selectedAddressId);
 
@@ -344,8 +323,7 @@ const CheckoutPaymentAddress: React.FC = () => {
           </p>
         </section>
 
-        {/* Section: Payment Method */}
-        <section className="space-y-3 animate-[fadeIn_0.6s_ease-out]">
+        <section className="space-y-4 animate-[fadeIn_0.6s_ease-out]">
           <div className="flex items-center justify-between">
             <h3 className="text-lg font-bold tracking-tight">طريقة الدفع</h3>
             <div className="flex flex-col items-end">
@@ -354,96 +332,83 @@ const CheckoutPaymentAddress: React.FC = () => {
             </div>
           </div>
           
-          <div className="relative">
+          <div className="grid grid-cols-1 gap-3">
+            {/* Zain Cash */}
             <button 
-              onClick={() => setIsPaymentMethodDropdownOpen(!isPaymentMethodDropdownOpen)}
-              className="w-full p-5 rounded-3xl border-2 border-slate-100 dark:border-slate-800 bg-surface-light dark:bg-surface-dark transition-all duration-300 flex items-center justify-between shadow-sm hover:border-slate-200 dark:hover:border-slate-700"
+              onClick={() => setPaymentMethod('zain_cash')}
+              className={`relative flex items-center gap-4 p-4 rounded-2xl border-2 transition-all duration-300 ${
+                paymentMethod === 'zain_cash' 
+                  ? 'border-primary bg-primary/5 shadow-md scale-[1.02]' 
+                  : 'border-slate-100 dark:border-slate-800 bg-surface-light dark:bg-surface-dark hover:border-slate-200 dark:hover:border-slate-700 opacity-70'
+              }`}
             >
-              <div className="flex items-center gap-4">
-                {paymentMethod === 'zain_cash' && (
-                  <>
-                    <div className="w-12 h-12 rounded-2xl bg-[#272727] flex items-center justify-center overflow-hidden shadow-lg shadow-black/10">
-                      <div className="w-6 h-6 rounded-full border-2 border-[#D6006E] flex items-center justify-center">
-                        <div className="w-1 h-3 bg-white rotate-45"></div>
-                      </div>
-                    </div>
-                    <div className="flex flex-col text-right">
-                      <span className="font-bold text-base">زين كاش</span>
-                      <span className="text-xs text-slate-500 font-medium">الدفع السريع عبر المحفظة</span>
-                    </div>
-                  </>
-                )}
-                {paymentMethod === 'super_key' && (
-                  <>
-                    <div className="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center text-primary">
-                      <Key size={24} />
-                    </div>
-                    <div className="flex flex-col text-right">
-                      <span className="font-bold text-base">سوبر كي</span>
-                      <span className="text-xs text-slate-500 font-medium">دفع آمن عبر SuperKey</span>
-                    </div>
-                  </>
-                )}
-                {paymentMethod === 'cash' && (
-                  <>
-                    <div className="w-12 h-12 rounded-2xl bg-green-500/10 flex items-center justify-center text-green-500">
-                      <Wallet size={24} />
-                    </div>
-                    <div className="flex flex-col text-right">
-                      <span className="font-bold text-base">دفع نقداً</span>
-                      <span className="text-xs text-slate-500 font-medium">عند الاستلام (بغداد فقط)</span>
-                    </div>
-                  </>
-                )}
+              <div className={`w-12 h-12 rounded-xl flex items-center justify-center overflow-hidden transition-all shadow-sm ${
+                paymentMethod === 'zain_cash' ? 'bg-[#272727]' : 'bg-slate-100 dark:bg-slate-800'
+              }`}>
+                <div className="w-6 h-6 rounded-full border-2 border-[#D6006E] flex items-center justify-center">
+                  <div className="w-1 h-3 bg-white rotate-45"></div>
+                </div>
               </div>
-              <ChevronDown className={`text-slate-400 transition-transform duration-300 ${isPaymentMethodDropdownOpen ? 'rotate-180' : ''}`} />
+              <div className="flex flex-col text-right flex-1">
+                <span className="font-bold text-base">زين كاش</span>
+                <span className="text-[10px] text-slate-500 font-medium">الدفع السريع عبر المحفظة</span>
+              </div>
+              <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all ${
+                paymentMethod === 'zain_cash' ? 'border-primary bg-primary' : 'border-slate-200 dark:border-slate-700'
+              }`}>
+                {paymentMethod === 'zain_cash' && <Check size={14} className="text-white" strokeWidth={4} />}
+              </div>
             </button>
 
-            <AnimatePresence>
-              {isPaymentMethodDropdownOpen && (
-                <motion.div 
-                  initial={{ opacity: 0, y: -10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -10 }}
-                  className="absolute top-full left-0 right-0 z-[60] mt-2 bg-white dark:bg-slate-900 rounded-3xl border border-slate-100 dark:border-slate-800 shadow-2xl overflow-hidden"
-                >
-                  <button 
-                    onClick={() => { setPaymentMethod('zain_cash'); setIsPaymentMethodDropdownOpen(false); }}
-                    className={`w-full p-4 flex items-center gap-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors ${paymentMethod === 'zain_cash' ? 'bg-primary/5' : ''}`}
-                  >
-                    <div className="w-10 h-10 rounded-xl bg-[#272727] flex items-center justify-center overflow-hidden">
-                      <div className="w-5 h-5 rounded-full border-2 border-[#D6006E] flex items-center justify-center">
-                        <div className="w-1 h-2.5 bg-white rotate-45"></div>
-                      </div>
-                    </div>
-                    <span className="font-bold">زين كاش</span>
-                    {paymentMethod === 'zain_cash' && <Check className="mr-auto text-primary" size={20} />}
-                  </button>
+            {/* Super Key */}
+            <button 
+              onClick={() => setPaymentMethod('super_key')}
+              className={`relative flex items-center gap-4 p-4 rounded-2xl border-2 transition-all duration-300 ${
+                paymentMethod === 'super_key' 
+                  ? 'border-primary bg-primary/5 shadow-md scale-[1.02]' 
+                  : 'border-slate-100 dark:border-slate-800 bg-surface-light dark:bg-surface-dark hover:border-slate-200 dark:hover:border-slate-700 opacity-70'
+              }`}
+            >
+              <div className={`w-12 h-12 rounded-xl flex items-center justify-center transition-all shadow-sm ${
+                paymentMethod === 'super_key' ? 'bg-primary text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-400'
+              }`}>
+                <Key size={24} />
+              </div>
+              <div className="flex flex-col text-right flex-1">
+                <span className="font-bold text-base">سوبر كي</span>
+                <span className="text-[10px] text-slate-500 font-medium">دفع آمن عبر SuperKey</span>
+              </div>
+              <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all ${
+                paymentMethod === 'super_key' ? 'border-primary bg-primary' : 'border-slate-200 dark:border-slate-700'
+              }`}>
+                {paymentMethod === 'super_key' && <Check size={14} className="text-white" strokeWidth={4} />}
+              </div>
+            </button>
 
-                  <button 
-                    onClick={() => { setPaymentMethod('super_key'); setIsPaymentMethodDropdownOpen(false); }}
-                    className={`w-full p-4 flex items-center gap-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors ${paymentMethod === 'super_key' ? 'bg-primary/5' : ''}`}
-                  >
-                    <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary">
-                      <Key size={20} />
-                    </div>
-                    <span className="font-bold">سوبر كي</span>
-                    {paymentMethod === 'super_key' && <Check className="mr-auto text-primary" size={20} />}
-                  </button>
-
-                  <button 
-                    onClick={() => { setPaymentMethod('cash'); setIsPaymentMethodDropdownOpen(false); }}
-                    className={`w-full p-4 flex items-center gap-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors ${paymentMethod === 'cash' ? 'bg-primary/5' : ''}`}
-                  >
-                    <div className="w-10 h-10 rounded-xl bg-green-500/10 flex items-center justify-center text-green-500">
-                      <Wallet size={20} />
-                    </div>
-                    <span className="font-bold">دفع نقداً</span>
-                    {paymentMethod === 'cash' && <Check className="mr-auto text-primary" size={20} />}
-                  </button>
-                </motion.div>
-              )}
-            </AnimatePresence>
+            {/* Cash on Delivery */}
+            <button 
+              onClick={() => setPaymentMethod('cash')}
+              className={`relative flex items-center gap-4 p-4 rounded-2xl border-2 transition-all duration-300 ${
+                paymentMethod === 'cash' 
+                  ? 'border-primary bg-primary/5 shadow-md scale-[1.02]' 
+                  : 'border-slate-100 dark:border-slate-800 bg-surface-light dark:bg-surface-dark hover:border-slate-200 dark:hover:border-slate-700 opacity-70'
+              }`}
+            >
+              <div className={`w-12 h-12 rounded-xl flex items-center justify-center transition-all shadow-sm ${
+                paymentMethod === 'cash' ? 'bg-green-500 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-400'
+              }`}>
+                <Wallet size={24} />
+              </div>
+              <div className="flex flex-col text-right flex-1">
+                <span className="font-bold text-base">دفع نقدي</span>
+                <span className="text-[10px] text-slate-500 font-medium">الدفع مقدماً، يجب تسليم المبلغ خلال 3 أيام</span>
+              </div>
+              <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all ${
+                paymentMethod === 'cash' ? 'border-primary bg-primary' : 'border-slate-200 dark:border-slate-700'
+              }`}>
+                {paymentMethod === 'cash' && <Check size={14} className="text-white" strokeWidth={4} />}
+              </div>
+            </button>
           </div>
 
           {/* QR Code Section for Electronic Payments */}
@@ -573,7 +538,7 @@ const CheckoutPaymentAddress: React.FC = () => {
                     )}
                   </div>
                   <div className="text-xs font-black text-slate-900 dark:text-white shrink-0">
-                    {((item.variant?.price || item.product.price) * item.quantity).toLocaleString()} د.ع
+                    {(Math.ceil((item.variant?.price || item.product.price) / 250) * 250 * item.quantity).toLocaleString()} د.ع
                   </div>
                 </div>
               ))}
@@ -732,45 +697,23 @@ const CheckoutPaymentAddress: React.FC = () => {
               <div className="w-20 h-20 rounded-full bg-primary/10 text-primary flex items-center justify-center mx-auto mb-6">
                 <Wallet size={40} />
               </div>
-              <h3 className="text-xl font-black mb-2 text-slate-900 dark:text-white">تأكيد عملية الدفع</h3>
+              <h3 className="text-xl font-black mb-2 text-slate-900 dark:text-white">
+                {paymentMethod === 'cash' ? 'تأكيد الطلب' : 'تأكيد عملية الدفع'}
+              </h3>
               <p className="text-slate-500 dark:text-slate-400 mb-8 leading-relaxed">
-                هل أنت متأكد من قيامك بتحويل المبلغ؟ يرجى التأكد من إتمام العملية لتجنب إلغاء الطلب.
+                {paymentMethod === 'cash' 
+                  ? 'هل أنت متأكد من رغبتك في إتمام الطلب؟'
+                  : 'هل أنت متأكد من قيامك بتحويل المبلغ؟ يرجى التأكد من إتمام العملية لتجنب إلغاء الطلب.'}
               </p>
               <div className="flex flex-col gap-3">
                 <button 
-                  onClick={async () => {
-                    if (!createdOrderId) return;
+                  onClick={() => {
                     setShowPaymentConfirmation(false);
-                    try {
-                      await confirmOrderPayment(createdOrderId);
-                      showToast('تم تأكيد الدفع بنجاح', 'success');
-                      
-                      setPaymentStep('success');
-                      setTimeout(() => {
-                        navigate('/order-confirmation', { 
-                          state: { 
-                            order: { 
-                              id: createdOrderId,
-                              paymentMethod,
-                              shippingMethod,
-                              items: orderedItems, // Use snapshotted items
-                              total: snapshottedTotal,
-                              subtotal: snapshottedSubtotal,
-                              discountAmount: snapshottedDiscount,
-                              internationalShippingFee: (shippingInfo?.internationalFee || 0)
-                            } 
-                          }, 
-                          replace: true 
-                        });
-                      }, 1500);
-                    } catch (err) {
-                      console.error('Payment confirmation failed:', err);
-                      showToast('فشل تأكيد الدفع. يرجى المحاولة لاحقاً.', 'error');
-                    }
+                    processOrderPlacement();
                   }}
                   className="w-full py-4 bg-primary text-white rounded-2xl font-black shadow-lg shadow-primary/20 hover:shadow-primary/30 active:scale-95 transition-all"
                 >
-                  نعم، قمت بالتحويل
+                  {paymentMethod === 'cash' ? 'نعم، أكمل الطلب' : 'نعم، قمت بالتحويل'}
                 </button>
                 <button 
                   onClick={() => setShowPaymentConfirmation(false)}

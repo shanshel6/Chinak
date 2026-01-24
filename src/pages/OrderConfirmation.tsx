@@ -46,7 +46,7 @@ const OrderConfirmation: React.FC = () => {
         type: 'order',
         icon: 'check_circle',
         title: 'تم استلام طلبك! 🎉',
-        description: `شكراً لتسوقك معنا. طلبك رقم #${order.id} بمبلغ ${order.total.toLocaleString()} د.ع قيد المراجعة الآن وسيتم تجهيزه للشحن قريباً. ستصلك رسالة عبر الواتساب قريباً بالتفاصيل.`,
+        description: `شكراً لتسوقك معنا. طلبك رقم #${order.id} بمبلغ ${(Math.ceil(order.total / 250) * 250).toLocaleString()} د.ع قيد المراجعة الآن وسيتم تجهيزه للشحن قريباً. ستصلك رسالة عبر الواتساب قريباً بالتفاصيل.`,
         color: 'green',
         link: `/shipping-tracking?id=${order.id}`
       });
@@ -179,7 +179,7 @@ const OrderConfirmation: React.FC = () => {
                         )}
                       </div>
                       <div className="text-xs font-bold text-slate-900 dark:text-white shrink-0">
-                        {((item.price || item.variant?.price || item.product?.price || 0) * item.quantity).toLocaleString()} د.ع
+                        {(Math.ceil((item.price || item.variant?.price || item.product?.price || 0) / 250) * 250 * item.quantity).toLocaleString()} د.ع
                       </div>
                     </div>
                   ))}
@@ -198,7 +198,7 @@ const OrderConfirmation: React.FC = () => {
               <div className="flex justify-between gap-x-6 py-3 border-b border-slate-100 dark:border-slate-700">
                 <p className="text-slate-500 dark:text-slate-400 text-sm font-normal">مجموع المنتجات</p>
                 <p className="text-[#0d141b] dark:text-white text-sm font-bold text-left">
-                  {( order?.subtotal || (order?.total || 0) + (order?.discountAmount || 0) ).toLocaleString()} د.ع
+                  {order?.items?.reduce((acc: number, item: any) => acc + (Math.ceil((item.price || item.variant?.price || item.product?.price || 0) / 250) * 250 * item.quantity), 0).toLocaleString()} د.ع
                 </p>
               </div>
               <div className="flex justify-between gap-x-6 py-3 border-b border-slate-100 dark:border-slate-700">
@@ -216,7 +216,7 @@ const OrderConfirmation: React.FC = () => {
               <div className="flex justify-between gap-x-6 py-3 border-b border-slate-100 dark:border-slate-700 bg-primary/5 -mx-5 px-5">
                 <p className="text-primary text-sm font-black">المبلغ الإجمالي</p>
                 <p className="text-primary text-base font-black text-left">
-                  {(order?.total || 0).toLocaleString()} د.ع
+                  {(Math.ceil((order?.total || 0) / 250) * 250).toLocaleString()} د.ع
                 </p>
               </div>
               <div className="flex justify-between gap-x-6 pt-3"> 

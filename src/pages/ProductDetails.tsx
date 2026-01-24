@@ -5,7 +5,7 @@ import { useWishlistStore } from '../store/useWishlistStore';
 import { useCartStore } from '../store/useCartStore';
 import { useAuthStore } from '../store/useAuthStore';
 import { useToastStore } from '../store/useToastStore';
-import { calculateShippingFee as _calculateShippingFee } from '../utils/shipping';
+import { calculateInclusivePrice, getDefaultShippingMethod } from '../utils/shipping';
 import type { ShippingRates } from '../types/shipping';
 import { Clipboard } from '@capacitor/clipboard';
 import LazyImage from '../components/LazyImage';
@@ -50,6 +50,7 @@ interface Product {
   width?: number;
   height?: number;
   domesticShippingFee?: number;
+  basePriceRMB?: number;
 }
 
 import { AlertCircle, Package, MessageSquareText, Store, Star } from 'lucide-react';
@@ -86,14 +87,15 @@ const ProductDetails: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [isAdding, setIsAdding] = useState(false);
   const [isAdded, setIsAdded] = useState(false);
+  const [shippingMethod, setShippingMethod] = useState<'air' | 'sea'>('air');
   const [_isPurchaseAllowed, _setIsPurchaseAllowed] = useState<boolean>(true);
   const [shouldRenderDetails, setShouldRenderDetails] = useState(false);
   const [shippingRates, setShippingRates] = useState<ShippingRates & { airThreshold?: number, seaThreshold?: number }>({
     airRate: 15400,
     seaRate: 182000,
-    minFloor: 5000,
-    airThreshold: 50000,
-    seaThreshold: 50000
+    minFloor: 0,
+    airThreshold: 30000,
+    seaThreshold: 80000
   });
 
   useEffect(() => {
@@ -104,12 +106,12 @@ const ProductDetails: React.FC = () => {
           setShippingRates({
             airRate: settings.airShippingRate || 15400,
             seaRate: settings.seaShippingRate || 182000,
-            minFloor: settings.airShippingMinFloor || 5000,
+            minFloor: 0,
             airThreshold: settings.airShippingThreshold || 30000,
-            seaThreshold: settings.seaShippingThreshold || 150000
+            seaThreshold: settings.seaShippingThreshold || 80000
           });
         }
-      } catch (e) {}
+      } catch (e) { }
     };
     loadSettings();
   }, []);
@@ -165,6 +167,11 @@ const ProductDetails: React.FC = () => {
 
         return changed ? newOptions : prev;
       });
+    }
+
+    // Auto-select shipping method based on weight and dimensions
+    if (product) {
+      setShippingMethod(getDefaultShippingMethod(product.weight, product.length, product.width, product.height));
     }
   }, [product]);
 
@@ -276,18 +283,54 @@ const ProductDetails: React.FC = () => {
   const averageRating = useMemo(() => {
     return allReviews.length > 0 
       ? (allReviews.reduce((acc, rev) => acc + (rev.rating || 5), 0) / allReviews.length).toFixed(1)
-      : '0.0';
+      : '4.8';
   }, [allReviews]);
+
+  const { inclusivePrice, airPrice, seaPrice } = useMemo(() => {
+    const basePrice = currentVariant?.price || product?.price || 0;
+    if (!product) return { inclusivePrice: basePrice, airPrice: basePrice, seaPrice: basePrice };
+    
+    const air = calculateInclusivePrice(
+      basePrice,
+      product.weight,
+      product.length,
+      product.width,
+      product.height,
+      shippingRates,
+      'air',
+      product.domesticShippingFee || 0,
+      product.basePriceRMB
+    );
+
+    const sea = calculateInclusivePrice(
+      basePrice,
+      product.weight,
+      product.length,
+      product.width,
+      product.height,
+      shippingRates,
+      'sea',
+      product.domesticShippingFee || 0,
+      product.basePriceRMB
+    );
+
+    return {
+      inclusivePrice: shippingMethod === 'air' ? air : sea,
+      airPrice: air,
+      seaPrice: sea
+    };
+  }, [currentVariant, product, shippingMethod, shippingRates]);
 
   useEffect(() => {
     if (product) {
       const exists = cartItems.some(item => 
         item.productId === product.id && 
-        (!currentVariant || item.variantId === currentVariant.id)
+        (!currentVariant || item.variantId === currentVariant.id) &&
+        item.shippingMethod === shippingMethod
       );
       setIsAdded(exists);
     }
-  }, [product, currentVariant, cartItems]);
+  }, [product, currentVariant, cartItems, shippingMethod]);
 
   const galleryImages = useMemo(() => {
     if (!product) return [];
@@ -501,7 +544,7 @@ const ProductDetails: React.FC = () => {
         width: product.width,
         height: product.height,
         domesticShippingFee: product.domesticShippingFee
-      }, selectedOptions);
+      }, selectedOptions, shippingMethod);
     } catch (err) {
       // Rollback UI state if API fails
       setIsAdded(false);
@@ -577,7 +620,7 @@ const ProductDetails: React.FC = () => {
 
         <main className="relative -mt-6 md:mt-0 bg-background-light dark:bg-background-dark rounded-t-3xl md:rounded-none px-5 md:px-0 pt-8 md:pt-0 shadow-[0_-4px_20px_rgba(0,0,0,0.05)] md:shadow-none">
           <ProductInfo 
-            price={currentVariant?.price || product.price || 0}
+            price={currentVariant?.price || product?.price || 0}
             originalPrice={product.originalPrice}
             name={product.name}
             chineseName={product.chineseName}
@@ -591,8 +634,11 @@ const ProductDetails: React.FC = () => {
             width={product.width}
             height={product.height}
             domesticShippingFee={product.domesticShippingFee}
+            basePriceRMB={product.basePriceRMB}
             airThreshold={shippingRates.airThreshold}
             seaThreshold={shippingRates.seaThreshold}
+            variant={currentVariant}
+            shippingMethod={shippingMethod}
           />
 
           {product.options && product.options.length > 0 && (
@@ -754,15 +800,20 @@ const ProductDetails: React.FC = () => {
               const selectedProduct = similarProducts.find(p => p.id === id);
               navigate(`/product?id=${id}`, { state: { initialProduct: selectedProduct } });
             }}
+            rates={shippingRates}
           />
         </main>
 
         <AddToCartBar 
-            price={currentVariant?.price || product.price || 0}
+            price={inclusivePrice}
             onAddToCart={handleAddToCart}
             isAdding={isAdding}
             isAdded={isAdded}
             onGoToCart={() => navigate('/cart')}
+            shippingMethod={shippingMethod}
+            onShippingMethodChange={setShippingMethod}
+            airPrice={airPrice}
+            seaPrice={seaPrice}
           />
       </div>
     </div>

@@ -2,12 +2,10 @@ import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { fetchProducts } from '../services/api';
 import { useWishlistStore } from '../store/useWishlistStore';
-import { useAuthStore } from '../store/useAuthStore';
 import { useNotificationStore } from '../store/useNotificationStore';
 import { usePageCacheStore } from '../store/usePageCacheStore';
 import Skeleton from '../components/Skeleton';
 import { useTranslation } from 'react-i18next';
-import HomeHeader from '../components/home/HomeHeader';
 import SearchBar from '../components/home/SearchBar';
 import ProductCard from '../components/home/ProductCard';
 import CategoryTabs from '../components/home/CategoryTabs';
@@ -48,7 +46,6 @@ const Home: React.FC = () => {
   const navigate = useNavigate();
   const wishlistItems = useWishlistStore((state) => state.items);
   const toggleWishlist = useWishlistStore((state) => state.toggleWishlist);
-  const user = useAuthStore((state) => state.user);
   const unreadNotificationsCount = useNotificationStore((state) => state.unreadCount);
 
   const { 
@@ -68,6 +65,8 @@ const Home: React.FC = () => {
   // Infinite Scroll & Categories State
   const [hasMore, setHasMore] = useState(true);
   const [selectedCategoryId, setSelectedCategoryId] = useState(homeCategoryId);
+  const [showSearchBar, setShowSearchBar] = useState(true);
+  const lastScrollY = useRef(window.scrollY);
   const observer = useRef<IntersectionObserver | null>(null);
   const [_page, setPage] = useState(homePage);
 
@@ -145,15 +144,60 @@ const Home: React.FC = () => {
     }
   }, [selectedCategoryId, homeCategoryId, products.length, loadData, homeScrollPos, setPage]);
 
-  // Save scroll position on unmount
+  // Save scroll position and handle search bar visibility
   useEffect(() => {
+    let timeoutId: any = null;
+    let ticking = false;
+    
     const handleScroll = () => {
-      // Use a small timeout to debounce scroll saving
-      setHomeScrollPos(window.scrollY);
+      if (!ticking) {
+        window.requestAnimationFrame(() => {
+          const currentScrollY = window.scrollY;
+          const deltaY = currentScrollY - lastScrollY.current;
+          
+          // Ignore bounces at the very top or bottom (iOS elastic scroll)
+          if (currentScrollY < 0) {
+            ticking = false;
+            return;
+          }
+
+          // Search bar visibility logic
+          if (currentScrollY < 50) {
+            // At the very top, always show
+            setShowSearchBar(true);
+          } else if (Math.abs(deltaY) > 15) { // Increased threshold for stability
+            if (deltaY < 0) {
+              // Scrolling up - show search bar immediately
+              setShowSearchBar(true);
+            } else if (deltaY > 15 && currentScrollY > 200) { // More deliberate down scroll to hide
+              // Scrolling down - hide search bar
+              setShowSearchBar(false);
+            }
+            // Update lastScrollY only when we've moved significantly to lock the state
+            lastScrollY.current = currentScrollY;
+          }
+
+          // Always update lastScrollY for small movements to prevent accumulation 
+          // but only if we haven't already updated it above
+          if (Math.abs(deltaY) <= 15) {
+             // Optional: could update here too, but keeping it stable is better
+          }
+
+          ticking = false;
+        });
+        ticking = true;
+      }
+
+      // Separate debounced task for saving scroll position (not for visibility)
+      if (timeoutId) clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => {
+        setHomeScrollPos(window.scrollY);
+      }, 150);
     };
 
-    window.addEventListener('scroll', handleScroll);
+    window.addEventListener('scroll', handleScroll, { passive: true });
     return () => {
+      if (timeoutId) clearTimeout(timeoutId);
       window.removeEventListener('scroll', handleScroll);
     };
   }, [setHomeScrollPos]);
@@ -265,28 +309,24 @@ const Home: React.FC = () => {
 
   return (
     <div className="relative flex min-h-screen w-full flex-col pb-28 pb-safe bg-background-light dark:bg-background-dark font-display text-slate-900 dark:text-white antialiased selection:bg-primary/30 rtl" dir="rtl">
-      <HomeHeader 
-        user={user}
-        onNavigate={navigate}
-        unreadNotificationsCount={unreadNotificationsCount}
-      />
-
-      <div className="sticky top-0 z-30 w-full bg-background-light dark:bg-background-dark border-b border-slate-200/50 dark:border-slate-800/50 shadow-sm transition-all duration-300">
-        <div className="pt-safe">
+      {/* Sticky Search Bar - Sticks to top and handles slide up/down */}
+      <div className={`sticky top-0 z-50 transition-transform duration-300 ease-in-out ${showSearchBar ? 'translate-y-0' : '-translate-y-full'}`}>
+        <div className="w-full bg-background-light dark:bg-background-dark border-b border-slate-200/50 dark:border-slate-800/50 shadow-sm pt-safe">
           <div className="pt-1">
             <SearchBar 
               onNavigate={navigate} 
+              unreadNotificationsCount={unreadNotificationsCount}
             />
           </div>
         </div>
       </div>
 
-        <CategoryTabs 
-          categories={categories}
-          selectedCategoryId={selectedCategoryId}
-          onSelectCategory={handleSelectCategory}
-          onHoverCategory={handleHoverCategory}
-        />
+      <CategoryTabs 
+        categories={categories}
+        selectedCategoryId={selectedCategoryId}
+        onSelectCategory={handleSelectCategory}
+        onHoverCategory={handleHoverCategory}
+      />
 
         {error && (
           <div className="mx-4 mt-4 p-4 rounded-2xl bg-red-50 dark:bg-red-900/20 border border-red-100 dark:border-red-900/30 text-red-600 dark:text-red-400 text-sm flex items-center gap-3">

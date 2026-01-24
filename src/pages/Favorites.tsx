@@ -1,24 +1,45 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useWishlistStore } from '../store/useWishlistStore';
 import { useCartStore } from '../store/useCartStore';
 import { useAuthStore } from '../store/useAuthStore';
 import { useToastStore } from '../store/useToastStore';
 import LazyImage from '../components/LazyImage';
+import { calculateInclusivePrice } from '../utils/shipping';
+import { fetchSettings } from '../services/api';
 
 import { ArrowLeft, ShoppingBag, LayoutGrid, List, Heart, ShoppingCart, Star } from 'lucide-react';
 
 const Favorites: React.FC = () => {
   const navigate = useNavigate();
   const wishlist = useWishlistStore((state) => state.items);
-  // const loading = useWishlistStore((state) => state.isLoading); // Removed unused
   const toggleWishlist = useWishlistStore((state) => state.toggleWishlist);
   const addItem = useCartStore((state) => state.addItem);
-  // const fetchWishlist = useWishlistStore((state) => state.fetchWishlist); // Removed unused
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
   const showToast = useToastStore((state) => state.showToast);
-  // const fetchWishlist = useWishlistStore((state) => state.fetchWishlist); // Removed unused
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+
+  const [rates, setRates] = useState({
+    airRate: 15400,
+    seaRate: 182000,
+    minFloor: 0
+  });
+
+  useEffect(() => {
+    const loadRates = async () => {
+      try {
+        const settings = await fetchSettings();
+        if (settings) {
+          setRates({
+            airRate: settings.airShippingRate || 15400,
+            seaRate: settings.seaShippingRate || 182000,
+            minFloor: 0
+          });
+        }
+      } catch (e) {}
+    };
+    loadRates();
+  }, []);
 
   const handleMoveAllToCart = async () => {
     if (wishlist.length === 0) return;
@@ -161,7 +182,16 @@ const Favorites: React.FC = () => {
                     </div>
 
                     <div className="mt-2 flex items-center gap-2">
-                      <p className="text-primary text-base font-bold">{product.price.toLocaleString()} د.ع</p>
+                      <p className="text-primary text-base font-bold">
+                        {calculateInclusivePrice(
+                          product.price,
+                          product.weight,
+                          product.length,
+                          product.width,
+                          product.height,
+                          rates
+                        ).toLocaleString()} د.ع
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -190,7 +220,16 @@ const Favorites: React.FC = () => {
                       {product.name}
                     </h3>
                     <div className="flex items-center gap-2 mt-2">
-                      <span className="text-lg font-bold text-primary">{product.price.toLocaleString()} د.ع</span>
+                      <span className="text-lg font-bold text-primary">
+                        {calculateInclusivePrice(
+                          product.price,
+                          product.weight,
+                          product.length,
+                          product.width,
+                          product.height,
+                          rates
+                        ).toLocaleString()} د.ع
+                      </span>
                     </div>
                   </div>
                   <div className="flex flex-col gap-2">

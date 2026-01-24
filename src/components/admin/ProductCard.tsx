@@ -14,9 +14,11 @@ import {
   MessageSquareQuote, 
   Camera, 
   Edit3, 
-  Trash2 
+  Trash2,
+  Truck
 } from 'lucide-react';
 import ProductImageCarousel from './ProductImageCarousel';
+import { calculateInclusivePrice } from '../../utils/shipping';
 
 interface ProductCardProps {
   product: any;
@@ -29,6 +31,11 @@ interface ProductCardProps {
   onImportReviews: (product: any) => void;
   onAddPictures: (product: any) => void;
   checkPermission: (permission: string) => boolean;
+  rates: {
+    airRate: number;
+    seaRate: number;
+    minFloor: number;
+  };
 }
 
 const ProductCard: React.FC<ProductCardProps> = ({
@@ -41,7 +48,8 @@ const ProductCard: React.FC<ProductCardProps> = ({
   onDelete,
   onImportReviews,
   onAddPictures,
-  checkPermission
+  checkPermission,
+  rates
 }) => {
   const { t } = useTranslation();
   const [isEditingPrice, setIsEditingPrice] = useState(false);
@@ -401,15 +409,25 @@ const ProductCard: React.FC<ProductCardProps> = ({
                 <div 
                   className={`text-right ${(product.status === 'DRAFT' || product.isLocal) ? 'cursor-pointer hover:bg-primary/5 px-1 rounded transition-colors' : ''}`}
                   onDoubleClick={() => (product.status === 'DRAFT' || product.isLocal) && setIsEditingPrice(true)}
-                  title={(product.status === 'DRAFT' || product.isLocal) ? 'نقر مزدوج للتعديل' : ''}
+                  title={(product.status === 'DRAFT' || product.isLocal) ? 'نقر مزدوج لتعديل السعر الأساسي' : ''}
                 >
-                  <p className="text-sm font-bold text-primary">
-                    {hasPriceRange ? (
+                  <p className="text-[10px] font-bold text-slate-400 mb-0.5">
+                    {t('common.base_price')}: {hasPriceRange ? (
                       `${minPrice.toLocaleString()} - ${maxPrice.toLocaleString()} ${t('common.iqd')}`
                     ) : (
                       `${product.price.toLocaleString()} ${t('common.iqd')}`
                     )}
                   </p>
+                  <div className="flex items-center gap-1 justify-end text-primary">
+                    <Truck size={14} className="opacity-70" />
+                    <p className="text-sm font-black">
+                      {hasPriceRange ? (
+                        `${calculateInclusivePrice(minPrice, product.weight, product.length, product.width, product.height, rates).toLocaleString()} - ${calculateInclusivePrice(maxPrice, product.weight, product.length, product.width, product.height, rates).toLocaleString()} ${t('common.iqd')}`
+                      ) : (
+                        `${calculateInclusivePrice(product.price, product.weight, product.length, product.width, product.height, rates).toLocaleString()} ${t('common.iqd')}`
+                      )}
+                    </p>
+                  </div>
                   {hasPriceRange && (
                     <p className="text-[9px] text-slate-400 font-bold">يختلف حسب المتغير</p>
                   )}

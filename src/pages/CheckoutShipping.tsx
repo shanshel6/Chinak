@@ -5,8 +5,6 @@ import {
   MapPin, 
   ChevronLeft, 
   MapPinPlus, 
-  Plane, 
-  Ship, 
   X, 
   ArrowLeft, 
   Check,
@@ -17,7 +15,7 @@ import {
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { fetchAddresses, calculateShipping } from '../services/api';
-import type { ShippingInfo } from '../types/shipping';
+import type { ShippingInfo as _ShippingInfo } from '../types/shipping';
 import { useCartStore } from '../store/useCartStore';
 import { useCheckoutStore } from '../store/useCheckoutStore';
 import { useToastStore } from '../store/useToastStore';
@@ -33,83 +31,33 @@ const CheckoutShipping: React.FC = () => {
     setShippingMethod,
     appliedCoupon,
     setAppliedCoupon,
-    shippingFee,
     setShippingFee,
     shippingInfo,
     setShippingInfo
   } = useCheckoutStore();
   
-  const cartItems = useCartStore((state) => state.items);
+  const allCartItems = useCartStore((state) => state.items);
+  const cartItems = React.useMemo(() => 
+    allCartItems.filter(item => item.shippingMethod === shippingMethod),
+    [allCartItems, shippingMethod]
+  );
   const fetchCart = useCartStore((state) => state.fetchCart);
-  const subtotal = useCartStore((state) => state.getBaseSubtotal());
+  const subtotal = useCartStore((state) => state.getSubtotal(shippingMethod)); // Filtered by shipping method
+  const baseSubtotal = useCartStore((state) => state.getBaseSubtotal(shippingMethod)); // Filtered by shipping method
   const [addresses, setAddresses] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [calculatingShipping, setCalculatingShipping] = useState(false);
   const [showAddressSheet, setShowAddressSheet] = useState(false);
   const [isDiscountPopupOpen, setIsDiscountPopupOpen] = useState(false);
-  const [airShippingInfo, setAirShippingInfo] = useState<ShippingInfo | null>(null);
-  const [seaShippingInfo, setSeaShippingInfo] = useState<ShippingInfo | null>(null);
 
-  useEffect(() => {
-    const loadAllShippingInfo = async () => {
-      if (cartItems.length === 0) return;
-      try {
-        const [airInfo, seaInfo] = await Promise.all([
-          calculateShipping(cartItems, 'air'),
-          calculateShipping(cartItems, 'sea')
-        ]);
-        setAirShippingInfo(airInfo);
-        setSeaShippingInfo(seaInfo);
-
-        // Auto-switch if air is selected but not available
-        if (shippingMethod === 'air' && airInfo.isAvailable === false) {
-          setShippingMethod('sea');
-          showToast('تم تحويل الشحن إلى بحري لعدم توفر أوزان لبعض المنتجات', 'warning');
-        }
-      } catch (err) {
-        console.error('Failed to load all shipping info:', err);
-      }
-    };
-    loadAllShippingInfo();
-  }, [cartItems, shippingMethod, setShippingMethod, showToast]);
-
-  useEffect(() => {
-    const loadData = async () => {
-      try {
-        await Promise.all([
-          fetchCart(),
-          fetchAddresses().then(setAddresses)
-        ]);
-        
-        // Default to air unless already set
-        if (!shippingMethod) {
-          setShippingMethod('air');
-        }
-        
-        // If no address selected in store, pick default or first
-        fetchAddresses().then(addressData => {
-          if (!selectedAddressId && addressData && addressData.length > 0) {
-            const defaultAddr = addressData.find((a: any) => a.isDefault) || addressData[0];
-            setSelectedAddressId(defaultAddr.id);
-          }
-        });
-      } catch (err) {
-        console.error('Failed to fetch data:', err);
-        showToast('فشل في تحميل البيانات. يرجى المحاولة مرة أخرى.', 'error');
-      } finally {
-        // Add a slight delay to make the loading page visible as requested
-        setTimeout(() => {
-          setLoading(false);
-        }, 1500);
-      }
-    };
-    loadData();
-  }, [selectedAddressId, setSelectedAddressId, fetchCart, shippingMethod, setShippingMethod, showToast]);
-
-  // Shipping fee calculation
+  // Single effect to manage shipping info calculation
   useEffect(() => {
     const updateShipping = async () => {
-      if (cartItems.length === 0) return;
+      if (cartItems.length === 0) {
+        setShippingFee(0);
+        setShippingInfo(null);
+        return;
+      }
       
       setCalculatingShipping(true);
       try {
@@ -127,6 +75,39 @@ const CheckoutShipping: React.FC = () => {
   }, [cartItems, shippingMethod, setShippingFee, setShippingInfo]);
 
   useEffect(() => {
+    const loadData = async () => {
+      try {
+        await Promise.all([
+          fetchCart(),
+          fetchAddresses().then(setAddresses)
+        ]);
+        
+        // Default to air unless already set
+        if (!shippingMethod) {
+          setShippingMethod('air');
+        }
+        
+        // If no address selected in store, pick default or first
+        const addressData = await fetchAddresses();
+        if (!selectedAddressId && addressData && addressData.length > 0) {
+          const defaultAddr = addressData.find((a: any) => a.isDefault) || addressData[0];
+          setSelectedAddressId(defaultAddr.id);
+        }
+      } catch (err) {
+        console.error('Failed to fetch data:', err);
+        showToast('فشل في تحميل البيانات. يرجى المحاولة مرة أخرى.', 'error');
+      } finally {
+        // Add a slight delay to make the loading page visible as requested
+        setTimeout(() => {
+          setLoading(false);
+        }, 1500);
+      }
+    };
+    loadData();
+    // Only run on mount or when critical dependencies change
+  }, [fetchCart, setShippingMethod, setSelectedAddressId, showToast]);
+
+  useEffect(() => {
     if (!loading && shippingInfo && !shippingInfo.isThresholdMet) {
       showToast('يرجى الوصول للحد الأدنى للطلب للمتابعة', 'error');
       navigate('/cart');
@@ -137,11 +118,14 @@ const CheckoutShipping: React.FC = () => {
   
   const discountAmount = appliedCoupon ? (
     appliedCoupon.discountType === 'PERCENTAGE' 
-      ? (subtotal * (appliedCoupon.discountValue / 100))
+      ? Math.min(
+          (baseSubtotal * (appliedCoupon.discountValue / 100)), 
+          appliedCoupon.maxDiscount || Infinity
+        )
       : appliedCoupon.discountValue
   ) : 0;
 
-  const total = subtotal - discountAmount + shippingFee;
+  const total = Math.ceil(Math.max(0, subtotal - discountAmount) / 250) * 250;
 
   const selectedAddress = addresses.find(a => a.id === selectedAddressId);
 
@@ -262,127 +246,7 @@ const CheckoutShipping: React.FC = () => {
           )}
         </section>
 
-        {/* Section: Shipping Method */}
-        <section className="space-y-4">
-          <h3 className="text-lg font-bold">طريقة التوصيل</h3>
-          <div className="flex flex-col gap-4">
-            {/* Air Shipping */}
-            <div className="flex flex-col gap-2">
-              <label className={`group relative transition-all ${airShippingInfo?.isAvailable === false ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}`}>
-                <input 
-                  checked={shippingMethod === 'air'} 
-                  onChange={() => airShippingInfo?.isAvailable !== false && setShippingMethod('air')}
-                  disabled={airShippingInfo?.isAvailable === false}
-                  className="peer sr-only" 
-                  name="shipping_method" 
-                  type="radio" 
-                />
-                <div className={`flex items-center gap-4 rounded-xl border-2 bg-white dark:bg-slate-800 p-4 transition-all shadow-sm ${
-                  shippingMethod === 'air' 
-                    ? 'border-primary bg-primary/5' 
-                    : airShippingInfo?.isAvailable === false
-                      ? 'border-slate-100 dark:border-slate-800 bg-slate-50/50'
-                      : 'border-slate-200 dark:border-slate-700 hover:border-primary/50'
-                }`}>
-                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-blue-50 dark:bg-blue-900/30 text-primary">
-                    <Plane size={24} />
-                  </div>
-                  <div className="flex grow flex-col">
-                    <div className="flex justify-between items-center mb-1">
-                      <p className="text-slate-900 dark:text-white text-base font-bold">شحن جوي</p>
-                      {airShippingInfo?.isAvailable === false && (
-                        <span className="text-[8px] bg-rose-500 text-white px-2 py-0.5 rounded-full font-black uppercase tracking-wider">غير متوفر</span>
-                      )}
-                    </div>
-                    <p className="text-slate-500 dark:text-slate-400 text-xs font-medium mb-1 italic">
-                      {airShippingInfo?.isAvailable === false 
-                        ? 'يتطلب الشحن الجوي وجود أوزان لجميع المنتجات' 
-                        : 'للأشياء الصغيرة والخفيفة، يُنصح باختيار الشحن الجوي'}
-                    </p>
-                    <div className="flex items-center gap-3">
-                      <p className="text-slate-400 dark:text-slate-500 text-[10px] font-bold uppercase tracking-wider bg-slate-100 dark:bg-slate-700/50 px-2 py-0.5 rounded-md">7 - 14 يوم</p>
-                      {airShippingInfo?.isAvailable !== false && (
-                        <p className="text-green-600 dark:text-green-400 text-[10px] font-black uppercase tracking-wider bg-green-500/10 px-2 py-0.5 rounded-md">الأسرع وصولاً</p>
-                      )}
-                    </div>
-                  </div>
-                  <div className={`radio-circle flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition-colors ${
-                    shippingMethod === 'air' 
-                      ? 'border-primary bg-primary' 
-                      : airShippingInfo?.isAvailable === false
-                        ? 'border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800'
-                        : 'border-slate-300 dark:border-slate-600'
-                  }`}>
-                    {shippingMethod === 'air' && <div className="h-2 w-2 rounded-full bg-white"></div>}
-                  </div>
-                </div>
-              </label>
-              {airShippingInfo?.isAvailable === false && airShippingInfo.itemsMissingWeight && airShippingInfo.itemsMissingWeight.length > 0 && (
-                <div className="px-4 py-3 bg-rose-50 dark:bg-rose-900/20 border border-rose-100 dark:border-rose-900/30 rounded-xl">
-                  <div className="flex items-start gap-2">
-                    <AlertCircle className="text-rose-600 dark:text-rose-400 shrink-0 mt-0.5" size={14} />
-                    <div className="flex flex-col">
-                      <p className="text-[10px] font-black text-rose-700 dark:text-rose-300 uppercase tracking-wider mb-1">منتجات مفقودة الأوزان:</p>
-                      <ul className="list-disc list-inside space-y-0.5">
-                        {airShippingInfo.itemsMissingWeight.slice(0, 3).map((name, i) => (
-                          <li key={i} className="text-[10px] text-rose-600 dark:text-rose-400 font-bold truncate max-w-[200px]">{name}</li>
-                        ))}
-                        {airShippingInfo.itemsMissingWeight.length > 3 && (
-                          <li className="text-[10px] text-rose-500 font-medium">...و {airShippingInfo.itemsMissingWeight.length - 3} منتجات أخرى</li>
-                        )}
-                      </ul>
-                    </div>
-                  </div>
-                </div>
-              )}
-              {airShippingInfo && airShippingInfo.isAvailable !== false && !airShippingInfo.isThresholdMet && (
-                <div className="px-4 py-2 bg-amber-500/10 border border-amber-500/20 rounded-xl">
-                  <p className="text-xs font-bold text-amber-600 dark:text-amber-400">
-                    أضف <span className="text-amber-700 dark:text-amber-300">{(airShippingInfo.threshold - airShippingInfo.subtotal).toLocaleString()} د.ع</span> لتفعيل الشحن الجوي
-                  </p>
-                </div>
-              )}
-            </div>
-
-            {/* Sea Shipping */}
-            <div className="flex flex-col gap-2">
-              <label className={`group relative transition-all cursor-pointer`}>
-                <input 
-                  checked={shippingMethod === 'sea'} 
-                  onChange={() => setShippingMethod('sea')}
-                  className="peer sr-only" 
-                  name="shipping_method" 
-                  type="radio" 
-                />
-                <div className={`flex items-center gap-4 rounded-xl border-2 bg-white dark:bg-slate-800 p-4 transition-all shadow-sm ${shippingMethod === 'sea' ? 'border-primary bg-primary/5' : 'border-slate-200 dark:border-slate-700 hover:border-primary/50'}`}>
-                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-teal-50 dark:bg-teal-900/30 text-teal-600 dark:text-teal-400">
-                    <Ship size={24} />
-                  </div>
-                  <div className="flex grow flex-col">
-                    <div className="flex justify-between items-center mb-1">
-                      <p className="text-slate-900 dark:text-white text-base font-bold">شحن بحري</p>
-                    </div>
-                    <p className="text-slate-500 dark:text-slate-400 text-xs font-medium mb-1 italic">للأشياء الثقيلة، من الأفضل اختيار الشحن البحري</p>
-                    <div className="flex items-center gap-3">
-                      <p className="text-slate-400 dark:text-slate-500 text-[10px] font-bold uppercase tracking-wider bg-slate-100 dark:bg-slate-700/50 px-2 py-0.5 rounded-md">شهرين - 3 أشهر</p>
-                      <p className="text-teal-600 dark:text-teal-400 text-[10px] font-black uppercase tracking-wider bg-teal-500/10 px-2 py-0.5 rounded-md">الأكثر توفيراً</p>
-                    </div>
-                  </div>
-                  <div className={`radio-circle flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition-colors ${shippingMethod === 'sea' ? 'border-primary bg-primary' : 'border-slate-300 dark:border-slate-600'}`}>
-                    {shippingMethod === 'sea' && <div className="h-2 w-2 rounded-full bg-white"></div>}
-                  </div>
-                </div>
-              </label>
-              {seaShippingInfo && !seaShippingInfo.isThresholdMet && (
-                <div className="px-4 py-2 bg-amber-500/10 border border-amber-500/20 rounded-xl">
-                  <p className="text-xs font-bold text-amber-600 dark:text-amber-400">
-                    أضف <span className="text-amber-700 dark:text-amber-300">{(seaShippingInfo.threshold - seaShippingInfo.subtotal).toLocaleString()} د.ع</span> لتفعيل الشحن البحري
-                  </p>
-                </div>
-              )}
-            </div>
-          </div>
-        </section>
+        {/* Section: Shipping Method - REMOVED as per request to use per-product shipping */}
 
         {/* Min Order Warning */}
         {shippingInfo && !shippingInfo.isThresholdMet && (
@@ -455,7 +319,7 @@ const CheckoutShipping: React.FC = () => {
                   )}
                 </div>
                 <div className="text-xs font-bold text-slate-900 dark:text-white shrink-0">
-                  {((item.variant?.price || item.product?.price || 0) * item.quantity).toLocaleString()} د.ع
+                  {(Math.ceil((item.variant?.price || item.product?.price || 0) / 250) * 250 * item.quantity).toLocaleString()} د.ع
                 </div>
               </div>
             ))}
@@ -498,11 +362,7 @@ const CheckoutShipping: React.FC = () => {
 
           <div className="flex justify-between items-center text-sm">
             <span className="text-slate-500 dark:text-slate-400">الشحن الدولي</span>
-            {calculatingShipping ? (
-              <div className="h-4 w-12 bg-slate-200 animate-pulse rounded"></div>
-            ) : (
-              <span className="font-bold text-slate-900 dark:text-white">{(shippingInfo?.internationalFee || 0).toLocaleString()} د.ع</span>
-            )}
+            <span className="font-bold text-slate-900 dark:text-white">مشمول في سعر المنتجات</span>
           </div>
 
           {shippingInfo && !shippingInfo.isThresholdMet && (

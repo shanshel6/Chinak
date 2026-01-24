@@ -10,6 +10,10 @@ interface WishlistItem {
     price: number;
     image: string;
     description: string;
+    weight?: number;
+    length?: number;
+    width?: number;
+    height?: number;
   };
 }
 
@@ -49,7 +53,11 @@ export const useWishlistStore = create<WishlistState>()(
               name: productInfo.name,
               price: productInfo.price,
               image: productInfo.image,
-              description: productInfo.description || ''
+              description: productInfo.description || '',
+              weight: productInfo.weight,
+              length: productInfo.length,
+              width: productInfo.width,
+              height: productInfo.height
             }
           };
           set({ items: [...items, newItem] });

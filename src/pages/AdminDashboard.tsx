@@ -9,7 +9,7 @@ import {
   MoreVertical,
   ChevronRight,
   ChevronLeft,
-  TrendingUp,
+  TrendingUp as _TrendingUp,
   CheckCircle2,
   Clock,
   ArrowLeft,
@@ -58,6 +58,8 @@ import { useToastStore } from '../store/useToastStore';
 import { useAuthStore } from '../store/useAuthStore';
 import StatsCards from '../components/admin/StatsCards';
 import ProductCard from '../components/admin/ProductCard';
+import BestSellers from '../components/admin/BestSellers';
+import ProductPerformance from '../components/admin/ProductPerformance';
 import ProductEditor from './ProductEditor';
 import LazyImage from '../components/LazyImage';
 
@@ -101,7 +103,7 @@ const AdminDashboard: React.FC = () => {
   const [storeSettings, setStoreSettings] = useState({
     airShippingRate: 15400,
     seaShippingRate: 182000,
-    airShippingMinFloor: 5000,
+    airShippingMinFloor: 0,
     currency: 'د.ع',
     storeName: '',
     contactEmail: '',
@@ -225,7 +227,7 @@ const AdminDashboard: React.FC = () => {
             ...data,
             airShippingRate: data.airShippingRate || 15400,
             seaShippingRate: data.seaShippingRate || 182000,
-            airShippingMinFloor: data.airShippingMinFloor || 5000,
+            airShippingMinFloor: 0,
             socialLinks: typeof data.socialLinks === 'string' ? JSON.parse(data.socialLinks) : (data.socialLinks || prev.socialLinks)
           }));
         }
@@ -245,9 +247,34 @@ const AdminDashboard: React.FC = () => {
   }, [activeTab, currentPage, getLimit, searchTerm, showToast]);
 
   useEffect(() => {
-    setCurrentPage(1); // Reset page when tab changes
+    // Initial data load
     loadData(1);
-  }, [activeTab, loadData]);
+
+    // Load store settings once on mount to get shipping rates for price calculations
+    const loadStoreSettings = async () => {
+      try {
+        const data = await fetchSettings();
+        if (data) {
+          setStoreSettings(prev => ({
+            ...prev,
+            ...data,
+            airShippingRate: data.airShippingRate || 15400,
+            seaShippingRate: data.seaShippingRate || 182000,
+            airShippingMinFloor: 0,
+            socialLinks: typeof data.socialLinks === 'string' ? JSON.parse(data.socialLinks) : (data.socialLinks || prev.socialLinks)
+          }));
+        }
+      } catch (error) {
+        console.error('Failed to load store settings:', error);
+      }
+    };
+    loadStoreSettings();
+  }, [loadData]);
+
+  useEffect(() => {
+    setCurrentPage(1); // Reset page when tab changes
+    loadData(1, true); // Load tab data silently
+  }, [activeTab]);
 
   const handlePasteImport = async () => {
     if (!importText.trim()) return;
@@ -663,42 +690,8 @@ const AdminDashboard: React.FC = () => {
       <StatsCards stats={stats} />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <div className="lg:col-span-2 bg-white dark:bg-slate-900 rounded-3xl p-6 sm:p-8 border border-slate-100 dark:border-slate-800">
-          <div className="flex items-center justify-between mb-8">
-            <h3 className="text-lg font-black">تحليل المبيعات</h3>
-            <div className="flex gap-2">
-              <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-500 bg-emerald-500/10 px-2 py-1 rounded-lg">
-                <TrendingUp size={12} />
-                +12%
-              </span>
-            </div>
-          </div>
-          <div className="h-48 sm:h-64 flex items-center justify-center text-slate-400 font-medium bg-slate-50 dark:bg-slate-800/50 rounded-2xl border-2 border-dashed border-slate-200 dark:border-slate-700 text-center px-4">
-            [رسم بياني للمبيعات سيتم دمجه لاحقاً]
-          </div>
-        </div>
-
-        <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 sm:p-8 border border-slate-100 dark:border-slate-800">
-          <h3 className="text-lg font-black mb-6">أهم التصنيفات</h3>
-          <div className="space-y-6">
-            {[
-              { label: 'إلكترونيات', value: 45, color: 'bg-blue-500' },
-              { label: 'ملابس', value: 30, color: 'bg-purple-500' },
-              { label: 'أحذية', value: 15, color: 'bg-amber-500' },
-              { label: 'أخرى', value: 10, color: 'bg-slate-400' },
-            ].map((cat, i) => (
-              <div key={i} className="space-y-2">
-                <div className="flex justify-between text-sm font-bold">
-                  <span>{cat.label}</span>
-                  <span>{cat.value}%</span>
-                </div>
-                <div className="h-2 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
-                  <div className={`h-full ${cat.color}`} style={{ width: `${cat.value}%` }}></div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
+        <ProductPerformance products={products} />
+        <BestSellers products={products} onViewAll={() => {}} />
       </div>
     </div>
   );
@@ -874,6 +867,11 @@ const AdminDashboard: React.FC = () => {
             onImportReviews={() => {}}
             onAddPictures={() => {}}
             checkPermission={checkPermission}
+            rates={{
+              airRate: storeSettings.airShippingRate,
+              seaRate: storeSettings.seaShippingRate,
+              minFloor: storeSettings.airShippingMinFloor
+            }}
           />
         ))}
       </div>
@@ -1294,6 +1292,15 @@ const AdminDashboard: React.FC = () => {
                   <p><span className="text-slate-500">الاسم:</span> <span className="font-bold">{selectedOrder.user?.name || 'مستخدم'}</span></p>
                   <p><span className="text-slate-500">الهاتف:</span> <span className="font-bold">{selectedOrder.address?.phone || '-'}</span></p>
                   <p><span className="text-slate-500">البريد:</span> <span className="font-bold">{selectedOrder.user?.email || '-'}</span></p>
+                  <p>
+                    <span className="text-slate-500">طريقة الدفع:</span> 
+                    <span className="font-bold text-primary mr-1">
+                      {selectedOrder.paymentMethod === 'credit_card' ? 'بطاقة ائتمان' :
+                       selectedOrder.paymentMethod === 'cash' ? 'دفع نقدي' :
+                       selectedOrder.paymentMethod === 'zain_cash' ? 'زين كاش' : 
+                       selectedOrder.paymentMethod === 'super_key' ? 'سوبر كي' : (selectedOrder.paymentMethod || '---')}
+                    </span>
+                  </p>
                 </div>
               </div>
 
@@ -1323,6 +1330,7 @@ const AdminDashboard: React.FC = () => {
                       <tr>
                         <th className="px-4 py-3 text-right">المنتج</th>
                         <th className="px-4 py-3 text-right">الاختيارات</th>
+                        <th className="px-4 py-3 text-center">طريقة الشحن</th>
                         <th className="px-4 py-3 text-center">الكمية</th>
                         <th className="px-4 py-3 text-right">السعر</th>
                         <th className="px-4 py-3 text-right">الإجمالي</th>
@@ -1387,6 +1395,15 @@ const AdminDashboard: React.FC = () => {
                               <span className="text-slate-400 text-[10px]">منتج أساسي</span>
                             )}
                           </td>
+                          <td className="px-4 py-3 text-center">
+                            <span className={`px-2 py-1 rounded-full text-[10px] font-bold ${
+                              item.shippingMethod === 'sea' 
+                                ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' 
+                                : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
+                            }`}>
+                              {item.shippingMethod === 'sea' ? 'بحري' : 'جوي'}
+                            </span>
+                          </td>
                           <td className="px-4 py-4 text-center font-bold">
                             {item.quantity}
                           </td>
@@ -1413,11 +1430,11 @@ const AdminDashboard: React.FC = () => {
                                 onClick={(e) => e.stopPropagation()}
                               />
                             ) : (
-                              <span>{item.price.toLocaleString()} د.ع</span>
+                              <span>{(Math.ceil(item.price / 250) * 250).toLocaleString()} د.ع</span>
                             )}
                           </td>
                           <td className="px-4 py-4 font-bold text-primary">
-                            {(item.price * item.quantity).toLocaleString()} د.ع
+                            {(Math.ceil(item.price / 250) * 250 * item.quantity).toLocaleString()} د.ع
                           </td>
                           <td className="px-4 py-4 text-center">
                             {item.product?.purchaseUrl ? (
@@ -1447,8 +1464,16 @@ const AdminDashboard: React.FC = () => {
               <div className="w-full sm:w-80 space-y-3 bg-slate-50 dark:bg-slate-800/50 p-4 rounded-2xl border border-slate-100 dark:border-slate-800">
                 <div className="flex justify-between text-xs sm:text-sm">
                   <span className="text-slate-500 font-bold">المجموع الفرعي:</span>
-                  <span className="font-black">{(selectedOrder.total - (selectedOrder.internationalShippingFee || 0)).toLocaleString()} د.ع</span>
+                  <span className="font-black">
+                    {selectedOrder.items.reduce((acc: number, item: any) => acc + (Math.ceil(item.price / 250) * 250 * item.quantity), 0).toLocaleString()} د.ع
+                  </span>
                 </div>
+                {selectedOrder.discountAmount > 0 && (
+                  <div className="flex justify-between text-xs sm:text-sm text-green-600 dark:text-green-400 font-bold">
+                    <span>الخصم:</span>
+                    <span>- {selectedOrder.discountAmount.toLocaleString()} د.ع</span>
+                  </div>
+                )}
                 <div className="flex items-center justify-between text-xs sm:text-sm">
                   <span className="text-slate-500 font-bold">رسوم الشحن الدولي:</span>
                   <div className="flex items-center gap-2">
@@ -1469,7 +1494,7 @@ const AdminDashboard: React.FC = () => {
                 </div>
                 <div className="pt-3 border-t border-slate-200 dark:border-slate-700 flex justify-between items-center">
                   <span className="font-black text-sm sm:text-base">الإجمالي الكلي:</span>
-                  <span className="font-black text-lg sm:text-xl text-primary">{selectedOrder.total.toLocaleString()} د.ع</span>
+                  <span className="font-black text-lg sm:text-xl text-primary">{(Math.ceil(selectedOrder.total / 250) * 250).toLocaleString()} د.ع</span>
                 </div>
               </div>
             </div>
@@ -1537,6 +1562,7 @@ const AdminDashboard: React.FC = () => {
               <th className="px-6 py-4">رقم الطلب</th>
               <th className="px-6 py-4">العميل</th>
               <th className="px-6 py-4">التاريخ</th>
+              <th className="px-6 py-4">طريقة الدفع</th>
               <th className="px-6 py-4">المبلغ الإجمالي</th>
               <th className="px-6 py-4">رسوم الشحن (د.ع)</th>
               <th className="px-6 py-4 text-center">الحالة</th>
@@ -1566,8 +1592,14 @@ const AdminDashboard: React.FC = () => {
                     <span>{new Date(order.createdAt).toLocaleDateString('ar-IQ')}</span>
                   </div>
                 </td>
+                <td className="px-6 py-4 text-xs font-bold text-slate-600 dark:text-slate-400">
+                  {order.paymentMethod === 'credit_card' ? 'بطاقة ائتمان' :
+                   order.paymentMethod === 'cash' ? 'دفع نقدي' :
+                   order.paymentMethod === 'zain_cash' ? 'زين كاش' : 
+                   order.paymentMethod === 'super_key' ? 'سوبر كي' : (order.paymentMethod || '---')}
+                </td>
                 <td className="px-6 py-4 font-black text-primary">
-                  {(order.total || 0).toLocaleString()} د.ع
+                  {(Math.ceil((order.total || 0) / 250) * 250).toLocaleString()} د.ع
                 </td>
                 <td className="px-6 py-4">
                   <div className="flex items-center gap-2">
@@ -1782,9 +1814,9 @@ const AdminDashboard: React.FC = () => {
                           value={storeSettings.contactEmail}
                           onChange={(e) => setStoreSettings({...storeSettings, contactEmail: e.target.value})}
                           className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl py-4 px-6 font-bold focus:ring-2 focus:ring-primary/20 outline-none transition-all"
-                        />
-                      </div>
+                      />
                     </div>
+                  </div>
 
                     <div>
                       <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">العملة الافتراضية</label>

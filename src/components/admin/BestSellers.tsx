@@ -1,6 +1,9 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import LazyImage from '../LazyImage';
+import { calculateInclusivePrice } from '../../utils/shipping';
+import { fetchSettings } from '../../services/api';
+import { Truck } from 'lucide-react';
 
 interface BestSellersProps {
   products: any[];
@@ -9,6 +12,29 @@ interface BestSellersProps {
 
 const BestSellers: React.FC<BestSellersProps> = ({ products, onViewAll }) => {
   const { t } = useTranslation();
+  const [rates, setRates] = useState<any>({
+    airRate: 15400,
+    seaRate: 182000,
+    minFloor: 0
+  });
+
+  useEffect(() => {
+    const loadRates = async () => {
+      try {
+        const settings = await fetchSettings();
+        if (settings) {
+          setRates({
+            airRate: settings.airShippingRate || 15400,
+            seaRate: settings.seaShippingRate || 182000,
+            minFloor: 0
+          });
+        }
+      } catch (error) {
+        console.error('Failed to load shipping rates:', error);
+      }
+    };
+    loadRates();
+  }, []);
 
   const productsWithStats = useMemo(() => {
     return products.slice(0, 6).map((p, i) => ({
@@ -39,8 +65,16 @@ const BestSellers: React.FC<BestSellersProps> = ({ products, onViewAll }) => {
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-bold text-slate-900 dark:text-white truncate text-right">{product.name}</p>
-              <div className="flex items-center gap-1 justify-end">
-                <span className="text-[10px] text-slate-500 dark:text-slate-400">{product.price.toLocaleString()} {t('common.iqd')}</span>
+              <div className="flex flex-col items-end gap-0.5 mt-0.5">
+                <span className="text-[9px] font-bold text-slate-400">
+                  {t('common.base_price')}: {product.price.toLocaleString()} {t('common.iqd')}
+                </span>
+                <div className="flex items-center gap-1 text-primary">
+                  <Truck size={10} className="opacity-70" />
+                  <span className="text-[11px] font-black">
+                    {calculateInclusivePrice(product.price, product.weight, product.length, product.width, product.height, rates).toLocaleString()} {t('common.iqd')}
+                  </span>
+                </div>
               </div>
             </div>
             <div className="text-left">

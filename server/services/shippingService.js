@@ -2,8 +2,52 @@
 import prisma from '../prismaClient.js';
 
 // Packaging Constants
-const BOX_PADDING_CM = 1; // 1cm added to each dimension (reduced from 2cm)
-const WEIGHT_BUFFER_FACTOR = 1.05; // 5% added to weight (reduced from 15%)
+const BOX_PADDING_CM = 5; // Increased to 5cm for "safe side" guessing
+const WEIGHT_BUFFER_FACTOR = 1.25; // Increased to 25% for "safe side" guessing
+
+/**
+ * Helper to get adjusted price based on shipping method.
+ * Reverses the 90% air markup or 15% sea markup from the DB price
+ * and applies the new markup based on the selected method.
+ */
+export function getAdjustedPrice(basePrice, weight, length, width, height, selectedMethod, domesticShippingFee, basePriceRMB) {
+  const weightInKg = (weight || 0.5);
+  const hasDimensions = !!(length && width && height);
+  
+  // Default method logic matching frontend and bulk import
+  let defaultMethod = (weightInKg > 0 && weightInKg < 2) ? 'AIR' : 'SEA';
+  
+  const method = (selectedMethod || defaultMethod).toUpperCase();
+  
+  // 1. Determine the "original price" in IQD (before markup)
+  let originalPrice = basePrice;
+  
+  if (basePriceRMB && basePriceRMB > 0) {
+    // If basePriceRMB is provided, use it as the source of truth
+    originalPrice = basePriceRMB;
+  } else {
+    // If only the database 'price' is available, reverse the markup to get original price
+    if (defaultMethod === 'AIR') {
+      originalPrice = basePrice / 1.9;
+    } else {
+      originalPrice = basePrice / 1.15;
+    }
+  }
+
+  // Calculate domestic fee (default to 0 if not provided)
+  const domesticFee = domesticShippingFee || 0;
+
+  // 2. Apply markup for selected method + domestic fee
+  if (method === 'AIR') {
+    // Air Price: (Base Price + 90% Base Price) + Domestic Shipping
+    const airPrice = (originalPrice * 1.9) + domesticFee;
+    return Math.ceil(airPrice / 250) * 250;
+  } else {
+    // Sea Price: (Base Price + 15% Base Price) + Domestic Shipping
+    const seaPrice = (originalPrice * 1.15) + domesticFee;
+    return Math.ceil(seaPrice / 250) * 250;
+  }
+}
 
 /**
  * Calculate international shipping fee based on store settings and product dimensions.
@@ -11,7 +55,7 @@ const WEIGHT_BUFFER_FACTOR = 1.05; // 5% added to weight (reduced from 15%)
  * @param {string} method - 'AIR' or 'SEA'
  * @returns {number} - Calculated shipping fee in IQD
  */
-export async function calculateOrderShipping(items, method = 'SEA') {
+export async function calculateOrderShipping(items, defaultMethod = 'SEA') {
   try {
     const settings = await prisma.storeSettings.findUnique({ where: { id: 1 } });
     
@@ -27,65 +71,69 @@ export async function calculateOrderShipping(items, method = 'SEA') {
     // Calculate Subtotal and Actual Shipping Cost
     for (const item of items) {
       const product = item.product;
+      const variant = item.variant;
       const qty = item.quantity || 1;
+      const method = (item.shippingMethod || defaultMethod || 'SEA').toUpperCase();
       
-      if (method.toUpperCase() === 'AIR') {
-        if (product.weight === null || product.weight === undefined || product.weight <= 0) {
-          isAirAvailable = false;
-          itemsMissingWeight.push(product.name || 'منتج غير مسمى');
-        }
+      // Use variant dimensions/weight if available, otherwise fallback to product
+      const currentWeight = (variant && variant.weight !== null && variant.weight !== undefined) ? variant.weight : product.weight;
+      const currentLength = (variant && variant.length !== null && variant.length !== undefined) ? variant.length : product.length;
+      const currentWidth = (variant && variant.width !== null && variant.width !== undefined) ? variant.width : product.width;
+      const currentHeight = (variant && variant.height !== null && variant.height !== undefined) ? variant.height : product.height;
+
+      if (method === 'AIR') {
+        // Air is always available now with estimation
+        isAirAvailable = true;
       }
 
-      const basePrice = item.variant?.price || item.product?.price || 0;
-      totalSubtotal += basePrice * qty;
+      const dbPrice = item.variant?.price || item.product?.price || 0;
+      const adjustedBasePrice = getAdjustedPrice(
+        dbPrice, 
+        currentWeight, 
+        currentLength, 
+        currentWidth, 
+        currentHeight, 
+        method,
+        product.domesticShippingFee || 0,
+        product.basePriceRMB
+      );
+      
+      totalSubtotal += adjustedBasePrice * qty;
 
       // Domestic shipping fee is now included in the product price
-      // totalChinaDomestic is kept at 0 to avoid double charging
       totalChinaDomestic = 0;
 
       // Apply Packaging Padding & Buffer
-      const rawW = product.weight || 0.1;
-      const rawL = product.length || 10;
-      const rawWi = product.width || 10;
-      const rawH = product.height || 10;
+      const rawW = currentWeight || 0.5; // Estimated weight on the safe side
+      const rawL = currentLength || 0;
+      const rawWi = currentWidth || 0;
+      const rawH = currentHeight || 0;
 
       // Boxed Dimensions
-      const boxedL = rawL + BOX_PADDING_CM;
-      const boxedWi = rawWi + BOX_PADDING_CM;
-      const boxedH = rawH + BOX_PADDING_CM;
+      const boxedL = rawL > 0 ? rawL + BOX_PADDING_CM : 0;
+      const boxedWi = rawWi > 0 ? rawWi + BOX_PADDING_CM : 0;
+      const boxedH = rawH > 0 ? rawH + BOX_PADDING_CM : 0;
       const boxedW = rawW * WEIGHT_BUFFER_FACTOR;
 
       let itemShipping = 0;
-      if (method.toUpperCase() === 'AIR') {
-        // For Air: Based on Actual Weight only (volumetric weight removed as per request)
-        itemShipping = boxedW * airRate;
-      } else {
-        // For Sea: Based on CBM (Volume)
-        const cbm = (boxedL * boxedWi * boxedH) / 1000000;
-        itemShipping = cbm * seaRate;
-      }
+      // International shipping is now free for all methods as per request
+      itemShipping = 0;
 
       // Round per item to match home page logic (250 IQD rounding)
       const roundedItemShipping = Math.ceil(itemShipping / 250) * 250;
       totalActualShipping += roundedItemShipping * qty;
     }
 
-    // New logic: Shipping is either FREE (if threshold met) or ACTUAL COST
-    const airMinOrder = settings?.airShippingThreshold || 50000;
-    const seaMinOrder = settings?.seaShippingThreshold || 50000; // Updated to 50k as per request
-    
-    const threshold = method.toUpperCase() === 'AIR' ? airMinOrder : seaMinOrder;
+    // New logic: Threshold from settings (defaults to 30,000 for air, 80,000 for sea)
+    const airMinOrder = settings?.airShippingThreshold || 30000;
+    const seaMinOrder = settings?.seaShippingThreshold || 80000;
+    const isSea = items.some(i => (i.shippingMethod || defaultMethod || 'SEA').toUpperCase() === 'SEA');
+    const threshold = isSea ? seaMinOrder : airMinOrder;
     const isThresholdMet = totalSubtotal >= threshold;
     
-    // Apply minimum per order
-    let finalShippingFee = totalActualShipping;
-    if (method.toUpperCase() === 'AIR') {
-      const minAirCost = 1 * airRate;
-      finalShippingFee = Math.max(finalShippingFee, minAirCost);
-    } else {
-      finalShippingFee = Math.max(finalShippingFee, 10000);
-    }
-
+    // International shipping is now free for all methods as per request
+    let finalShippingFee = 0;
+    
     return {
       fee: finalShippingFee + totalChinaDomestic, // Total fee including domestic
       actualCost: totalActualShipping,
@@ -100,7 +148,18 @@ export async function calculateOrderShipping(items, method = 'SEA') {
     };
   } catch (error) {
     console.error('Shipping calculation failed:', error);
-    return { fee: 0, isThresholdMet: true };
+    return { 
+      fee: 0, 
+      actualCost: 0,
+      chinaDomesticFee: 0,
+      internationalFee: 0,
+      contribution: 0,
+      isThresholdMet: true, // Don't block order if calculation fails
+      isAvailable: true,
+      itemsMissingWeight: [],
+      threshold: 0,
+      subtotal: 0
+    };
   }
 }
 
@@ -108,54 +167,35 @@ export async function calculateOrderShipping(items, method = 'SEA') {
  * Calculate shipping for a single product.
  * Automatically chooses between AIR and SEA based on weight.
  */
-export async function calculateProductShipping(product, method = 'SEA', applyMinimum = false) {
+export async function calculateProductShipping(product, method = 'SEA', applyMinimum = true, variant = null) {
   try {
+    const safeMethod = (method || 'SEA').toUpperCase();
     const settings = await prisma.storeSettings.findUnique({ where: { id: 1 } });
-    const airRate = settings?.airShippingRate || 15400;
     const seaRate = settings?.seaShippingRate || 182000;
 
+    // Use variant dimensions/weight if available, otherwise fallback to product
+    const currentWeight = (variant && variant.weight !== null && variant.weight !== undefined) ? variant.weight : product.weight;
+    const currentLength = (variant && variant.length !== null && variant.length !== undefined) ? variant.length : product.length;
+    const currentWidth = (variant && variant.width !== null && variant.width !== undefined) ? variant.width : product.width;
+    const currentHeight = (variant && variant.height !== null && variant.height !== undefined) ? variant.height : product.height;
+
     // Apply Packaging Padding & Buffer
-    const rawW = product.weight || 0.1;
-    const rawL = product.length || 10;
-    const rawWi = product.width || 10;
-    const rawH = product.height || 10;
+    const rawL = currentLength || 0;
+    const rawWi = currentWidth || 0;
+    const rawH = currentHeight || 0;
 
     // Boxed Dimensions
-    const boxedL = rawL + BOX_PADDING_CM;
-    const boxedWi = rawWi + BOX_PADDING_CM;
-    const boxedH = rawH + BOX_PADDING_CM;
-    const boxedW = rawW * WEIGHT_BUFFER_FACTOR;
+    const boxedL = rawL > 0 ? rawL + BOX_PADDING_CM : 0;
+    const boxedWi = rawWi > 0 ? rawWi + BOX_PADDING_CM : 0;
+    const boxedH = rawH > 0 ? rawH + BOX_PADDING_CM : 0;
 
     let actualCost = 0;
-    if (method.toUpperCase() === 'AIR') {
-      // For Air: Weight must be available
-      if (product.weight === null || product.weight === undefined || product.weight <= 0) {
-        return 0; // Air shipping not available without weight
-      }
-      // For Air: Based on Actual Weight only (volumetric weight removed as per request)
-      // Minimum weight is 1kg
-      const effectiveWeight = applyMinimum ? Math.max(boxedW, 1) : boxedW;
-      actualCost = effectiveWeight * airRate;
-    } else {
-      // For Sea: Based on CBM (Volume)
-      const cbm = (boxedL * boxedWi * boxedH) / 1000000;
-      actualCost = cbm * seaRate;
-      
-      // Minimum cost for Sea is 10,000 IQD
-      if (applyMinimum && actualCost < 10000) {
-        actualCost = 10000;
-      }
-    }
+    // International shipping is now free for all methods as per request
+    actualCost = 0;
 
-    // Free shipping threshold for single product view
-    const airMinOrder = settings?.airShippingThreshold || 50000;
-    const seaMinOrder = settings?.seaShippingThreshold || 50000;
-    const threshold = method.toUpperCase() === 'AIR' ? airMinOrder : seaMinOrder;
-    
     // As per user request: always add money of delivery
     const roundedShipping = Math.ceil(actualCost / 250) * 250;
     
-    // Domestic shipping fee is now included in the product price
     return roundedShipping;
   } catch (error) {
     return 0;

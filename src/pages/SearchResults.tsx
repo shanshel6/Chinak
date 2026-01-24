@@ -55,6 +55,8 @@ const SearchResults: React.FC = () => {
   const [sortBy, setSortBy] = useState<'none' | 'price_asc' | 'price_desc' | 'rating'>('none');
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [showSearchHeader, setShowSearchHeader] = useState(true);
+  const lastScrollY = useRef(window.scrollY);
 
   const observer = useRef<IntersectionObserver | null>(null);
 
@@ -117,10 +119,44 @@ const SearchResults: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    let ticking = false;
     const handleScroll = () => {
+      // Save scroll position
       setSearchScrollPos(window.scrollY);
+
+      if (!ticking) {
+        window.requestAnimationFrame(() => {
+          const currentScrollY = window.scrollY;
+          const deltaY = currentScrollY - lastScrollY.current;
+          
+          // Ignore bounces at the very top or bottom (iOS elastic scroll)
+          if (currentScrollY < 0) {
+            ticking = false;
+            return;
+          }
+
+          // Search header visibility logic
+          if (currentScrollY < 50) {
+            // At the very top, always show
+            setShowSearchHeader(true);
+          } else if (Math.abs(deltaY) > 15) { // Threshold for stability
+            if (deltaY < 0) {
+              // Scrolling up - show header immediately
+              setShowSearchHeader(true);
+            } else if (deltaY > 15 && currentScrollY > 200) { // More deliberate down scroll to hide
+              // Scrolling down - hide header
+              setShowSearchHeader(false);
+            }
+            // Update lastScrollY only when we've moved significantly to lock the state
+            lastScrollY.current = currentScrollY;
+          }
+
+          ticking = false;
+        });
+        ticking = true;
+      }
     };
-    window.addEventListener('scroll', handleScroll);
+    window.addEventListener('scroll', handleScroll, { passive: true });
     return () => window.removeEventListener('scroll', handleScroll);
   }, [setSearchScrollPos]);
 
@@ -198,8 +234,8 @@ const SearchResults: React.FC = () => {
 
     // Apply filters
     if (activeFilter === 'free_shipping') {
-      // Products over 50,000 IQD get free shipping in our business logic
-      result = result.filter(p => p.price >= 50000); 
+      // Products over 30,000 IQD get free shipping in our business logic
+      result = result.filter(p => p.price >= 30000); 
     } else if (activeFilter === 'top_rated') {
       // Simulated top rated (products with even IDs for demo)
       result = result.filter(p => p.id % 2 === 0);
@@ -226,7 +262,7 @@ const SearchResults: React.FC = () => {
 
   return (
     <div className="relative flex min-h-screen w-full flex-col bg-background-light dark:bg-background-dark font-display text-slate-900 dark:text-white antialiased selection:bg-primary/30 rtl overflow-visible" dir="rtl">
-         <div className="sticky top-0 z-50 w-full bg-background-light dark:bg-background-dark border-b border-slate-200/50 dark:border-slate-800/50 shadow-sm transition-all duration-300">
+         <div className={`sticky top-0 z-50 w-full bg-background-light dark:bg-background-dark border-b border-slate-200/50 dark:border-slate-800/50 shadow-sm transition-transform duration-300 ease-in-out ${showSearchHeader ? 'translate-y-0' : '-translate-y-full'}`}>
            <div className="pt-1">
              <SearchHeader 
                query={searchQuery}

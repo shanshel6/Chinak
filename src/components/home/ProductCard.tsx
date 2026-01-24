@@ -2,7 +2,7 @@ import React, { useRef, useEffect, useState } from 'react';
 import LazyImage from '../LazyImage';
 import { fetchProductById, fetchProductReviews, checkProductPurchase, fetchSettings } from '../../services/api';
 import { Heart } from 'lucide-react';
-import { calculateShippingFee as _calculateShippingFee } from '../../utils/shipping';
+import { calculateInclusivePrice } from '../../utils/shipping';
 
 interface Product {
   id: number;
@@ -19,6 +19,8 @@ interface Product {
   length?: number;
   width?: number;
   height?: number;
+  domesticShippingFee?: number;
+  basePriceRMB?: number;
 }
 
 interface ProductCardProps {
@@ -85,7 +87,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
 
   const [_airRate, setAirRate] = useState<number>(15400);
   const [_seaRate, setSeaRate] = useState<number>(182000);
-  const [_minFloor, setMinFloor] = useState<number>(5000);
+  const [_minFloor, setMinFloor] = useState<number>(0);
 
   useEffect(() => {
     const loadRates = async () => {
@@ -93,15 +95,25 @@ const ProductCard: React.FC<ProductCardProps> = ({
         const settings = await fetchSettings();
         if (settings?.airShippingRate) setAirRate(settings.airShippingRate);
         if (settings?.seaShippingRate) setSeaRate(settings.seaShippingRate);
-        if (settings?.airShippingMinFloor) setMinFloor(settings.airShippingMinFloor);
+        setMinFloor(0);
       } catch (e) {}
     };
     loadRates();
   }, []);
 
   const totalPrice = React.useMemo(() => {
-    return minPrice;
-  }, [minPrice]);
+    return calculateInclusivePrice(
+      minPrice,
+      product.weight,
+      product.length,
+      product.width,
+      product.height,
+      { airRate: _airRate, seaRate: _seaRate, minFloor: _minFloor },
+      undefined,
+      product.domesticShippingFee || 0,
+      product.basePriceRMB
+    );
+  }, [minPrice, product.weight, product.length, product.width, product.height, _airRate, _seaRate, _minFloor]);
 
   return (
     <div 

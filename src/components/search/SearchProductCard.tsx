@@ -1,12 +1,18 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Heart, Star } from 'lucide-react';
 import LazyImage from '../LazyImage';
+import { calculateInclusivePrice } from '../../utils/shipping';
+import { fetchSettings } from '../../services/api';
 
 interface Product {
   id: number;
   name: string;
   price: number;
   image: string;
+  weight?: number;
+  length?: number;
+  width?: number;
+  height?: number;
 }
 
 interface SearchProductCardProps {
@@ -22,6 +28,39 @@ const SearchProductCard: React.FC<SearchProductCardProps> = ({
   onToggleWishlist,
   isWishlisted,
 }) => {
+  const [rates, setRates] = useState<any>({
+    airRate: 15400,
+    seaRate: 182000,
+    minFloor: 0
+  });
+
+  useEffect(() => {
+    const loadRates = async () => {
+      try {
+        const settings = await fetchSettings();
+        if (settings) {
+          setRates({
+            airRate: settings.airShippingRate || 15400,
+            seaRate: settings.seaShippingRate || 182000,
+            minFloor: 0
+          });
+        }
+      } catch (error) {}
+    };
+    loadRates();
+  }, []);
+
+  const totalPrice = React.useMemo(() => {
+    return calculateInclusivePrice(
+      product.price,
+      product.weight,
+      product.length,
+      product.width,
+      product.height,
+      rates
+    );
+  }, [product, rates]);
+
   return (
     <div 
       onClick={() => onNavigate(product.id)}
@@ -49,7 +88,7 @@ const SearchProductCard: React.FC<SearchProductCardProps> = ({
             fill={isWishlisted ? "currentColor" : "none"} 
           />
         </button>
-        {product.price < 50000 && (
+        {totalPrice < 30000 && (
           <div className="absolute top-2 right-2 px-2 py-1 rounded-lg bg-red-500 text-white text-[10px] font-bold">
             وفر 20%
           </div>
@@ -66,8 +105,8 @@ const SearchProductCard: React.FC<SearchProductCardProps> = ({
         </div>
         <div className="flex items-center">
           <div className="flex flex-col">
-            <span className="text-base font-bold text-primary">{product.price.toLocaleString()} د.ع</span>
-            <span className="text-[10px] text-slate-400 line-through">{(product.price * 1.2).toLocaleString()} د.ع</span>
+            <span className="text-base font-bold text-primary">{totalPrice.toLocaleString()} د.ع</span>
+            <span className="text-[10px] text-slate-400 line-through">{(totalPrice * 1.2).toLocaleString()} د.ع</span>
           </div>
         </div>
       </div>

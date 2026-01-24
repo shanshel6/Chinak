@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { motion } from 'framer-motion';
 import { useCartStore } from '../store/useCartStore';
 import { Home, ShoppingBag, ShoppingCart, Heart, User } from 'lucide-react';
 
@@ -15,47 +14,54 @@ const BottomNav: React.FC<BottomNavProps> = ({ className = '' }) => {
   const [isVisible, setIsVisible] = useState(true);
   const [prevPathname, setPrevPathname] = useState(location.pathname);
 
-  if (location.pathname !== prevPathname) {
-    setPrevPathname(location.pathname);
-    setIsVisible(true);
-  }
+  useEffect(() => {
+    if (location.pathname !== prevPathname) {
+      setPrevPathname(location.pathname);
+      setIsVisible(true);
+    }
+  }, [location.pathname, prevPathname]);
 
-  const lastScrollY = useRef(0);
-  const scrollThreshold = 20; // Increased threshold for "not right away" feel
+  const lastScrollY = useRef(window.scrollY);
 
   useEffect(() => {
     // Only apply hide/show on scroll for the Home page as requested
     if (location.pathname !== '/') {
+      setIsVisible(true);
       return;
     }
 
+    let ticking = false;
     const handleScroll = () => {
-      const currentScrollY = window.scrollY;
-      
-      // Calculate the difference between current and last scroll position
-      const diff = currentScrollY - lastScrollY.current;
+      if (!ticking) {
+        window.requestAnimationFrame(() => {
+          const currentScrollY = window.scrollY;
+          const diff = currentScrollY - lastScrollY.current;
 
-      // Always show at the very top
-      if (currentScrollY < 50) {
-        setIsVisible(true);
-        lastScrollY.current = currentScrollY;
-        return;
-      }
+          // Ignore bounces at the very top or bottom (iOS elastic scroll)
+          if (currentScrollY < 0) {
+            ticking = false;
+            return;
+          }
+          
+          // Always show at the top
+          if (currentScrollY < 50) {
+            setIsVisible(true);
+          } else if (Math.abs(diff) > 15) { // Sync threshold with Home.tsx
+            if (diff < 0) {
+              // Scrolling up - show nav immediately
+              setIsVisible(true);
+            } else if (diff > 15 && currentScrollY > 200) { // More deliberate down scroll to hide
+              // Scrolling down - hide nav
+              setIsVisible(false);
+            }
+            // Only update lastScrollY when threshold is met to lock state
+            lastScrollY.current = currentScrollY;
+          }
 
-      // Don't do anything if we haven't scrolled past the threshold
-      if (Math.abs(diff) < scrollThreshold) {
-        return;
+          ticking = false;
+        });
+        ticking = true;
       }
-
-      if (diff > 0) {
-        // Scrolling down - hide
-        setIsVisible(false);
-      } else {
-        // Scrolling up - show
-        setIsVisible(true);
-      }
-      
-      lastScrollY.current = currentScrollY;
     };
 
     window.addEventListener('scroll', handleScroll, { passive: true });
@@ -76,16 +82,10 @@ const BottomNav: React.FC<BottomNavProps> = ({ className = '' }) => {
   };
 
   return (
-    <motion.nav 
-      initial={{ y: 0 }}
-      animate={{ y: isVisible ? 0 : 120 }}
-      transition={{ 
-        type: 'spring',
-        stiffness: 300,
-        damping: 30,
-        mass: 0.8
-      }}
-      className={`fixed bottom-0 left-0 right-0 z-40 w-full border-t border-slate-200 bg-white/95 px-6 pb-[calc(env(safe-area-inset-bottom)+1.25rem)] pt-3 backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/95 ${className}`}
+    <nav 
+      className={`fixed bottom-0 left-0 right-0 z-40 w-full border-t border-slate-200 bg-white/95 px-6 pb-[calc(env(safe-area-inset-bottom)+1.25rem)] pt-3 backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/95 transition-transform duration-300 ease-in-out ${
+        isVisible ? 'translate-y-0' : 'translate-y-full'
+      } ${className}`}
     >
       <div className="mx-auto flex max-w-lg items-center justify-between">
         {navItems.map((item) => {
@@ -106,13 +106,9 @@ const BottomNav: React.FC<BottomNavProps> = ({ className = '' }) => {
                   <Icon size={26} strokeWidth={active ? 2.5 : 2} />
                 </button>
                 {cartItemsCount > 0 && (
-                  <motion.span 
-                    initial={{ scale: 0 }}
-                    animate={{ scale: 1 }}
-                    className="absolute top-0 right-0 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white ring-2 ring-white dark:ring-slate-900"
-                  >
+                  <span className="absolute top-0 right-0 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white ring-2 ring-white dark:ring-slate-900 animate-in zoom-in duration-300">
                     {cartItemsCount > 99 ? '+99' : cartItemsCount}
-                  </motion.span>
+                  </span>
                 )}
               </div>
             );
@@ -133,7 +129,7 @@ const BottomNav: React.FC<BottomNavProps> = ({ className = '' }) => {
           );
         })}
       </div>
-    </motion.nav>
+    </nav>
   );
 };
 

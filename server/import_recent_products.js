@@ -1,6 +1,40 @@
 import prisma from './prismaClient.js';
 import fs from 'fs';
 
+const extractNumber = (val) => {
+  if (val === null || val === undefined || val === '') return null;
+  if (typeof val === 'number') return val;
+  const str = String(val);
+  const match = str.match(/(\d+\.?\d*)/);
+  if (match) {
+    const parsed = parseFloat(match[1]);
+    const isGramUnit = (str.includes('جرام') || str.toLowerCase().includes('gram')) && !str.toLowerCase().includes('kg');
+    const isLikelyGrams = !str.toLowerCase().includes('kg') && parsed > 10;
+    if (isGramUnit || isLikelyGrams) {
+      return parsed / 1000;
+    }
+    return isNaN(parsed) ? null : parsed;
+  }
+  return null;
+};
+
+const calculateBulkImportPrice = (rawPrice, domesticFee, weight, explicitMethod) => {
+  const weightInKg = extractNumber(weight) || 0.5;
+  let method = explicitMethod?.toLowerCase();
+  if (!method) {
+    method = (weightInKg > 0 && weightInKg < 2) ? 'air' : 'sea';
+  }
+  const domestic = domesticFee || 0;
+
+  if (method === 'air') {
+    // Air Price: (Base Price * 1.9) + Domestic Shipping
+    return Math.ceil(((rawPrice * 1.9) + domestic) / 250) * 250;
+  } else {
+    // Sea Price: (Base Price * 1.15) + Domestic Shipping
+    return Math.ceil(((rawPrice * 1.15) + domestic) / 250) * 250;
+  }
+};
+
 async function main() {
   const content = fs.readFileSync('../recent_products.json', 'utf8');
   
@@ -29,13 +63,17 @@ async function main() {
       });
 
       if (!existing) {
+        const domesticFee = parseFloat(p.domestic_shipping_fee || p.domesticShippingFee) || 0;
+        const rawPrice = parseFloat(p.price) || parseFloat(p.basePriceRMB) || 0;
+        const price = calculateBulkImportPrice(rawPrice, domesticFee, p.weight, p.shippingMethod);
+
         await prisma.product.create({
           data: {
             name: p.name || 'Unnamed Product',
             chineseName: p.chineseName,
             description: p.description,
-            price: (parseFloat(p.price) || 0) * 1.1, // 10% profit markup
-            basePriceRMB: parseFloat(p.basePriceRMB) || 0,
+            price: price, // Now uses 90% markup for Air items
+            basePriceRMB: rawPrice,
             image: p.image || '',
             purchaseUrl: p.purchaseUrl,
             status: 'PUBLISHED',
@@ -44,7 +82,8 @@ async function main() {
             specs: p.specs,
             storeEvaluation: p.storeEvaluation,
             reviewsCountShown: p.reviewsCountShown,
-            videoUrl: p.videoUrl
+            videoUrl: p.videoUrl,
+            domesticShippingFee: domesticFee
           }
         });
         console.log(`Imported: ${p.name}`);

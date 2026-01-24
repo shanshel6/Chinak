@@ -52,7 +52,7 @@ const ShippingTracking: React.FC = () => {
     if (!order || isConfirmingPayment) return;
     
     // Add confirmation dialog
-    const isConfirmed = window.confirm('هل أنت متأكد أنك قمت بتحويل المبلغ؟\nAre you sure you paid the bill?');
+    const isConfirmed = window.confirm('هل أنت متأكد أنك قمت بتحويل المبلغ؟');
     if (!isConfirmed) return;
     
     setIsConfirmingPayment(true);
@@ -84,107 +84,119 @@ const ShippingTracking: React.FC = () => {
     const lang = 'ar-IQ';
     
     // Define logical status sequence
-    const statusSequence = ['PENDING', 'AWAITING_PAYMENT', 'PREPARING', 'SHIPPED', 'ARRIVED_IRAQ', 'DELIVERED'];
-    const currentStatusIndex = statusSequence.indexOf(order.status);
+    const statusSequence = ['AWAITING_PAYMENT', 'PENDING', 'PREPARING', 'SHIPPED', 'ARRIVED_IRAQ', 'DELIVERED'];
+    // Normalize status to uppercase for comparison
+    const normalizedStatus = (order.status || 'PENDING').toUpperCase();
+    const currentStatusIndex = statusSequence.indexOf(normalizedStatus);
+    // Always show at least 2 steps for new orders (Paid & Under Review)
+    // unless it's already further along in the process
+    const displayIndex = Math.max(1, currentStatusIndex);
     
-    // 1. Order Confirmed (Always show as completed)
+    // Helper to calculate date for future steps
+    const getFutureDate = (hours: number) => {
+      const d = new Date(date.getTime() + hours * 60 * 60 * 1000);
+      return {
+        time: d.toLocaleTimeString(lang, { hour: '2-digit', minute: '2-digit' }),
+        date: d.toLocaleDateString(lang, { day: 'numeric', month: 'long' })
+      };
+    };
+
+    // 1. Paid / Awaiting Payment
     events.push({
-      status: 'CONFIRMED',
-      title: t('status.pending'),
-      description: t('tracking.status_desc_pending'),
+      status: 'AWAITING_PAYMENT',
+      title: normalizedStatus === 'AWAITING_PAYMENT' ? t('status.awaiting_payment') : t('status.paid'),
+      description: normalizedStatus === 'AWAITING_PAYMENT' ? t('tracking.status_desc_awaiting_payment') : t('tracking.status_desc_paid'),
       time: date.toLocaleTimeString(lang, { hour: '2-digit', minute: '2-digit' }),
       date: date.toLocaleDateString(lang, { day: 'numeric', month: 'long' }),
-      completed: true,
-      icon: ReceiptText
+      completed: currentStatusIndex > 0 || currentStatusIndex === -1,
+      active: currentStatusIndex === 0,
+      icon: normalizedStatus === 'AWAITING_PAYMENT' ? CreditCard : CheckCircle2
     });
     
-    // 2. Awaiting Payment
-    if (currentStatusIndex >= 1) {
-      const isPaid = currentStatusIndex >= 2;
-      const payDate = new Date(date.getTime() + 4 * 60 * 60 * 1000);
-      
-      events.push({
-        status: 'AWAITING_PAYMENT',
-        title: isPaid ? t('status.paid') : t('status.awaiting_payment'),
-        description: isPaid ? t('tracking.status_desc_paid') : t('tracking.status_desc_awaiting_payment'),
-        time: payDate.toLocaleTimeString(lang, { hour: '2-digit', minute: '2-digit' }),
-        date: payDate.toLocaleDateString(lang, { day: 'numeric', month: 'long' }),
-        completed: isPaid,
-        icon: isPaid ? CheckCircle2 : CreditCard
-      });
-    }
+    // 2. Under Review (PENDING)
+    const reviewDates = getFutureDate(2);
+    events.push({
+      status: 'PENDING',
+      title: t('status.pending'),
+      description: t('tracking.status_desc_pending'),
+      time: reviewDates.time,
+      date: reviewDates.date,
+      completed: currentStatusIndex > 1,
+      active: currentStatusIndex === 1 || currentStatusIndex === -1,
+      icon: ReceiptText
+    });
 
     // 3. Preparing
-    if (currentStatusIndex >= 2) {
-      const isPreparingDone = currentStatusIndex >= 3;
-      const procDate = new Date(date.getTime() + 6 * 60 * 60 * 1000);
-      events.push({
-        status: 'PREPARING',
-        title: t('status.preparing'),
-        description: t('tracking.status_desc_preparing'),
-        time: procDate.toLocaleTimeString(lang, { hour: '2-digit', minute: '2-digit' }),
-        date: procDate.toLocaleDateString(lang, { day: 'numeric', month: 'long' }),
-        completed: isPreparingDone,
-        icon: Package
-      });
-    }
+    const prepDates = getFutureDate(6);
+    events.push({
+      status: 'PREPARING',
+      title: t('status.preparing'),
+      description: t('tracking.status_desc_preparing'),
+      time: prepDates.time,
+      date: prepDates.date,
+      completed: currentStatusIndex > 2,
+      active: currentStatusIndex === 2,
+      icon: Package
+    });
 
     // 4. Shipped
-    if (currentStatusIndex >= 3) {
-      const isShippedDone = currentStatusIndex >= 4;
-      const shipDate = new Date(date.getTime() + 24 * 60 * 60 * 1000);
-      
-      let arrivalMessage = '';
-      const arrivalDate = new Date(shipDate.getTime());
-      if (order.shippingMethod === 'air') {
-        arrivalDate.setDate(arrivalDate.getDate() + 12);
-        arrivalMessage = `موعد الوصول المتوقع: ${arrivalDate.toLocaleDateString(lang, { day: 'numeric', month: 'long' })}`;
-      } else if (order.shippingMethod === 'sea') {
-        arrivalDate.setMonth(arrivalDate.getMonth() + 2);
-        arrivalMessage = `موعد الوصول المتوقع: ${arrivalDate.toLocaleDateString(lang, { day: 'numeric', month: 'long' })}`;
-      }
-
-      events.push({
-        status: 'SHIPPED',
-        title: t('status.shipped'),
-        description: arrivalMessage || t('tracking.status_desc_shipped'),
-        time: shipDate.toLocaleTimeString(lang, { hour: '2-digit', minute: '2-digit' }),
-        date: shipDate.toLocaleDateString(lang, { day: 'numeric', month: 'long' }),
-        completed: isShippedDone,
-        icon: Truck
-      });
+    const shipDates = getFutureDate(24);
+    let arrivalMessage = '';
+    const arrivalDate = new Date(date.getTime() + 24 * 60 * 60 * 1000);
+    if (order.shippingMethod === 'air') {
+      arrivalDate.setDate(arrivalDate.getDate() + 12);
+      arrivalMessage = `موعد الوصول المتوقع: ${arrivalDate.toLocaleDateString(lang, { day: 'numeric', month: 'long' })}`;
+    } else if (order.shippingMethod === 'sea') {
+      arrivalDate.setMonth(arrivalDate.getMonth() + 2);
+      arrivalMessage = `موعد الوصول المتوقع: ${arrivalDate.toLocaleDateString(lang, { day: 'numeric', month: 'long' })}`;
     }
+
+    events.push({
+      status: 'SHIPPED',
+      title: t('status.shipped'),
+      description: arrivalMessage || t('tracking.status_desc_shipped'),
+      time: shipDates.time,
+      date: shipDates.date,
+      completed: currentStatusIndex > 3,
+      active: currentStatusIndex === 3,
+      icon: Truck
+    });
 
     // 5. Arrived to Iraq
-    if (currentStatusIndex >= 4) {
-      const isArrivedDone = currentStatusIndex >= 5;
-      const arrivedDate = new Date(date.getTime() + 48 * 60 * 60 * 1000);
-      events.push({
-        status: 'ARRIVED_IRAQ',
-        title: t('status.arrived_iraq'),
-        description: t('tracking.status_desc_arrived_iraq'),
-        time: arrivedDate.toLocaleTimeString(lang, { hour: '2-digit', minute: '2-digit' }),
-        date: arrivedDate.toLocaleDateString(lang, { day: 'numeric', month: 'long' }),
-        completed: isArrivedDone,
-        icon: PackageSearch
-      });
-    }
+    const iraqDates = getFutureDate(48);
+    events.push({
+      status: 'ARRIVED_IRAQ',
+      title: t('status.arrived_iraq'),
+      description: t('tracking.status_desc_arrived_iraq'),
+      time: iraqDates.time,
+      date: iraqDates.date,
+      completed: currentStatusIndex > 4,
+      active: currentStatusIndex === 4,
+      icon: PackageSearch
+    });
 
     // 6. Delivered
-    if (currentStatusIndex >= 5) {
-      const delDate = new Date(order.updatedAt || date.getTime() + 72 * 60 * 60 * 1000);
-      events.push({
-        status: 'DELIVERED',
-        title: t('status.delivered'),
-        description: t('tracking.status_desc_delivered'),
-        time: delDate.toLocaleTimeString(lang, { hour: '2-digit', minute: '2-digit' }),
-        date: delDate.toLocaleDateString(lang, { day: 'numeric', month: 'long' }),
-        completed: true,
-        icon: Home
-      });
-    }
+    const delDates = order.updatedAt ? {
+      time: new Date(order.updatedAt).toLocaleTimeString(lang, { hour: '2-digit', minute: '2-digit' }),
+      date: new Date(order.updatedAt).toLocaleDateString(lang, { day: 'numeric', month: 'long' })
+    } : getFutureDate(72);
+    
+    events.push({
+      status: 'DELIVERED',
+      title: t('status.delivered'),
+      description: t('tracking.status_desc_delivered'),
+      time: delDates.time,
+      date: delDates.date,
+      completed: currentStatusIndex >= 5,
+      active: currentStatusIndex === 5,
+      icon: Home
+    });
 
-    return events.reverse(); // Newest first
+    // Only show events up to the current one + 1 (to show what's next)
+    // or show all if it's already delivered
+    if (normalizedStatus === 'DELIVERED') return events.reverse();
+    
+    return events.slice(0, displayIndex + 1).reverse();
   }, [t]);
 
   const loadOrder = useCallback(async (id: number | string) => {
@@ -273,6 +285,13 @@ const ShippingTracking: React.FC = () => {
         @keyframes pulse-subtle {
             0%, 100% { transform: scale(1); }
             50% { transform: scale(1.02); }
+        }
+        @keyframes blink-opacity {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+        .animate-blink {
+            animation: blink-opacity 1s ease-in-out infinite;
         }
         .pulse-ring {
             position: absolute;
@@ -416,19 +435,21 @@ const ShippingTracking: React.FC = () => {
                   ) : (
                     <div className="flex flex-col">
                       {order.trackingEvents?.map((event: any, idx: number) => (
-                        <div key={idx} className={`relative flex gap-6 pb-8 z-10 ${event.completed ? 'opacity-100' : 'opacity-40'}`}>
+                        <div key={idx} className={`relative flex gap-6 pb-8 z-10 ${(event.completed || event.active) ? 'opacity-100' : 'opacity-40'}`}>
                           <div className="relative shrink-0 flex flex-col items-center">
-                            <div className={`size-10 rounded-full flex items-center justify-center text-white shadow-lg z-10 relative ${event.completed ? 'bg-primary shadow-primary/30' : event.status === 'OUT_FOR_DELIVERY' ? 'bg-amber-500 shadow-amber-500/30' : 'bg-slate-300 dark:bg-slate-600'}`}>
+                            <div className={`size-10 rounded-full flex items-center justify-center text-white shadow-lg z-10 relative ${(event.completed || event.active) ? 'bg-primary shadow-primary/30' : event.status === 'OUT_FOR_DELIVERY' ? 'bg-amber-500 shadow-amber-500/30' : 'bg-slate-300 dark:bg-slate-600'} ${event.active ? 'animate-blink' : ''}`}>
                               <event.icon size={20} />
-                              {(idx === 0 && order.status !== 'DELIVERED' && order.status !== 'CANCELLED') && (
+                              {(event.active && order.status !== 'DELIVERED' && order.status !== 'CANCELLED') && (
                                 <div className={`pulse-ring ${event.status === 'OUT_FOR_DELIVERY' ? 'bg-amber-500' : 'bg-primary'}`}></div>
                               )}
                             </div>
                           </div>
                           <div className="flex flex-1 flex-col pt-1">
                             <div className="flex justify-between items-start">
-                              <p className={`text-base font-bold ${event.status === 'OUT_FOR_DELIVERY' && order.status === 'SHIPPED' ? 'text-amber-600 dark:text-amber-400' : 'text-slate-900 dark:text-white'}`}>{event.title}</p>
-                              <span className="text-[10px] text-slate-400 font-medium">{event.date} - {event.time}</span>
+                              <p className={`text-base font-bold ${event.status === 'OUT_FOR_DELIVERY' && order.status === 'SHIPPED' ? 'text-amber-600 dark:text-amber-400' : 'text-slate-900 dark:text-white'} ${event.active ? 'animate-blink' : ''}`}>{event.title}</p>
+                              {(event.completed || event.active) && (
+                                <span className="text-[10px] text-slate-400 font-medium">{event.date} - {event.time}</span>
+                              )}
                             </div>
                             <p className="text-slate-500 dark:text-slate-400 text-sm mt-1 leading-relaxed">{event.description}</p>
                           </div>
@@ -497,7 +518,7 @@ const ShippingTracking: React.FC = () => {
                       </div>
                     )}
                     <p className="text-xs text-slate-500 dark:text-slate-400">{t('tracking.qty')}: {item.quantity}</p>
-                    <p className="text-sm font-bold text-primary">{item.price.toLocaleString()} {t('common.iqd')}</p>
+                    <p className="text-sm font-bold text-primary">{(Math.ceil(item.price / 250) * 250).toLocaleString()} {t('common.iqd')}</p>
                   </div>
                 </div>
               ))}
@@ -508,7 +529,9 @@ const ShippingTracking: React.FC = () => {
           <div className="bg-white dark:bg-slate-800 rounded-xl p-4 shadow-sm border border-slate-100 dark:border-slate-700/50 flex flex-col gap-3 mt-2">
             <div className="flex justify-between items-center text-sm">
               <span className="text-slate-500 dark:text-slate-400">{t('tracking.subtotal')}</span>
-              <span className="text-slate-900 dark:text-white font-medium">{(order.total + (order.discountAmount || 0)).toLocaleString()} {t('common.iqd')}</span>
+              <span className="text-slate-900 dark:text-white font-medium">
+                {order.items.reduce((acc: number, item: any) => acc + (Math.ceil(item.price / 250) * 250 * item.quantity), 0).toLocaleString()} {t('common.iqd')}
+              </span>
             </div>
             {order.discountAmount > 0 && (
               <div className="flex justify-between items-center text-sm text-green-600 dark:text-green-400 font-bold">
@@ -521,7 +544,7 @@ const ShippingTracking: React.FC = () => {
             )}
             <div className="flex justify-between items-center">
               <span className="text-base font-bold text-slate-900 dark:text-white">{t('tracking.total')}</span>
-              <span className="text-lg font-bold text-primary">{order.total.toLocaleString()} {t('common.iqd')}</span>
+              <span className="text-lg font-bold text-primary">{(Math.ceil(order.total / 250) * 250).toLocaleString()} {t('common.iqd')}</span>
             </div>
           </div>
 
@@ -560,7 +583,6 @@ const ShippingTracking: React.FC = () => {
             </div>
           </div>
 
-          {/* Payment Method Section */}
           <div className="bg-white dark:bg-slate-800 rounded-xl p-4 shadow-sm border border-slate-100 dark:border-slate-700/50 flex flex-col gap-3 mt-2">
             <div className="flex items-center gap-2 text-slate-900 dark:text-white font-bold">
               <CreditCard size={20} className="text-primary" />
@@ -568,11 +590,13 @@ const ShippingTracking: React.FC = () => {
             </div>
             <div className="flex items-center justify-between pr-7">
               <p className="text-sm text-slate-600 dark:text-slate-300">
-                {order.paymentMethod === 'zain_cash' ? t('tracking.zain_cash') : 
-                 order.paymentMethod === 'super_key' ? t('tracking.super_key') : t('tracking.online_payment')}
+                {order.paymentMethod === 'zain_cash' ? 'زين كاش' : 
+                 order.paymentMethod === 'super_key' ? 'سوبر كي' : 
+                 order.paymentMethod === 'cash' ? 'دفع نقدي' : 
+                 order.paymentMethod === 'credit_card' ? 'بطاقة ائتمان' : (order.paymentMethod || '---')}
               </p>
               <span className="text-xs bg-slate-100 dark:bg-slate-700 px-2 py-1 rounded text-slate-500 uppercase">
-                {order.paymentMethod?.replace('_', ' ') || 'PAYMENT'}
+                {order.paymentMethod === 'cash' ? 'CASH' : (order.paymentMethod?.replace('_', ' ') || 'PAYMENT')}
               </span>
             </div>
           </div>
@@ -623,7 +647,7 @@ const ShippingTracking: React.FC = () => {
               </button>
             </div>
             
-            {order.status === 'PENDING' && (
+            {order.status === 'PENDING' && (new Date().getTime() - new Date(order.createdAt).getTime() < 24 * 60 * 60 * 1000) && (
               <button 
                 onClick={handleCancelOrder}
                 disabled={isCancelling}
@@ -677,7 +701,7 @@ const ShippingTracking: React.FC = () => {
                   <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-5 border border-slate-100 dark:border-slate-800 text-center">
                     <p className="text-sm text-slate-500 mb-1">المبلغ المطلوب دفعه</p>
                     <div className="text-3xl font-black text-primary font-sans tracking-tight">
-                      {order.total.toLocaleString()} <span className="text-sm">د.ع</span>
+                      {(Math.ceil(order.total / 250) * 250).toLocaleString()} <span className="text-sm">د.ع</span>
                     </div>
                   </div>
 

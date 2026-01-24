@@ -115,6 +115,10 @@ model ProductVariant {
   productId   Int
   combination String
   price       Float
+  weight      Float?
+  height      Float?
+  length      Float?
+  width       Float?
   image       String?
   cartItems   CartItem[]
   orderItems  OrderItem[]
@@ -147,11 +151,12 @@ model CartItem {
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
   selectedOptions String?
+  shippingMethod  String          @default("air") // 'air' or 'sea'
   product         Product         @relation(fields: [productId], references: [id])
   user            User            @relation(fields: [userId], references: [id])
   variant         ProductVariant? @relation(fields: [variantId], references: [id])
 
-  @@unique([userId, productId, variantId, selectedOptions])
+  @@unique([userId, productId, variantId, selectedOptions, shippingMethod])
 }
 
 model Banner {
@@ -175,11 +180,11 @@ model StoreSettings {
   socialLinks         String   @default("{}")
   footerText          String?
   updatedAt           DateTime @updatedAt
-  airShippingMinFloor Float    @default(5000)
-  airShippingRate     Float    @default(15400)
-  seaShippingRate     Float    @default(182000)
+  airShippingRate      Float    @default(15400)
+  seaShippingRate      Float    @default(182000)
+  airShippingMinFloor  Float    @default(0)
   airShippingThreshold Float    @default(30000)
-  seaShippingThreshold Float    @default(50000)
+  seaShippingThreshold Float    @default(80000)
   chinaDomesticShipping Float    @default(1500)
 }
 
@@ -298,6 +303,7 @@ model OrderItem {
   order           Order           @relation(fields: [orderId], references: [id])
   product         Product         @relation(fields: [productId], references: [id])
   variant         ProductVariant? @relation(fields: [variantId], references: [id])
+  shippingMethod  String          @default("air") // 'air' or 'sea'
 }
 
 model WishlistItem {

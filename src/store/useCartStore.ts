@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { fetchCart, updateCartItem, removeFromCart, addToCart, fetchSettings } from '../services/api';
-import { calculateShippingFee } from '../utils/shipping';
+import { calculateInclusivePrice } from '../utils/shipping';
 import type { ShippingRates } from '../types/shipping';
 
 interface Product {
@@ -14,6 +14,7 @@ interface Product {
   width?: number;
   height?: number;
   domesticShippingFee?: number;
+  basePriceRMB?: number;
 }
 
 interface CartItem {
@@ -22,6 +23,7 @@ interface CartItem {
   variantId?: number | string;
   selectedOptions?: string | any;
   quantity: number;
+  shippingMethod: 'air' | 'sea';
   price?: number; // Inclusive price from server
   product: Product;
   variant?: {
@@ -29,6 +31,10 @@ interface CartItem {
     combination: string;
     price: number;
     image?: string;
+    weight?: number;
+    length?: number;
+    width?: number;
+    height?: number;
   };
 }
 
@@ -41,14 +47,34 @@ interface CartState {
   lastSynced: number | null;
   fetchCart: (silent?: boolean) => Promise<void>;
   fetchRates: () => Promise<void>;
-  addItem: (productId: number | string, quantity?: number, variantId?: number | string, productInfo?: { id: number | string; name: string; price: number; image: string; variant?: any; weight?: number; length?: number; width?: number; height?: number; domesticShippingFee?: number }, selectedOptions?: any) => Promise<void>;
+  addItem: (
+    productId: number | string, 
+    quantity?: number, 
+    variantId?: number | string, 
+    productInfo?: { 
+      id: number | string; 
+      name: string; 
+      price: number; 
+      image: string; 
+      variant?: any; 
+      weight?: number; 
+      length?: number; 
+      width?: number; 
+      height?: number; 
+      domesticShippingFee?: number;
+      basePriceRMB?: number;
+    }, 
+    selectedOptions?: any,
+    shippingMethod?: 'air' | 'sea'
+  ) => Promise<void>;
   updateQuantity: (itemId: number | string, quantity: number) => Promise<void>;
   removeItem: (itemId: number | string) => Promise<void>;
   removeItems: (itemIds: (number | string)[]) => Promise<void>;
   clearCart: () => void;
-  getTotalItems: () => number;
-  getBaseSubtotal: () => number;
-  getShippingTotal: (method: 'air' | 'sea') => number;
+  clearShippingMethodItems: (method: 'air' | 'sea') => void;
+  getTotalItems: (method?: 'air' | 'sea') => number;
+  getBaseSubtotal: (method?: 'air' | 'sea') => number;
+  getShippingTotal: (method?: 'air' | 'sea') => number;
   getSubtotal: (method?: 'air' | 'sea') => number;
 }
 
@@ -64,7 +90,7 @@ export const useCartStore = create<CartState>()(
         airRate: 15400,
         seaRate: 182000,
         chinaDomesticRate: 1500,
-        minFloor: 5000
+        minFloor: 0
       },
 
       fetchRates: async () => {
@@ -76,7 +102,7 @@ export const useCartStore = create<CartState>()(
                 airRate: settings.airShippingRate || 15400,
                 seaRate: settings.seaShippingRate || 182000,
                 chinaDomesticRate: settings.chinaDomesticShipping || 1500,
-                minFloor: settings.airShippingMinFloor || 5000
+                minFloor: 0
               }
             });
           }
@@ -119,7 +145,7 @@ export const useCartStore = create<CartState>()(
         }
       },
 
-      addItem: async (productId, quantity = 1, variantId, productInfo, selectedOptions) => {
+      addItem: async (productId, quantity = 1, variantId, productInfo, selectedOptions, shippingMethod = 'air') => {
         const { items } = get();
         const sOptions = typeof selectedOptions === 'object' && selectedOptions !== null 
           ? JSON.stringify(selectedOptions) 
@@ -133,7 +159,8 @@ export const useCartStore = create<CartState>()(
                             (item.variantId && variantId && String(item.variantId) === String(variantId));
           const sameOptions = (item.selectedOptions === sOptions) || 
                             (!item.selectedOptions && !sOptions);
-          return sameProduct && sameVariant && sameOptions;
+          const sameShipping = item.shippingMethod === shippingMethod;
+          return sameProduct && sameVariant && sameOptions && sameShipping;
         });
 
         if (existingItem) {
@@ -157,6 +184,7 @@ export const useCartStore = create<CartState>()(
             variantId,
             selectedOptions: sOptions,
             quantity,
+            shippingMethod,
             product: {
               id: productInfo.id,
               name: productInfo.name,
@@ -165,7 +193,9 @@ export const useCartStore = create<CartState>()(
               weight: productInfo.weight,
               length: productInfo.length,
               width: productInfo.width,
-              height: productInfo.height
+              height: productInfo.height,
+              domesticShippingFee: productInfo.domesticShippingFee,
+              basePriceRMB: productInfo.basePriceRMB
             },
             variant: productInfo.variant
           };
@@ -173,7 +203,7 @@ export const useCartStore = create<CartState>()(
           
           // Background sync
           try {
-            addToCart(productId, quantity, variantId, selectedOptions).then(response => {
+            addToCart(productId, quantity, variantId, selectedOptions, shippingMethod).then(response => {
               if (response && response.id) {
                 // Update the local item with the server ID to keep them in sync
                 set({
@@ -236,45 +266,42 @@ export const useCartStore = create<CartState>()(
         set({ items: [] });
       },
 
-      getTotalItems: () => {
-        return get().items.reduce((acc, item) => acc + item.quantity, 0);
+      clearShippingMethodItems: (method) => {
+        const { items } = get();
+        set({ items: items.filter(i => i.shippingMethod !== method) });
       },
 
-      getBaseSubtotal: () => {
-        return get().items.reduce((acc, item) => {
-          const basePrice = item.price || item.variant?.price || item.product.price || 0;
-          return acc + (basePrice * item.quantity);
+      getTotalItems: (method) => {
+        const items = method ? get().items.filter(i => i.shippingMethod === method) : get().items;
+        return items.reduce((acc, item) => acc + item.quantity, 0);
+      },
+
+      getBaseSubtotal: (method) => {
+        const { items: allItems, rates } = get();
+        const items = method ? allItems.filter(i => i.shippingMethod === method) : allItems;
+        return items.reduce((acc, item) => {
+          const basePrice = item.variant?.price || item.product.price || 0;
+          const currentPrice = calculateInclusivePrice(
+            basePrice,
+            item.variant?.weight ?? item.product.weight,
+            item.variant?.length ?? item.product.length,
+            item.variant?.width ?? item.product.width,
+            item.variant?.height ?? item.product.height,
+            rates,
+            item.shippingMethod,
+            item.product.domesticShippingFee || 0,
+            item.product.basePriceRMB
+          );
+          return acc + (currentPrice * item.quantity);
         }, 0);
       },
 
-      getShippingTotal: (method: 'air' | 'sea') => {
-        const { rates } = get();
-        const total = get().items.reduce((acc, item) => {
-            const basePrice = item.price || item.variant?.price || item.product.price || 0;
-            const shipping = calculateShippingFee(
-              item.product.weight,
-              item.product.length,
-              item.product.width,
-              item.product.height,
-              rates,
-              basePrice,
-              method.toUpperCase() as 'AIR' | 'SEA',
-              0,
-              false
-            );
-            return acc + (shipping * item.quantity);
-          }, 0);
-
-        if (method === 'air') {
-          const minWeightCost = 1 * rates.airRate;
-          return Math.max(total, minWeightCost);
-        } else {
-          return Math.max(total, 10000);
-        }
+      getShippingTotal: () => {
+        return 0; // International shipping is now free
       },
 
-      getSubtotal: (method: 'air' | 'sea' = 'sea') => {
-        const baseSubtotal = get().getBaseSubtotal();
+      getSubtotal: (method) => {
+        const baseSubtotal = get().getBaseSubtotal(method);
         const shippingTotal = get().getShippingTotal(method);
         return baseSubtotal + shippingTotal;
       },

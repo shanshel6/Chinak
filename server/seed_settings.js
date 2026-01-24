@@ -11,9 +11,9 @@ async function main() {
           storeName: 'My Store',
           airShippingRate: 15400,
           seaShippingRate: 182000,
-          airShippingMinFloor: 5000,
-          airShippingThreshold: 50000,
-          seaShippingThreshold: 50000
+          airShippingMinFloor: 0,
+          airShippingThreshold: 30000,
+          seaShippingThreshold: 30000
         }
       });
       console.log('Default settings created');
@@ -21,8 +21,9 @@ async function main() {
       await prisma.storeSettings.update({
         where: { id: 1 },
         data: {
-          airShippingThreshold: 50000,
-          seaShippingThreshold: 50000
+          airShippingThreshold: 30000,
+          seaShippingThreshold: 30000,
+          airShippingMinFloor: 0
         }
       });
       console.log('Settings updated with new thresholds');

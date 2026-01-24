@@ -73,7 +73,7 @@ async function main() {
       await prisma.product.create({
         data: {
           ...productData,
-          price: productData.price * 1.1, // 10% profit markup
+          price: productData.price * 1.7, // 70% markup for Air shipping (default for small items)
           status: "PUBLISHED",
           isActive: true
         }

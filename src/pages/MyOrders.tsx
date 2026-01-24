@@ -182,7 +182,7 @@ const MyOrders: React.FC = () => {
                   <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-5 border border-slate-100 dark:border-slate-800 text-center">
                     <p className="text-sm text-slate-500 mb-1">المبلغ المطلوب دفعه</p>
                     <div className="text-3xl font-black text-primary font-sans tracking-tight">
-                      {selectedOrder.total.toLocaleString()} <span className="text-sm">د.ع</span>
+                      {(Math.ceil(selectedOrder.total / 250) * 250).toLocaleString()} <span className="text-sm">د.ع</span>
                     </div>
                   </div>
 
@@ -424,7 +424,7 @@ const MyOrders: React.FC = () => {
                           </div>
                         )}
                         <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
-                          {t('tracking.qty')}: {item.quantity} • {(item.price || item.product.price).toLocaleString()} {t('common.iqd')}
+                          {t('tracking.qty')}: {item.quantity} • {(Math.ceil((item.price || item.product.price) / 250) * 250).toLocaleString()} {t('common.iqd')}
                         </p>
                       </div>
                     </div>
@@ -436,7 +436,7 @@ const MyOrders: React.FC = () => {
                   <div className="flex justify-between items-center text-[11px]">
                     <span className="text-slate-500 font-medium">المجموع الفرعي:</span>
                     <span className="font-bold text-slate-700 dark:text-slate-200 font-sans">
-                      {(order.total + (order.discountAmount || 0)).toLocaleString()} د.ع
+                      {order.items.reduce((acc: number, item: any) => acc + (Math.ceil((item.price || item.product.price) / 250) * 250 * item.quantity), 0).toLocaleString()} د.ع
                     </span>
                   </div>
                   <div className="flex justify-between items-center text-[11px]">
@@ -453,7 +453,7 @@ const MyOrders: React.FC = () => {
                   )}
                   <div className="flex justify-between items-center pt-2 border-t border-slate-100 dark:border-slate-800">
                     <span className="text-xs font-black text-slate-900 dark:text-white">الإجمالي النهائي:</span>
-                    <span className="text-sm font-black text-primary font-sans">{order.total.toLocaleString()} د.ع</span>
+                    <span className="text-sm font-black text-primary font-sans">{(Math.ceil(order.total / 250) * 250).toLocaleString()} د.ع</span>
                   </div>
                 </div>
                 {/* Status & Action Footer */}
@@ -473,7 +473,7 @@ const MyOrders: React.FC = () => {
                     >
                       <Headset size={20} />
                     </button>
-                    {order.status === 'PENDING' && (
+                    {order.status === 'PENDING' && (new Date().getTime() - new Date(order.createdAt).getTime() < 24 * 60 * 60 * 1000) && (
                       <button 
                         onClick={() => handleCancelOrder(order.id)}
                         disabled={isCancelling === order.id}

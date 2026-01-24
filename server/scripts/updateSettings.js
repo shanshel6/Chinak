@@ -5,8 +5,9 @@ async function main() {
     const settings = await prisma.storeSettings.update({
       where: { id: 1 },
       data: {
-        seaShippingThreshold: 50000,
-        airShippingThreshold: 50000
+        seaShippingThreshold: 30000,
+        airShippingThreshold: 30000,
+        airShippingMinFloor: 0
       }
     });
     console.log('Successfully updated store settings:', settings);

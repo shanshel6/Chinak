@@ -1,8 +1,10 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Bolt, Heart } from 'lucide-react';
 import LazyImage from '../LazyImage';
 import Skeleton from '../Skeleton';
+import { calculateInclusivePrice } from '../../utils/shipping';
+import { fetchSettings } from '../../services/api';
 
 interface Product {
   id: number;
@@ -10,6 +12,12 @@ interface Product {
   price: number;
   image: string;
   description: string;
+  weight?: number;
+  length?: number;
+  width?: number;
+  height?: number;
+  domesticShippingFee?: number;
+  basePriceRMB?: number;
 }
 
 interface FlashSalesProps {
@@ -28,6 +36,27 @@ const FlashSales: React.FC<FlashSalesProps> = ({
   isProductInWishlist,
 }) => {
   const { t } = useTranslation();
+  const [rates, setRates] = useState({
+    airRate: 15400,
+    seaRate: 182000,
+    minFloor: 0
+  });
+
+  useEffect(() => {
+    const loadRates = async () => {
+      try {
+        const settings = await fetchSettings();
+        if (settings) {
+          setRates({
+            airRate: settings.airShippingRate || 15400,
+            seaRate: settings.seaShippingRate || 182000,
+            minFloor: 0
+          });
+        }
+      } catch (e) {}
+    };
+    loadRates();
+  }, []);
 
   return (
     <div className="mt-6 flex flex-col gap-4 bg-gradient-to-b from-transparent to-white dark:to-slate-900/50 py-4">
@@ -49,37 +78,51 @@ const FlashSales: React.FC<FlashSalesProps> = ({
             </div>
           ))
         ) : (
-          products.slice(0, 4).map((product, index) => (
-            <div 
-              key={product.id}
-              onClick={() => onNavigate(`/product?id=${product.id}`)}
-              className="flex w-36 shrink-0 flex-col overflow-hidden rounded-xl bg-white dark:bg-slate-800 shadow-sm ring-1 ring-slate-900/5 dark:ring-white/10 cursor-pointer group"
-            >
-              <div className="relative aspect-square w-full bg-slate-100 dark:bg-slate-700">
-                <div className="absolute left-2 top-2 z-10 rounded bg-red-500 px-1.5 py-0.5 text-[10px] font-bold text-white">-10%</div>
-                
-                <button 
-                  onClick={(e) => onAddToWishlist(e, product)}
-                  className={`absolute top-2 right-2 z-10 flex size-7 items-center justify-center rounded-full bg-white/90 shadow-sm backdrop-blur-sm transition hover:bg-white ${isProductInWishlist(product.id) ? 'text-red-500' : 'text-slate-400'}`}
-                >
-                  <Heart size={16} fill={isProductInWishlist(product.id) ? "currentColor" : "none"} />
-                </button>
-                <LazyImage 
-                  src={product.image} 
-                  alt={product.name}
-                  priority={index < 2}
-                  className="h-full w-full"
-                />
-              </div>
-              <div className="flex flex-col p-3">
-                <h3 className="line-clamp-2 text-xs font-medium text-slate-700 dark:text-slate-200">{product.name}</h3>
-                <div className="mt-2 flex flex-col gap-0.5">
-                  <span className="text-sm font-bold text-primary">{product.price.toLocaleString()} د.ع</span>
-                  <span className="text-[10px] text-slate-400 line-through">{(product.price * 1.1).toLocaleString()} د.ع</span>
+          products.slice(0, 4).map((product, index) => {
+            const totalPrice = calculateInclusivePrice(
+              product.price,
+              product.weight,
+              product.length,
+              product.width,
+              product.height,
+              rates,
+              undefined,
+              product.domesticShippingFee || 0,
+              product.basePriceRMB
+            );
+
+            return (
+              <div 
+                key={product.id}
+                onClick={() => onNavigate(`/product?id=${product.id}`)}
+                className="flex w-36 shrink-0 flex-col overflow-hidden rounded-xl bg-white dark:bg-slate-800 shadow-sm ring-1 ring-slate-900/5 dark:ring-white/10 cursor-pointer group"
+              >
+                <div className="relative aspect-square w-full bg-slate-100 dark:bg-slate-700">
+                  <div className="absolute left-2 top-2 z-10 rounded bg-red-500 px-1.5 py-0.5 text-[10px] font-bold text-white">-10%</div>
+                  
+                  <button 
+                    onClick={(e) => onAddToWishlist(e, product)}
+                    className={`absolute top-2 right-2 z-10 flex size-7 items-center justify-center rounded-full bg-white/90 shadow-sm backdrop-blur-sm transition hover:bg-white ${isProductInWishlist(product.id) ? 'text-red-500' : 'text-slate-400'}`}
+                  >
+                    <Heart size={16} fill={isProductInWishlist(product.id) ? "currentColor" : "none"} />
+                  </button>
+                  <LazyImage 
+                    src={product.image} 
+                    alt={product.name}
+                    priority={index < 2}
+                    className="h-full w-full"
+                  />
+                </div>
+                <div className="flex flex-col p-3">
+                  <h3 className="line-clamp-2 text-xs font-medium text-slate-700 dark:text-slate-200">{product.name}</h3>
+                  <div className="mt-2 flex flex-col gap-0.5">
+                    <span className="text-sm font-bold text-primary">{totalPrice.toLocaleString()} د.ع</span>
+                    <span className="text-[10px] text-slate-400 line-through">{(totalPrice * 1.1).toLocaleString()} د.ع</span>
+                  </div>
                 </div>
               </div>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
     </div>

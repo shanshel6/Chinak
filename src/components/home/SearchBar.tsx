@@ -1,14 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
-import { Search } from 'lucide-react';
+import { Search, Bell } from 'lucide-react';
 
 interface SearchBarProps {
   onNavigate: (path: string) => void;
+  unreadNotificationsCount?: number;
 }
 
 const SearchBar: React.FC<SearchBarProps> = ({ 
-  onNavigate
+  onNavigate,
+  unreadNotificationsCount = 0
 }) => {
   const { t } = useTranslation();
   const [placeholderIndex, setPlaceholderIndex] = useState(0);
@@ -30,39 +32,52 @@ const SearchBar: React.FC<SearchBarProps> = ({
 
   return (
     <div className="px-4 py-2 bg-background-light dark:bg-background-dark transition-all duration-300">
-      <div 
-        onClick={() => onNavigate('/search')}
-        className="relative flex w-full items-center group cursor-pointer"
-      >
-        <div className="relative flex-1 flex items-center bg-white dark:bg-slate-800 rounded-2xl h-[52px] shadow-sm ring-1 ring-slate-200 dark:ring-white/5 transition-all group-hover:shadow-md group-hover:ring-primary/20 overflow-hidden">
-          {/* Right Icon (Search) */}
-          <div className="flex items-center justify-center w-12 text-primary group-hover:scale-110 transition-transform duration-300">
-            <Search size={20} strokeWidth={2.5} />
-          </div>
+      <div className="flex items-center gap-3">
+        <div 
+          onClick={() => onNavigate('/search')}
+          className="relative flex-1 flex items-center group cursor-pointer"
+        >
+          <div className="relative flex-1 flex items-center bg-white dark:bg-slate-800 rounded-2xl h-[52px] shadow-sm ring-1 ring-slate-200 dark:ring-white/5 transition-all group-hover:shadow-md group-hover:ring-primary/20 overflow-hidden">
+            {/* Right Icon (Search) */}
+            <div className="flex items-center justify-center w-12 text-primary group-hover:scale-110 transition-transform duration-300">
+              <Search size={20} strokeWidth={2.5} />
+            </div>
 
-          {/* Animated Placeholders */}
-          <div className="flex-1 relative h-full flex items-center overflow-hidden">
-            <AnimatePresence mode="wait">
-              <motion.span
-                key={placeholderIndex}
-                initial={{ y: 20, opacity: 0 }}
-                animate={{ y: 0, opacity: 1 }}
-                exit={{ y: -20, opacity: 0 }}
-                transition={{ duration: 0.5, ease: "easeInOut" }}
-                className="text-slate-400 text-[13px] font-bold whitespace-nowrap"
-              >
-                {placeholders[placeholderIndex]}
-              </motion.span>
-            </AnimatePresence>
-          </div>
+            {/* Animated Placeholders */}
+            <div className="flex-1 relative h-full flex items-center overflow-hidden">
+              <AnimatePresence mode="wait">
+                <motion.span
+                  key={placeholderIndex}
+                  initial={{ y: 20, opacity: 0 }}
+                  animate={{ y: 0, opacity: 1 }}
+                  exit={{ y: -20, opacity: 0 }}
+                  transition={{ duration: 0.5, ease: "easeInOut" }}
+                  className="text-slate-400 text-[13px] font-bold whitespace-nowrap"
+                >
+                  {placeholders[placeholderIndex]}
+                </motion.span>
+              </AnimatePresence>
+            </div>
 
-          {/* Left Action Button (Visual Only) */}
-          <div className="flex items-center px-3 h-full border-r border-slate-100 dark:border-slate-700/50">
-            <div className="bg-primary text-white text-[10px] font-black px-4 py-2 rounded-xl uppercase tracking-wider shadow-sm group-hover:bg-primary/90 transition-colors">
-              بحث
+            {/* Left Action Button (Visual Only) */}
+            <div className="flex items-center px-3 h-full border-r border-slate-100 dark:border-slate-700/50">
+              <div className="bg-primary text-white text-[10px] font-black px-4 py-2 rounded-xl uppercase tracking-wider shadow-sm group-hover:bg-primary/90 transition-colors">
+                بحث
+              </div>
             </div>
           </div>
         </div>
+
+        {/* Notification Icon */}
+        <button 
+          onClick={() => onNavigate('/notifications')}
+          className="relative flex size-12 flex-shrink-0 items-center justify-center rounded-2xl bg-white dark:bg-slate-800 shadow-sm ring-1 ring-slate-200 dark:ring-white/5 text-slate-600 dark:text-slate-300 transition-all hover:text-primary active:scale-95"
+        >
+          <Bell size={22} />
+          {unreadNotificationsCount > 0 && (
+            <span className="absolute top-3.5 right-3.5 h-2.5 w-2.5 rounded-full bg-red-500 ring-2 ring-white dark:ring-slate-800 animate-pulse"></span>
+          )}
+        </button>
       </div>
     </div>
   );
