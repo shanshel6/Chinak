@@ -440,7 +440,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
             {/* Weight Field */}
             <div className="flex items-center gap-1">
               <span className="text-[10px] font-bold text-slate-400">الوزن:</span>
-              {isEditingWeight && (product.status === 'DRAFT' || product.isLocal) ? (
+              {isEditingWeight ? (
                 <input
                   type="text"
                   value={tempWeight}
@@ -452,14 +452,12 @@ const ProductCard: React.FC<ProductCardProps> = ({
                 />
               ) : (
                 <div 
-                  className={`text-[10px] font-bold text-slate-700 dark:text-slate-200 px-1.5 py-0.5 rounded border border-dashed ${ (product.status === 'DRAFT' || product.isLocal) ? 'cursor-pointer border-slate-300 dark:border-slate-600 hover:border-primary hover:bg-primary/5 transition-all' : 'border-transparent'}`}
+                  className="text-[10px] font-bold text-slate-700 dark:text-slate-200 px-1.5 py-0.5 rounded border border-dashed cursor-pointer border-slate-300 dark:border-slate-600 hover:border-primary hover:bg-primary/5 transition-all"
                   onDoubleClick={(e) => {
                     e.stopPropagation();
-                    if (product.status === 'DRAFT' || product.isLocal) {
-                      setIsEditingWeight(true);
-                    }
+                    setIsEditingWeight(true);
                   }}
-                  title={(product.status === 'DRAFT' || product.isLocal) ? 'نقر مزدوج لتعديل الوزن' : ''}
+                  title="نقر مزدوج لتعديل الوزن"
                 >
                   {product.weight || 0} كغم
                 </div>
@@ -469,7 +467,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
             {/* Size Field */}
             <div className="flex items-center gap-1">
               <span className="text-[10px] font-bold text-slate-400">المقاس:</span>
-              {isEditingSize && (product.status === 'DRAFT' || product.isLocal) ? (
+              {isEditingSize ? (
                 <input
                   type="text"
                   value={tempSize}
@@ -482,14 +480,12 @@ const ProductCard: React.FC<ProductCardProps> = ({
                 />
               ) : (
                 <div 
-                  className={`text-[10px] font-bold text-slate-700 dark:text-slate-200 px-1.5 py-0.5 rounded border border-dashed ${(product.status === 'DRAFT' || product.isLocal) ? 'cursor-pointer border-slate-300 dark:border-slate-600 hover:border-primary hover:bg-primary/5 transition-all' : 'border-transparent'}`}
+                  className="text-[10px] font-bold text-slate-700 dark:text-slate-200 px-1.5 py-0.5 rounded border border-dashed cursor-pointer border-slate-300 dark:border-slate-600 hover:border-primary hover:bg-primary/5 transition-all"
                   onDoubleClick={(e) => {
                     e.stopPropagation();
-                    if (product.status === 'DRAFT' || product.isLocal) {
-                      setIsEditingSize(true);
-                    }
+                    setIsEditingSize(true);
                   }}
-                  title={(product.status === 'DRAFT' || product.isLocal) ? 'نقر مزدوج لتعديل المقاس (L x W x H)' : ''}
+                  title="نقر مزدوج لتعديل المقاس (L x W x H)"
                 >
                   {product.length || 0}x{product.width || 0}x{product.height || 0}
                 </div>
