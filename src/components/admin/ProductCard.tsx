@@ -373,7 +373,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
         <div className="flex-1 min-w-0 text-right">
           <div className="flex items-start justify-between gap-2 mb-1 flex-row-reverse">
             <div className="flex-1 flex flex-col items-end min-w-0">
-              {isEditingName && product.status === 'DRAFT' ? (
+              {isEditingName && (product.status === 'DRAFT' || product.isLocal) ? (
                 <input
                   type="text"
                   value={tempProductName}
@@ -385,9 +385,14 @@ const ProductCard: React.FC<ProductCardProps> = ({
                 />
               ) : (
                 <h4 
-                  className={`text-sm font-bold text-slate-900 dark:text-white truncate w-full text-right ${product.status === 'DRAFT' ? 'cursor-pointer hover:text-primary transition-colors' : ''}`}
-                  onDoubleClick={() => product.status === 'DRAFT' && setIsEditingName(true)}
-                  title={product.status === 'DRAFT' ? 'نقر مزدوج لتعديل الاسم' : ''}
+                  className={`text-sm font-bold text-slate-900 dark:text-white truncate w-full text-right ${(product.status === 'DRAFT' || product.isLocal) ? 'cursor-pointer hover:text-primary transition-colors' : ''}`}
+                  onDoubleClick={(e) => {
+                    e.stopPropagation();
+                    if (product.status === 'DRAFT' || product.isLocal) {
+                      setIsEditingName(true);
+                    }
+                  }}
+                  title={(product.status === 'DRAFT' || product.isLocal) ? 'نقر مزدوج لتعديل الاسم' : ''}
                 >
                   {product.name}
                 </h4>
@@ -435,7 +440,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
             {/* Weight Field */}
             <div className="flex items-center gap-1">
               <span className="text-[10px] font-bold text-slate-400">الوزن:</span>
-              {isEditingWeight && product.status === 'DRAFT' ? (
+              {isEditingWeight && (product.status === 'DRAFT' || product.isLocal) ? (
                 <input
                   type="text"
                   value={tempWeight}
@@ -446,20 +451,25 @@ const ProductCard: React.FC<ProductCardProps> = ({
                   className="w-16 px-1 py-0.5 text-[10px] font-bold text-right bg-white dark:bg-slate-700 border border-primary rounded-md outline-none"
                 />
               ) : (
-                <span 
-                  className={`text-[10px] font-bold text-slate-700 dark:text-slate-200 ${product.status === 'DRAFT' ? 'cursor-pointer hover:text-primary' : ''}`}
-                  onDoubleClick={() => product.status === 'DRAFT' && setIsEditingWeight(true)}
-                  title={product.status === 'DRAFT' ? 'نقر مزدوج لتعديل الوزن' : ''}
+                <div 
+                  className={`text-[10px] font-bold text-slate-700 dark:text-slate-200 px-1.5 py-0.5 rounded border border-dashed ${ (product.status === 'DRAFT' || product.isLocal) ? 'cursor-pointer border-slate-300 dark:border-slate-600 hover:border-primary hover:bg-primary/5 transition-all' : 'border-transparent'}`}
+                  onDoubleClick={(e) => {
+                    e.stopPropagation();
+                    if (product.status === 'DRAFT' || product.isLocal) {
+                      setIsEditingWeight(true);
+                    }
+                  }}
+                  title={(product.status === 'DRAFT' || product.isLocal) ? 'نقر مزدوج لتعديل الوزن' : ''}
                 >
                   {product.weight || 0} كغم
-                </span>
+                </div>
               )}
             </div>
 
             {/* Size Field */}
             <div className="flex items-center gap-1">
               <span className="text-[10px] font-bold text-slate-400">المقاس:</span>
-              {isEditingSize && product.status === 'DRAFT' ? (
+              {isEditingSize && (product.status === 'DRAFT' || product.isLocal) ? (
                 <input
                   type="text"
                   value={tempSize}
@@ -471,13 +481,18 @@ const ProductCard: React.FC<ProductCardProps> = ({
                   className="w-24 px-1 py-0.5 text-[10px] font-bold text-right bg-white dark:bg-slate-700 border border-primary rounded-md outline-none"
                 />
               ) : (
-                <span 
-                  className={`text-[10px] font-bold text-slate-700 dark:text-slate-200 ${product.status === 'DRAFT' ? 'cursor-pointer hover:text-primary' : ''}`}
-                  onDoubleClick={() => product.status === 'DRAFT' && setIsEditingSize(true)}
-                  title={product.status === 'DRAFT' ? 'نقر مزدوج لتعديل المقاس (L x W x H)' : ''}
+                <div 
+                  className={`text-[10px] font-bold text-slate-700 dark:text-slate-200 px-1.5 py-0.5 rounded border border-dashed ${(product.status === 'DRAFT' || product.isLocal) ? 'cursor-pointer border-slate-300 dark:border-slate-600 hover:border-primary hover:bg-primary/5 transition-all' : 'border-transparent'}`}
+                  onDoubleClick={(e) => {
+                    e.stopPropagation();
+                    if (product.status === 'DRAFT' || product.isLocal) {
+                      setIsEditingSize(true);
+                    }
+                  }}
+                  title={(product.status === 'DRAFT' || product.isLocal) ? 'نقر مزدوج لتعديل المقاس (L x W x H)' : ''}
                 >
                   {product.length || 0}x{product.width || 0}x{product.height || 0}
-                </span>
+                </div>
               )}
             </div>
           </div>
@@ -498,7 +513,12 @@ const ProductCard: React.FC<ProductCardProps> = ({
               ) : (
                 <div 
                   className={`text-right ${(product.status === 'DRAFT' || product.isLocal) ? 'cursor-pointer hover:bg-primary/5 px-1 rounded transition-colors' : ''}`}
-                  onDoubleClick={() => (product.status === 'DRAFT' || product.isLocal) && setIsEditingPrice(true)}
+                  onDoubleClick={(e) => {
+                    e.stopPropagation();
+                    if (product.status === 'DRAFT' || product.isLocal) {
+                      setIsEditingPrice(true);
+                    }
+                  }}
                   title={(product.status === 'DRAFT' || product.isLocal) ? 'نقر مزدوج لتعديل السعر الأساسي' : ''}
                 >
                   <p className="text-[10px] font-bold text-slate-400 mb-0.5">
