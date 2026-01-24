@@ -7,17 +7,21 @@ export const getBaseDomain = () => {
   const envApiUrl = import.meta.env.VITE_API_URL;
   if (envApiUrl) return envApiUrl;
 
-  // 2. Check for Capacitor/Mobile environment first
-  // This allows local testing on emulators even with production builds
+  // 2. Production Fallback (Google Play Store version)
+  // For production builds, we should always default to the production server
+  // unless we are explicitly testing on an emulator.
+  if (import.meta.env.PROD) {
+    // For a real Google Play release, we want the production URL.
+    return 'https://shanshal66-my-shop-backend.hf.space';
+  }
+
+  // 3. Development / Mobile Testing Logic
   const isCapacitor = window.hasOwnProperty('Capacitor');
-  
   if (isCapacitor || window.location.hostname !== 'localhost') {
-    // If we are on an Android emulator, we should use 10.0.2.2
-    // We check if it's Android platform
     const isAndroid = /android/i.test(navigator.userAgent);
     
     if (isAndroid) {
-      console.log('API: Running on Android, using 10.0.2.2');
+      // 10.0.2.2 is the standard for Android emulators to access host localhost
       return 'http://10.0.2.2:5000';
     }
 
@@ -26,18 +30,11 @@ export const getBaseDomain = () => {
       return `http://${window.location.hostname}:5000`;
     }
     
-    // Fallback for mobile development: use the machine IP if we're not in actual production
-    if (!import.meta.env.PROD) {
-      return 'http://192.168.2.200:5000';
-    }
+    // Fallback for mobile development: use the machine IP
+    return 'http://192.168.2.200:5000';
   }
 
-  // 3. Production Fallback
-  if (import.meta.env.PROD) {
-    return 'https://shanshal66-my-shop-backend.hf.space';
-  }
-
-  // 4. Default local development
+  // 4. Default local development (Browser)
   if (window.location.hostname === 'localhost') {
     return 'http://localhost:5000';
   }
