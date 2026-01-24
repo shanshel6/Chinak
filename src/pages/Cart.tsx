@@ -71,13 +71,13 @@ const Cart: React.FC = () => {
     // Perform a silent fetch if we already have items to avoid full-screen spinner
     const initCart = async () => {
       await Promise.all([
-        fetchCart(cartItems.length > 0),
+        fetchCart(allCartItems.length > 0),
         fetchRates(),
         checkAvailableCoupons()
       ]);
     };
     initCart();
-  }, [fetchCart, fetchRates, cartItems.length]);
+  }, [fetchCart, fetchRates, allCartItems.length]);
 
   useEffect(() => {
     if (appliedCoupon && appliedCoupon.minOrderAmount && baseSubtotal < appliedCoupon.minOrderAmount) {

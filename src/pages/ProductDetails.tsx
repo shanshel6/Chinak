@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import { fetchProductById, fetchProductReviews, checkProductPurchase, findProductInGlobalCache, fetchSettings } from '../services/api';
 import { useWishlistStore } from '../store/useWishlistStore';
@@ -87,8 +87,14 @@ const ProductDetails: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [isAdding, setIsAdding] = useState(false);
   const [isAdded, setIsAdded] = useState(false);
-  const [shippingMethod, setShippingMethod] = useState<'air' | 'sea'>('air');
-  const [_isPurchaseAllowed, _setIsPurchaseAllowed] = useState<boolean>(true);
+  const [shippingMethod, setShippingMethod] = useState<'air' | 'sea'>(() => {
+    if (productId) {
+      const saved = localStorage.getItem(`shipping_pref_${productId}`);
+      if (saved === 'air' || saved === 'sea') return saved;
+    }
+    return 'air';
+  });
+  const userChangedShipping = useRef(false);
   const [shouldRenderDetails, setShouldRenderDetails] = useState(false);
   const [shippingRates, setShippingRates] = useState<ShippingRates & { airThreshold?: number, seaThreshold?: number }>({
     airRate: 15400,
@@ -170,8 +176,13 @@ const ProductDetails: React.FC = () => {
     }
 
     // Auto-select shipping method based on weight and dimensions
-    if (product) {
-      setShippingMethod(getDefaultShippingMethod(product.weight, product.length, product.width, product.height));
+    // Only if the user hasn't manually changed it during this session
+    // and there's no saved preference for this product
+    if (product && !userChangedShipping.current) {
+      const savedPref = localStorage.getItem(`shipping_pref_${product.id}`);
+      if (!savedPref) {
+        setShippingMethod(getDefaultShippingMethod(product.weight, product.length, product.width, product.height));
+      }
     }
   }, [product]);
 
@@ -519,6 +530,29 @@ const ProductDetails: React.FC = () => {
     }
   }, [selectedOptions, product]);
 
+  const allCartItems = useCartStore((state) => state.items);
+
+  useEffect(() => {
+    if (product && allCartItems.length > 0) {
+      const isAlreadyInCart = allCartItems.some(item => 
+        String(item.productId) === String(product.id) && 
+        (item.variantId === currentVariant?.id || (!item.variantId && !currentVariant)) &&
+        item.shippingMethod === shippingMethod
+      );
+      setIsAdded(isAlreadyInCart);
+    } else {
+      setIsAdded(false);
+    }
+  }, [product, currentVariant, shippingMethod, allCartItems]);
+
+  const handleShippingMethodChange = (method: 'air' | 'sea') => {
+    setShippingMethod(method);
+    userChangedShipping.current = true;
+    if (productId) {
+      localStorage.setItem(`shipping_pref_${productId}`, method);
+    }
+  };
+
   const handleAddToCart = async () => {
     if (!product) return;
     if (!isAuthenticated) {
@@ -543,7 +577,8 @@ const ProductDetails: React.FC = () => {
         length: product.length,
         width: product.width,
         height: product.height,
-        domesticShippingFee: product.domesticShippingFee
+        domesticShippingFee: product.domesticShippingFee,
+        basePriceRMB: product.basePriceRMB
       }, selectedOptions, shippingMethod);
     } catch (err) {
       // Rollback UI state if API fails
@@ -811,7 +846,7 @@ const ProductDetails: React.FC = () => {
             isAdded={isAdded}
             onGoToCart={() => navigate('/cart')}
             shippingMethod={shippingMethod}
-            onShippingMethodChange={setShippingMethod}
+            onShippingMethodChange={handleShippingMethodChange}
             airPrice={airPrice}
             seaPrice={seaPrice}
           />

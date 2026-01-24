@@ -131,14 +131,39 @@ export const useCartStore = create<CartState>()(
           const serverData = await fetchCart();
           const serverItems = Array.isArray(serverData) ? serverData : [];
           
-          if (serverItems.length > 0 && localItems.length === 0) {
-            // First time loading or local is empty, use server data
-            set({ items: serverItems, lastSynced: Date.now(), isLoading: false });
-          } else {
-            // We have local items, we keep them as source of truth for this session
-            // But we update the lastSynced timestamp
-            set({ lastSynced: Date.now(), isLoading: false });
-          }
+          set((state) => {
+            // Merge logic:
+            // 1. Keep all local items that are currently syncing (id starts with 'local-')
+            // 2. Add all server items
+            // 3. For duplicate items (same productId, variantId, options, shippingMethod), 
+            //    prefer the server version but keep the local quantity if it's higher (optimistic)
+            
+            const localOnly = state.items.filter(item => 
+              typeof item.id === 'string' && item.id.startsWith('local-')
+            );
+            
+            const mergedItems = [...serverItems];
+            
+            // Add local items if they don't exist in server items yet
+            localOnly.forEach(localItem => {
+              const existsOnServer = serverItems.some(serverItem => 
+                String(serverItem.productId) === String(localItem.productId) &&
+                serverItem.variantId === localItem.variantId &&
+                serverItem.selectedOptions === localItem.selectedOptions &&
+                serverItem.shippingMethod === localItem.shippingMethod
+              );
+              
+              if (!existsOnServer) {
+                mergedItems.push(localItem);
+              }
+            });
+
+            return { 
+              items: mergedItems, 
+              lastSynced: Date.now(), 
+              isLoading: false 
+            };
+          });
         } catch (err) {
           console.error('Failed to sync cart:', err);
           set({ isLoading: false });
@@ -174,7 +199,18 @@ export const useCartStore = create<CartState>()(
           
           // Background sync
           try {
-            updateCartItem(existingItem.id, existingItem.quantity + quantity).catch(() => {});
+            if (typeof existingItem.id === 'string' && existingItem.id.startsWith('local-')) {
+              // If it's still local, use addToCart to sync (server handles upsert)
+              addToCart(productId, quantity, variantId, selectedOptions, shippingMethod).then(response => {
+                if (response && response.id) {
+                  set({
+                    items: get().items.map(item => item.id === existingItem.id ? response : item)
+                  });
+                }
+              }).catch(() => {});
+            } else {
+              updateCartItem(existingItem.id, existingItem.quantity + quantity).catch(() => {});
+            }
           } catch (_e) {}
         } else if (productInfo) {
           const tempId = `local-${Date.now()}`;

@@ -18,7 +18,7 @@ import sharp from 'sharp';
 import axios from 'axios';
 import { fileURLToPath } from 'url';
 import prisma from './prismaClient.js';
-import { processProductAI, hybridSearch } from './services/aiService.js';
+import { processProductAI, hybridSearch, estimateProductPhysicals } from './services/aiService.js';
 import { calculateOrderShipping, calculateProductShipping, getAdjustedPrice } from './services/shippingService.js';
 import { setupLinkCheckerCron, checkAllProductLinks } from './services/linkCheckerService.js';
 import { createClient } from '@supabase/supabase-js';
@@ -2724,6 +2724,41 @@ app.post('/api/products/bulk', authenticateToken, isAdmin, hasPermission('manage
       
       const mainImage = imageUrls.length > 0 ? imageUrls[0] : (p.image || '');
 
+      // Dimensions and Weight parsing
+      let weight = parseNum(p.weight || p['重量'] || p.grossWeight, true);
+      let length = parseNum(p.length || p['长'] || p['长度']);
+      let width = parseNum(p.width || p['宽'] || p['宽度']);
+      let height = parseNum(p.height || p['高'] || p['高度']);
+
+      // Support "dimensions": "25x18x3" format
+      if (p.dimensions && (!length || !width || !height)) {
+        const parts = String(p.dimensions).toLowerCase().split(/[x*]/).map(s => parseFloat(s.trim()));
+        if (parts.length === 3) {
+          if (!length) length = parts[0];
+          if (!width) width = parts[1];
+          if (!height) height = parts[2];
+        }
+      }
+
+      // AI Estimation Fallback
+      if (!weight || !length || !width || !height) {
+        try {
+          console.log(`[AI] Estimating missing dimensions for: ${name}`);
+          const estimates = await estimateProductPhysicals({
+            name,
+            image: mainImage,
+            description: p.description
+          });
+          
+          if (!weight) weight = estimates.weight;
+          if (!length) length = estimates.length;
+          if (!width) width = estimates.width;
+          if (!height) height = estimates.height;
+        } catch (aiErr) {
+          console.error('[AI] Estimation failed:', aiErr);
+        }
+      }
+
       // Instead of creating in DB, add to drafts array for local storage
       results.drafts.push({
         name,
@@ -2743,7 +2778,7 @@ app.post('/api/products/bulk', authenticateToken, isAdmin, hasPermission('manage
         options: processedOptions,
         variants: (Array.isArray(p.variants_data) ? p.variants_data : []).map(v => {
           const variantRawPrice = parsePrice(v.price) || rawPrice;
-          const variantWeight = v.weight || p.weight || p['重量'] || p.grossWeight;
+          const variantWeight = v.weight || weight || p['重量'] || p.grossWeight;
           return {
             combination: typeof v.options === 'object' ? v.options : {},
             price: calculateBulkImportPrice(variantRawPrice, domesticShippingFee, variantWeight, v.shippingMethod || p.shippingMethod),
@@ -2751,10 +2786,10 @@ app.post('/api/products/bulk', authenticateToken, isAdmin, hasPermission('manage
             image: v.image || null
           };
         }),
-        weight: parseNum(p.weight || p['重量'] || p.grossWeight, true),
-        length: parseNum(p.length || p['长'] || p['长度']),
-        width: parseNum(p.width || p['宽'] || p['宽度']),
-        height: parseNum(p.height || p['高'] || p['高度']),
+        weight,
+        length,
+        width,
+        height,
         domesticShippingFee,
         isPriceCombined: true,
         images: imageUrls.map((url, index) => ({

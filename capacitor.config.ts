@@ -9,7 +9,7 @@ const config: CapacitorConfig = {
     // For production/physical device testing, we should use the local dist files.
     // In dev mode with 'npx cap run android', the CLI will automatically handle live reload URLs if configured.
     androidScheme: 'https',
-    cleartext: false
+    cleartext: true
   },
   plugins: {
     SplashScreen: {
