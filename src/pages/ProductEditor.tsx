@@ -23,6 +23,7 @@ import {
   createProduct, 
   saveProductOptions 
 } from '../services/api';
+import { calculateInclusivePrice } from '../utils/shipping';
 import { localProductService } from '../services/localProductService';
 import { useToastStore } from '../store/useToastStore';
 import { useAuthStore } from '../store/useAuthStore';
@@ -43,11 +44,12 @@ interface ProductVariant {
 
 interface ProductEditorProps {
   productId?: string | number | null;
+  storeSettings?: any;
   onClose: () => void;
   onSuccess?: () => void;
 }
 
-const ProductEditor: React.FC<ProductEditorProps> = ({ productId, onClose, onSuccess }) => {
+const ProductEditor: React.FC<ProductEditorProps> = ({ productId, storeSettings, onClose, onSuccess }) => {
   const isEdit = !!productId;
   const showToast = useToastStore((state) => state.showToast);
   const token = useAuthStore((state) => state.token);
@@ -154,6 +156,46 @@ const ProductEditor: React.FC<ProductEditorProps> = ({ productId, onClose, onSuc
       loadProduct();
     }
   }, [isEdit, loadProduct]);
+
+  // Immediately update price when weight, size, or RMB price changes
+  useEffect(() => {
+    if (formData.basePriceRMB && storeSettings) {
+      const rates = {
+        airRate: storeSettings.airShippingRate || 15400,
+        seaRate: storeSettings.seaShippingRate || 182000,
+        minFloor: storeSettings.airShippingMinFloor || 0
+      };
+
+      const newPrice = calculateInclusivePrice(
+        formData.price,
+        formData.weight,
+        formData.length,
+        formData.width,
+        formData.height,
+        rates,
+        undefined, // default method logic
+        formData.domesticShippingFee || 0,
+        formData.basePriceRMB,
+        formData.isPriceCombined
+      );
+
+      if (newPrice !== formData.price) {
+        setFormData((prev: any) => ({
+          ...prev,
+          price: newPrice
+        }));
+      }
+    }
+  }, [
+    formData.basePriceRMB, 
+    formData.weight, 
+    formData.length, 
+    formData.width, 
+    formData.height, 
+    formData.domesticShippingFee,
+    formData.isPriceCombined,
+    storeSettings
+  ]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     const { name, value, type } = e.target as HTMLInputElement;

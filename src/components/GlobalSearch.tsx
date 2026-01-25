@@ -197,7 +197,11 @@ const GlobalSearch: React.FC<GlobalSearchProps> = ({
                               product.length,
                               product.width,
                               product.height,
-                              rates
+                              rates,
+                              undefined,
+                              product.domesticShippingFee || 0,
+                              product.basePriceRMB,
+                              product.isPriceCombined
                             ).toLocaleString()
                           } د.ع
                         </p>

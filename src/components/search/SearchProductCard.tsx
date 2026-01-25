@@ -13,6 +13,9 @@ interface Product {
   length?: number;
   width?: number;
   height?: number;
+  domesticShippingFee?: number;
+  basePriceRMB?: number;
+  isPriceCombined?: boolean;
 }
 
 interface SearchProductCardProps {
@@ -57,7 +60,11 @@ const SearchProductCard: React.FC<SearchProductCardProps> = ({
       product.length,
       product.width,
       product.height,
-      rates
+      rates,
+      undefined,
+      product.domesticShippingFee || 0,
+      product.basePriceRMB,
+      product.isPriceCombined
     );
   }, [product, rates]);
 

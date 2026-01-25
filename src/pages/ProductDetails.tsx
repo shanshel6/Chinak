@@ -310,7 +310,8 @@ const ProductDetails: React.FC = () => {
       shippingRates,
       'air',
       product.domesticShippingFee || 0,
-      product.basePriceRMB
+      product.basePriceRMB,
+      product.isPriceCombined
     );
 
     const sea = calculateInclusivePrice(
@@ -322,7 +323,8 @@ const ProductDetails: React.FC = () => {
       shippingRates,
       'sea',
       product.domesticShippingFee || 0,
-      product.basePriceRMB
+      product.basePriceRMB,
+      product.isPriceCombined
     );
 
     return {
@@ -674,6 +676,7 @@ const ProductDetails: React.FC = () => {
             seaThreshold={shippingRates.seaThreshold}
             variant={currentVariant}
             shippingMethod={shippingMethod}
+            isPriceCombined={product.isPriceCombined}
           />
 
           {product.options && product.options.length > 0 && (

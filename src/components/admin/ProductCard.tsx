@@ -89,7 +89,28 @@ const ProductCard: React.FC<ProductCardProps> = ({
   const handleWeightSubmit = () => {
     const newWeight = parseFloat(tempWeight);
     if (!isNaN(newWeight) && newWeight !== product.weight) {
-      onUpdateStatus(product.id, { weight: newWeight });
+      const updates: any = { weight: newWeight };
+      
+      // Also update price immediately if RMB price is available
+      if (product.basePriceRMB) {
+        const newPrice = calculateInclusivePrice(
+          product.price,
+          newWeight,
+          product.length,
+          product.width,
+          product.height,
+          rates,
+          undefined,
+          product.domesticShippingFee || 0,
+          product.basePriceRMB,
+          product.isPriceCombined
+        );
+        if (newPrice !== product.price) {
+          updates.price = newPrice;
+        }
+      }
+      
+      onUpdateStatus(product.id, updates);
     }
     setIsEditingWeight(false);
   };
@@ -101,7 +122,30 @@ const ProductCard: React.FC<ProductCardProps> = ({
       const width = parseFloat(parts[1]);
       const height = parseFloat(parts[2]);
       if (!isNaN(length) && !isNaN(width) && !isNaN(height)) {
-        onUpdateStatus(product.id, { length, width, height });
+        if (length !== product.length || width !== product.width || height !== product.height) {
+          const updates: any = { length, width, height };
+          
+          // Also update price immediately if RMB price is available
+          if (product.basePriceRMB) {
+            const newPrice = calculateInclusivePrice(
+              product.price,
+              product.weight,
+              length,
+              width,
+              height,
+              rates,
+              undefined,
+              product.domesticShippingFee || 0,
+              product.basePriceRMB,
+              product.isPriceCombined
+            );
+            if (newPrice !== product.price) {
+              updates.price = newPrice;
+            }
+          }
+          
+          onUpdateStatus(product.id, updates);
+        }
       }
     }
     setIsEditingSize(false);
@@ -528,9 +572,9 @@ const ProductCard: React.FC<ProductCardProps> = ({
                     <Truck size={14} className="opacity-70" />
                     <p className="text-sm font-black">
                       {hasPriceRange ? (
-                        `${calculateInclusivePrice(minPrice, product.weight, product.length, product.width, product.height, rates).toLocaleString()} - ${calculateInclusivePrice(maxPrice, product.weight, product.length, product.width, product.height, rates).toLocaleString()} ${t('common.iqd')}`
+                        `${calculateInclusivePrice(minPrice, product.weight, product.length, product.width, product.height, rates, undefined, product.domesticShippingFee || 0, product.basePriceRMB, product.isPriceCombined).toLocaleString()} - ${calculateInclusivePrice(maxPrice, product.weight, product.length, product.width, product.height, rates, undefined, product.domesticShippingFee || 0, product.basePriceRMB, product.isPriceCombined).toLocaleString()} ${t('common.iqd')}`
                       ) : (
-                        `${calculateInclusivePrice(product.price, product.weight, product.length, product.width, product.height, rates).toLocaleString()} ${t('common.iqd')}`
+                        `${calculateInclusivePrice(product.price, product.weight, product.length, product.width, product.height, rates, undefined, product.domesticShippingFee || 0, product.basePriceRMB, product.isPriceCombined).toLocaleString()} ${t('common.iqd')}`
                       )}
                     </p>
                   </div>

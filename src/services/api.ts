@@ -3,6 +3,10 @@ import { useMaintenanceStore } from '../store/useMaintenanceStore';
 import { localProductService } from './localProductService';
 
 export const getBaseDomain = () => {
+  // 0. Manual Override (Useful for testing production builds against local backends)
+  const manualOverride = localStorage.getItem('api_url_override');
+  if (manualOverride) return manualOverride;
+
   // 1. Priority: Environment variable
   const envApiUrl = import.meta.env.VITE_API_URL;
   if (envApiUrl) return envApiUrl;
@@ -1032,16 +1036,19 @@ export async function deleteBanner(id: number | string) {
 }
 
 // Admin: Settings
-export async function fetchSettings() {
-  return request('/settings');
+export async function fetchSettings(options: { skipCache?: boolean } = {}) {
+  return request('/settings', { skipCache: options.skipCache });
 }
 
 export async function updateSettings(settingsData: any, token?: string | null) {
-  return request('/admin/settings', {
+  const response = await request('/admin/settings', {
     method: 'PUT',
     body: JSON.stringify(settingsData),
     token
   });
+  // Clear settings cache after update
+  persistentCache.delete('/settings');
+  return response;
 }
 
 // Admin: AI Estimation

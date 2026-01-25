@@ -32,7 +32,7 @@ export const getDefaultShippingMethod = (weight?: number, _length?: number, _wid
 };
 
 export const calculateInclusivePrice = (
-  basePrice: number, // This is either product.price or product.basePriceRMB
+  basePrice: number, // This is product.price (already marked up in DB)
   weight: number | undefined,
   length: number | undefined,
   width: number | undefined,
@@ -40,52 +40,35 @@ export const calculateInclusivePrice = (
   _rates: ShippingRates,
   method?: 'air' | 'sea' | 'AIR' | 'SEA',
   domesticShippingFee: number = 0,
-  basePriceRMB?: number | null
+  basePriceRMB?: number | null,
+  isPriceCombined?: boolean
 ) => {
   const defaultMethod = getDefaultShippingMethod(weight, length, width, height);
   const selectedMethod = (method || defaultMethod).toLowerCase() as 'air' | 'sea';
 
-  // Determine the "original price" in IQD (before markup)
-  let originalPrice = basePrice;
-  
+  // If we have the original RMB price, it's our absolute source of truth
   if (basePriceRMB && basePriceRMB > 0) {
-    // If basePriceRMB is provided, use it as the source of truth
-    originalPrice = basePriceRMB;
-  } else {
-    // If only the database 'price' is available, reverse the markup to get original price
-    // The basePrice from database already has a markup:
-    // - Air pricing (can be complex, but we'll use a simplified check or 1.9 fallback)
-    // - 1.15 (15%) if it was imported as SEA
-    if (defaultMethod === 'air') {
-      // For reverse calculation, we use 1.9 as a safe average/fallback 
-      // since exact original price depends on the specific weight at import time
-      originalPrice = basePrice / 1.9;
+    const originalPrice = basePriceRMB;
+    const domesticFee = domesticShippingFee || 0;
+    const weightVal = weight || 0.5;
+
+    if (selectedMethod === 'air') {
+      const airRate = _rates?.airRate || 15400;
+      const shippingCost = weightVal * airRate;
+      const airPrice = (originalPrice + domesticFee + shippingCost) * 1.20;
+      return Math.ceil(airPrice / 250) * 250;
     } else {
-      originalPrice = basePrice / 1.15;
+      const seaPrice = (originalPrice + domesticFee) * 1.20;
+      return Math.ceil(seaPrice / 250) * 250;
     }
   }
 
-  // Calculate domestic fee (default to 0 if not provided)
-  const domesticFee = domesticShippingFee || 0;
-
-  if (selectedMethod === 'air') {
-    // Air Pricing logic:
-    // If weight is explicitly provided: (Base Price + 15% profit) + ((weight + 0.1) * 15400) + Domestic Shipping
-    // If weight is NOT provided: (Base Price * 1.9) + Domestic Shipping
-    
-    if (weight !== undefined && weight !== null && weight > 0) {
-      const shippingCost = (weight + 0.1) * 15400;
-      const airPrice = (originalPrice * 1.15) + shippingCost + domesticFee;
-      return Math.ceil(airPrice / 250) * 250;
-    } else {
-      // Default to 90% markup if weight is missing
-      const airPrice = (originalPrice * 1.9) + domesticFee;
-      return Math.ceil(airPrice / 250) * 250;
-    }
-  } else {
-    // Sea Price: (Base Price + 15% Base Price) + Domestic Shipping
-    // Note: Cost of sea shipping is calculated and shown separately in the cart
-    const seaPrice = (originalPrice * 1.15) + domesticFee;
-    return Math.ceil(seaPrice / 250) * 250;
+  // Fallback: if no basePriceRMB, and price is already combined, just return it
+  if (isPriceCombined) {
+    return Math.ceil(basePrice / 250) * 250;
   }
+
+  // Last resort fallback (avoiding the 1.9 markup which is confusing)
+  // If we're here, we just return the basePrice rounded
+  return Math.ceil(basePrice / 250) * 250;
 };

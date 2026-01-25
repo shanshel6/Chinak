@@ -111,7 +111,8 @@ const ProductCard: React.FC<ProductCardProps> = ({
       { airRate: _airRate, seaRate: _seaRate, minFloor: _minFloor },
       undefined,
       product.domesticShippingFee || 0,
-      product.basePriceRMB
+      product.basePriceRMB,
+      product.isPriceCombined
     );
   }, [minPrice, product.weight, product.length, product.width, product.height, _airRate, _seaRate, _minFloor]);
 

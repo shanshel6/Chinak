@@ -14,6 +14,7 @@ interface Product {
   height?: number;
   domesticShippingFee?: number;
   basePriceRMB?: number;
+  isPriceCombined?: boolean;
 }
 
 interface SimilarProductsProps {
@@ -39,7 +40,8 @@ const SimilarProducts: React.FC<SimilarProductsProps> = ({ products, onProductCl
             rates,
             undefined,
             p.domesticShippingFee || 0,
-            p.basePriceRMB
+            p.basePriceRMB,
+            p.isPriceCombined
           );
 
           return (

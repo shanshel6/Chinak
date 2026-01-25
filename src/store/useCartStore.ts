@@ -15,6 +15,7 @@ interface Product {
   height?: number;
   domesticShippingFee?: number;
   basePriceRMB?: number;
+  isPriceCombined?: boolean;
 }
 
 interface CartItem {
@@ -63,6 +64,7 @@ interface CartState {
       height?: number; 
       domesticShippingFee?: number;
       basePriceRMB?: number;
+      isPriceCombined?: boolean;
     }, 
     selectedOptions?: any,
     shippingMethod?: 'air' | 'sea'
@@ -231,7 +233,8 @@ export const useCartStore = create<CartState>()(
               width: productInfo.width,
               height: productInfo.height,
               domesticShippingFee: productInfo.domesticShippingFee,
-              basePriceRMB: productInfo.basePriceRMB
+              basePriceRMB: productInfo.basePriceRMB,
+              isPriceCombined: productInfo.isPriceCombined
             },
             variant: productInfo.variant
           };
@@ -326,7 +329,8 @@ export const useCartStore = create<CartState>()(
             rates,
             item.shippingMethod,
             item.product.domesticShippingFee || 0,
-            item.product.basePriceRMB
+            item.product.basePriceRMB,
+            item.product.isPriceCombined
           );
           return acc + (currentPrice * item.quantity);
         }, 0);

@@ -220,16 +220,21 @@ const AdminDashboard: React.FC = () => {
         setTotalPages(1);
         setTotalItems(data.length || 0);
       } else if (activeTab === 'settings') {
-        const data = await fetchSettings();
+        const data = await fetchSettings({ skipCache: true });
+        console.log('[AdminDashboard] Settings tab: Loaded data:', data);
         if (data) {
-          setStoreSettings(prev => ({
-            ...prev,
-            ...data,
-            airShippingRate: data.airShippingRate || 15400,
-            seaShippingRate: data.seaShippingRate || 182000,
-            airShippingMinFloor: 0,
-            socialLinks: typeof data.socialLinks === 'string' ? JSON.parse(data.socialLinks) : (data.socialLinks || prev.socialLinks)
-          }));
+          setStoreSettings(prev => {
+            const newState = {
+              ...prev,
+              ...data,
+              airShippingRate: data.airShippingRate || 15400,
+              seaShippingRate: data.seaShippingRate || 182000,
+              airShippingMinFloor: 0,
+              socialLinks: typeof data.socialLinks === 'string' ? JSON.parse(data.socialLinks) : (data.socialLinks || prev.socialLinks)
+            };
+            console.log('[AdminDashboard] Settings tab: Updating storeSettings to:', newState);
+            return newState;
+          });
         }
       }
     } catch (error: any) {
@@ -253,16 +258,21 @@ const AdminDashboard: React.FC = () => {
     // Load store settings once on mount to get shipping rates for price calculations
     const loadStoreSettings = async () => {
       try {
-        const data = await fetchSettings();
+        const data = await fetchSettings({ skipCache: true });
+        console.log('[AdminDashboard] Loaded store settings:', data);
         if (data) {
-          setStoreSettings(prev => ({
-            ...prev,
-            ...data,
-            airShippingRate: data.airShippingRate || 15400,
-            seaShippingRate: data.seaShippingRate || 182000,
-            airShippingMinFloor: 0,
-            socialLinks: typeof data.socialLinks === 'string' ? JSON.parse(data.socialLinks) : (data.socialLinks || prev.socialLinks)
-          }));
+          setStoreSettings(prev => {
+            const newState = {
+              ...prev,
+              ...data,
+              airShippingRate: data.airShippingRate || 15400,
+              seaShippingRate: data.seaShippingRate || 182000,
+              airShippingMinFloor: 0,
+              socialLinks: typeof data.socialLinks === 'string' ? JSON.parse(data.socialLinks) : (data.socialLinks || prev.socialLinks)
+            };
+            console.log('[AdminDashboard] Updating storeSettings state to:', newState);
+            return newState;
+          });
         }
       } catch (error) {
         console.error('Failed to load store settings:', error);
@@ -1918,13 +1928,14 @@ const AdminDashboard: React.FC = () => {
       {showProductEditor && (
         <ProductEditor 
           productId={editingProductId}
+          storeSettings={storeSettings}
           onClose={() => {
             setShowProductEditor(false);
             setEditingProductId(null);
           }}
           onSuccess={() => {
             // Refresh products list after edit/create
-            loadData(currentPage, true);
+            loadData(currentPage);
           }}
         />
       )}

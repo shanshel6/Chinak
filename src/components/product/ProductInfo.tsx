@@ -19,6 +19,7 @@ interface ProductInfoProps {
   height?: number;
   domesticShippingFee?: number;
   basePriceRMB?: number;
+  isPriceCombined?: boolean;
   airThreshold?: number;
   seaThreshold?: number;
   variant?: any;
@@ -37,6 +38,7 @@ const ProductInfo: React.FC<ProductInfoProps> = ({
   height,
   domesticShippingFee,
   basePriceRMB,
+  isPriceCombined,
   shippingMethod = 'air'
 }) => {
   const [airRate, setAirRate] = useState<number>(15400); 
@@ -63,16 +65,16 @@ const ProductInfo: React.FC<ProductInfoProps> = ({
       airRate,
       seaRate,
       minFloor: shippingMinFloor
-    }, 'air', domesticShippingFee || 0, basePriceRMB);
-  }, [price, weight, length, width, height, airRate, seaRate, shippingMinFloor, domesticShippingFee, basePriceRMB]);
+    }, 'air', domesticShippingFee || 0, basePriceRMB, isPriceCombined);
+  }, [price, weight, length, width, height, airRate, seaRate, shippingMinFloor, domesticShippingFee, basePriceRMB, isPriceCombined]);
 
   const seaPrice = React.useMemo(() => {
     return calculateInclusivePrice(price, weight, length, width, height, {
       airRate,
       seaRate,
       minFloor: shippingMinFloor
-    }, 'sea', domesticShippingFee || 0, basePriceRMB);
-  }, [price, weight, length, width, height, airRate, seaRate, shippingMinFloor, domesticShippingFee, basePriceRMB]);
+    }, 'sea', domesticShippingFee || 0, basePriceRMB, isPriceCombined);
+  }, [price, weight, length, width, height, airRate, seaRate, shippingMinFloor, domesticShippingFee, basePriceRMB, isPriceCombined]);
 
   const totalPrice = shippingMethod === 'air' ? airPrice : seaPrice;
 
@@ -82,8 +84,8 @@ const ProductInfo: React.FC<ProductInfoProps> = ({
       airRate,
       seaRate,
       minFloor: shippingMinFloor
-    }, shippingMethod, domesticShippingFee || 0, basePriceRMB);
-  }, [originalPrice, weight, length, width, height, airRate, seaRate, shippingMinFloor, shippingMethod, domesticShippingFee, basePriceRMB]);
+    }, shippingMethod, domesticShippingFee || 0, basePriceRMB, isPriceCombined);
+  }, [originalPrice, weight, length, width, height, airRate, seaRate, shippingMinFloor, shippingMethod, domesticShippingFee, basePriceRMB, isPriceCombined]);
 
   return (
     <div className="mb-6">

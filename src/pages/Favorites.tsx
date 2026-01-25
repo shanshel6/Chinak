@@ -189,7 +189,11 @@ const Favorites: React.FC = () => {
                           product.length,
                           product.width,
                           product.height,
-                          rates
+                          rates,
+                          undefined,
+                          product.domesticShippingFee || 0,
+                          product.basePriceRMB,
+                          product.isPriceCombined
                         ).toLocaleString()} د.ع
                       </p>
                     </div>
@@ -227,7 +231,11 @@ const Favorites: React.FC = () => {
                           product.length,
                           product.width,
                           product.height,
-                          rates
+                          rates,
+                          undefined,
+                          product.domesticShippingFee || 0,
+                          product.basePriceRMB,
+                          product.isPriceCombined
                         ).toLocaleString()} د.ع
                       </span>
                     </div>

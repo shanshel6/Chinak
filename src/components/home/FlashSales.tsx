@@ -18,6 +18,7 @@ interface Product {
   height?: number;
   domesticShippingFee?: number;
   basePriceRMB?: number;
+  isPriceCombined?: boolean;
 }
 
 interface FlashSalesProps {
@@ -88,7 +89,8 @@ const FlashSales: React.FC<FlashSalesProps> = ({
               rates,
               undefined,
               product.domesticShippingFee || 0,
-              product.basePriceRMB
+              product.basePriceRMB,
+              product.isPriceCombined
             );
 
             return (

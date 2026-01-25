@@ -72,7 +72,7 @@ const BestSellers: React.FC<BestSellersProps> = ({ products, onViewAll }) => {
                 <div className="flex items-center gap-1 text-primary">
                   <Truck size={10} className="opacity-70" />
                   <span className="text-[11px] font-black">
-                    {calculateInclusivePrice(product.price, product.weight, product.length, product.width, product.height, rates).toLocaleString()} {t('common.iqd')}
+                    {calculateInclusivePrice(product.price, product.weight, product.length, product.width, product.height, rates, undefined, product.domesticShippingFee || 0, product.basePriceRMB, product.isPriceCombined).toLocaleString()} {t('common.iqd')}
                   </span>
                 </div>
               </div>

@@ -147,11 +147,23 @@ const app = express();
 const httpServer = createServer(app);
 
 // Health check endpoint for Render/Deployment
-app.get('/api/health', (req, res) => {
+app.get('/api/health', async (req, res) => {
+  let dbStatus = 'unknown';
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    dbStatus = 'connected';
+  } catch (e) {
+    dbStatus = 'error: ' + e.message;
+  }
+
   res.json({ 
     status: 'ok', 
+    database: dbStatus,
     timestamp: new Date().toISOString(),
-    env: process.env.NODE_ENV || 'development'
+    env: process.env.NODE_ENV || 'development',
+    port: process.env.PORT || 5001,
+    has_db_url: !!process.env.DATABASE_URL,
+    has_supabase_url: !!process.env.SUPABASE_URL
   });
 });
 
