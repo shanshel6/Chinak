@@ -33,11 +33,13 @@ const calculateBulkImportPrice = (rawPrice, domesticFee, weight, explicitMethod)
   const domestic = domesticFee || 0;
 
   if (method === 'air') {
-    // Air Price: (Base Price * 1.9) + Domestic Shipping
-    return Math.ceil(((rawPrice * 1.9) + domestic) / 250) * 250;
+    // Air Pricing logic: (Base Price + Domestic Fee + (Weight * Air Rate)) * 1.20
+    const airRate = 15400;
+    const shippingCost = weightInKg * airRate;
+    return Math.ceil(((rawPrice + domestic + shippingCost) * 1.20) / 250) * 250;
   } else {
-    // Sea Price: (Base Price * 1.15) + Domestic Shipping
-    return Math.ceil(((rawPrice * 1.15) + domestic) / 250) * 250;
+    // Sea Price: (Base Price + Domestic Fee) * 1.20
+    return Math.ceil(((rawPrice + domestic) * 1.20) / 250) * 250;
   }
 };
 

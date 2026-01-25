@@ -90,28 +90,22 @@ const calculateBulkImportPrice = (rawPrice, domesticFee, weight, explicitMethod)
   
   if (!method) {
     // Default logic matching frontend: < 2kg is AIR, >= 2kg is SEA
-    // Also default to AIR if weight is unknown (using the 500g default)
     method = (weightInKg > 0 && weightInKg < 2) ? 'air' : 'sea';
   }
 
   if (method === 'air') {
-    // Air Pricing logic:
-    // If weight is explicitly provided: (Base Price + 15% profit) + ((weight + 0.1) * 15400) + Domestic Shipping
-    // If weight is NOT provided: (Base Price * 1.9) + Domestic Shipping
+    // Air Pricing logic: (Base Price + Domestic Fee + (Weight * Air Rate)) * 1.20
+    // We try to get the rate from settings, but use 15400 as a reliable fallback
+    const airRate = 15400;
+    const weightVal = extractNumber(weight) || 0.5;
     
-    const weightVal = extractNumber(weight);
-    if (weightVal !== null && weightVal !== undefined && weightVal > 0) {
-      const shippingCost = (weightVal + 0.1) * 15400;
-      const price = ((rawPrice * 1.15) + shippingCost + domesticFee);
-      return Math.ceil(price / 250) * 250;
-    } else {
-      // Default to 90% markup if weight is missing
-      const price = (rawPrice * 1.9) + domesticFee;
-      return Math.ceil(price / 250) * 250;
-    }
+    const shippingCost = weightVal * airRate;
+    const price = (rawPrice + domesticFee + shippingCost) * 1.20;
+    return Math.ceil(price / 250) * 250;
   } else {
-    // Sea: Add 15% profit markup as per request (Shipping fee will be calculated in cart and also marked up by 15%)
-    const price = (rawPrice + domesticFee) * 1.15;
+    // Sea: (Base Price + Domestic Fee) * 1.20
+    // International sea shipping is handled in cart
+    const price = (rawPrice + domesticFee) * 1.20;
     return Math.ceil(price / 250) * 250;
   }
 };
@@ -2672,6 +2666,13 @@ app.post('/api/products/bulk', authenticateToken, isAdmin, hasPermission('manage
       const rawPrice = parsePrice(p.general_price) || parsePrice(p.price) || parsePrice(p.basePriceRMB) || 0;
       const price = calculateBulkImportPrice(rawPrice, domesticShippingFee, p.weight || p['重量'] || p.grossWeight, p.shippingMethod);
 
+      // Skip products with 0 price
+      if (price <= 0 || rawPrice <= 0) {
+        console.log(`[Bulk Import] Skipping product with 0 price: ${name}`);
+        results.skipped++;
+        continue;
+      }
+
       // Process options
       let rawOptions = [];
       if (Array.isArray(p.options)) {
@@ -3087,6 +3088,12 @@ app.post('/api/admin/products/bulk-import', authenticateToken, isAdmin, hasPermi
           // Use the new calculation logic with 90% markup for air items
           const price = calculateBulkImportPrice(rawPrice, domesticFee, p.weight, p.shippingMethod);
           
+          // Skip products with 0 price
+          if (price <= 0 || rawPrice <= 0) {
+            console.log(`[Bulk Import] Skipping product with 0 price: ${p.name || 'Unnamed'}`);
+            return null;
+          }
+          
           console.log(`[Bulk Import] Processing product ${productIndex + 1}/${uniqueProductsToImport.length}: "${p.name?.substring(0, 30)}...", price=${price} (original=${rawPrice}, domestic=${domesticFee})`);
           
           // Use original names/descriptions without translation and clean 'empty'
@@ -3207,7 +3214,7 @@ app.post('/api/admin/products/bulk-import', authenticateToken, isAdmin, hasPermi
           
           const mainImage = imageUrls.length > 0 ? imageUrls[0] : (typeof p.image === 'string' ? p.image.replace(/[`"']/g, '').trim() : '');
           
-          const basePriceRMB = extractNumber(p.basePriceRMB) || extractNumber(p.base_price) || 0;
+          const basePriceRMB = extractNumber(p.basePriceRMB) || extractNumber(p.base_price) || rawPrice || 0;
           
           // Try to parse dimensions and weight using robust extractor
           const productWeight = extractNumber(p.weight) || extractNumber(p.shipping_weight);
@@ -3682,6 +3689,12 @@ app.post('/api/admin/products/bulk-create', authenticateToken, isAdmin, hasPermi
         // Use the new calculation logic with 90% markup for air items
         const rawPrice = safeParseFloat(rawProductData.price) || 0;
         const calculatedPrice = isPriceCombined ? rawPrice : calculateBulkImportPrice(rawPrice, domesticFee, rawProductData.weight, rawProductData.shippingMethod);
+
+        // Skip products with 0 price
+        if (calculatedPrice <= 0 || rawPrice <= 0) {
+          console.log(`[Bulk Create] Skipping product with 0 price: ${rawProductData.name || 'Unnamed'}`);
+          continue;
+        }
 
         // Pick only valid Prisma fields to avoid "Unknown arg" errors
         const productData = {
@@ -4695,7 +4708,8 @@ app.post('/api/cart', authenticateToken, async (req, res) => {
       variant?.height || product.height,
       shippingMethod,
       product.domesticShippingFee || 0,
-      product.basePriceRMB
+      product.basePriceRMB,
+      product.isPriceCombined
     );
     const shippingFee = await calculateProductShipping(product, shippingMethod, true, variant);
     const inclusivePrice = Math.ceil((adjustedBasePrice + shippingFee) / 250) * 250;
@@ -4882,7 +4896,8 @@ app.post('/api/orders', authenticateToken, async (req, res) => {
         variant?.height || product.height,
         method,
         product.domesticShippingFee || 0,
-        product.basePriceRMB
+        product.basePriceRMB,
+        product.isPriceCombined
       );
       
       // Ensure selectedOptions is a string for Prisma

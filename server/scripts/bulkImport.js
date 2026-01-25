@@ -47,13 +47,14 @@ const calculateBulkImportPrice = (rawPrice, domesticFee, weight, explicitMethod)
   const domestic = domesticFee || 0;
 
   if (method === 'air') {
-    // Air Price: (Base Price * 1.9) + Domestic Shipping
-    // Shipping fee in cart will be 0
-    return Math.ceil(((rawPrice * 1.9) + domestic) / 250) * 250;
+    // Air Pricing logic: (Base Price + Domestic Fee + (Weight * Air Rate)) * 1.20
+    const airRate = 15400;
+    const shippingCost = weightInKg * airRate;
+    return Math.ceil(((rawPrice + domestic + shippingCost) * 1.20) / 250) * 250;
   } else {
-    // Sea Price: (Base Price * 1.15) + Domestic Shipping
+    // Sea Price: (Base Price + Domestic Fee) * 1.20
     // Shipping fee will be calculated in cart separately
-    return Math.ceil(((rawPrice * 1.15) + domestic) / 250) * 250;
+    return Math.ceil(((rawPrice + domestic) * 1.20) / 250) * 250;
   }
 };
 
@@ -123,6 +124,13 @@ async function bulkImport(filePath) {
         const rawPrice = parseFloat(p.general_price) || parseFloat(p.price) || parseFloat(p.basePriceRMB) || 0;
         const price = calculateBulkImportPrice(rawPrice, domesticFee, p.weight, p.shippingMethod);
 
+        // Skip products with 0 price
+        if (price <= 0 || rawPrice <= 0) {
+          console.log(`[Bulk Import] Skipping product with 0 price: ${name}`);
+          results.skipped++;
+          continue;
+        }
+
         product = await prisma.product.create({
           data: {
             name: name,
@@ -132,8 +140,8 @@ async function bulkImport(filePath) {
             basePriceRMB: rawPrice,
             image: p.image || '',
             purchaseUrl: p.purchaseUrl,
-            status: 'PUBLISHED',
-            isActive: true,
+            status: 'DRAFT', // Import as draft until published
+            isActive: false, // Inactive by default when DRAFT
             isFeatured: !!p.isFeatured,
             specs: p.specs,
             storeEvaluation: p.storeEvaluation,

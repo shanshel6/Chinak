@@ -10,53 +10,33 @@ const WEIGHT_BUFFER_FACTOR = 1.25; // Increased to 25% for "safe side" guessing
  * Reverses the 90% air markup or 15% sea markup from the DB price
  * and applies the new markup based on the selected method.
  */
-export function getAdjustedPrice(basePrice, weight, length, width, height, selectedMethod, domesticShippingFee, basePriceRMB) {
+export function getAdjustedPrice(basePrice, weight, length, width, height, selectedMethod, domesticShippingFee, basePriceRMB, isPriceCombined) {
   const weightInKg = (weight || 0.5);
-  const hasDimensions = !!(length && width && height);
+  const method = (selectedMethod || (weightInKg > 0 && weightInKg < 2 ? 'AIR' : 'SEA')).toUpperCase();
   
-  // Default method logic matching frontend and bulk import
-  let defaultMethod = (weightInKg > 0 && weightInKg < 2) ? 'AIR' : 'SEA';
-  
-  const method = (selectedMethod || defaultMethod).toUpperCase();
-  
-  // 1. Determine the "original price" in IQD (before markup)
-  let originalPrice = basePrice;
-  
+  // 1. If we have basePriceRMB, it's our source of truth
   if (basePriceRMB && basePriceRMB > 0) {
-    // If basePriceRMB is provided, use it as the source of truth
-    originalPrice = basePriceRMB;
-  } else {
-    // If only the database 'price' is available, reverse the markup to get original price
-    if (defaultMethod === 'AIR') {
-      originalPrice = basePrice / 1.9;
-    } else {
-      originalPrice = basePrice / 1.15;
-    }
-  }
-
-  // Calculate domestic fee (default to 0 if not provided)
-  const domesticFee = domesticShippingFee || 0;
-
-  // 2. Apply markup for selected method + domestic fee
-  if (method === 'AIR') {
-    // Air Pricing logic:
-    // If weight is explicitly provided: (Base Price + 15% profit) + ((weight + 0.1) * 15400) + Domestic Shipping
-    // If weight is NOT provided: (Base Price * 1.9) + Domestic Shipping
+    const originalPrice = basePriceRMB;
+    const domesticFee = domesticShippingFee || 0;
     
-    if (weightInKg !== undefined && weightInKg !== null && weightInKg > 0) {
-      const shippingCost = (weightInKg + 0.1) * 15400;
-      const airPrice = (originalPrice * 1.15) + shippingCost + domesticFee;
+    if (method === 'AIR') {
+      const airRate = 15400;
+      const shippingCost = weightInKg * airRate;
+      const airPrice = (originalPrice + domesticFee + shippingCost) * 1.20;
       return Math.ceil(airPrice / 250) * 250;
     } else {
-      // Default to 90% markup if weight is missing
-      const airPrice = (originalPrice * 1.9) + domesticFee;
-      return Math.ceil(airPrice / 250) * 250;
+      const seaPrice = (originalPrice + domesticFee) * 1.20;
+      return Math.ceil(seaPrice / 250) * 250;
     }
-  } else {
-    // Sea Price: (Base Price + 15% Base Price) + Domestic Shipping
-    const seaPrice = (originalPrice * 1.15) + domesticFee;
-    return Math.ceil(seaPrice / 250) * 250;
   }
+
+  // 2. Fallback: if isPriceCombined, return basePrice as is
+  if (isPriceCombined) {
+    return Math.ceil(basePrice / 250) * 250;
+  }
+
+  // 3. Final fallback
+  return Math.ceil(basePrice / 250) * 250;
 }
 
 /**
@@ -105,7 +85,8 @@ export async function calculateOrderShipping(items, defaultMethod = 'SEA') {
         currentHeight, 
         method,
         product.domesticShippingFee || 0,
-        product.basePriceRMB
+        product.basePriceRMB,
+        product.isPriceCombined
       );
       
       totalSubtotal += adjustedBasePrice * qty;
