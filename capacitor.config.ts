@@ -8,7 +8,7 @@ const config: CapacitorConfig = {
     // When using a physical device, the app cannot reach 10.0.2.2 (which is only for emulators).
     // For production/physical device testing, we should use the local dist files.
     // In dev mode with 'npx cap run android', the CLI will automatically handle live reload URLs if configured.
-    androidScheme: 'https',
+    androidScheme: 'http',
     cleartext: true
   },
   plugins: {

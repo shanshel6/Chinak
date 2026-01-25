@@ -67,9 +67,32 @@ const VerifyOTP: React.FC = () => {
       return;
     }
 
+    const state = location.state as { 
+      phone?: string; 
+      fullName?: string; 
+      type?: 'login' | 'signup';
+      isTestAccount?: boolean;
+      testUser?: any;
+      testToken?: string;
+    };
+
+    // Special handling for test accounts - check BEFORE setting loading
+    if (state?.isTestAccount) {
+      if (otpCode === '123456') {
+        if (state.testToken && state.testUser) {
+          setAuth(state.testToken, state.testUser);
+          showToast('تم تسجيل الدخول كمراجع تجريبي', 'success');
+          navigate('/');
+          return;
+        }
+      } else {
+        showToast('كود التحقق غير صحيح', 'error');
+        return;
+      }
+    }
+
     setLoading(true);
     try {
-      const state = location.state as { phone?: string; fullName?: string; type?: 'login' | 'signup' };
       const { token, user } = await verifyWhatsAppOTP(phone, otpCode, state?.fullName);
 
       if (token && user) {
@@ -116,6 +139,13 @@ const VerifyOTP: React.FC = () => {
             لقد أرسلنا كود التحقق إلى <br />
             <span className="font-bold text-slate-900 dark:text-white" dir="ltr">{phone}</span>
           </p>
+          {(location.state as any)?.isTestAccount && (
+            <div className="mt-4 p-3 bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800 rounded-xl animate-bounce">
+              <p className="text-blue-700 dark:text-blue-300 text-sm font-bold text-center">
+                كود التحقق للمراجعة هو: <span className="text-lg">123456</span>
+              </p>
+            </div>
+          )}
         </div>
 
         {/* OTP Input Section */}

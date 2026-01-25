@@ -14,7 +14,7 @@ const Login: React.FC = () => {
   const showToast = useToastStore((state) => state.showToast);
   
   const [method, setMethod] = useState<'phone' | 'email'>('phone');
-  const [countryCode, setCountryCode] = useState('+964');
+  const [countryCode, setCountryCode] = useState('+1');
   const [phoneNumber, setPhoneNumber] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -177,19 +177,27 @@ const Login: React.FC = () => {
 
     if (testAccount) {
       // Simulate successful login for test accounts
-      const token = 'test-token-' + Date.now();
+      const token = 'test-token-' + normalizedPhone + '-' + Date.now();
       const user = {
         id: 'reviewer-' + Date.now(),
         phone: testAccount.phone,
         name: testAccount.name,
         email: testAccount.email,
-        role: testAccount.phone.includes('1987654321') ? 'admin' : 'user'
+        role: normalizedPhone.includes('1987654321') ? 'ADMIN' : 'USER'
       };
       
-      setAuth(token, user);
-      
-      showToast('تم تسجيل الدخول كمراجع تجريبي', 'success');
-      navigate('/');
+      // Simulation for Google Play reviewers
+      // Navigate to verify-otp with a special flag
+      showToast('تم إرسال كود التحقق (للمراجعة: 123456)', 'info', 5000);
+      navigate('/verify-otp', { 
+        state: { 
+          phone: normalizedPhone, 
+          type: 'login',
+          isTestAccount: true,
+          testUser: user,
+          testToken: token
+        } 
+      });
       return true;
     }
     return false;

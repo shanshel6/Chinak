@@ -227,7 +227,7 @@ io.on('connection', (socket) => {
   });
 });
 
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 5001;
 const JWT_SECRET = process.env.JWT_SECRET || 'c2hhbnNoYWw2Ni1teS1zaG9wLWJhY2tlbmQtc2VjcmV0LTIwMjY=';
 
 // --- Normalization Helpers ---
@@ -426,7 +426,18 @@ const authenticateToken = async (req, res, next) => {
   try {
     // Try Supabase Auth first
     console.log('[Auth] Checking Supabase token...');
-    const { data: { user: supabaseUser }, error: supabaseError } = await supabase.auth.getUser(token);
+    let supabaseUser = null;
+    let supabaseError = null;
+    
+    try {
+      // Only try Supabase if it looks like a Supabase token or if we want to be safe
+      // Supabase tokens are usually very long JWTs
+      const result = await supabase.auth.getUser(token);
+      supabaseUser = result.data?.user;
+      supabaseError = result.error;
+    } catch (sbErr) {
+      console.log('[Auth] Supabase getUser threw error (probably not a Supabase token):', sbErr.message);
+    }
     
     if (supabaseUser) {
       console.log('[Auth] Supabase user found:', supabaseUser.email);
@@ -514,8 +525,13 @@ const authenticateToken = async (req, res, next) => {
       return res.status(401).json({ error: 'Invalid or expired token' });
     }
   } catch (error) {
-    console.error('[Auth] Unexpected error:', error.message);
-    return res.status(401).json({ error: 'Authentication failed' });
+    console.error('[Auth] Unexpected error during authentication:', error);
+    if (error.stack) console.error(error.stack);
+    return res.status(401).json({ 
+      error: 'Authentication failed', 
+      details: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined 
+    });
   }
 };
 
