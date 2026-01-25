@@ -2,7 +2,7 @@ import forms from '@tailwindcss/forms';
 import containerQueries from '@tailwindcss/container-queries';
 
 /** @type {import('tailwindcss').Config} */
-export default {
+const config = {
   content: [
     "./index.html",
     "./src/**/*.{js,ts,jsx,tsx}",
@@ -19,7 +19,7 @@ export default {
         "border-light": "#dbe0e6",
         "border-dark": "#2a3b4d",
         "card-light": "#ffffff",
-        "card-dark": "#1e293b", // slate-800 or similar
+        "card-dark": "#1e293b",
       },
       fontFamily: {
         "display": ["Cairo", "Inter", "sans-serif"]
@@ -47,4 +47,6 @@ export default {
     forms,
     containerQueries,
   ],
-}
+};
+
+export default config;

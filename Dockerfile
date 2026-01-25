@@ -24,7 +24,10 @@ RUN ls -la index.html
 # Build the frontend
 ENV CI=true
 ENV NODE_OPTIONS="--max-old-space-size=4096"
-RUN npm run build -- --verbose
+
+# Run type check and build separately for better error tracking
+RUN node_modules/.bin/tsc -p tsconfig.app.json --noEmit && \
+    node node_modules/vite/bin/vite.js build
 
 # Production stage
 FROM node:20-slim
@@ -32,22 +35,25 @@ RUN apt-get update && apt-get install -y \
     openssl \
     ca-certificates \
     libvips-dev \
+    python3 \
+    make \
+    g++ \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Copy backend package files
+# Copy backend package files and prisma schema
 COPY server/package*.json ./
 COPY server/prisma ./prisma
 
 # Install production dependencies
 RUN npm install --omit=dev
 
-# Generate prisma client
-RUN npx prisma generate
-
-# Copy backend source files
+# Copy backend source files BEFORE prisma generate
 COPY server/ .
+
+# Generate prisma client with full context
+RUN npx prisma generate
 
 # Copy built frontend assets
 COPY --from=frontend-builder /app/dist ./dist
