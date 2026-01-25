@@ -55,6 +55,18 @@ const safeParseFloat = (val) => {
   return isNaN(parsed) ? null : parsed;
 };
 
+/**
+ * Standard SSE Middleware to ensure headers are set correctly
+ * Use this for any long-running event streams
+ */
+const sseMiddleware = (req, res, next) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no'); // Disable buffering for Nginx/HuggingFace
+  next();
+};
+
 // Robust numeric extractor for strings like "300 جرام" or "15.5 cm"
 const extractNumber = (val) => {
   if (val === null || val === undefined || val === '') return null;
@@ -401,23 +413,20 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(compression());
+app.use(compression({
+  filter: (req, res) => {
+    if (req.headers['accept'] === 'text/event-stream' || res.getHeader('Content-Type') === 'text/event-stream') {
+      return false;
+    }
+    return compression.filter(req, res);
+  }
+}));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // Serve static files from the 'dist' directory
 const distPath = path.join(__dirname, 'dist');
 app.use(express.static(distPath));
-
-app.get('/api/health', (req, res) => {
-  res.json({
-    status: 'ok',
-    time: new Date().toISOString(),
-    env: process.env.NODE_ENV,
-    hasJwtSecret: !!process.env.JWT_SECRET,
-    usingDefaultSecret: JWT_SECRET === 'c2hhbnNoYWw2Ni1teS1zaG9wLWJhY2tlbmQtc2VjcmV0LTIwMjY='
-  });
-});
 
 // --- Authentication Middleware ---
 const authenticateToken = async (req, res, next) => {
@@ -2598,10 +2607,19 @@ app.post('/api/admin/check-links', authenticateToken, isAdmin, async (req, res) 
 
 // ADMIN: Create product
 app.post('/api/products/bulk', authenticateToken, isAdmin, hasPermission('manage_products'), async (req, res) => {
-  const { products } = req.body;
+  const { products, useSSE = false } = req.body;
 
   if (!Array.isArray(products)) {
     return res.status(400).json({ error: 'Invalid products data' });
+  }
+
+  if (useSSE) {
+    // SSE Mode for large imports
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders();
   }
 
   const results = {
@@ -2830,6 +2848,14 @@ app.post('/api/products/bulk', authenticateToken, isAdmin, hasPermission('manage
       });
 
       results.imported++;
+      
+      if (useSSE && results.imported % 5 === 0) {
+        res.write(`data: ${JSON.stringify({ 
+          progress: Math.round((results.imported / results.total) * 100),
+          imported: results.imported,
+          total: results.total
+        })}\n\n`);
+      }
     } catch (err) {
       console.error(`Failed to process draft product ${p.name || p.product_name}:`, err);
       results.failed++;
@@ -2837,7 +2863,12 @@ app.post('/api/products/bulk', authenticateToken, isAdmin, hasPermission('manage
     }
   }
 
-  res.json(results);
+  if (useSSE) {
+    res.write(`data: ${JSON.stringify({ complete: true, results })}\n\n`);
+    res.end();
+  } else {
+    res.json(results);
+  }
 });
 
 app.post('/api/products', authenticateToken, isAdmin, hasPermission('manage_products'), async (req, res) => {

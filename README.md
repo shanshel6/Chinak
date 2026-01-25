@@ -1,5 +1,5 @@
 ---
-title: My Shop Backend (Updated)
+title: My Shop Backend (Live)
 emoji: 🛍️
 colorFrom: blue
 colorTo: indigo
