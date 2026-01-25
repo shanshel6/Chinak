@@ -371,7 +371,7 @@ const Profile: React.FC = () => {
 
                   <button 
                     onClick={() => navigate('/advanced-settings')}
-                    className="w-full flex items-center justify-between p-4 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors group"
+                    className="w-full flex items-center justify-between p-4 border-b border-slate-50 dark:border-slate-700/50 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors group"
                   >
                     <div className="flex items-center gap-4">
                       <div className="flex size-10 items-center justify-center rounded-xl bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-400 group-hover:scale-110 transition-transform">
@@ -380,6 +380,19 @@ const Profile: React.FC = () => {
                       <p className="text-sm font-bold text-slate-900 dark:text-white">إعدادات متقدمة</p>
                     </div>
                     <ChevronLeft size={20} className="text-slate-300 dark:text-slate-600" />
+                  </button>
+
+                  <button 
+                    onClick={() => navigate('/delete-account')}
+                    className="w-full flex items-center justify-between p-4 hover:bg-rose-50 dark:hover:bg-rose-900/10 transition-colors group"
+                  >
+                    <div className="flex items-center gap-4">
+                      <div className="flex size-10 items-center justify-center rounded-xl bg-rose-500/10 text-rose-600 dark:bg-rose-500/20 dark:text-rose-400 group-hover:scale-110 transition-transform">
+                        <Trash2 size={20} />
+                      </div>
+                      <p className="text-sm font-bold text-rose-600 dark:text-rose-400">حذف الحساب</p>
+                    </div>
+                    <ChevronLeft size={20} className="text-rose-300 dark:text-rose-800" />
                   </button>
                 </div>
               </div>
@@ -393,7 +406,7 @@ const Profile: React.FC = () => {
                   <LogOut size={20} />
                   {t('profile.logout')}
                 </button>
-                <p className="text-center text-[10px] text-slate-400 mt-6 font-medium">Chinak v2.4.0</p>
+                <p className="text-center text-[10px] text-slate-400 mt-6 font-medium">Chinak v1.0.6</p>
               </div>
             </div>
           </div>
