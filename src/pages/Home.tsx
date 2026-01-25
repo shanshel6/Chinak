@@ -10,20 +10,7 @@ import SearchBar from '../components/home/SearchBar';
 import ProductCard from '../components/home/ProductCard';
 import CategoryTabs from '../components/home/CategoryTabs';
 import { Grid2X2, Smartphone, Shirt, Sparkles, Banknote, AlertCircle, PackageSearch } from 'lucide-react';
-
-interface Product {
-  id: number;
-  name: string;
-  price: number;
-  image: string;
-  description: string;
-  images?: { id: number; url: string; order: number; type?: string }[];
-  purchaseUrl?: string;
-  weight?: number;
-  length?: number;
-  width?: number;
-  height?: number;
-}
+import type { Product } from '../types/product';
 
 const categories = [
   { id: 'all', name: 'الكل', icon: Grid2X2 },
@@ -281,7 +268,7 @@ const Home: React.FC = () => {
     };
   }, [loading, products.length, selectedCategoryId, loadData]);
 
-  const isProductInWishlist = (productId: number) => wishlistItems.some(item => String(item.productId) === String(productId));
+  const isProductInWishlist = (productId: number | string) => wishlistItems.some(item => String(item.productId) === String(productId));
 
   const handleAddToWishlist = (e: React.MouseEvent, product: Product) => {
     e.stopPropagation();

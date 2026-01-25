@@ -13,7 +13,8 @@ import {
   Info, 
   LogOut,
   Settings,
-  FileText
+  FileText,
+  Trash2
 } from 'lucide-react';
 import { updateProfile, fetchOrders, fetchAddresses, fetchCoupons, fetchMe } from '../services/api';
 import { useAuthStore } from '../store/useAuthStore';

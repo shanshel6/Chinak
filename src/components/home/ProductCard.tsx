@@ -3,31 +3,13 @@ import LazyImage from '../LazyImage';
 import { fetchProductById, fetchProductReviews, checkProductPurchase, fetchSettings } from '../../services/api';
 import { Heart } from 'lucide-react';
 import { calculateInclusivePrice } from '../../utils/shipping';
-
-interface Product {
-  id: number;
-  name: string;
-  price: number;
-  image: string;
-  images?: { id: number; url: string; order: number; type?: string }[];
-  description: string;
-  purchaseUrl?: string;
-  variants?: any[];
-  reviewsCountShown?: number;
-  isFeatured?: boolean;
-  weight?: number;
-  length?: number;
-  width?: number;
-  height?: number;
-  domesticShippingFee?: number;
-  basePriceRMB?: number;
-}
+import type { Product } from '../../types/product';
 
 interface ProductCardProps {
   product: Product;
-  onNavigate: (id: number) => void;
+  onNavigate: (id: number | string) => void;
   onAddToWishlist: (e: React.MouseEvent, product: Product) => void;
-  isProductInWishlist: (id: number) => boolean;
+  isProductInWishlist: (id: number | string) => boolean;
 }
 
 const ProductCard: React.FC<ProductCardProps> = ({
@@ -54,7 +36,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
   const minPrice = variantPrices.length > 0 ? Math.min(...variantPrices) : product.price;
 
   // Simulated discovery data
-  const soldCount = React.useMemo(() => (product.id * 17) % 1000 + 50, [product.id]);
+  const soldCount = React.useMemo(() => (Number(product.id) * 17) % 1000 + 50 || 0, [product.id]);
 
   const prefetchTimerRef = useRef<any>(null);
   const isPrefetched = useRef(false);
@@ -172,9 +154,8 @@ const ProductCard: React.FC<ProductCardProps> = ({
           <div className="flex items-center gap-1">
             <div className="flex items-baseline gap-1">
               <span className="text-[15px] font-black text-primary">
-                {totalPrice.toLocaleString()}
+                {totalPrice.toLocaleString()} د.ع
               </span>
-              <span className="text-[10px] font-bold text-primary/70">د.ع</span>
             </div>
           </div>
 

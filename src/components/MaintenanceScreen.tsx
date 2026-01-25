@@ -1,5 +1,5 @@
 import React from 'react';
-import { WifiOff, RefreshCw, AlertCircle, Globe } from 'lucide-react';
+import { WifiOff, RefreshCw, AlertCircle } from 'lucide-react';
 import Logo from './Logo';
 import { useMaintenanceStore } from '../store/useMaintenanceStore';
 

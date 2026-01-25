@@ -3,20 +3,7 @@ import { persist } from 'zustand/middleware';
 import { fetchCart, updateCartItem, removeFromCart, addToCart, fetchSettings } from '../services/api';
 import { calculateInclusivePrice } from '../utils/shipping';
 import type { ShippingRates } from '../types/shipping';
-
-interface Product {
-  id: number | string;
-  name: string;
-  price: number;
-  image: string;
-  weight?: number;
-  length?: number;
-  width?: number;
-  height?: number;
-  domesticShippingFee?: number;
-  basePriceRMB?: number;
-  isPriceCombined?: boolean;
-}
+import type { Product } from '../types/product';
 
 interface CartItem {
   id: number | string;
@@ -52,20 +39,7 @@ interface CartState {
     productId: number | string, 
     quantity?: number, 
     variantId?: number | string, 
-    productInfo?: { 
-      id: number | string; 
-      name: string; 
-      price: number; 
-      image: string; 
-      variant?: any; 
-      weight?: number; 
-      length?: number; 
-      width?: number; 
-      height?: number; 
-      domesticShippingFee?: number;
-      basePriceRMB?: number;
-      isPriceCombined?: boolean;
-    }, 
+    productInfo?: Product, 
     selectedOptions?: any,
     shippingMethod?: 'air' | 'sea'
   ) => Promise<void>;
@@ -224,17 +198,8 @@ export const useCartStore = create<CartState>()(
             quantity,
             shippingMethod,
             product: {
-              id: productInfo.id,
-              name: productInfo.name,
-              price: productInfo.price,
-              image: productInfo.image,
-              weight: productInfo.weight,
-              length: productInfo.length,
-              width: productInfo.width,
-              height: productInfo.height,
-              domesticShippingFee: productInfo.domesticShippingFee,
-              basePriceRMB: productInfo.basePriceRMB,
-              isPriceCombined: productInfo.isPriceCombined
+              ...productInfo,
+              description: productInfo.description || ''
             },
             variant: productInfo.variant
           };

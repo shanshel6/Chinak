@@ -1,20 +1,11 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import type { Product } from '../types/product';
 
 interface WishlistItem {
   id: number | string;
   productId: number | string;
-  product: {
-    id: number | string;
-    name: string;
-    price: number;
-    image: string;
-    description: string;
-    weight?: number;
-    length?: number;
-    width?: number;
-    height?: number;
-  };
+  product: Product;
 }
 
 interface WishlistState {
@@ -49,15 +40,8 @@ export const useWishlistStore = create<WishlistState>()(
             id: `local-${Date.now()}`,
             productId,
             product: {
-              id: productInfo.id,
-              name: productInfo.name,
-              price: productInfo.price,
-              image: productInfo.image,
-              description: productInfo.description || '',
-              weight: productInfo.weight,
-              length: productInfo.length,
-              width: productInfo.width,
-              height: productInfo.height
+              ...productInfo,
+              description: productInfo.description || ''
             }
           };
           set({ items: [...items, newItem] });

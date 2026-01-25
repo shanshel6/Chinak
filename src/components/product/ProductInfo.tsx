@@ -10,7 +10,7 @@ interface ProductInfoProps {
   chineseName?: string;
   videoUrl?: string;
   storeEvaluation?: string;
-  reviewsCountShown?: string;
+  reviewsCountShown?: string | number;
   averageRating: string;
   totalReviews: number;
   weight?: number;

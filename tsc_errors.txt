@@ -1,0 +1,12 @@
+﻿src/components/home/ProductCard.tsx(115,15): error TS2339: Property 'isPriceCombined' does not exist on type 'Product'.
+src/components/MaintenanceScreen.tsx(2,43): error TS6133: 'Globe' is declared but its value is never read.
+src/pages/Favorites.tsx(194,35): error TS2339: Property 'domesticShippingFee' does not exist on type '{ id: string | number; name: string; price: number; image: string; description: string; weight?: number | undefined; length?: number | undefined; width?: number | undefined; height?: number | undefined; }'.
+src/pages/Favorites.tsx(195,35): error TS2339: Property 'basePriceRMB' does not exist on type '{ id: string | number; name: string; price: number; image: string; description: string; weight?: number | undefined; length?: number | undefined; width?: number | undefined; height?: number | undefined; }'.
+src/pages/Favorites.tsx(196,35): error TS2339: Property 'isPriceCombined' does not exist on type '{ id: string | number; name: string; price: number; image: string; description: string; weight?: number | undefined; length?: number | undefined; width?: number | undefined; height?: number | undefined; }'.
+src/pages/Favorites.tsx(236,35): error TS2339: Property 'domesticShippingFee' does not exist on type '{ id: string | number; name: string; price: number; image: string; description: string; weight?: number | undefined; length?: number | undefined; width?: number | undefined; height?: number | undefined; }'.
+src/pages/Favorites.tsx(237,35): error TS2339: Property 'basePriceRMB' does not exist on type '{ id: string | number; name: string; price: number; image: string; description: string; weight?: number | undefined; length?: number | undefined; width?: number | undefined; height?: number | undefined; }'.
+src/pages/Favorites.tsx(238,35): error TS2339: Property 'isPriceCombined' does not exist on type '{ id: string | number; name: string; price: number; image: string; description: string; weight?: number | undefined; length?: number | undefined; width?: number | undefined; height?: number | undefined; }'.
+src/pages/ProductDetails.tsx(314,15): error TS2339: Property 'isPriceCombined' does not exist on type 'Product'.
+src/pages/ProductDetails.tsx(327,15): error TS2339: Property 'isPriceCombined' does not exist on type 'Product'.
+src/pages/ProductDetails.tsx(679,38): error TS2339: Property 'isPriceCombined' does not exist on type 'Product'.
+src/pages/Profile.tsx(391,26): error TS2304: Cannot find name 'Trash2'.
