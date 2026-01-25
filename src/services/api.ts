@@ -50,6 +50,7 @@ export const getBaseDomain = () => {
 };
 
 const API_BASE_URL = `${getBaseDomain()}/api`;
+const MOCK_SETTINGS_KEY = 'mock_admin_settings';
 
 // Simple in-memory cache
 const cache = new Map<string, { data: any; timestamp: number }>();
@@ -290,6 +291,26 @@ export async function request(endpoint: string, options: any = {}, retries = 2) 
 
       // Handle admin endpoints for test admin account
       if (isAdmin && endpoint.startsWith('/admin')) {
+        if (endpoint.includes('/settings')) {
+          if (options.method === 'PUT' && options.body) {
+            localStorage.setItem(MOCK_SETTINGS_KEY, options.body);
+            return JSON.parse(options.body);
+          }
+          const savedSettings = localStorage.getItem(MOCK_SETTINGS_KEY);
+          if (savedSettings) return JSON.parse(savedSettings);
+
+          return {
+            airShippingRate: 15400,
+            seaShippingRate: 182000,
+            airShippingMinFloor: 0,
+            currency: 'د.ع',
+            storeName: 'My Shop (Review Mode)',
+            contactEmail: 'admin@example.com',
+            contactPhone: '+1987654321',
+            footerText: 'Google Play Review Version',
+            socialLinks: {}
+          };
+        }
         if (endpoint.includes('/stats')) {
           return {
             stats: {
@@ -319,17 +340,6 @@ export async function request(endpoint: string, options: any = {}, retries = 2) 
         if (endpoint.includes('/products')) return { products: [], totalPages: 1, total: 0 };
         if (endpoint.includes('/orders')) return { orders: [], totalPages: 1, total: 0 };
         if (endpoint.includes('/coupons')) return [];
-        if (endpoint.includes('/settings')) return {
-          airShippingRate: 15400,
-          seaShippingRate: 182000,
-          airShippingMinFloor: 0,
-          currency: 'د.ع',
-          storeName: 'My Shop (Review Mode)',
-          contactEmail: 'admin@example.com',
-          contactPhone: '+1987654321',
-          footerText: 'Google Play Review Version',
-          socialLinks: {}
-        };
       }
       
       // Return empty results for auth-protected endpoints to prevent 401s for reviewers
