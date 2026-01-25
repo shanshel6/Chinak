@@ -1,4 +1,4 @@
-# Build stage for frontend
+# Build stage for frontend - Build Trigger: 2026-01-26 21:51
 FROM node:20 AS frontend-builder
 WORKDIR /app
 
@@ -24,10 +24,16 @@ RUN ls -la index.html
 # Build the frontend
 ENV CI=true
 ENV NODE_OPTIONS="--max-old-space-size=4096"
+ENV VITE_LOG_LEVEL=info
 
-# Run type check and build separately for better error tracking
-RUN node_modules/.bin/tsc -p tsconfig.app.json --noEmit && \
-    node node_modules/vite/bin/vite.js build
+# Diagnostics: List files and environment
+RUN ls -la && npm list --depth=0
+
+# Run type check
+RUN npx tsc -p tsconfig.app.json --noEmit
+
+# Run build with extra memory and verbosity
+RUN node --max-old-space-size=4096 node_modules/vite/bin/vite.js build --emptyOutDir
 
 # Production stage
 FROM node:20-slim
@@ -49,7 +55,7 @@ COPY server/prisma ./prisma
 # Install production dependencies
 RUN npm install --omit=dev
 
-# Copy backend source files BEFORE prisma generate
+# Copy backend source files
 COPY server/ .
 
 # Generate prisma client with full context

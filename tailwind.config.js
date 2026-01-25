@@ -1,5 +1,8 @@
-import forms from '@tailwindcss/forms';
-import containerQueries from '@tailwindcss/container-queries';
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+
+const forms = require('@tailwindcss/forms');
+const containerQueries = require('@tailwindcss/container-queries');
 
 /** @type {import('tailwindcss').Config} */
 const config = {

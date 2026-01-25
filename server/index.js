@@ -417,11 +417,17 @@ app.use(compression({
   filter: (req, res) => {
     // Never compress SSE streams as it breaks real-time delivery
     const contentType = res.getHeader('Content-Type');
-    if (req.headers['accept'] === 'text/event-stream' || (contentType && contentType.includes('text/event-stream'))) {
+    const accept = req.headers['accept'];
+    
+    if (accept === 'text/event-stream' || (contentType && String(contentType).includes('text/event-stream'))) {
       return false;
     }
-    // Fallback to default filter logic
-    return compression.filter ? compression.filter(req, res) : true;
+    
+    // Default filter logic
+    if (compression.filter) {
+      return compression.filter(req, res);
+    }
+    return true;
   }
 }));
 app.use(express.json({ limit: '50mb' }));
