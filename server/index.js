@@ -14,7 +14,6 @@ import { createServer } from 'http';
 import { Server } from 'socket.io';
 import fs from 'fs';
 import path from 'path';
-import sharp from 'sharp';
 import axios from 'axios';
 import { fileURLToPath } from 'url';
 import prisma from './prismaClient.js';
@@ -206,6 +205,18 @@ const io = new Server(httpServer, {
   }
 });
 
+let sharpModule;
+async function getSharp() {
+  if (sharpModule !== undefined) return sharpModule;
+  try {
+    const mod = await import('sharp');
+    sharpModule = mod.default ?? mod;
+  } catch {
+    sharpModule = null;
+  }
+  return sharpModule;
+}
+
 // --- Image Processing Helpers ---
 const convertToWebP = async (base64String) => {
   if (!base64String || !base64String.startsWith('data:image')) {
@@ -218,6 +229,9 @@ const convertToWebP = async (base64String) => {
   }
 
   try {
+    const sharp = await getSharp();
+    if (!sharp) return base64String;
+
     const base64Data = base64String.split(';base64,').pop();
     const buffer = Buffer.from(base64Data, 'base64');
     
