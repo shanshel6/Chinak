@@ -42,8 +42,11 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     libvips-dev \
     python3 \
+    python3-dev \
+    python3-distutils \
     python3-setuptools \
     pkg-config \
+    git \
     make \
     g++ \
     && rm -rf /var/lib/apt/lists/*
@@ -56,6 +59,7 @@ COPY server/prisma ./prisma
 
 # Install production dependencies
 ENV PUPPETEER_SKIP_DOWNLOAD=true
+ENV npm_config_build_from_source=true
 RUN npm ci --omit=dev --no-audit --no-fund || (echo "npm ci failed; dumping npm logs" && ls -la /root/.npm/_logs || true && cat /root/.npm/_logs/* || true && exit 1)
 
 # Copy backend source files
