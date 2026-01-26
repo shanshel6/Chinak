@@ -1,4 +1,4 @@
-# Build stage for frontend - Build Trigger: 2026-01-26 21:51
+# Build stage for frontend - Build Trigger: 2026-01-26 22:25
 FROM node:20 AS frontend-builder
 WORKDIR /app
 
