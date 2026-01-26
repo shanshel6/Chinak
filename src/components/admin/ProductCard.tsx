@@ -19,17 +19,18 @@ import {
 } from 'lucide-react';
 import ProductImageCarousel from './ProductImageCarousel';
 import { calculateInclusivePrice } from '../../utils/shipping';
+import type { Product } from '../../types/product';
 
 interface ProductCardProps {
-  product: any;
+  product: Product;
   isSelected: boolean;
-  onToggleSelection: (productId: any) => void;
-  onUpdateStatus: (productId: any, data: any) => void;
-  onUpdateOptions?: (productId: any, options: any[], variants: any[]) => void;
-  onEdit: (product: any) => void;
-  onDelete: (productId: any) => void;
-  onImportReviews: (product: any) => void;
-  onAddPictures: (product: any) => void;
+  onToggleSelection: (productId: number | string) => void;
+  onUpdateStatus: (productId: number | string, data: any) => void;
+  onUpdateOptions?: (productId: number | string, options: any[], variants: any[]) => void;
+  onEdit: (product: Product) => void;
+  onDelete: (productId: number | string) => void;
+  onImportReviews: (product: Product) => void;
+  onAddPictures: (product: Product) => void;
   checkPermission: (permission: string) => boolean;
   rates: {
     airRate: number;
