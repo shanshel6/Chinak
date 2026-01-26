@@ -61,7 +61,8 @@ COPY server/prisma ./prisma
 ENV PUPPETEER_SKIP_DOWNLOAD=true
 ENV npm_config_build_from_source=true
 ENV PRISMA_SKIP_POSTINSTALL_GENERATE=true
-RUN npm ci --omit=dev --no-audit --no-fund --ignore-scripts || (echo "npm ci failed; dumping npm logs" && ls -la /root/.npm/_logs || true && cat /root/.npm/_logs/* || true && exit 1)
+ENV npm_config_optional=false
+RUN npm ci --omit=dev --omit=optional --no-audit --no-fund --ignore-scripts || (echo "npm ci failed; dumping npm logs" && ls -la /root/.npm/_logs || true && cat /root/.npm/_logs/* || true && exit 1)
 
 # Copy backend source files
 COPY server/ .
