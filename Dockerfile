@@ -27,7 +27,7 @@ ENV NODE_OPTIONS="--max-old-space-size=4096"
 ENV VITE_LOG_LEVEL=info
 
 # Diagnostics: List files and environment
-RUN ls -la && npm list --depth=0
+RUN ls -la && (npm list --depth=0 || true)
 
 # Run type check
 RUN npx tsc -p tsconfig.app.json --noEmit
