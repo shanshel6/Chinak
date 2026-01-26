@@ -60,7 +60,8 @@ COPY server/prisma ./prisma
 # Install production dependencies
 ENV PUPPETEER_SKIP_DOWNLOAD=true
 ENV npm_config_build_from_source=true
-RUN npm ci --omit=dev --no-audit --no-fund || (echo "npm ci failed; dumping npm logs" && ls -la /root/.npm/_logs || true && cat /root/.npm/_logs/* || true && exit 1)
+ENV PRISMA_SKIP_POSTINSTALL_GENERATE=true
+RUN npm ci --omit=dev --no-audit --no-fund --ignore-scripts || (echo "npm ci failed; dumping npm logs" && ls -la /root/.npm/_logs || true && cat /root/.npm/_logs/* || true && exit 1)
 
 # Copy backend source files
 COPY server/ .
