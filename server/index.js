@@ -5691,7 +5691,16 @@ app.post('/api/messages', authenticateToken, async (req, res) => {
 });
 
 // Catch-all route for SPA - MUST be after all API routes
-app.get('*', (req, res) => {
+app.get('/', (req, res) => {
+  const indexPath = path.join(distPath, 'index.html');
+  if (fs.existsSync(indexPath)) {
+    res.sendFile(indexPath);
+  } else {
+    res.send('E-commerce API is running... (Frontend build not found)');
+  }
+});
+
+app.get('/*any', (req, res) => {
   // Check if the request is for an API route - if so, don't serve index.html
   if (req.path.startsWith('/api/')) {
     return res.status(404).json({ error: 'API route not found' });
