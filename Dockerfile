@@ -37,18 +37,9 @@ RUN node --max-old-space-size=4096 node_modules/vite/bin/vite.js build --emptyOu
 
 # Production stage
 FROM node:20
-RUN apt-get update && apt-get install -y \
+RUN apt-get update -o Acquire::ForceIPv4=true && apt-get install -y --no-install-recommends \
     openssl \
     ca-certificates \
-    libvips-dev \
-    python3 \
-    python3-dev \
-    python3-distutils \
-    python3-setuptools \
-    pkg-config \
-    git \
-    make \
-    g++ \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
