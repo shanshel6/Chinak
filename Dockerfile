@@ -66,9 +66,6 @@ RUN npm ci --omit=dev --no-audit --no-fund --ignore-scripts || (echo "npm ci fai
 # Copy backend source files
 COPY server/ .
 
-# Generate prisma client with full context
-RUN npx prisma generate
-
 # Copy built frontend assets
 COPY --from=frontend-builder /app/dist ./dist
 
@@ -78,4 +75,4 @@ ENV NODE_ENV=production
 EXPOSE 7860
 
 # Start the server
-CMD ["node", "index.js"]
+CMD ["sh", "-c", "npx prisma generate && node index.js"]
