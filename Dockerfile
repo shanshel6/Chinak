@@ -62,7 +62,14 @@ ENV PUPPETEER_SKIP_DOWNLOAD=true
 ENV npm_config_build_from_source=true
 ENV PRISMA_SKIP_POSTINSTALL_GENERATE=true
 ENV npm_config_optional=false
-RUN npm ci --omit=dev --omit=optional --no-audit --no-fund --ignore-scripts || (echo "npm ci failed; dumping npm logs" && ls -la /root/.npm/_logs || true && cat /root/.npm/_logs/* || true && exit 1)
+ENV npm_config_registry=https://registry.npmjs.org/
+ENV npm_config_fetch_retries=5
+ENV npm_config_fetch_retry_factor=2
+ENV npm_config_fetch_retry_mintimeout=20000
+ENV npm_config_fetch_retry_maxtimeout=120000
+ENV npm_config_timeout=600000
+ENV npm_config_loglevel=verbose
+RUN npm ci --omit=dev --omit=optional --no-audit --no-fund --ignore-scripts --verbose || (echo "npm ci failed; dumping npm logs" && npm config get cache || true && ls -la "$(npm config get cache)/_logs" || true && cat "$(npm config get cache)/_logs"/* || true && exit 1)
 
 # Copy backend source files
 COPY server/ .
