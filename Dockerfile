@@ -54,7 +54,7 @@ COPY server/prisma ./prisma
 
 # Install production dependencies
 ENV PUPPETEER_SKIP_DOWNLOAD=true
-RUN npm install --omit=dev
+RUN npm install --omit=dev || (echo "npm install failed; dumping npm logs" && ls -la /root/.npm/_logs || true && cat /root/.npm/_logs/* || true && exit 1)
 
 # Copy backend source files
 COPY server/ .
