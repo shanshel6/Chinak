@@ -2,11 +2,24 @@ import React from 'react';
 import LazyImage from '../LazyImage';
 import { calculateInclusivePrice } from '../../utils/shipping';
 import type { ShippingRates } from '../../types/shipping';
-import type { Product } from '../../types/product';
+
+interface Product {
+  id: number;
+  name: string;
+  price: number;
+  image: string;
+  weight?: number;
+  length?: number;
+  width?: number;
+  height?: number;
+  domesticShippingFee?: number;
+  basePriceRMB?: number;
+  isPriceCombined?: boolean;
+}
 
 interface SimilarProductsProps {
   products: Product[];
-  onProductClick: (id: number | string) => void;
+  onProductClick: (id: number) => void;
   rates: ShippingRates;
 }
 

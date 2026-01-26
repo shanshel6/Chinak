@@ -7,7 +7,6 @@ import { useAuthStore } from '../store/useAuthStore';
 import { useToastStore } from '../store/useToastStore';
 import { calculateInclusivePrice, getDefaultShippingMethod } from '../utils/shipping';
 import type { ShippingRates } from '../types/shipping';
-import type { Product } from '../types/product';
 import { Clipboard } from '@capacitor/clipboard';
 import LazyImage from '../components/LazyImage';
 import ProductHeader from '../components/product/ProductHeader';
@@ -27,6 +26,32 @@ interface Review {
   createdAt: string;
   user: { name: string };
   images?: string[];
+}
+
+interface Product {
+  id: number;
+  name: string;
+  chineseName?: string;
+  price: number;
+  image: string;
+  description: string;
+  specs?: any;
+  reviews?: Review[];
+  images?: { id: number | string; url: string; order: number; type?: string }[];
+  options?: any[];
+  variants?: any[];
+  purchaseUrl?: string;
+  videoUrl?: string;
+  originalPrice?: number;
+  reviewsCountShown?: string;
+  storeEvaluation?: string;
+  weight?: number;
+  length?: number;
+  width?: number;
+  height?: number;
+  domesticShippingFee?: number;
+  isPriceCombined?: boolean;
+  basePriceRMB?: number | null;
 }
 
 import { AlertCircle, Package, MessageSquareText, Store, Star } from 'lucide-react';
@@ -277,12 +302,17 @@ const ProductDetails: React.FC = () => {
     const basePrice = currentVariant?.price || product?.price || 0;
     if (!product) return { inclusivePrice: basePrice, airPrice: basePrice, seaPrice: basePrice };
     
+    const weight = currentVariant?.weight || product.weight;
+    const length = currentVariant?.length || product.length;
+    const width = currentVariant?.width || product.width;
+    const height = currentVariant?.height || product.height;
+
     const air = calculateInclusivePrice(
       basePrice,
-      product.weight,
-      product.length,
-      product.width,
-      product.height,
+      weight,
+      length,
+      width,
+      height,
       shippingRates,
       'air',
       product.domesticShippingFee || 0,
@@ -292,10 +322,10 @@ const ProductDetails: React.FC = () => {
 
     const sea = calculateInclusivePrice(
       basePrice,
-      product.weight,
-      product.length,
-      product.width,
-      product.height,
+      weight,
+      length,
+      width,
+      height,
       shippingRates,
       'sea',
       product.domesticShippingFee || 0,
@@ -546,10 +576,17 @@ const ProductDetails: React.FC = () => {
 
     try {
       await addItem(product.id, 1, currentVariant?.id, {
-        ...product,
+        id: product.id,
+        name: product.name,
         price: currentVariant?.price || product.price || 0,
         image: currentVariant?.image || product.image,
-        variant: currentVariant
+        variant: currentVariant,
+        weight: product.weight,
+        length: product.length,
+        width: product.width,
+        height: product.height,
+        domesticShippingFee: product.domesticShippingFee,
+        basePriceRMB: product.basePriceRMB
       }, selectedOptions, shippingMethod);
     } catch (err) {
       // Rollback UI state if API fails
@@ -653,7 +690,7 @@ const ProductDetails: React.FC = () => {
               <ProductOptions 
                 options={product.options}
                 selectedOptions={selectedOptions}
-                onOptionSelect={(name: string, val: string) => setSelectedOptions(prev => ({ ...prev, [name]: val }))}
+                onOptionSelect={(name, val) => setSelectedOptions(prev => ({ ...prev, [name]: val }))}
               />
             </div>
           )}
@@ -803,10 +840,9 @@ const ProductDetails: React.FC = () => {
 
           <SimilarProducts 
             products={similarProducts}
-            onProductClick={(id: number | string) => {
+            onProductClick={(id) => {
               const selectedProduct = similarProducts.find(p => p.id === id);
               navigate(`/product?id=${id}`, { state: { initialProduct: selectedProduct } });
-              window.scrollTo(0, 0);
             }}
             rates={shippingRates}
           />

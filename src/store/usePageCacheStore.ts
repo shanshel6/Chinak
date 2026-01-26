@@ -8,6 +8,13 @@ interface Product {
   description: string;
   images?: { id: number; url: string; order: number; type?: string }[];
   purchaseUrl?: string;
+  weight?: number;
+  length?: number;
+  width?: number;
+  height?: number;
+  domesticShippingFee?: number;
+  basePriceRMB?: number;
+  isPriceCombined?: boolean;
 }
 
 interface PageCacheState {

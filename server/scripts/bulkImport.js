@@ -34,7 +34,7 @@ const extractNumber = (val) => {
   return null;
 };
 
-const calculateBulkImportPrice = (rawPrice, domesticFee, weight, explicitMethod) => {
+const calculateBulkImportPrice = (rawPrice, domesticFee, weight, length, width, height, explicitMethod) => {
   const weightInKg = extractNumber(weight) || 0.5; // Default 0.5kg if missing
   
   let method = explicitMethod?.toLowerCase();
@@ -52,9 +52,20 @@ const calculateBulkImportPrice = (rawPrice, domesticFee, weight, explicitMethod)
     const shippingCost = weightInKg * airRate;
     return Math.ceil(((rawPrice + domestic + shippingCost) * 1.20) / 250) * 250;
   } else {
-    // Sea Price: (Base Price + Domestic Fee) * 1.20
-    // Shipping fee will be calculated in cart separately
-    return Math.ceil(((rawPrice + domestic) * 1.20) / 250) * 250;
+    // Sea: (Base Price + Domestic Fee + Sea Shipping) * 1.20
+    const seaRate = 182000;
+    const l = extractNumber(length) || 0;
+    const w = extractNumber(width) || 0;
+    const h = extractNumber(height) || 0;
+
+    const paddedL = l > 0 ? l + 5 : 0;
+    const paddedW = w > 0 ? w + 5 : 0;
+    const paddedH = h > 0 ? h + 5 : 0;
+
+    const volumeCbm = (paddedL * paddedW * paddedH) / 1000000;
+    const seaShippingCost = Math.max(volumeCbm * seaRate, 1000);
+
+    return Math.ceil(((rawPrice + domestic + seaShippingCost) * 1.20) / 250) * 250;
   }
 };
 
@@ -122,7 +133,7 @@ async function bulkImport(filePath) {
       if (!product) {
         const domesticFee = parseFloat(p.domestic_shipping_fee || p.domesticShippingFee) || 0;
         const rawPrice = parseFloat(p.general_price) || parseFloat(p.price) || parseFloat(p.basePriceRMB) || 0;
-        const price = calculateBulkImportPrice(rawPrice, domesticFee, p.weight, p.shippingMethod);
+        const price = calculateBulkImportPrice(rawPrice, domesticFee, p.weight, p.length, p.width, p.height, p.shippingMethod);
 
         // Skip products with 0 price
         if (price <= 0 || rawPrice <= 0) {

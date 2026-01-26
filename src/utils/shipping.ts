@@ -58,7 +58,15 @@ export const calculateInclusivePrice = (
       const airPrice = (originalPrice + domesticFee + shippingCost) * 1.20;
       return Math.ceil(airPrice / 250) * 250;
     } else {
-      const seaPrice = (originalPrice + domesticFee) * 1.20;
+      const seaRate = _rates?.seaRate || 182000;
+      const l = length || 0;
+      const w = width || 0;
+      const h = height || 0;
+      
+      const volumeCbm = (l * w * h) / 1000000;
+      const seaShippingCost = Math.max(volumeCbm * seaRate, 1000);
+      
+      const seaPrice = (originalPrice + domesticFee + seaShippingCost) * 1.20;
       return Math.ceil(seaPrice / 250) * 250;
     }
   }

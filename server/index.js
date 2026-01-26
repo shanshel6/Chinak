@@ -95,7 +95,7 @@ const extractNumber = (val) => {
  * Calculates the product price with appropriate markup based on shipping method.
  * Used during bulk import and creation.
  */
-const calculateBulkImportPrice = (rawPrice, domesticFee, weight, explicitMethod) => {
+const calculateBulkImportPrice = (rawPrice, domesticFee, weight, length, width, height, explicitMethod) => {
   const weightInKg = extractNumber(weight) || 0.5; // Default 0.5kg if missing
   
   let method = explicitMethod?.toLowerCase();
@@ -105,19 +105,25 @@ const calculateBulkImportPrice = (rawPrice, domesticFee, weight, explicitMethod)
     method = (weightInKg > 0 && weightInKg < 2) ? 'air' : 'sea';
   }
 
+  const domestic = domesticFee || 0;
+
   if (method === 'air') {
     // Air Pricing logic: (Base Price + Domestic Fee + (Weight * Air Rate)) * 1.20
-    // We try to get the rate from settings, but use 15400 as a reliable fallback
     const airRate = 15400;
-    const weightVal = extractNumber(weight) || 0.5;
-    
-    const shippingCost = weightVal * airRate;
-    const price = (rawPrice + domesticFee + shippingCost) * 1.20;
+    const shippingCost = weightInKg * airRate;
+    const price = (rawPrice + domestic + shippingCost) * 1.20;
     return Math.ceil(price / 250) * 250;
   } else {
-    // Sea: (Base Price + Domestic Fee) * 1.20
-    // International sea shipping is handled in cart
-    const price = (rawPrice + domesticFee) * 1.20;
+    // Sea: (Base Price + Domestic Fee + Sea Shipping) * 1.20
+    const seaRate = 182000;
+    const l = extractNumber(length) || 0;
+    const w = extractNumber(width) || 0;
+    const h = extractNumber(height) || 0;
+
+    const volumeCbm = (l * w * h) / 1000000;
+    const seaShippingCost = Math.max(volumeCbm * seaRate, 1000);
+
+    const price = (rawPrice + domestic + seaShippingCost) * 1.20;
     return Math.ceil(price / 250) * 250;
   }
 };
@@ -2704,7 +2710,7 @@ app.post('/api/products/bulk', authenticateToken, isAdmin, hasPermission('manage
       
       const domesticShippingFee = parsePrice(p.domestic_shipping_fee || p.domesticShippingFee) || 0;
       const rawPrice = parsePrice(p.general_price) || parsePrice(p.price) || parsePrice(p.basePriceRMB) || 0;
-      const price = calculateBulkImportPrice(rawPrice, domesticShippingFee, p.weight || p['重量'] || p.grossWeight, p.shippingMethod);
+      const price = calculateBulkImportPrice(rawPrice, domesticShippingFee, p.weight || p['重量'] || p.grossWeight, p.length || p['长'] || p['长度'], p.width || p['宽'] || p['宽度'], p.height || p['高'] || p['高度'], p.shippingMethod);
 
       // Skip products with 0 price
       if (price <= 0 || rawPrice <= 0) {
@@ -2822,7 +2828,7 @@ app.post('/api/products/bulk', authenticateToken, isAdmin, hasPermission('manage
         chineseName,
         description: cleanStr(p.description) || '',
         price,
-        basePriceRMB: parsePrice(p.basePriceRMB) || 0,
+        basePriceRMB: rawPrice,
         image: mainImage,
         purchaseUrl,
         status: 'DRAFT',
@@ -2838,7 +2844,7 @@ app.post('/api/products/bulk', authenticateToken, isAdmin, hasPermission('manage
           const variantWeight = v.weight || weight || p['重量'] || p.grossWeight;
           return {
             combination: typeof v.options === 'object' ? v.options : {},
-            price: calculateBulkImportPrice(variantRawPrice, domesticShippingFee, variantWeight, v.shippingMethod || p.shippingMethod),
+            price: calculateBulkImportPrice(variantRawPrice, domesticShippingFee, variantWeight, v.length || length, v.width || width, v.height || height, v.shippingMethod || p.shippingMethod),
             isPriceCombined: true,
             image: v.image || null
           };
@@ -2980,7 +2986,7 @@ app.post('/api/products', authenticateToken, isAdmin, hasPermission('manage_prod
     
     // Use the same markup logic as bulk import
     const rawPrice = safeParseFloat(price) || 0;
-    const finalPrice = isPriceCombined ? rawPrice : calculateBulkImportPrice(rawPrice, domesticFee, weight, req.body.shippingMethod);
+    const finalPrice = isPriceCombined ? rawPrice : calculateBulkImportPrice(rawPrice, domesticFee, weight, length, width, height, req.body.shippingMethod);
 
     const product = await prisma.product.create({
       data: {
@@ -3003,6 +3009,7 @@ app.post('/api/products', authenticateToken, isAdmin, hasPermission('manage_prod
         width: safeParseFloat(width),
         height: safeParseFloat(height),
         domesticShippingFee: domesticFee,
+        isPriceCombined: isPriceCombined,
         aiMetadata: aiMetadata && typeof aiMetadata === 'object' ? JSON.stringify(aiMetadata) : (aiMetadata || null),
         images: {
           create: [
@@ -3028,12 +3035,13 @@ app.post('/api/products', authenticateToken, isAdmin, hasPermission('manage_prod
           create: (Array.isArray(variants) ? variants : []).map(v => ({
             combination: typeof v.options === 'object' ? JSON.stringify(v.options) : 
                         (typeof v.combination === 'object' ? JSON.stringify(v.combination) : (v.combination || '{}')),
-            price: (v.isPriceCombined || isPriceCombined) ? (safeParseFloat(v.price) || 0) : calculateBulkImportPrice(safeParseFloat(v.price) || 0, domesticFee, v.weight || weight, v.shippingMethod),
+            price: (v.isPriceCombined || isPriceCombined) ? (safeParseFloat(v.price) || 0) : calculateBulkImportPrice(safeParseFloat(v.price) || 0, domesticFee, v.weight || weight, v.length || length, v.width || width, v.height || height, v.shippingMethod),
             image: v.image || null,
             weight: v.weight ? safeParseFloat(v.weight) : null,
             height: v.height ? safeParseFloat(v.height) : null,
             length: v.length ? safeParseFloat(v.length) : null,
-            width: v.width ? safeParseFloat(v.width) : null
+            width: v.width ? safeParseFloat(v.width) : null,
+            isPriceCombined: v.isPriceCombined || isPriceCombined
           }))
         }
       }
@@ -3139,7 +3147,7 @@ app.post('/api/admin/products/bulk-import', authenticateToken, isAdmin, hasPermi
           const rawPrice = parsePrice(p.general_price) || parsePrice(p.price) || parsePrice(p.basePriceRMB) || 0;
           
           // Use the new calculation logic with 90% markup for air items
-          const price = calculateBulkImportPrice(rawPrice, domesticFee, p.weight, p.shippingMethod);
+          const price = calculateBulkImportPrice(rawPrice, domesticFee, p.weight, p.length, p.width, p.height, p.shippingMethod);
           
           // Skip products with 0 price
           if (price <= 0 || rawPrice <= 0) {
@@ -3328,7 +3336,7 @@ app.post('/api/admin/products/bulk-import', authenticateToken, isAdmin, hasPermi
 
               return {
                 combination: typeof v.options === 'object' ? v.options : {},
-                price: calculateBulkImportPrice(variantRawPrice, domesticFee, variantWeight || productWeight, v.shippingMethod || p.shippingMethod),
+                price: calculateBulkImportPrice(variantRawPrice, domesticFee, variantWeight || productWeight, v.length || p.length, v.width || p.width, v.height || p.height, v.shippingMethod || p.shippingMethod),
                 isPriceCombined: true,
                 image: v.image || null,
                 weight: variantWeight,
@@ -3741,7 +3749,7 @@ app.post('/api/admin/products/bulk-create', authenticateToken, isAdmin, hasPermi
         
         // Use the new calculation logic with 90% markup for air items
         const rawPrice = safeParseFloat(rawProductData.price) || 0;
-        const calculatedPrice = isPriceCombined ? rawPrice : calculateBulkImportPrice(rawPrice, domesticFee, rawProductData.weight, rawProductData.shippingMethod);
+        const calculatedPrice = isPriceCombined ? rawPrice : calculateBulkImportPrice(rawPrice, domesticFee, rawProductData.weight, rawProductData.length, rawProductData.width, rawProductData.height, rawProductData.shippingMethod);
 
         // Skip products with 0 price
         if (calculatedPrice <= 0 || rawPrice <= 0) {
@@ -3755,7 +3763,7 @@ app.post('/api/admin/products/bulk-create', authenticateToken, isAdmin, hasPermi
           chineseName: rawProductData.chineseName || null,
           description: rawProductData.description || '',
           price: calculatedPrice,
-          basePriceRMB: safeParseFloat(rawProductData.basePriceRMB),
+          basePriceRMB: safeParseFloat(rawProductData.basePriceRMB) || rawPrice,
           image: rawProductData.image || (images && images[0]) || '',
           purchaseUrl: rawProductData.purchaseUrl || null,
           videoUrl: rawProductData.videoUrl || null,
@@ -3769,7 +3777,8 @@ app.post('/api/admin/products/bulk-create', authenticateToken, isAdmin, hasPermi
           length: safeParseFloat(rawProductData.length),
           width: safeParseFloat(rawProductData.width),
           height: safeParseFloat(rawProductData.height),
-          domesticShippingFee: domesticFee
+          domesticShippingFee: domesticFee,
+          isPriceCombined: isPriceCombined
         };
         
         // Create the product
@@ -3820,11 +3829,12 @@ app.post('/api/admin/products/bulk-create', authenticateToken, isAdmin, hasPermi
               data: validVariants.map(v => ({
                 productId: product.id,
                 combination: typeof v.combination === 'string' ? v.combination : JSON.stringify(v.combination),
-                price: v.price ? ( (v.isPriceCombined || isPriceCombined) ? (safeParseFloat(v.price) || 0) : calculateBulkImportPrice(safeParseFloat(v.price) || 0, domesticFee, v.weight || rawProductData.weight, v.shippingMethod || rawProductData.shippingMethod) ) : product.price,
+                price: v.price ? ( (v.isPriceCombined || isPriceCombined) ? (safeParseFloat(v.price) || 0) : calculateBulkImportPrice(safeParseFloat(v.price) || 0, domesticFee, v.weight || rawProductData.weight, v.length || rawProductData.length, v.width || rawProductData.width, v.height || rawProductData.height, v.shippingMethod || rawProductData.shippingMethod) ) : product.price,
                 weight: safeParseFloat(v.weight),
                 height: safeParseFloat(v.height),
                 length: safeParseFloat(v.length),
                 width: safeParseFloat(v.width),
+                isPriceCombined: v.isPriceCombined || isPriceCombined,
                 image: v.image || product.image || ''
               }))
             });

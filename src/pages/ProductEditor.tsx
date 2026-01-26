@@ -535,8 +535,8 @@ const ProductEditor: React.FC<ProductEditorProps> = ({ productId, storeSettings,
                     {formData.isPriceCombined && <Plus size={16} className="text-white" />}
                   </div>
                   <div onClick={() => setFormData((prev: any) => ({ ...prev, isPriceCombined: !prev.isPriceCombined }))}>
-                    <span className="text-sm font-bold">السعر المعروض نهائي (يتضمن الربح 10%)</span>
-                    <p className="text-[10px] text-slate-400 font-medium">إذا تم تفعيله، لن يقوم النظام بإضافة 10% ربح عند النشر.</p>
+                    <span className="text-sm font-bold">السعر المعروض نهائي (يتضمن الربح 20%)</span>
+                    <p className="text-[10px] text-slate-400 font-medium">إذا تم تفعيله، لن يقوم النظام بإضافة 20% ربح عند النشر.</p>
                   </div>
                 </div>
 
