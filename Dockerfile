@@ -53,6 +53,7 @@ COPY server/package*.json ./
 COPY server/prisma ./prisma
 
 # Install production dependencies
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 RUN npm install --omit=dev
 
 # Copy backend source files
