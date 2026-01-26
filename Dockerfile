@@ -60,7 +60,7 @@ ENV npm_config_fetch_retry_mintimeout=20000
 ENV npm_config_fetch_retry_maxtimeout=120000
 ENV npm_config_timeout=600000
 ENV npm_config_loglevel=verbose
-RUN npm install --omit=dev --omit=optional --no-audit --no-fund --ignore-scripts --legacy-peer-deps --verbose || (echo "npm install failed; dumping npm logs" && npm config get cache || true && ls -la "$(npm config get cache)/_logs" || true && cat "$(npm config get cache)/_logs"/* || true && exit 1)
+ENV npm_config_cache=/data/.npm
 
 # Copy backend source files
 COPY server/ .
@@ -74,4 +74,4 @@ ENV NODE_ENV=production
 EXPOSE 7860
 
 # Start the server
-CMD ["sh", "-c", "npx prisma generate && node index.js"]
+CMD ["sh", "-c", "npm install --omit=dev --omit=optional --no-audit --no-fund --ignore-scripts --legacy-peer-deps --verbose && npx prisma generate && node index.js"]
