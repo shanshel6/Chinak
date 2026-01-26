@@ -3,20 +3,7 @@ import { Heart, Star } from 'lucide-react';
 import LazyImage from '../LazyImage';
 import { calculateInclusivePrice } from '../../utils/shipping';
 import { fetchSettings } from '../../services/api';
-
-interface Product {
-  id: number;
-  name: string;
-  price: number;
-  image: string;
-  weight?: number;
-  length?: number;
-  width?: number;
-  height?: number;
-  domesticShippingFee?: number;
-  basePriceRMB?: number;
-  isPriceCombined?: boolean;
-}
+import type { Product } from '../../types/product';
 
 interface SearchProductCardProps {
   product: Product;

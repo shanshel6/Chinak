@@ -3,20 +3,7 @@ import { persist } from 'zustand/middleware';
 import { fetchCart, updateCartItem, removeFromCart, addToCart, fetchSettings } from '../services/api';
 import { calculateInclusivePrice } from '../utils/shipping';
 import type { ShippingRates } from '../types/shipping';
-
-interface Product {
-  id: number | string;
-  name: string;
-  price: number;
-  image: string;
-  weight?: number;
-  length?: number;
-  width?: number;
-  height?: number;
-  domesticShippingFee?: number;
-  basePriceRMB?: number;
-  isPriceCombined?: boolean;
-}
+import type { Product } from '../types/product';
 
 interface CartItem {
   id: number | string;

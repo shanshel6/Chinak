@@ -1,23 +1,11 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import type { Product } from '../types/product';
 
 interface WishlistItem {
   id: number | string;
   productId: number | string;
-  product: {
-    id: number | string;
-    name: string;
-    price: number;
-    image: string;
-    description: string;
-    weight?: number;
-    length?: number;
-    width?: number;
-    height?: number;
-    domesticShippingFee?: number;
-    basePriceRMB?: number;
-    isPriceCombined?: boolean;
-  };
+  product: Product;
 }
 
 interface WishlistState {

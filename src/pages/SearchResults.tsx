@@ -10,14 +10,7 @@ import FilterSortStrip from '../components/search/FilterSortStrip';
 import SearchEmptyState from '../components/search/SearchEmptyState';
 import SearchLoadingState from '../components/search/SearchLoadingState';
 import SearchProductCard from '../components/search/SearchProductCard';
-
-interface Product {
-  id: number;
-  name: string;
-  price: number;
-  image: string;
-  description?: string;
-}
+import type { Product } from '../types/product';
 
 import { AlertCircle, ArrowUp } from 'lucide-react';
 

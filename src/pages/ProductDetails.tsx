@@ -7,6 +7,7 @@ import { useAuthStore } from '../store/useAuthStore';
 import { useToastStore } from '../store/useToastStore';
 import { calculateInclusivePrice, getDefaultShippingMethod } from '../utils/shipping';
 import type { ShippingRates } from '../types/shipping';
+import type { Product } from '../types/product';
 import { Clipboard } from '@capacitor/clipboard';
 import LazyImage from '../components/LazyImage';
 import ProductHeader from '../components/product/ProductHeader';
@@ -26,32 +27,6 @@ interface Review {
   createdAt: string;
   user: { name: string };
   images?: string[];
-}
-
-interface Product {
-  id: number;
-  name: string;
-  chineseName?: string;
-  price: number;
-  image: string;
-  description: string;
-  specs?: any;
-  reviews?: Review[];
-  images?: { id: number | string; url: string; order: number; type?: string }[];
-  options?: any[];
-  variants?: any[];
-  purchaseUrl?: string;
-  videoUrl?: string;
-  originalPrice?: number;
-  reviewsCountShown?: string;
-  storeEvaluation?: string;
-  weight?: number;
-  length?: number;
-  width?: number;
-  height?: number;
-  domesticShippingFee?: number;
-  isPriceCombined?: boolean;
-  basePriceRMB?: number | null;
 }
 
 import { AlertCircle, Package, MessageSquareText, Store, Star } from 'lucide-react';

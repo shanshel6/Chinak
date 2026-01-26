@@ -3,26 +3,7 @@ import LazyImage from '../LazyImage';
 import { fetchProductById, fetchProductReviews, checkProductPurchase, fetchSettings } from '../../services/api';
 import { Heart } from 'lucide-react';
 import { calculateInclusivePrice } from '../../utils/shipping';
-
-interface Product {
-  id: number;
-  name: string;
-  price: number;
-  image: string;
-  images?: { id: number; url: string; order: number; type?: string }[];
-  description: string;
-  purchaseUrl?: string;
-  variants?: any[];
-  reviewsCountShown?: number;
-  isFeatured?: boolean;
-  weight?: number;
-  length?: number;
-  width?: number;
-  height?: number;
-  domesticShippingFee?: number;
-  basePriceRMB?: number;
-  isPriceCombined?: boolean;
-}
+import type { Product } from '../../types/product';
 
 interface ProductCardProps {
   product: Product;

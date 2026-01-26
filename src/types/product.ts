@@ -1,0 +1,30 @@
+export interface Product {
+  id: number | string;
+  name: string;
+  price: number;
+  image: string;
+  description?: string;
+  weight?: number;
+  length?: number;
+  width?: number;
+  height?: number;
+  domesticShippingFee?: number;
+  basePriceRMB?: number;
+  isPriceCombined?: boolean;
+  category?: string;
+  status?: string;
+  images?: string[] | { id: number; url: string; order: number; type?: string }[];
+  specs?: any;
+  options?: any[];
+  variants?: any[];
+  purchaseUrl?: string;
+  videoUrl?: string;
+  storeEvaluation?: string;
+  reviewsCountShown?: number;
+  isFeatured?: boolean;
+  averageRating?: string;
+  totalReviews?: number;
+  reviews?: any[];
+  originalPrice?: number;
+  stock?: number;
+}

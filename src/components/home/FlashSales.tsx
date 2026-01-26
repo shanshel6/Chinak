@@ -5,21 +5,7 @@ import LazyImage from '../LazyImage';
 import Skeleton from '../Skeleton';
 import { calculateInclusivePrice } from '../../utils/shipping';
 import { fetchSettings } from '../../services/api';
-
-interface Product {
-  id: number;
-  name: string;
-  price: number;
-  image: string;
-  description: string;
-  weight?: number;
-  length?: number;
-  width?: number;
-  height?: number;
-  domesticShippingFee?: number;
-  basePriceRMB?: number;
-  isPriceCombined?: boolean;
-}
+import type { Product } from '../../types/product';
 
 interface FlashSalesProps {
   products: Product[];
