@@ -36,12 +36,14 @@ RUN npx tsc -p tsconfig.app.json --noEmit
 RUN node --max-old-space-size=4096 node_modules/vite/bin/vite.js build --emptyOutDir
 
 # Production stage
-FROM node:20-slim
+FROM node:20
 RUN apt-get update && apt-get install -y \
     openssl \
     ca-certificates \
     libvips-dev \
     python3 \
+    python3-setuptools \
+    pkg-config \
     make \
     g++ \
     && rm -rf /var/lib/apt/lists/*
@@ -54,7 +56,7 @@ COPY server/prisma ./prisma
 
 # Install production dependencies
 ENV PUPPETEER_SKIP_DOWNLOAD=true
-RUN npm install --omit=dev || (echo "npm install failed; dumping npm logs" && ls -la /root/.npm/_logs || true && cat /root/.npm/_logs/* || true && exit 1)
+RUN npm ci --omit=dev --no-audit --no-fund || (echo "npm ci failed; dumping npm logs" && ls -la /root/.npm/_logs || true && cat /root/.npm/_logs/* || true && exit 1)
 
 # Copy backend source files
 COPY server/ .
