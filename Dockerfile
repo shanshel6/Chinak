@@ -37,10 +37,6 @@ RUN node --max-old-space-size=4096 node_modules/vite/bin/vite.js build --emptyOu
 
 # Production stage
 FROM node:20
-RUN apt-get update -o Acquire::ForceIPv4=true && apt-get install -y --no-install-recommends \
-    openssl \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
