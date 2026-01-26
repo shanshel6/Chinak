@@ -7,9 +7,9 @@ import type { Product } from '../../types/product';
 
 interface ProductCardProps {
   product: Product;
-  onNavigate: (id: number) => void;
+  onNavigate: (id: number | string) => void;
   onAddToWishlist: (e: React.MouseEvent, product: Product) => void;
-  isProductInWishlist: (id: number) => boolean;
+  isProductInWishlist: (id: number | string) => boolean;
 }
 
 const ProductCard: React.FC<ProductCardProps> = ({

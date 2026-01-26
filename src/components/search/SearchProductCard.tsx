@@ -7,7 +7,7 @@ import type { Product } from '../../types/product';
 
 interface SearchProductCardProps {
   product: Product;
-  onNavigate: (id: number) => void;
+  onNavigate: (id: number | string) => void;
   onToggleWishlist: (product: Product) => void;
   isWishlisted: boolean;
 }

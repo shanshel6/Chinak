@@ -1,21 +1,5 @@
 import { create } from 'zustand';
-
-interface Product {
-  id: number;
-  name: string;
-  price: number;
-  image: string;
-  description: string;
-  images?: { id: number; url: string; order: number; type?: string }[];
-  purchaseUrl?: string;
-  weight?: number;
-  length?: number;
-  width?: number;
-  height?: number;
-  domesticShippingFee?: number;
-  basePriceRMB?: number;
-  isPriceCombined?: boolean;
-}
+import type { Product } from '../types/product';
 
 interface PageCacheState {
   homeProducts: Product[];

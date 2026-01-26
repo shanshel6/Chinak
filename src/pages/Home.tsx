@@ -10,23 +10,7 @@ import SearchBar from '../components/home/SearchBar';
 import ProductCard from '../components/home/ProductCard';
 import CategoryTabs from '../components/home/CategoryTabs';
 import { Grid2X2, Smartphone, Shirt, Sparkles, Banknote, AlertCircle, PackageSearch } from 'lucide-react';
-
-interface Product {
-  id: number;
-  name: string;
-  price: number;
-  image: string;
-  description: string;
-  images?: { id: number; url: string; order: number; type?: string }[];
-  purchaseUrl?: string;
-  weight?: number;
-  length?: number;
-  width?: number;
-  height?: number;
-  domesticShippingFee?: number;
-  basePriceRMB?: number;
-  isPriceCombined?: boolean;
-}
+import type { Product } from '../types/product';
 
 const categories = [
   { id: 'all', name: 'الكل', icon: Grid2X2 },

@@ -12,7 +12,7 @@ interface FlashSalesProps {
   loading: boolean;
   onNavigate: (path: string) => void;
   onAddToWishlist: (e: React.MouseEvent, product: Product) => void;
-  isProductInWishlist: (productId: number) => boolean;
+  isProductInWishlist: (productId: number | string) => boolean;
 }
 
 const FlashSales: React.FC<FlashSalesProps> = ({
