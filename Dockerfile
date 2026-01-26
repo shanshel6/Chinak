@@ -59,10 +59,14 @@ COPY server/prisma ./prisma
 
 # Install production dependencies
 ENV PUPPETEER_SKIP_DOWNLOAD=true
+ENV NODE_OPTIONS="--dns-result-order=ipv4first"
 ENV PRISMA_SKIP_POSTINSTALL_GENERATE=true
 ENV npm_config_optional=false
 ENV npm_config_legacy_peer_deps=true
 ENV npm_config_registry=https://registry.npmjs.org/
+ENV npm_config_maxsockets=5
+ENV npm_config_network_concurrency=5
+ENV npm_config_progress=false
 ENV npm_config_fetch_retries=5
 ENV npm_config_fetch_retry_factor=2
 ENV npm_config_fetch_retry_mintimeout=20000
