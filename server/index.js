@@ -5691,7 +5691,7 @@ app.post('/api/messages', authenticateToken, async (req, res) => {
 });
 
 // Catch-all route for SPA - MUST be after all API routes
-app.get('/*any', (req, res) => {
+app.get('*', (req, res) => {
   // Check if the request is for an API route - if so, don't serve index.html
   if (req.path.startsWith('/api/')) {
     return res.status(404).json({ error: 'API route not found' });
