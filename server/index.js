@@ -17,7 +17,7 @@ import path from 'path';
 import axios from 'axios';
 import { fileURLToPath } from 'url';
 import prisma from './prismaClient.js';
-import { processProductAI, hybridSearch, estimateProductPhysicals } from './services/aiService.js';
+import { processProductAI, processProductEmbedding, hybridSearch, estimateProductPhysicals } from './services/aiService.js';
 import { calculateOrderShipping, calculateProductShipping, getAdjustedPrice } from './services/shippingService.js';
 import { setupLinkCheckerCron, checkAllProductLinks } from './services/linkCheckerService.js';
 import { createClient } from '@supabase/supabase-js';
@@ -1896,31 +1896,6 @@ app.post('/api/admin/products/bulk-delete', authenticateToken, isAdmin, hasPermi
   }
 });
 
-// ADMIN: Bulk publish products
-app.post('/api/admin/products/bulk-publish', authenticateToken, isAdmin, hasPermission('manage_products'), async (req, res) => {
-  try {
-    const { ids } = req.body;
-    
-    await prisma.product.updateMany({
-      where: { id: { in: ids } },
-      data: { status: 'PUBLISHED', isActive: true }
-    });
-    
-    await logActivity(
-      req.user.id,
-      req.user.name,
-      'BULK_PUBLISH_PRODUCTS',
-      { ids },
-      'PRODUCT'
-    );
-    
-    res.json({ success: true });
-  } catch (error) {
-    console.error('Bulk publish error:', error);
-    res.status(500).json({ error: 'Failed to bulk publish products' });
-  }
-});
-
 // ADMIN: Get all users
 app.get('/api/admin/users', authenticateToken, isAdmin, hasPermission('manage_users'), async (req, res) => {
   try {
@@ -2682,8 +2657,22 @@ app.post('/api/products/bulk', authenticateToken, isAdmin, hasPermission('manage
   for (const p of products) {
     try {
       const name = cleanStr(p.name || p.product_name || 'Unnamed').replace(/\n/g, ' ').trim();
-      const purchaseUrl = p.purchaseUrl || p.url || '';
+      const purchaseUrl = (p.purchaseUrl || p.url || '').replace(/[`"']/g, '').trim();
       const chineseName = cleanStr(p.chineseName) || '';
+      const parseJsonObject = (val) => {
+        if (!val) return null;
+        if (typeof val === 'object') return val;
+        if (typeof val === 'string') {
+          try {
+            const parsed = JSON.parse(val);
+            return parsed && typeof parsed === 'object' ? parsed : null;
+          } catch {
+            return null;
+          }
+        }
+        return null;
+      };
+      const aiMetadata = parseJsonObject(p.aiMetadata) || parseJsonObject(p.marketing_metadata);
       
       // Existence check (by name or purchaseUrl)
       const existingProduct = await prisma.product.findFirst({
@@ -2837,6 +2826,36 @@ app.post('/api/products/bulk', authenticateToken, isAdmin, hasPermission('manage
       }
 
       // Instead of creating in DB, add to drafts array for local storage
+      const variantsInput = Array.isArray(p.variants_data) ? p.variants_data : [];
+      if (variantsInput.length === 0 && Array.isArray(p.generated_options)) {
+        const generated = [];
+        for (const opt of p.generated_options) {
+          if (!opt || typeof opt !== 'object') continue;
+          const color = cleanStr(opt.color ?? opt.colour);
+          const sizesRaw = Array.isArray(opt.sizes) ? opt.sizes : (opt.size ? [opt.size] : []);
+          const sizes = sizesRaw.map(s => cleanStr(String(s))).filter(Boolean);
+          const optPrice = parsePrice(opt.price) || rawPrice;
+          const optImage = cleanStr(opt.image);
+
+          const baseCombination = {};
+          if (color) baseCombination['اللون'] = color;
+
+          if (sizes.length === 0) {
+            if (Object.keys(baseCombination).length === 0) continue;
+            generated.push({ options: baseCombination, price: optPrice, image: optImage || null });
+          } else {
+            for (const size of sizes) {
+              generated.push({
+                options: { ...baseCombination, 'المقاس': size },
+                price: optPrice,
+                image: optImage || null
+              });
+            }
+          }
+        }
+        variantsInput.push(...generated);
+      }
+
       results.drafts.push({
         name,
         chineseName,
@@ -2852,8 +2871,9 @@ app.post('/api/products/bulk', authenticateToken, isAdmin, hasPermission('manage
         storeEvaluation: p.storeEvaluation && typeof p.storeEvaluation === 'object' ? JSON.stringify(p.storeEvaluation) : (p.storeEvaluation || null),
         reviewsCountShown: p.reviewsCountShown || null,
         videoUrl: p.videoUrl || null,
+        aiMetadata: aiMetadata || null,
         options: processedOptions,
-        variants: (Array.isArray(p.variants_data) ? p.variants_data : []).map(v => {
+        variants: variantsInput.map(v => {
           const variantRawPrice = parsePrice(v.price) || rawPrice;
           const variantWeight = v.weight || weight || p['重量'] || p.grossWeight;
           return {
@@ -3061,9 +3081,8 @@ app.post('/api/products', authenticateToken, isAdmin, hasPermission('manage_prod
       }
     });
 
-    // Trigger AI processing in background
-    if (process.env.SILICONFLOW_API_KEY && process.env.HUGGINGFACE_API_KEY) {
-      processProductAI(product.id).catch(err => console.error('Initial AI processing failed:', err));
+    if (process.env.HUGGINGFACE_API_KEY) {
+      processProductEmbedding(product.id).catch(err => console.error('Initial embedding processing failed:', err));
     }
 
     res.status(201).json(product);
@@ -3088,7 +3107,10 @@ app.post('/api/admin/products/bulk-import', authenticateToken, isAdmin, hasPermi
     }
 
     // --- Duplicate Check ---
-    const purchaseUrls = products.map(p => p.purchaseUrl).filter(url => !!url);
+    const normalizeUrl = (u) => (typeof u === 'string' ? u.replace(/[`"']/g, '').trim() : u);
+    const purchaseUrls = products
+      .map(p => normalizeUrl(p.purchaseUrl ?? p.url))
+      .filter(url => !!url);
     const chineseNames = products.map(p => p.chineseName).filter(name => !!name);
 
     const existingProducts = await prisma.product.findMany({
@@ -3108,10 +3130,11 @@ app.post('/api/admin/products/bulk-import', authenticateToken, isAdmin, hasPermi
     const uniqueProductsToImport = [];
 
     for (const p of products) {
-      const isDuplicateInDB = (p.purchaseUrl && existingUrlsSet.has(p.purchaseUrl)) || 
+      const normalizedPurchaseUrl = normalizeUrl(p.purchaseUrl ?? p.url);
+      const isDuplicateInDB = (normalizedPurchaseUrl && existingUrlsSet.has(normalizedPurchaseUrl)) || 
                              (p.chineseName && existingNamesSet.has(p.chineseName));
       
-      const urlId = p.purchaseUrl;
+      const urlId = normalizedPurchaseUrl;
       const nameId = p.chineseName;
       
       const isDuplicateInRequest = (urlId && seenInRequest.has(urlId)) || (nameId && seenInRequest.has(nameId));
@@ -3156,6 +3179,19 @@ app.post('/api/admin/products/bulk-import', authenticateToken, isAdmin, hasPermi
             const cleanVal = String(val).replace(/[^\d.]/g, '');
             return parseFloat(cleanVal) || 0;
           };
+          const parseJsonObject = (val) => {
+            if (!val) return null;
+            if (typeof val === 'object') return val;
+            if (typeof val === 'string') {
+              try {
+                const parsed = JSON.parse(val);
+                return parsed && typeof parsed === 'object' ? parsed : null;
+              } catch {
+                return null;
+              }
+            }
+            return null;
+          };
           
           const domesticFee = parsePrice(p.domestic_shipping_fee) || 0;
           const rawPrice = parsePrice(p.general_price) || parsePrice(p.price) || parsePrice(p.basePriceRMB) || 0;
@@ -3175,6 +3211,7 @@ app.post('/api/admin/products/bulk-import', authenticateToken, isAdmin, hasPermi
           const name = cleanStr(p.name) || cleanStr(p.product_name) || `Draft ${Date.now()}`;
           const description = cleanStr(p.description);
           const chineseName = cleanStr(p.chineseName) || cleanStr(p.name) || cleanStr(p.product_name);
+          const aiMetadata = parseJsonObject(p.aiMetadata) || parseJsonObject(p.marketing_metadata);
 
           // Enhanced Options processing - extract from p.options OR p.variants OR direct properties
           let rawOptions = [];
@@ -3308,6 +3345,36 @@ app.post('/api/admin/products/bulk-import', authenticateToken, isAdmin, hasPermi
             }
           }
 
+          const variantsInput = Array.isArray(p.variants_data) ? p.variants_data : [];
+          if (variantsInput.length === 0 && Array.isArray(p.generated_options)) {
+            const generated = [];
+            for (const opt of p.generated_options) {
+              if (!opt || typeof opt !== 'object') continue;
+              const color = cleanStr(opt.color ?? opt.colour);
+              const sizesRaw = Array.isArray(opt.sizes) ? opt.sizes : (opt.size ? [opt.size] : []);
+              const sizes = sizesRaw.map(s => cleanStr(String(s))).filter(Boolean);
+              const optPrice = parsePrice(opt.price) || rawPrice;
+              const optImage = cleanStr(opt.image);
+
+              const baseCombination = {};
+              if (color) baseCombination['اللون'] = color;
+
+              if (sizes.length === 0) {
+                if (Object.keys(baseCombination).length === 0) continue;
+                generated.push({ options: baseCombination, price: optPrice, image: optImage || null });
+              } else {
+                for (const size of sizes) {
+                  generated.push({
+                    options: { ...baseCombination, 'المقاس': size },
+                    price: optPrice,
+                    image: optImage || null
+                  });
+                }
+              }
+            }
+            variantsInput.push(...generated);
+          }
+
           // Return as a draft object instead of creating in database
           return {
             id: `local-${Date.now()}-${productIndex}-${Math.floor(Math.random() * 1000000)}`,
@@ -3325,6 +3392,7 @@ app.post('/api/admin/products/bulk-import', authenticateToken, isAdmin, hasPermi
             isFeatured: !!p.isFeatured,
             isLocal: true,
             specs: specs,
+            aiMetadata: aiMetadata || null,
             weight: productWeight,
             length: length,
             width: width,
@@ -3333,7 +3401,7 @@ app.post('/api/admin/products/bulk-import', authenticateToken, isAdmin, hasPermi
             images: imageUrls.map((url, i) => ({ url, order: i, type: 'GALLERY' })),
             detailImages: detailImageUrls.map((url, i) => ({ url, order: i, type: 'DETAIL' })),
             options: processedOptions,
-            variants: (Array.isArray(p.variants_data) ? p.variants_data : []).map(v => {
+            variants: variantsInput.map(v => {
               const variantRawPrice = parsePrice(v.price) || rawPrice;
               
               // Find weight for this variant if specified in variations
@@ -3638,6 +3706,95 @@ app.put('/api/admin/products/update-price', authenticateToken, isAdmin, hasPermi
   }
 });
 
+app.post('/api/admin/products/bulk-ai-metadata', authenticateToken, isAdmin, hasPermission('manage_products'), async (req, res) => {
+  try {
+    const { products, overwrite = false } = req.body;
+
+    if (!Array.isArray(products) || products.length === 0) {
+      return res.status(400).json({ error: 'No products provided' });
+    }
+
+    const cleanUrl = (u) => (typeof u === 'string' ? u.replace(/[`"']/g, '').trim() : '');
+    const parseJsonObject = (val) => {
+      if (!val) return null;
+      if (typeof val === 'object') return val;
+      if (typeof val === 'string') {
+        try {
+          const parsed = JSON.parse(val);
+          return parsed && typeof parsed === 'object' ? parsed : null;
+        } catch {
+          return null;
+        }
+      }
+      return null;
+    };
+    const extractOfferId = (u) => {
+      if (!u) return null;
+      const match = String(u).match(/[?&]offerId=(\d+)/i);
+      return match ? match[1] : null;
+    };
+
+    const results = {
+      total: products.length,
+      matched: 0,
+      updated: 0,
+      skipped: 0,
+      notFound: 0
+    };
+
+    for (const p of products) {
+      const purchaseUrlRaw = p?.purchaseUrl ?? p?.url ?? '';
+      const purchaseUrl = cleanUrl(purchaseUrlRaw);
+      const offerId = extractOfferId(purchaseUrl) || extractOfferId(purchaseUrlRaw);
+      const aiMetadata = parseJsonObject(p?.aiMetadata) || parseJsonObject(p?.marketing_metadata);
+
+      if (!purchaseUrl || !aiMetadata) {
+        results.skipped++;
+        continue;
+      }
+
+      const product = await prisma.product.findFirst({
+        where: {
+          OR: [
+            { purchaseUrl: purchaseUrl },
+            { purchaseUrl: String(purchaseUrlRaw) },
+            ...(offerId ? [{ purchaseUrl: { contains: `offerId=${offerId}` } }] : [])
+          ]
+        },
+        select: { id: true, aiMetadata: true, purchaseUrl: true }
+      });
+
+      if (!product) {
+        results.notFound++;
+        continue;
+      }
+
+      results.matched++;
+
+      const alreadyHasMetadata = product.aiMetadata !== null && product.aiMetadata !== undefined;
+      if (alreadyHasMetadata && !overwrite) {
+        results.skipped++;
+        continue;
+      }
+
+      await prisma.product.update({
+        where: { id: product.id },
+        data: {
+          aiMetadata,
+          purchaseUrl: purchaseUrl
+        }
+      });
+
+      results.updated++;
+    }
+
+    return res.json({ success: true, results });
+  } catch (error) {
+    console.error('[Bulk AI Metadata] Error:', error);
+    return res.status(500).json({ error: error.message || 'Failed to update aiMetadata' });
+  }
+});
+
 // ADMIN: Bulk Publish (Step 5)
 app.post('/api/admin/products/bulk-publish', authenticateToken, isAdmin, hasPermission('manage_products'), async (req, res) => {
   try {
@@ -3650,18 +3807,36 @@ app.post('/api/admin/products/bulk-publish', authenticateToken, isAdmin, hasPerm
       }
     });
 
-    // Trigger AI processing for newly published products if they don't have metadata
-    if (process.env.SILICONFLOW_API_KEY && process.env.HUGGINGFACE_API_KEY) {
+    // Trigger background processing for newly published products if they don't have metadata/embedding
+    if (process.env.HUGGINGFACE_API_KEY) {
       ids.forEach((id, index) => {
         (async () => {
           try {
-            // Check if already processed to avoid redundant calls
-            const product = await prisma.product.findUnique({ where: { id: safeParseId(id) }, select: { aiMetadata: true } });
-            if (!product || product.aiMetadata) return;
+            const productId = safeParseId(id);
+            const rows = await prisma.$queryRaw`
+              SELECT
+                "aiMetadata" as "aiMetadata",
+                (embedding IS NULL) as "missingEmbedding"
+              FROM "Product"
+              WHERE id = ${productId}
+              LIMIT 1
+            `;
+            const product = rows?.[0];
+
+            if (!product) return;
+            if (product.aiMetadata && !product.missingEmbedding) return;
 
             await new Promise(r => setTimeout(r, index * 2000));
-            console.log(`[Bulk Publish AI] Processing product ${id}`);
-            await processProductAI(safeParseId(id));
+            if (product.missingEmbedding) {
+              console.log(`[Bulk Publish AI] Processing embedding for product ${id}`);
+              await processProductEmbedding(productId);
+              return;
+            }
+
+            if (!product.aiMetadata && process.env.SILICONFLOW_API_KEY) {
+              console.log(`[Bulk Publish AI] Processing metadata for product ${id}`);
+              await processProductAI(productId);
+            }
           } catch (aiErr) {
             console.error(`[Bulk Publish AI] Failed for product ${id}:`, aiErr.message);
           }
@@ -3760,6 +3935,20 @@ app.post('/api/admin/products/bulk-create', authenticateToken, isAdmin, hasPermi
         
         const domesticFee = safeParseFloat(rawProductData.domesticShippingFee) || 0;
         const isPriceCombined = rawProductData.isPriceCombined === true;
+        const parsedAiMetadata = (() => {
+          const candidate = rawProductData.aiMetadata ?? rawProductData.marketing_metadata;
+          if (!candidate) return null;
+          if (typeof candidate === 'object') return candidate;
+          if (typeof candidate === 'string') {
+            try {
+              const parsed = JSON.parse(candidate);
+              return parsed && typeof parsed === 'object' ? parsed : null;
+            } catch {
+              return null;
+            }
+          }
+          return null;
+        })();
         
         // Use the new calculation logic with 90% markup for air items
         const rawPrice = safeParseFloat(rawProductData.price) || 0;
@@ -3792,7 +3981,8 @@ app.post('/api/admin/products/bulk-create', authenticateToken, isAdmin, hasPermi
           width: safeParseFloat(rawProductData.width),
           height: safeParseFloat(rawProductData.height),
           domesticShippingFee: domesticFee,
-          isPriceCombined: isPriceCombined
+          isPriceCombined: isPriceCombined,
+          aiMetadata: parsedAiMetadata
         };
         
         // Create the product
@@ -3871,15 +4061,14 @@ app.post('/api/admin/products/bulk-create', authenticateToken, isAdmin, hasPermi
 
     res.json({ success: true, count: createdResults.length, products: createdResults });
 
-    // Trigger AI processing in background for each product
-    if (process.env.SILICONFLOW_API_KEY && process.env.HUGGINGFACE_API_KEY) {
+    // Trigger background embedding processing for each product
+    if (process.env.HUGGINGFACE_API_KEY) {
       createdResults.forEach((product, index) => {
         (async () => {
           try {
-            // Spread out AI processing to avoid rate limits
             await new Promise(r => setTimeout(r, index * 2000));
-            console.log(`[Bulk Create AI] Starting processing for product ${product.id}`);
-            await processProductAI(product.id);
+            console.log(`[Bulk Create AI] Starting embedding processing for product ${product.id}`);
+            await processProductEmbedding(product.id);
           } catch (aiErr) {
             console.error(`[Bulk Create AI] Processing failed for product ${product.id}:`, aiErr.message);
           }
@@ -3962,11 +4151,43 @@ app.get('/api/search', async (req, res) => {
     // Use AI Hybrid Search if API keys are available
     if (process.env.SILICONFLOW_API_KEY && process.env.HUGGINGFACE_API_KEY) {
       try {
-        const results = await hybridSearch(q);
-        // Apply pagination to AI results too
+        const results = await hybridSearch(q, 500, 0);
         const paginatedResults = results.slice(skip, skip + limitNum);
+
+        const paginatedIds = paginatedResults.map(r => Number(r.id)).filter(id => !Number.isNaN(id));
+        const productsWithDetails = await prisma.product.findMany({
+          where: {
+            id: { in: paginatedIds },
+            status: 'PUBLISHED',
+            isActive: true
+          },
+          include: {
+            variants: true,
+            images: {
+              take: 1,
+              orderBy: { order: 'asc' }
+            }
+          }
+        });
+
+        const productsById = new Map(productsWithDetails.map(p => [p.id, p]));
+        const scoresById = new Map(paginatedResults.map(r => [Number(r.id), {
+          semantic_score: r.semantic_score,
+          keyword_score: r.keyword_score,
+          final_rank: r.final_rank
+        }]));
+
+        const mergedResults = paginatedIds
+          .map(id => {
+            const product = productsById.get(id);
+            if (!product) return null;
+            const scores = scoresById.get(id);
+            return scores ? { ...product, ...scores } : product;
+          })
+          .filter(Boolean);
+
         return res.json({ 
-          products: paginatedResults, 
+          products: mergedResults, 
           total: results.length,
           hasMore: skip + limitNum < results.length
         });
@@ -4229,6 +4450,7 @@ app.get('/api/search', async (req, res) => {
         ]
       },
       include: { 
+        variants: true,
         images: {
           take: 1,
           orderBy: { order: 'asc' }
@@ -4478,9 +4700,8 @@ app.put('/api/products/:id', authenticateToken, isAdmin, hasPermission('manage_p
       return updated;
     });
 
-    // Trigger AI processing in background on update
-    if (process.env.SILICONFLOW_API_KEY && process.env.HUGGINGFACE_API_KEY) {
-      processProductAI(product.id).catch(err => console.error('AI processing on update failed:', err));
+    if (process.env.HUGGINGFACE_API_KEY) {
+      processProductEmbedding(product.id).catch(err => console.error('Embedding processing on update failed:', err));
     }
 
     res.json(product);

@@ -1,27 +1,47 @@
 import prisma from '../prismaClient.js';
 
+console.log('[check_ai_data] starting');
+
 async function checkData() {
   try {
-    const products = await prisma.product.findMany({
-      take: 5,
-      select: {
-        id: true,
-        name: true,
-        aiMetadata: true,
-        // embedding is Unsupported, so we can't select it directly via Prisma
-      }
-    });
+    console.log('[check_ai_data] querying counts');
+    const withTimeout = (promise, ms) => Promise.race([
+      promise,
+      new Promise((_, reject) => setTimeout(() => reject(new Error(`Timeout after ${ms}ms`)), ms))
+    ]);
 
-    console.log('Sample Products:');
-    products.forEach(p => {
-      console.log(`ID: ${p.id}, Name: ${p.name}`);
-      console.log(`AI Metadata: ${JSON.stringify(p.aiMetadata, null, 2)}`);
-      console.log('---');
-    });
+    const [total] = await withTimeout(prisma.$queryRaw`SELECT count(*) as count FROM "Product"`, 15000);
+    const [withMetadata] = await prisma.$queryRaw`SELECT count(*) as count FROM "Product" WHERE "aiMetadata" IS NOT NULL`;
+    const [withEmbedding] = await prisma.$queryRaw`SELECT count(*) as count FROM "Product" WHERE embedding IS NOT NULL`;
+    const [missingEither] = await prisma.$queryRaw`SELECT count(*) as count FROM "Product" WHERE "aiMetadata" IS NULL OR embedding IS NULL`;
+    const [missingBoth] = await prisma.$queryRaw`SELECT count(*) as count FROM "Product" WHERE "aiMetadata" IS NULL AND embedding IS NULL`;
 
-    // Check if any product has an embedding using raw query
-    const embeddingCount = await prisma.$queryRaw`SELECT count(*) FROM "Product" WHERE embedding IS NOT NULL`;
-    console.log('Products with embeddings:', embeddingCount);
+    console.log('--- AI Data Counts ---');
+    console.log('Total products:', String(total.count));
+    console.log('Products with aiMetadata:', String(withMetadata.count));
+    console.log('Products with embedding:', String(withEmbedding.count));
+    console.log('Products missing aiMetadata OR embedding:', String(missingEither.count));
+    console.log('Products missing aiMetadata AND embedding:', String(missingBoth.count));
+    console.log('----------------------\n');
+
+    console.log('[check_ai_data] querying missing samples');
+    const missingSamples = await prisma.$queryRaw`
+      SELECT
+        id,
+        name,
+        ("aiMetadata" IS NULL) as missing_metadata,
+        (embedding IS NULL) as missing_embedding
+      FROM "Product"
+      WHERE "aiMetadata" IS NULL OR embedding IS NULL
+      ORDER BY id DESC
+      LIMIT 10
+    `;
+
+    console.log('Sample Missing Products (up to 10):');
+    missingSamples.forEach(p => {
+      console.log(`ID: ${p.id} | missing_metadata=${p.missing_metadata} | missing_embedding=${p.missing_embedding} | ${p.name}`);
+    });
+    console.log('[check_ai_data] done');
 
   } catch (error) {
     console.error('Error checking data:', error);
@@ -30,4 +50,4 @@ async function checkData() {
   }
 }
 
-checkData();
+await checkData();

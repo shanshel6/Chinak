@@ -41,8 +41,14 @@ const SearchProductCard: React.FC<SearchProductCardProps> = ({
   }, []);
 
   const totalPrice = React.useMemo(() => {
+    const variants = (product as any).variants || [];
+    const variantPrices = variants
+      .map((v: any) => v?.price)
+      .filter((p: any) => typeof p === 'number' && p > 0);
+    const minPrice = variantPrices.length > 0 ? Math.min(...variantPrices) : product.price;
+
     return calculateInclusivePrice(
-      product.price,
+      minPrice,
       product.weight,
       product.length,
       product.width,

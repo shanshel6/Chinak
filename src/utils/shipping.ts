@@ -64,7 +64,7 @@ export const calculateInclusivePrice = (
       const h = height || 0;
       
       const volumeCbm = (l * w * h) / 1000000;
-      const seaShippingCost = Math.max(volumeCbm * seaRate, 1000);
+      const seaShippingCost = Math.max(volumeCbm * seaRate, _rates?.minFloor || 2200);
       
       const seaPrice = (originalPrice + domesticFee + seaShippingCost) * 1.20;
       return Math.ceil(seaPrice / 250) * 250;

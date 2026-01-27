@@ -36,7 +36,10 @@ const ProductCard: React.FC<ProductCardProps> = ({
   const minPrice = variantPrices.length > 0 ? Math.min(...variantPrices) : product.price;
 
   // Simulated discovery data
-  const soldCount = React.useMemo(() => (product.id * 17) % 1000 + 50, [product.id]);
+  const soldCount = React.useMemo(() => {
+    const numericId = typeof product.id === 'number' ? product.id : Number.parseInt(String(product.id), 10) || 0;
+    return (numericId * 17) % 1000 + 50;
+  }, [product.id]);
 
   const prefetchTimerRef = useRef<any>(null);
   const isPrefetched = useRef(false);

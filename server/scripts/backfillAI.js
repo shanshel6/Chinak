@@ -1,7 +1,7 @@
 import dns from 'node:dns';
 dns.setDefaultResultOrder('ipv4first');
 
-import { processProductAI } from '../services/aiService.js';
+import { processProductEmbedding, processProductAI } from '../services/aiService.js';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -15,16 +15,15 @@ dotenv.config({ path: path.join(__dirname, '../.env') });
 async function backfillAI() {
   console.log('Starting AI backfill for existing products...');
   
-  if (!process.env.SILICONFLOW_API_KEY || !process.env.HUGGINGFACE_API_KEY) {
-    console.error('ERROR: SILICONFLOW_API_KEY or HUGGINGFACE_API_KEY not found in .env');
+  if (!process.env.HUGGINGFACE_API_KEY) {
+    console.error('ERROR: HUGGINGFACE_API_KEY not found in .env');
     process.exit(1);
   }
 
-  // Use raw query to find products without embeddings or without aiMetadata
   const productsToProcess = await prisma.$queryRaw`
-    SELECT id, name, "aiMetadata" 
+    SELECT id, name, "aiMetadata", (embedding IS NULL) as "missingEmbedding"
     FROM "Product" 
-    WHERE "aiMetadata" IS NULL OR embedding IS NULL
+    WHERE embedding IS NULL OR ("aiMetadata" IS NULL AND ${!!process.env.SILICONFLOW_API_KEY} = true)
   `;
 
   console.log(`Found ${productsToProcess.length} products to process.`);
@@ -32,12 +31,15 @@ async function backfillAI() {
   for (const product of productsToProcess) {
     console.log(`Processing product ${product.id}: ${product.name}...`);
     try {
-      await processProductAI(product.id);
+      if (product.missingEmbedding) {
+        await processProductEmbedding(product.id);
+      } else if (!product.aiMetadata && process.env.SILICONFLOW_API_KEY) {
+        await processProductAI(product.id);
+      }
       console.log(`Successfully processed product ${product.id}`);
     } catch (error) {
       console.error(`Failed to process product ${product.id}:`, error.message);
     }
-    // 2-second delay to be safe with SiliconFlow free tier
     await new Promise(resolve => setTimeout(resolve, 2000));
   }
 

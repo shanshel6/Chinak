@@ -83,7 +83,7 @@ const BottomNav: React.FC<BottomNavProps> = ({ className = '' }) => {
 
   return (
     <nav 
-      className={`fixed bottom-0 left-0 right-0 z-40 w-full border-t border-slate-200 bg-white/95 px-6 pb-[calc(env(safe-area-inset-bottom)+1.25rem)] pt-3 backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/95 transition-transform duration-300 ease-in-out ${
+      className={`fixed bottom-0 left-0 right-0 z-40 w-full border-t border-slate-100 bg-white/95 px-6 pb-[calc(env(safe-area-inset-bottom)+1.5rem)] pt-2 backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/95 transition-transform duration-300 ease-in-out ${
         isVisible ? 'translate-y-0' : 'translate-y-full'
       } ${className}`}
     >
@@ -95,18 +95,18 @@ const BottomNav: React.FC<BottomNavProps> = ({ className = '' }) => {
           
           if (item.id === 'cart') {
             return (
-              <div key={item.id} className="relative -mt-8">
+              <div key={item.id} className="relative -mt-10">
                 <button 
                   onClick={() => !isDisabled && navigate(item.path)}
                   disabled={isDisabled}
-                  className={`flex size-14 items-center justify-center rounded-full shadow-lg ring-4 ring-white dark:ring-slate-900 transition hover:scale-105 ${
+                  className={`flex size-16 items-center justify-center rounded-full shadow-xl ring-[6px] ring-white dark:ring-slate-900 transition hover:scale-105 ${
                     active ? 'bg-primary text-white' : 'bg-primary text-white'
                   } ${isDisabled ? 'opacity-50 cursor-not-allowed' : ''}`}
                 >
-                  <Icon size={26} strokeWidth={active ? 2.5 : 2} />
+                  <Icon size={28} strokeWidth={active ? 2.5 : 2} />
                 </button>
                 {cartItemsCount > 0 && (
-                  <span className="absolute top-0 right-0 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white ring-2 ring-white dark:ring-slate-900 animate-in zoom-in duration-300">
+                  <span className="absolute top-0 right-0 flex h-6 w-6 items-center justify-center rounded-full bg-red-600 text-[11px] font-bold text-slate-900 ring-4 ring-white dark:ring-slate-900 shadow-md animate-in zoom-in duration-300 z-50">
                     {cartItemsCount > 99 ? '+99' : cartItemsCount}
                   </span>
                 )}

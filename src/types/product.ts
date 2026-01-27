@@ -1,6 +1,7 @@
 export interface Product {
   id: number | string;
   name: string;
+  chineseName?: string;
   price: number;
   image: string;
   description?: string;
@@ -13,6 +14,8 @@ export interface Product {
   isPriceCombined?: boolean;
   category?: string;
   status?: string;
+  isActive?: boolean;
+  isLocal?: boolean;
   images?: string[] | { id: number; url: string; order: number; type?: string }[];
   specs?: any;
   options?: any[];
@@ -20,7 +23,7 @@ export interface Product {
   purchaseUrl?: string;
   videoUrl?: string;
   storeEvaluation?: string;
-  reviewsCountShown?: number;
+  reviewsCountShown?: number | string;
   isFeatured?: boolean;
   averageRating?: string;
   totalReviews?: number;

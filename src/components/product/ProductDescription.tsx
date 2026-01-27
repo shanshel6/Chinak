@@ -2,7 +2,7 @@ import React from 'react';
 
 interface ProductDescriptionProps {
   productName?: string;
-  description: string;
+  description?: string;
   specs?: string | Record<string, any>;
 }
 
@@ -29,7 +29,7 @@ const ProductDescription: React.FC<ProductDescriptionProps> = ({
   };
   
   const normalizedSpecs = hasSpecs ? normalize(specs!) : '';
-  const normalizedDescription = normalize(description);
+  const normalizedDescription = normalize(description || '');
   const normalizedProductName = productName ? normalize(productName) : '';
 
   const isDescriptionRedundant = (hasSpecs && (
@@ -43,7 +43,7 @@ const ProductDescription: React.FC<ProductDescriptionProps> = ({
   return (
     <div className="mb-8">
       {/* Description Section */}
-      {description && !isDescriptionRedundant && (
+      {!!description && !isDescriptionRedundant && (
         <section className="relative">
           <div className="flex items-center gap-3 mb-4">
             <div className="w-1.5 h-6 bg-primary rounded-full" />

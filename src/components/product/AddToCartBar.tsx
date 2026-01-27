@@ -37,9 +37,8 @@ const AddToCartBar: React.FC<AddToCartBarProps> = ({
         <div className="relative flex p-1 bg-slate-100 dark:bg-white/5 rounded-2xl border border-slate-200 dark:border-white/10">
           {/* Background Slider */}
           <div 
-            className={`absolute top-1 bottom-1 w-[calc(50%-4px)] bg-white dark:bg-slate-800 rounded-xl shadow-md transition-all duration-300 ease-out ${
-              shippingMethod === 'sea' ? 'translate-x-[calc(-100%-8px)]' : 'translate-x-0'
-            }`}
+            className="absolute top-1 bottom-1 w-[calc(50%-4px)] bg-white dark:bg-slate-800 rounded-xl shadow-md transition-all duration-300 ease-out"
+            style={{ left: shippingMethod === 'sea' ? 'calc(50% + 4px)' : '4px' }}
           />
           
           <button
@@ -68,7 +67,7 @@ const AddToCartBar: React.FC<AddToCartBarProps> = ({
             }`}
           >
             {discountPercentage > 0 && (
-              <div className="absolute -top-2 -right-1 z-10 flex items-center gap-1 px-2 py-0.5 rounded-full bg-gradient-to-r from-red-500 to-orange-500 shadow-[0_4px_12px_rgba(239,68,68,0.4)] animate-[bounce_2s_infinite] rotate-3 border border-white dark:border-slate-800">
+              <div className="absolute -top-2 -right-1 z-10 flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-600 bg-gradient-to-r from-red-500 to-orange-500 shadow-[0_4px_12px_rgba(239,68,68,0.4)] animate-[bounce_2s_infinite] rotate-3 border border-white dark:border-slate-800">
                 <Flame size={10} className="text-white fill-white" />
                 <span className="text-white text-[9px] font-black whitespace-nowrap">
                   توفير {discountPercentage}%

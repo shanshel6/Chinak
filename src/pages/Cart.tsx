@@ -240,7 +240,7 @@ const Cart: React.FC = () => {
   return (
     <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden bg-background-light dark:bg-background-dark font-display text-text-primary-light dark:text-text-primary-dark antialiased pb-32 pt-safe" dir="rtl">
       {/* Top App Bar */}
-      <header className="sticky top-0 z-50 bg-background-light/90 dark:bg-background-dark/90 backdrop-blur-md border-b border-gray-200 dark:border-gray-800 pt-[calc(env(safe-area-inset-top)+0.5rem)]">
+      <header className="sticky top-0 z-50 bg-background-light/90 dark:bg-background-dark/90 backdrop-blur-md border-b border-gray-100 dark:border-gray-800 pt-[calc(env(safe-area-inset-top)+0.5rem)]">
         <div className="flex items-center justify-between p-4">
           <div className="flex items-center gap-2">
             <button 

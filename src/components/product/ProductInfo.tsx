@@ -10,7 +10,7 @@ interface ProductInfoProps {
   chineseName?: string;
   videoUrl?: string;
   storeEvaluation?: string;
-  reviewsCountShown?: string;
+  reviewsCountShown?: string | number;
   averageRating: string;
   totalReviews: number;
   weight?: number;
@@ -44,7 +44,7 @@ const ProductInfo: React.FC<ProductInfoProps> = ({
   const [airRate, setAirRate] = useState<number>(15400); 
   const [seaRate, setSeaRate] = useState<number>(182000);
   const [_chinaDomesticRate, setChinaDomesticRate] = useState<number>(1500);
-  const [shippingMinFloor, _setShippingMinFloor] = useState<number>(0);
+  const [shippingMinFloor, setShippingMinFloor] = useState<number>(2200);
   
   useEffect(() => {
     const loadSettings = async () => {
@@ -53,6 +53,7 @@ const ProductInfo: React.FC<ProductInfoProps> = ({
         if (settings?.airShippingRate) setAirRate(settings.airShippingRate);
         if (settings?.seaShippingRate) setSeaRate(settings.seaShippingRate);
         if (settings?.chinaDomesticShipping) setChinaDomesticRate(settings.chinaDomesticShipping);
+        if (settings?.shippingMinFloor) setShippingMinFloor(settings.shippingMinFloor);
       } catch (error) {
         console.error('Failed to load shipping rates:', error);
       }

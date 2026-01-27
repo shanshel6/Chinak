@@ -74,7 +74,7 @@ const AdminDashboard: React.FC = () => {
   const [orders, setOrders] = useState<any[]>([]);
   const [coupons, setCoupons] = useState<any[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedProducts, setSelectedProducts] = useState<any[]>([]);
+  const [selectedProducts, setSelectedProducts] = useState<(number | string)[]>([]);
   const [isImporting, setIsImporting] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [showCouponModal, setShowCouponModal] = useState(false);
@@ -863,7 +863,7 @@ const AdminDashboard: React.FC = () => {
             product={product} 
             isSelected={selectedProducts.includes(product.id)}
             onToggleSelection={(id) => {
-              setSelectedProducts((prev: string[]) => 
+              setSelectedProducts((prev) => 
                 prev.includes(id) ? prev.filter(p => p !== id) : [...prev, id]
               );
             }}

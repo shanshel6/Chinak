@@ -33,16 +33,15 @@ function getClients() {
   }
   
   if (!siliconflow) {
-    if (!process.env.SILICONFLOW_API_KEY) {
-        // Fallback or warning if key is missing
-        console.warn('[AI Debug] SILICONFLOW_API_KEY is missing. AI features will fail.');
+    if (process.env.SILICONFLOW_API_KEY) {
+      siliconflow = new OpenAI({
+        baseURL: "https://api.siliconflow.cn/v1",
+        apiKey: process.env.SILICONFLOW_API_KEY,
+      });
+      console.log(`[AI Debug] SiliconFlow initialized (OpenAI-compatible)`);
+    } else {
+      siliconflow = null;
     }
-    siliconflow = new OpenAI({
-      baseURL: "https://api.siliconflow.cn/v1",
-      apiKey: process.env.SILICONFLOW_API_KEY,
-      // No proxy needed for SiliconFlow in China, but OpenAI SDK uses global fetch
-    });
-    console.log(`[AI Debug] SiliconFlow initialized (OpenAI-compatible)`);
   }
 
   if (!genAI) {
@@ -63,20 +62,84 @@ function getClients() {
  * This model is optimized for 50+ languages including Arabic.
  */
 async function generateEmbedding(text) {
-  try {
-    const { hf } = getClients();
-    const response = await hf.featureExtraction({
-      model: 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2',
-      inputs: text,
-    });
-    // MiniLM returns a 1D array of 384 floats, but sometimes it's nested
-    let result = response;
-    if (Array.isArray(result) && Array.isArray(result[0])) {
-      result = result[0];
+  const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+  const getStatusCode = (err) => {
+    if (!err) return null;
+    const direct = err.status ?? err.statusCode;
+    if (typeof direct === 'number') return direct;
+    const respStatus = err.response?.status;
+    if (typeof respStatus === 'number') return respStatus;
+    const msg = String(err.message || '');
+    const match = msg.match(/\b(4\d\d|5\d\d)\b/);
+    return match ? Number(match[1]) : null;
+  };
+  const shouldRetry = (err) => {
+    const status = getStatusCode(err);
+    return status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
+  };
+
+  const { hf } = getClients();
+  const maxAttempts = 5;
+  let lastErr = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const response = await hf.featureExtraction({
+        model: 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2',
+        inputs: text,
+      });
+
+      let result = response;
+      if (Array.isArray(result) && Array.isArray(result[0])) {
+        result = result[0];
+      }
+      if (!Array.isArray(result) || result.length !== 384) {
+        throw new Error(`Unexpected embedding shape (len=${Array.isArray(result) ? result.length : 'n/a'})`);
+      }
+      return result;
+    } catch (error) {
+      lastErr = error;
+      if (!shouldRetry(error) || attempt === maxAttempts) break;
+      const base = Math.min(30000, 1000 * (2 ** (attempt - 1)));
+      const jitter = Math.floor(Math.random() * 250);
+      await sleep(base + jitter);
     }
-    return result;
+  }
+
+  console.error('Hugging Face embedding failed:', lastErr);
+  throw lastErr;
+}
+
+export async function processProductEmbedding(productId) {
+  try {
+    console.log(`[AI Debug] Starting embedding-only processing for product ${productId}`);
+    const product = await prisma.product.findUnique({
+      where: { id: productId },
+      select: { id: true, name: true, description: true, specs: true, image: true }
+    });
+
+    if (!product) {
+      console.error(`[AI Debug] Product ${productId} not found`);
+      return;
+    }
+
+    const content = `Title: ${product.name}\nDescription: ${product.description || ''}\nSpecs: ${product.specs || ''}\nMain Image URL: ${product.image || ''}`;
+    const embedding = await generateEmbedding(content);
+
+    const vectorStr = `[${embedding.join(',')}]`;
+    const query = `
+      UPDATE "Product"
+      SET "embedding" = $1::vector
+      WHERE "id" = $2
+    `;
+
+    await prisma.$executeRawUnsafe(query, vectorStr, productId);
+    console.log(`[AI Debug] Successfully saved embedding for product ${productId}`);
   } catch (error) {
-    console.error('Hugging Face embedding failed:', error);
+    console.error(`[AI Debug] Embedding-only processing failed for product ${productId}:`, error.message);
+    if (process.env.NODE_ENV !== 'production') {
+      console.error(error);
+    }
     throw error;
   }
 }
@@ -187,7 +250,7 @@ export async function estimateProductPhysicals(product) {
 export async function processProductAI(productId) {
   try {
     console.log(`[AI Debug] Starting processing for product ${productId}`);
-    const { hf, siliconflow } = getClients();
+    const { siliconflow } = getClients();
     const product = await prisma.product.findUnique({
       where: { id: productId },
     });
@@ -199,44 +262,43 @@ export async function processProductAI(productId) {
 
     const content = `Title: ${product.name}\nDescription: ${product.description || ''}\nSpecs: ${product.specs || ''}\nMain Image URL: ${product.image || ''}`;
     
-    // 1. Extract Tags and Synonyms using SiliconFlow (DeepSeek-V3)
-    const prompt = `You are an AI specialized in e-commerce product analysis for the Middle Eastern market, specifically Iraq. 
-    Analyze the product details and image to extract 'Invisible Tags' and search synonyms.
-    
-    Product Details:
-    Title: ${product.name}
-    Description: ${product.description || ''}
-    Specs: ${product.specs || ''}
-    
-    Return ONLY a valid JSON object with:
-    1. 'extracted_tags': Array of strings representing style (e.g., modern, classic), occasion (e.g., wedding, office), material (e.g., silk, cotton), and target audience (e.g., kids, professionals).
-    2. 'synonyms': Array of strings representing how users might search for this in Arabic, English, and Iraqi dialect (e.g., if it's a 'refrigerator', include 'ثلاجة', 'مبردة', 'براد').
-    3. 'category_suggestion': A string suggesting the best category for this product.
-
-    Do not include markdown formatting or extra text.`;
-
-    console.log(`[AI Debug] Calling SiliconFlow for product ${productId}...`);
-    
-    const response = await siliconflow.chat.completions.create({
-      model: 'deepseek-ai/DeepSeek-V3', // Fast, cheap, and extremely capable
-      messages: [
-        { role: 'user', content: prompt }
-      ],
-      response_format: { type: 'json_object' }
-    });
-
-    const responseText = response.choices[0].message.content.trim();
-    console.log(`[AI Debug] SiliconFlow response for product ${productId}: ${responseText}`);
-    
-    let aiMetadata;
-    try {
-      // Clean potential markdown and parse JSON
-      const cleanJson = responseText.replace(/^```json\s*/, '').replace(/\s*```$/, '').trim();
-      aiMetadata = JSON.parse(cleanJson);
-    } catch (parseError) {
-      console.error(`[AI Debug] JSON Parse Error for product ${productId}:`, parseError.message);
-      // Fallback metadata
-      aiMetadata = { extracted_tags: [], synonyms: [] };
+    let aiMetadata = null;
+    if (!product.aiMetadata && siliconflow) {
+      const prompt = `You are an AI specialized in e-commerce product analysis for the Middle Eastern market, specifically Iraq. 
+      Analyze the product details and image to extract 'Invisible Tags' and search synonyms.
+      
+      Product Details:
+      Title: ${product.name}
+      Description: ${product.description || ''}
+      Specs: ${product.specs || ''}
+      
+      Return ONLY a valid JSON object with:
+      1. 'extracted_tags': Array of strings representing style (e.g., modern, classic), occasion (e.g., wedding, office), material (e.g., silk, cotton), and target audience (e.g., kids, professionals).
+      2. 'synonyms': Array of strings representing how users might search for this in Arabic, English, and Iraqi dialect (e.g., if it's a 'refrigerator', include 'ثلاجة', 'مبردة', 'براد').
+      3. 'category_suggestion': A string suggesting the best category for this product.
+  
+      Do not include markdown formatting or extra text.`;
+  
+      console.log(`[AI Debug] Calling SiliconFlow for product ${productId}...`);
+      
+      const response = await siliconflow.chat.completions.create({
+        model: 'deepseek-ai/DeepSeek-V3',
+        messages: [
+          { role: 'user', content: prompt }
+        ],
+        response_format: { type: 'json_object' }
+      });
+  
+      const responseText = response.choices[0].message.content.trim();
+      console.log(`[AI Debug] SiliconFlow response for product ${productId}: ${responseText}`);
+      
+      try {
+        const cleanJson = responseText.replace(/^```json\s*/, '').replace(/\s*```$/, '').trim();
+        aiMetadata = JSON.parse(cleanJson);
+      } catch (parseError) {
+        console.error(`[AI Debug] JSON Parse Error for product ${productId}:`, parseError.message);
+        aiMetadata = { extracted_tags: [], synonyms: [] };
+      }
     }
 
     // 2. Generate Embedding (384 dimensions) using Hugging Face
@@ -274,22 +336,22 @@ export async function processProductAI(productId) {
     const vectorStr = `[${embedding.join(',')}]`;
     const query = `
       UPDATE "Product" 
-      SET "aiMetadata" = $1::jsonb, 
+      SET "aiMetadata" = CASE WHEN "aiMetadata" IS NULL THEN $1::jsonb ELSE "aiMetadata" END,
           "embedding" = $2::vector 
           ${physicalUpdate}
       WHERE "id" = $3
     `;
 
     console.log(`[AI Debug] Executing database update for product ${productId}...`);
-    await prisma.$executeRawUnsafe(query, JSON.stringify(aiMetadata), vectorStr, productId);
+    const aiMetadataParam = aiMetadata === null ? null : JSON.stringify(aiMetadata);
+    await prisma.$executeRawUnsafe(query, aiMetadataParam, vectorStr, productId);
     console.log(`[AI Debug] Successfully processed product ${productId}`);
   } catch (error) {
     console.error(`[AI Debug] Critical error in processProductAI for product ${productId}:`, error.message);
-    // Don't rethrow, as this is a background task and we've already logged it.
-    // However, in development, we might want to see the stack trace.
     if (process.env.NODE_ENV !== 'production') {
       console.error(error);
     }
+    throw error;
   }
 }
 

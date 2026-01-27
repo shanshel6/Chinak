@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import dotenv from 'dotenv';
 import prisma from '../prismaClient.js';
-import { processProductAI } from '../services/aiService.js';
+import { processProductAI, processProductEmbedding } from '../services/aiService.js';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -164,11 +164,11 @@ async function bulkImport(filePath) {
         results.imported++;
         console.log(`[${results.imported + results.skipped + results.failed}/${rawData.length}] Imported: ${name}`);
 
-        // Trigger AI processing
-        if (process.env.SILICONFLOW_API_KEY && process.env.HUGGINGFACE_API_KEY) {
+        // Trigger embedding processing
+        if (process.env.HUGGINGFACE_API_KEY) {
           try {
-            console.log(`  -> AI Processing for product ${product.id}...`);
-            await processProductAI(product.id);
+            console.log(`  -> Embedding processing for product ${product.id}...`);
+            await processProductEmbedding(product.id);
             results.aiProcessed++;
             // 2-second delay to be safe with SiliconFlow free tier
             await new Promise(r => setTimeout(r, 2000));

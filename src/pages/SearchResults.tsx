@@ -21,7 +21,7 @@ const SearchResults: React.FC = () => {
   const toggleWishlist = useWishlistStore((state) => state.toggleWishlist);
   const cartCount = useCartStore((state) => state.items.length);
 
-  const isProductInWishlist = (productId: number) => wishlistItems.some(item => String(item.productId) === String(productId));
+  const isProductInWishlist = (productId: number | string) => wishlistItems.some(item => String(item.productId) === String(productId));
   
   // Get query from URL if present
   const queryParams = new URLSearchParams(location.search);
@@ -222,32 +222,41 @@ const SearchResults: React.FC = () => {
     setHasMore(true);
   }, [searchQuery]);
 
+  const getProductBasePrice = useCallback((p: Product) => {
+    const variants = (p as any).variants || [];
+    const variantPrices = variants
+      .map((v: any) => v?.price)
+      .filter((price: any) => typeof price === 'number' && price > 0);
+    return variantPrices.length > 0 ? Math.min(...variantPrices) : p.price;
+  }, []);
+
   useEffect(() => {
     let result = [...products];
+    const getNumericId = (id: number | string) => (typeof id === 'number' ? id : Number.parseInt(String(id), 10) || 0);
 
     // Apply filters
     if (activeFilter === 'free_shipping') {
       // Products over 30,000 IQD get free shipping in our business logic
-      result = result.filter(p => p.price >= 30000); 
+      result = result.filter(p => getProductBasePrice(p) >= 30000); 
     } else if (activeFilter === 'top_rated') {
       // Simulated top rated (products with even IDs for demo)
-      result = result.filter(p => p.id % 2 === 0);
+      result = result.filter(p => getNumericId(p.id) % 2 === 0);
     } else if (activeFilter === 'under_25k') {
-      result = result.filter(p => p.price < 25000);
+      result = result.filter(p => getProductBasePrice(p) < 25000);
     }
 
     // Apply sorting
     if (sortBy === 'price_asc') {
-      result.sort((a, b) => a.price - b.price);
+      result.sort((a, b) => getProductBasePrice(a) - getProductBasePrice(b));
     } else if (sortBy === 'price_desc') {
-      result.sort((a, b) => b.price - a.price);
+      result.sort((a, b) => getProductBasePrice(b) - getProductBasePrice(a));
     } else if (sortBy === 'rating') {
       // Sort by simulated rating (higher IDs first for demo)
-      result.sort((a, b) => b.id - a.id);
+      result.sort((a, b) => getNumericId(b.id) - getNumericId(a.id));
     }
 
     setFilteredProducts(result);
-  }, [activeFilter, sortBy, products]);
+  }, [activeFilter, sortBy, products, getProductBasePrice]);
 
 
 

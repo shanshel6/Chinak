@@ -268,7 +268,7 @@ const Home: React.FC = () => {
     };
   }, [loading, products.length, selectedCategoryId, loadData]);
 
-  const isProductInWishlist = (productId: number) => wishlistItems.some(item => String(item.productId) === String(productId));
+  const isProductInWishlist = (productId: number | string) => wishlistItems.some(item => String(item.productId) === String(productId));
 
   const handleAddToWishlist = (e: React.MouseEvent, product: Product) => {
     e.stopPropagation();

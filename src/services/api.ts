@@ -824,7 +824,19 @@ export async function fetchProductById(id: number | string) {
 }
 
 export async function searchProducts(query: string, page = 1, limit = 20) {
-  return request(`/search?q=${encodeURIComponent(query)}&page=${page}&limit=${limit}`);
+  try {
+    const data = await request(`/products?page=${page}&limit=${limit}&search=${encodeURIComponent(query)}`);
+    if (data && typeof data === 'object') {
+      const totalPages = typeof data.totalPages === 'number' ? data.totalPages : undefined;
+      return {
+        ...data,
+        hasMore: totalPages ? page < totalPages : (data.hasMore ?? undefined),
+      };
+    }
+    return data;
+  } catch (_e) {
+    return request(`/search?q=${encodeURIComponent(query)}&page=${page}&limit=${limit}`);
+  }
 }
 
 // Admin: Products

@@ -6,7 +6,7 @@ import type { Product } from '../../types/product';
 
 interface SimilarProductsProps {
   products: Product[];
-  onProductClick: (id: number) => void;
+  onProductClick: (id: number | string) => void;
   rates: ShippingRates;
 }
 
