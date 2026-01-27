@@ -2929,6 +2929,21 @@ app.post('/api/products', authenticateToken, isAdmin, hasPermission('manage_prod
       specs, storeEvaluation, reviewsCountShown, images, detailImages,
       weight, length, width, height, domesticShippingFee, options, variants, aiMetadata
     } = req.body;
+
+    const parsedAiMetadata = (() => {
+      const candidate = aiMetadata ?? req.body.marketing_metadata;
+      if (!candidate) return null;
+      if (typeof candidate === 'object') return candidate;
+      if (typeof candidate === 'string') {
+        try {
+          const parsed = JSON.parse(candidate);
+          return parsed && typeof parsed === 'object' ? parsed : null;
+        } catch {
+          return null;
+        }
+      }
+      return null;
+    })();
     
     // Process main images (gallery)
     let processedGalleryImages = [];
@@ -3044,7 +3059,7 @@ app.post('/api/products', authenticateToken, isAdmin, hasPermission('manage_prod
         height: safeParseFloat(height),
         domesticShippingFee: domesticFee,
         isPriceCombined: isPriceCombined,
-        aiMetadata: aiMetadata && typeof aiMetadata === 'object' ? JSON.stringify(aiMetadata) : (aiMetadata || null),
+        aiMetadata: parsedAiMetadata,
         images: {
           create: [
             ...imageUrls.map((url, i) => ({
