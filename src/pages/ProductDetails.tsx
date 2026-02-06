@@ -151,16 +151,21 @@ const ProductDetails: React.FC = () => {
       });
     }
 
-    // Auto-select shipping method based on weight and dimensions
-    // Only if the user hasn't manually changed it during this session
-    // and there's no saved preference for this product
-    if (product && !userChangedShipping.current) {
-      const savedPref = localStorage.getItem(`shipping_pref_${product.id}`);
-      if (!savedPref) {
-        setShippingMethod(getDefaultShippingMethod(product.weight, product.length, product.width, product.height));
-      }
-    }
   }, [product]);
+
+  useEffect(() => {
+    if (!product || userChangedShipping.current) return;
+    const savedPref = localStorage.getItem(`shipping_pref_${product.id}`);
+    if (savedPref) return;
+
+    const weight = currentVariant?.weight ?? product.weight;
+    const length = currentVariant?.length ?? product.length;
+    const width = currentVariant?.width ?? product.width;
+    const height = currentVariant?.height ?? product.height;
+
+    const nextMethod = getDefaultShippingMethod(weight, length, width, height);
+    setShippingMethod((prev) => (prev === nextMethod ? prev : nextMethod));
+  }, [product, currentVariant]);
 
   // Defer rendering of heavy detail images
   useEffect(() => {
@@ -273,14 +278,54 @@ const ProductDetails: React.FC = () => {
       : '4.8';
   }, [allReviews]);
 
-  const { inclusivePrice, airPrice, seaPrice } = useMemo(() => {
-    const basePrice = currentVariant?.price || product?.price || 0;
-    if (!product) return { inclusivePrice: basePrice, airPrice: basePrice, seaPrice: basePrice };
+  const pricingParams = useMemo(() => {
+    if (!product) return null;
     
-    const weight = currentVariant?.weight || product.weight;
-    const length = currentVariant?.length || product.length;
-    const width = currentVariant?.width || product.width;
-    const height = currentVariant?.height || product.height;
+    const variants = product.variants || [];
+    const minVariant = !currentVariant && variants.length > 0 
+      ? variants.reduce((min: any, curr: any) => {
+          if (!curr.price) return min;
+          if (!min) return curr;
+          return curr.price < min.price ? curr : min;
+        }, null)
+      : null;
+
+    const target = currentVariant || minVariant || product;
+    
+    const basePrice = target.price || 0;
+    const weight = target.weight || product.weight;
+    const length = target.length || product.length;
+    const width = target.width || product.width;
+    const height = target.height || product.height;
+    
+    const basePriceRMB = (target.basePriceRMB && target.basePriceRMB > 0) 
+      ? target.basePriceRMB 
+      : (product.basePriceRMB ?? null);
+      
+    // Strict check for the target (current variant or min variant)
+    // Use nullish coalescing to respect explicit false values
+    const effectiveIsPriceCombined = target.isPriceCombined ?? product.isPriceCombined ?? false;
+
+    // FORCE recalculation if basePriceRMB exists, even if isPriceCombined is true.
+    // This fixes the issue where variants with different weights/shipping costs wouldn't update the price
+    // because the frontend thought the price was "fixed" (combined).
+    const shouldForceRecalculate = !!basePriceRMB;
+
+    return {
+      basePrice,
+      weight,
+      length,
+      width,
+      height,
+      basePriceRMB,
+      effectiveIsPriceCombined: shouldForceRecalculate ? false : effectiveIsPriceCombined
+    };
+  }, [product, currentVariant]);
+
+  const { inclusivePrice, airPrice, seaPrice } = useMemo(() => {
+    if (!product || !pricingParams) return { inclusivePrice: 0, airPrice: 0, seaPrice: 0 };
+    
+    const { basePrice, weight, length, width, height, basePriceRMB, effectiveIsPriceCombined } = pricingParams;
 
     const air = calculateInclusivePrice(
       basePrice,
@@ -291,8 +336,8 @@ const ProductDetails: React.FC = () => {
       shippingRates,
       'air',
       product.domesticShippingFee || 0,
-      product.basePriceRMB,
-      product.isPriceCombined
+      basePriceRMB,
+      effectiveIsPriceCombined
     );
 
     const sea = calculateInclusivePrice(
@@ -304,16 +349,12 @@ const ProductDetails: React.FC = () => {
       shippingRates,
       'sea',
       product.domesticShippingFee || 0,
-      product.basePriceRMB,
-      product.isPriceCombined
+      basePriceRMB,
+      effectiveIsPriceCombined
     );
 
-    return {
-      inclusivePrice: shippingMethod === 'air' ? air : sea,
-      airPrice: air,
-      seaPrice: sea
-    };
-  }, [currentVariant, product, shippingMethod, shippingRates]);
+    return { inclusivePrice: shippingMethod === 'air' ? air : sea, airPrice: air, seaPrice: sea };
+  }, [product, pricingParams, shippingRates, shippingMethod]);
 
   useEffect(() => {
     if (product) {
@@ -491,24 +532,64 @@ const ProductDetails: React.FC = () => {
 
   useEffect(() => {
     if (product && product.variants && product.variants.length > 0) {
+      const normalizeValue = (val: any) => {
+        const str = typeof val === 'object' && val !== null
+          ? (val.value ?? val.name ?? JSON.stringify(val))
+          : String(val);
+        return str.toLowerCase().trim();
+      };
+
+      // Debug: Log selected options and available variants
+      console.log('[ProductDetails] Selected Options:', selectedOptions);
+      
       const variant = product.variants.find((v: any) => {
         try {
           const combination = typeof v.combination === 'string' ? JSON.parse(v.combination) : v.combination;
           if (!combination) return false;
           
-          // Case-insensitive and trimmed matching
-          return Object.entries(selectedOptions).every(([selKey, selVal]) => {
-            const matchKey = Object.keys(combination).find(k => 
+          // Case-insensitive and trimmed matching with improved key mapping
+          const isMatch = Object.entries(selectedOptions).every(([selKey, selVal]) => {
+            // 1. Try direct match
+            let matchKey = Object.keys(combination).find(k => 
               k.toLowerCase().trim() === selKey.toLowerCase().trim()
             );
-            if (!matchKey) return false;
-            return String(combination[matchKey]).toLowerCase().trim() === String(selVal).toLowerCase().trim();
+
+            // 2. If no direct match, try mapped keys (English <-> Arabic)
+            if (!matchKey) {
+              const selKeyLower = selKey.toLowerCase().trim();
+              if (selKeyLower === 'color' || selKeyLower === 'colour' || selKeyLower === 'اللون') {
+                 matchKey = Object.keys(combination).find(k => {
+                   const kLower = k.toLowerCase().trim();
+                   return kLower === 'color' || kLower === 'colour' || kLower === 'اللون';
+                 });
+              } else if (selKeyLower === 'size' || selKeyLower === 'المقاس') {
+                 matchKey = Object.keys(combination).find(k => {
+                   const kLower = k.toLowerCase().trim();
+                   return kLower === 'size' || kLower === 'المقاس';
+                 });
+              }
+            }
+
+            if (!matchKey) {
+              console.log(`[ProductDetails] No matching key for ${selKey} in variant ${v.id}`, combination);
+              return false;
+            }
+
+            const valMatch = normalizeValue(combination[matchKey]) === normalizeValue(selVal);
+            if (!valMatch) {
+               // console.log(`[ProductDetails] Value mismatch for ${selKey}: ${normalizeValue(combination[matchKey])} !== ${normalizeValue(selVal)}`);
+            }
+            return valMatch;
           });
+
+          return isMatch;
         } catch (e) {
           console.error('Error matching variant:', e);
           return false;
         }
       });
+
+      console.log('[ProductDetails] Found variant:', variant ? variant.id : 'None', variant);
       setCurrentVariant(variant || null);
     }
   }, [selectedOptions, product]);
@@ -638,7 +719,7 @@ const ProductDetails: React.FC = () => {
 
         <main className="relative -mt-6 md:mt-0 bg-background-light dark:bg-background-dark rounded-t-3xl md:rounded-none px-5 md:px-0 pt-8 md:pt-0 shadow-[0_-4px_20px_rgba(0,0,0,0.05)] md:shadow-none">
           <ProductInfo 
-            price={currentVariant?.price || product?.price || 0}
+            price={pricingParams?.basePrice || 0}
             originalPrice={product.originalPrice}
             name={product.name}
             chineseName={product.chineseName}
@@ -647,17 +728,20 @@ const ProductDetails: React.FC = () => {
             reviewsCountShown={product.reviewsCountShown}
             averageRating={averageRating}
             totalReviews={allReviews.length}
-            weight={product.weight}
-            length={product.length}
-            width={product.width}
-            height={product.height}
+            weight={pricingParams?.weight}
+            length={pricingParams?.length}
+            width={pricingParams?.width}
+            height={pricingParams?.height}
             domesticShippingFee={product.domesticShippingFee}
-            basePriceRMB={product.basePriceRMB}
+            basePriceRMB={pricingParams?.basePriceRMB}
             airThreshold={shippingRates.airThreshold}
             seaThreshold={shippingRates.seaThreshold}
             variant={currentVariant}
             shippingMethod={shippingMethod}
-            isPriceCombined={product.isPriceCombined}
+            onShippingMethodChange={handleShippingMethodChange}
+            isPriceCombined={pricingParams?.effectiveIsPriceCombined || false}
+            calculatedAirPrice={airPrice}
+            calculatedSeaPrice={seaPrice}
           />
 
           {product.options && product.options.length > 0 && (

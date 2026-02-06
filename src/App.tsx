@@ -13,7 +13,7 @@ import { useThemeStore } from './store/useThemeStore';
 import { useChatStore } from './store/useChatStore';
 import { useMaintenanceStore } from './store/useMaintenanceStore';
 import { useToastStore } from './store/useToastStore';
-import { connectSocket, disconnectSocket } from './services/socket';
+import { socket, connectSocket, disconnectSocket } from './services/socket';
 import ProtectedRoute from './components/ProtectedRoute';
 import BottomNav from './components/BottomNav';
 import ErrorBoundary from './components/ErrorBoundary';
@@ -322,6 +322,9 @@ function App() {
       // fetchWishlist(); // Removed as wishlist is now local storage only
       fetchNotifications();
       connectSocket();
+      if (String(user.role || '').toUpperCase() === 'ADMIN') {
+        socket.emit('join_admin_room');
+      }
       initNotificationSocket(user.id);
 
       return () => {

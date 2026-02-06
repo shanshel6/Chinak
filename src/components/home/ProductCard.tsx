@@ -32,8 +32,34 @@ const ProductCard: React.FC<ProductCardProps> = ({
   }, [product.image, product.images]);
 
   const variants = product.variants || [];
-  const variantPrices = variants.map((v: any) => v.price).filter((p: any) => p > 0);
-  const minPrice = variantPrices.length > 0 ? Math.min(...variantPrices) : product.price;
+  
+  // Find the cheapest variant to get the correct price AND weight
+  const minVariant = React.useMemo(() => {
+    if (!variants.length) return null;
+    return variants.reduce((min: any, curr: any) => {
+      if (!curr.price) return min;
+      if (!min) return curr;
+      return curr.price < min.price ? curr : min;
+    }, null);
+  }, [variants]);
+
+  const minPrice = minVariant ? minVariant.price : product.price;
+  const effectiveWeight = (minVariant && minVariant.weight) ? minVariant.weight : product.weight;
+  const effectiveLength = (minVariant && minVariant.length) ? minVariant.length : product.length;
+  const effectiveWidth = (minVariant && minVariant.width) ? minVariant.width : product.width;
+  const effectiveHeight = (minVariant && minVariant.height) ? minVariant.height : product.height;
+
+  // Determine if the price is combined (strictly check minVariant or product)
+  const isEffectivePriceCombined = React.useMemo(() => {
+    if (minVariant) {
+      return minVariant.isPriceCombined ?? product.isPriceCombined ?? false;
+    }
+    return product.isPriceCombined ?? false;
+  }, [product.isPriceCombined, minVariant]);
+
+  const effectiveBasePriceRMB = (minVariant && minVariant.basePriceRMB && minVariant.basePriceRMB > 0)
+    ? minVariant.basePriceRMB
+    : product.basePriceRMB;
 
   // Simulated discovery data
   const soldCount = React.useMemo(() => {
@@ -89,17 +115,17 @@ const ProductCard: React.FC<ProductCardProps> = ({
   const totalPrice = React.useMemo(() => {
     return calculateInclusivePrice(
       minPrice,
-      product.weight,
-      product.length,
-      product.width,
-      product.height,
+      effectiveWeight,
+      effectiveLength,
+      effectiveWidth,
+      effectiveHeight,
       { airRate: _airRate, seaRate: _seaRate, minFloor: _minFloor },
-      undefined,
+      'sea',
       product.domesticShippingFee || 0,
-      product.basePriceRMB,
-      product.isPriceCombined
+      effectiveBasePriceRMB,
+      isEffectivePriceCombined
     );
-  }, [minPrice, product.weight, product.length, product.width, product.height, _airRate, _seaRate, _minFloor]);
+  }, [minPrice, effectiveWeight, effectiveLength, effectiveWidth, effectiveHeight, _airRate, _seaRate, _minFloor, effectiveBasePriceRMB, isEffectivePriceCombined]);
 
   return (
     <div 

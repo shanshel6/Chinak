@@ -18,17 +18,40 @@ const SimilarProducts: React.FC<SimilarProductsProps> = ({ products, onProductCl
       <h3 className="text-slate-900 dark:text-white text-lg font-black mb-4">منتجات مشابهة</h3>
       <div className="flex gap-4 overflow-x-auto no-scrollbar pb-4">
         {products.map((p) => {
+          const variants = p.variants || [];
+          
+          const minVariant = variants.reduce((min: any, curr: any) => {
+            if (!curr.price) return min;
+            if (!min) return curr;
+            return curr.price < min.price ? curr : min;
+          }, null);
+
+          const minPrice = minVariant ? minVariant.price : p.price;
+          const effectiveWeight = (minVariant && minVariant.weight) ? minVariant.weight : p.weight;
+          const effectiveLength = (minVariant && minVariant.length) ? minVariant.length : p.length;
+          const effectiveWidth = (minVariant && minVariant.width) ? minVariant.width : p.width;
+          const effectiveHeight = (minVariant && minVariant.height) ? minVariant.height : p.height;
+          
+          // Determine if the price is combined (strictly check minVariant or product)
+          const isEffectivePriceCombined = minVariant 
+            ? (minVariant.isPriceCombined ?? p.isPriceCombined ?? false)
+            : (p.isPriceCombined ?? false);
+
+          const effectiveBasePriceRMB = (minVariant && minVariant.basePriceRMB && minVariant.basePriceRMB > 0)
+            ? minVariant.basePriceRMB
+            : p.basePriceRMB;
+
           const totalPrice = calculateInclusivePrice(
-            p.price,
-            p.weight,
-            p.length,
-            p.width,
-            p.height,
+            minPrice,
+            effectiveWeight,
+            effectiveLength,
+            effectiveWidth,
+            effectiveHeight,
             rates,
-            undefined,
+            'sea',
             p.domesticShippingFee || 0,
-            p.basePriceRMB,
-            p.isPriceCombined
+            effectiveBasePriceRMB,
+            isEffectivePriceCombined
           );
 
           return (

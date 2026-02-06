@@ -442,8 +442,8 @@ const Cart: React.FC = () => {
                       rates,
                       item.shippingMethod,
                       item.product.domesticShippingFee || 0,
-                      item.product.basePriceRMB,
-                      item.product.isPriceCombined
+                      item.variant?.basePriceRMB ?? item.product.basePriceRMB,
+                      item.variant?.isPriceCombined ?? item.product.isPriceCombined
                     );
                     return (
                       <div className="flex flex-col gap-0.5 mt-1">

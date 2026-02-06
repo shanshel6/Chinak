@@ -47,7 +47,7 @@ export const getBaseDomain = () => {
 
   // 4. Default local development (Browser)
   if (window.location.hostname === 'localhost') {
-    return 'http://localhost:5001';
+    return '';
   }
 
   return 'https://shanshal66-my-shop-backend.hf.space';
@@ -60,8 +60,8 @@ const MOCK_SETTINGS_KEY = 'mock_admin_settings';
 const cache = new Map<string, { data: any; timestamp: number }>();
 
 // Persistent Cache Implementation
-const CACHE_PREFIX = 'app_cache_';
-const CACHE_TTL = 30 * 60 * 1000; // 30 minutes cache (increased for persistence)
+const CACHE_PREFIX = 'app_cache_v2_'; // Changed prefix to invalidate old cache
+const CACHE_TTL = 2 * 60 * 1000; // 2 minutes cache for faster updates during dev
 
 const persistentCache = {
   get: (key: string) => {
@@ -259,9 +259,12 @@ export async function request(endpoint: string, options: any = {}, retries = 2) 
 
   let currentBaseUrl = API_BASE_URL;
 
-  const executeRequest = async (attempt: number): Promise<any> => {
-    // Priority: 1. options.token, 2. localStorage
-    let token = (options.token || localStorage.getItem('auth_token'))?.trim();
+  const executeRequest = async (attempt: number, authRetry = 0): Promise<any> => {
+    const storedToken = localStorage.getItem('auth_token')?.trim();
+    const providedToken = typeof options.token === 'string' ? options.token.trim() : null;
+
+    let token = providedToken || storedToken;
+    if (providedToken?.startsWith('test-token-')) token = providedToken;
     
     // Explicitly handle "null" or "undefined" strings that can sometimes get into localStorage
     if (token === 'null' || token === 'undefined') {
@@ -438,7 +441,9 @@ export async function request(endpoint: string, options: any = {}, retries = 2) 
           if (currentToken && currentToken !== requestToken) {
             console.warn('[API] Detected 401 from old token, retrying with new token...');
             // Retry once with the current token
-            return executeRequest(attempt); 
+            if (authRetry < 1) {
+              return executeRequest(attempt, authRetry + 1);
+            }
           }
 
           if (!isAuthRequest && (currentToken === requestToken || !currentToken)) {
@@ -456,7 +461,7 @@ export async function request(endpoint: string, options: any = {}, retries = 2) 
         if (attempt < retries && (response.status >= 500 || response.status === 404)) {
           const delay = Math.pow(2, attempt) * 1000;
           await new Promise(resolve => setTimeout(resolve, delay));
-          return executeRequest(attempt + 1);
+          return executeRequest(attempt + 1, authRetry);
         }
 
         if (data && data.error) throw new Error(data.error);
@@ -469,7 +474,14 @@ export async function request(endpoint: string, options: any = {}, retries = 2) 
       if (isGet) {
         persistentCache.set(cacheKey, data);
       } else {
-        if (endpoint.includes('/products')) persistentCache.invalidatePattern('/products');
+        if (endpoint.includes('/products')) {
+          persistentCache.invalidatePattern('/products');
+          persistentCache.invalidatePattern('/admin/products');
+        }
+        if (endpoint.includes('/admin/products')) {
+          persistentCache.invalidatePattern('/admin/products');
+          persistentCache.invalidatePattern('/products');
+        }
         if (endpoint.includes('/addresses')) persistentCache.invalidatePattern('/addresses');
         if (endpoint.includes('/cart')) persistentCache.invalidatePattern('/cart');
         if (endpoint.includes('/orders')) {
@@ -489,6 +501,14 @@ export async function request(endpoint: string, options: any = {}, retries = 2) 
         error.message.includes('Load failed');
 
       if (attempt < retries && isNetworkError) {
+        if (currentBaseUrl.includes('localhost:5002/api')) {
+          console.warn(`[API Fallback] localhost:5002 failed, trying localhost:5001...`);
+          currentBaseUrl = 'http://localhost:5001/api';
+        } else if (currentBaseUrl.includes('localhost:5000/api')) {
+          console.warn(`[API Fallback] localhost:5000 failed, trying localhost:5001...`);
+          currentBaseUrl = 'http://localhost:5001/api';
+        }
+
         // Fallback logic for Android emulators
         const userAgent = navigator.userAgent.toLowerCase();
         const isAndroid = /android/i.test(userAgent);
@@ -504,7 +524,7 @@ export async function request(endpoint: string, options: any = {}, retries = 2) 
         const delay = Math.pow(2, attempt) * 1000;
         console.warn(`[API Network Error] Retrying ${endpoint} in ${delay}ms... (Attempt ${attempt + 1})`);
         await new Promise(resolve => setTimeout(resolve, delay));
-        return executeRequest(attempt + 1);
+        return executeRequest(attempt + 1, authRetry);
       }
 
       if (isNetworkError) {
@@ -522,7 +542,7 @@ export async function request(endpoint: string, options: any = {}, retries = 2) 
     }
   };
 
-  return executeRequest(0);
+  return executeRequest(0, 0);
 }
 
 export function clearCache() {
@@ -1231,6 +1251,20 @@ export async function bulkImportProducts(products: any[], token?: string | null)
   });
 }
 
+export async function enqueueBulkImportProducts(products: any[], token?: string | null) {
+  return request('/admin/products/bulk-import-jobs', {
+    method: 'POST',
+    body: JSON.stringify({ products }),
+    token
+  });
+}
+
+export async function fetchBulkImportJob(jobId: string, token?: string | null) {
+  return request(`/admin/products/bulk-import-jobs/${jobId}`, {
+    token
+  });
+}
+
 export async function bulkImportReviews(reviews: any[], token?: string | null) {
   return request('/admin/products/bulk-import-reviews', {
     method: 'POST',
@@ -1273,7 +1307,7 @@ export async function bulkPublishProducts(ids: (number | string)[], token?: stri
         // Create product on server
         const result = await request('/products', {
           method: 'POST',
-          body: JSON.stringify({ ...rest, status: 'PUBLISHED' }),
+          body: JSON.stringify({ ...rest, status: 'PUBLISHED', isActive: true }),
           token
         });
         

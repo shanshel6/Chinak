@@ -87,6 +87,80 @@ const ProductCard: React.FC<ProductCardProps> = ({
     setTempSize(currentSize);
   }
 
+  const options = Array.isArray(product.options) ? product.options : [];
+  const variants = product.variants || [];
+  const variantPrices = variants.map((v: any) => v.price).filter((p: any) => p > 0);
+  const minPrice = variantPrices.length > 0 ? Math.min(...variantPrices) : product.price;
+  const maxPrice = variantPrices.length > 0 ? Math.max(...variantPrices) : product.price;
+  const hasPriceRange = minPrice !== maxPrice;
+
+  const isEffectivePriceCombined = React.useMemo(() => {
+    if (product.isPriceCombined) return true;
+    if (variants.length > 0) {
+      return variants.some((v: any) => v.isPriceCombined);
+    }
+    return false;
+  }, [product.isPriceCombined, variants]);
+
+  const { minInclusivePrice, maxInclusivePrice, hasInclusivePriceRange } = React.useMemo(() => {
+    if (variants.length === 0) {
+      const price = calculateInclusivePrice(
+        product.price,
+        product.weight,
+        product.length,
+        product.width,
+        product.height,
+        rates,
+        undefined,
+        product.domesticShippingFee || 0,
+        product.basePriceRMB,
+        isEffectivePriceCombined
+      );
+      return { minInclusivePrice: price, maxInclusivePrice: price, hasInclusivePriceRange: false };
+    }
+
+    const inclusivePrices = variants.map((v: any) => {
+      const isVariantCombined = v.isPriceCombined || product.isPriceCombined || false;
+      const variantBasePriceRMB = v.basePriceRMB && v.basePriceRMB > 0 ? v.basePriceRMB : product.basePriceRMB;
+      
+      return calculateInclusivePrice(
+        v.price,
+        v.weight || product.weight,
+        v.length || product.length,
+        v.width || product.width,
+        v.height || product.height,
+        rates,
+        undefined,
+        product.domesticShippingFee || 0,
+        variantBasePriceRMB,
+        isVariantCombined
+      );
+    }).filter((p: number) => p > 0);
+
+    if (inclusivePrices.length === 0) {
+       // Fallback if variants exist but have 0 price?
+       // Use product price
+       const price = calculateInclusivePrice(
+        product.price,
+        product.weight,
+        product.length,
+        product.width,
+        product.height,
+        rates,
+        undefined,
+        product.domesticShippingFee || 0,
+        product.basePriceRMB,
+        isEffectivePriceCombined
+      );
+      return { minInclusivePrice: price, maxInclusivePrice: price, hasInclusivePriceRange: false };
+    }
+
+    const min = Math.min(...inclusivePrices);
+    const max = Math.max(...inclusivePrices);
+    return { minInclusivePrice: min, maxInclusivePrice: max, hasInclusivePriceRange: min !== max };
+  }, [product, variants, rates, isEffectivePriceCombined]);
+
+
   const handleWeightSubmit = () => {
     const newWeight = parseFloat(tempWeight);
     if (!isNaN(newWeight) && newWeight !== product.weight) {
@@ -104,7 +178,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
           undefined,
           product.domesticShippingFee || 0,
           product.basePriceRMB,
-          product.isPriceCombined
+          isEffectivePriceCombined
         );
         if (newPrice !== product.price) {
           updates.price = newPrice;
@@ -137,9 +211,9 @@ const ProductCard: React.FC<ProductCardProps> = ({
               rates,
               undefined,
               product.domesticShippingFee || 0,
-              product.basePriceRMB,
-              product.isPriceCombined
-            );
+          product.basePriceRMB,
+          isEffectivePriceCombined
+        );
             if (newPrice !== product.price) {
               updates.price = newPrice;
             }
@@ -156,12 +230,6 @@ const ProductCard: React.FC<ProductCardProps> = ({
   const [editingName, setEditingName] = useState<string | null>(null);
   const [tempValue, setTempValue] = useState('');
   const [tempName, setTempName] = useState('');
-
-  const variants = product.variants || [];
-  const variantPrices = variants.map((v: any) => v.price).filter((p: any) => p > 0);
-  const minPrice = variantPrices.length > 0 ? Math.min(...variantPrices) : product.price;
-  const maxPrice = variantPrices.length > 0 ? Math.max(...variantPrices) : product.price;
-  const hasPriceRange = minPrice !== maxPrice;
 
   const handlePriceSubmit = () => {
     const newPrice = parseFloat(tempPrice);
@@ -183,7 +251,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
       setEditingName(null);
       return;
     }
-    const newOptions = product.options.map((o: any) => 
+    const newOptions = options.map((o: any) => 
       o.id === optionId ? { ...o, name: tempName.trim() } : o
     );
     if (onUpdateOptions) {
@@ -197,7 +265,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
       setEditingValue(null);
       return;
     }
-    const option = product.options.find((o: any) => o.id === optionId);
+    const option = options.find((o: any) => o.id === optionId);
     if (!option) return;
 
     let values = [];
@@ -210,7 +278,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
     const newValues = [...values];
     newValues[index] = tempValue.trim();
 
-    const newOptions = product.options.map((o: any) => 
+    const newOptions = options.map((o: any) => 
       o.id === optionId ? { ...o, values: newValues } : o
     );
 
@@ -222,7 +290,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
 
   const handleRemoveOptionValue = (optionId: string, valueToRemove: string) => {
     // Find the option by ID or fallback to matching by name if ID is missing (legacy)
-    const option = product.options.find((o: any) => 
+    const option = options.find((o: any) => 
       (optionId && o.id === optionId) || (!o.id && !optionId)
     );
     if (!option) return;
@@ -230,7 +298,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
     const optionName = option.name;
     
     // Ensure all options have parsed values and consistent IDs for mapping
-    const parsedOptions = product.options.map((o: any) => {
+    const parsedOptions = options.map((o: any) => {
       let vals = o.values;
       if (typeof vals === 'string') {
         try { vals = JSON.parse(vals); } catch { vals = []; }
@@ -285,7 +353,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
 
   const handleRemoveOption = (optionId: string) => {
     // Find the option by ID or fallback to matching by name if ID is missing (legacy)
-    const option = product.options.find((o: any) => 
+    const option = options.find((o: any) => 
       (optionId && o.id === optionId) || (!o.id && !optionId)
     );
     if (!option) return;
@@ -294,7 +362,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
     const optionName = option.name;
     
     // Ensure all options have parsed values
-    const parsedOptions = product.options.map((o: any) => {
+    const parsedOptions = options.map((o: any) => {
       let vals = o.values;
       if (typeof vals === 'string') {
         try { vals = JSON.parse(vals); } catch { vals = []; }
@@ -347,7 +415,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
     if (!newValue.trim()) return;
     
     // Ensure all options have parsed values
-    const parsedOptions = product.options.map((o: any) => {
+    const parsedOptions = options.map((o: any) => {
       let vals = o.values;
       if (typeof vals === 'string') {
         try { vals = JSON.parse(vals); } catch { vals = []; }
@@ -397,7 +465,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
 
       <div className="p-4 flex gap-4 flex-row-reverse items-start">
         <ProductImageCarousel 
-          images={[...(product.images || []), ...(product.detailImages || [])]} 
+          images={Array.isArray(product.images) ? product.images : []} 
           mainImage={product.image} 
           isActive={product.isActive || product.status === 'DRAFT'} 
         />
@@ -467,7 +535,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
                   مسودة محلية
                 </span>
               )}
-              {product.status === 'DRAFT' && !product.isLocal && (
+              {product.status === 'DRAFT' && !product.isLocal && !product.isActive && (
                 <span className="text-[9px] font-black bg-amber-100 text-amber-600 dark:bg-amber-500/20 dark:text-amber-400 px-1.5 py-0.5 rounded">{t('dashboard.products.badges.draft')}</span>
               )}
               {!product.isActive && (
@@ -572,20 +640,20 @@ const ProductCard: React.FC<ProductCardProps> = ({
                   <div className="flex items-center gap-1 justify-end text-primary">
                     <Truck size={14} className="opacity-70" />
                     <p className="text-sm font-black">
-                      {hasPriceRange ? (
-                        `${calculateInclusivePrice(minPrice, product.weight, product.length, product.width, product.height, rates, undefined, product.domesticShippingFee || 0, product.basePriceRMB, product.isPriceCombined).toLocaleString()} - ${calculateInclusivePrice(maxPrice, product.weight, product.length, product.width, product.height, rates, undefined, product.domesticShippingFee || 0, product.basePriceRMB, product.isPriceCombined).toLocaleString()} ${t('common.iqd')}`
+                      {hasInclusivePriceRange ? (
+                        `${minInclusivePrice.toLocaleString()} - ${maxInclusivePrice.toLocaleString()} ${t('common.iqd')}`
                       ) : (
-                        `${calculateInclusivePrice(product.price, product.weight, product.length, product.width, product.height, rates, undefined, product.domesticShippingFee || 0, product.basePriceRMB, product.isPriceCombined).toLocaleString()} ${t('common.iqd')}`
+                        `${minInclusivePrice.toLocaleString()} ${t('common.iqd')}`
                       )}
                     </p>
                   </div>
-                  {hasPriceRange && (
+                  {(hasPriceRange || hasInclusivePriceRange) && (
                     <p className="text-[9px] text-slate-400 font-bold">يختلف حسب المتغير</p>
                   )}
                 </div>
               )}
-              {product.basePriceRMB > 0 && (
-                <p className="text-[10px] text-slate-400 font-bold font-sans">{product.basePriceRMB.toLocaleString()} RMB</p>
+              {(product.basePriceRMB ?? 0) > 0 && (
+                <p className="text-[10px] text-slate-400 font-bold font-sans">{(product.basePriceRMB ?? 0).toLocaleString()} RMB</p>
               )}
             </div>
           </div>

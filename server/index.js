@@ -1,6 +1,7 @@
 import dns from 'node:dns';
 dns.setDefaultResultOrder('ipv4first');
 
+import { randomUUID } from 'node:crypto';
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -54,6 +55,142 @@ const safeParseFloat = (val) => {
   return isNaN(parsed) ? null : parsed;
 };
 
+const applyDynamicPricingToProduct = (product, rates) => {
+  if (!product) return product;
+
+  // Helper to calculate price for a specific target (product or variant)
+  const calcPrice = (target, method) => {
+    const basePrice = target.price || 0;
+    const weight = target.weight || product.weight || 0.5;
+    const length = target.length || product.length || 0;
+    const width = target.width || product.width || 0;
+    const height = target.height || product.height || 0;
+    // Use target's basePriceRMB if available, else product's
+    const basePriceRMB = (target.basePriceRMB && target.basePriceRMB > 0) ? target.basePriceRMB : (product.basePriceRMB || null);
+    const isPriceCombined = target.isPriceCombined ?? product.isPriceCombined ?? false;
+    const domesticShippingFee = product.domesticShippingFee || 0;
+
+    return getAdjustedPrice(
+      basePrice, weight, length, width, height, method,
+      domesticShippingFee, basePriceRMB, isPriceCombined, rates
+    );
+  };
+
+  // 1. Calculate for all variants if they exist
+  let newVariants = [];
+  if (product.variants && Array.isArray(product.variants)) {
+    newVariants = product.variants.map(v => {
+      const seaPrice = calcPrice(v, 'sea');
+      const airPrice = calcPrice(v, 'air');
+      return {
+        ...v,
+        price: seaPrice, // Default to Sea
+        inclusivePrice: seaPrice,
+        seaPrice,
+        airPrice
+      };
+    });
+  }
+
+  // 2. Find min variant from the *newly calculated* prices
+  let minVariant = null;
+  if (newVariants.length > 0) {
+    minVariant = newVariants.reduce((min, curr) => {
+      if (!curr.price) return min;
+      if (!min) return curr;
+      return curr.price < min.price ? curr : min;
+    }, null);
+  }
+
+  // 3. Calculate main product prices
+  let seaPrice, airPrice;
+  
+  if (minVariant) {
+    seaPrice = minVariant.seaPrice;
+    airPrice = minVariant.airPrice;
+  } else {
+    seaPrice = calcPrice(product, 'sea');
+    airPrice = calcPrice(product, 'air');
+  }
+
+  return {
+    ...product,
+    variants: newVariants,
+    price: seaPrice, // Update price to match default (sea)
+    inclusivePrice: seaPrice, // Default to sea price as per requirement
+    airPrice,
+    seaPrice
+  };
+};
+
+const embeddingJobQueue = [];
+const embeddingJobSet = new Set();
+const embeddingJobAttempts = new Map();
+let embeddingJobRunning = false;
+
+const bulkImportJobQueue = [];
+const bulkImportJobs = new Map();
+let bulkImportJobRunning = false;
+
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+const getHttpStatusFromError = (err) => {
+  if (!err) return null;
+  const direct = err.status ?? err.statusCode;
+  if (typeof direct === 'number') return direct;
+  const resp = err.response?.status;
+  if (typeof resp === 'number') return resp;
+  const msg = String(err.message || '');
+  const match = msg.match(/\b(4\d\d|5\d\d)\b/);
+  return match ? Number(match[1]) : null;
+};
+
+const enqueueEmbeddingJob = (productId) => {
+  const id = safeParseId(productId);
+  if (!id) return;
+  if (!process.env.SILICONFLOW_API_KEY && !process.env.HUGGINGFACE_API_KEY) return;
+  if (embeddingJobSet.has(id)) return;
+  embeddingJobQueue.push(id);
+  embeddingJobSet.add(id);
+  void runEmbeddingJobs();
+};
+
+const runEmbeddingJobs = async () => {
+  if (embeddingJobRunning) return;
+  embeddingJobRunning = true;
+  try {
+    while (embeddingJobQueue.length > 0) {
+      const productId = embeddingJobQueue.shift();
+      embeddingJobSet.delete(productId);
+
+      try {
+        await processProductEmbedding(productId);
+        embeddingJobAttempts.delete(productId);
+        await sleep(2500);
+      } catch (err) {
+        const prev = embeddingJobAttempts.get(productId) || 0;
+        const nextAttempt = prev + 1;
+        embeddingJobAttempts.set(productId, nextAttempt);
+
+        const status = getHttpStatusFromError(err);
+        const waitMs = status === 429 ? 60000 : 15000;
+
+        if (nextAttempt <= 10) {
+          await sleep(waitMs);
+          if (!embeddingJobSet.has(productId)) {
+            embeddingJobQueue.push(productId);
+            embeddingJobSet.add(productId);
+          }
+        } else {
+          embeddingJobAttempts.delete(productId);
+        }
+      }
+    }
+  } finally {
+    embeddingJobRunning = false;
+  }
+};
+
 /**
  * Standard SSE Middleware to ensure headers are set correctly
  * Use this for any long-running event streams
@@ -94,38 +231,181 @@ const extractNumber = (val) => {
  * Calculates the product price with appropriate markup based on shipping method.
  * Used during bulk import and creation.
  */
-const calculateBulkImportPrice = (rawPrice, domesticFee, weight, length, width, height, explicitMethod) => {
+const calculateBulkImportPrice = (rawPrice, domesticFee, weight, length, width, height, explicitMethod, rates) => {
   const weightInKg = extractNumber(weight) || 0.5; // Default 0.5kg if missing
   
   let method = explicitMethod?.toLowerCase();
   
   if (!method) {
-    // Default logic matching frontend: < 2kg is AIR, >= 2kg is SEA
-    method = (weightInKg > 0 && weightInKg < 2) ? 'air' : 'sea';
+    // Default logic matching frontend: < 1kg is AIR, >= 1kg is SEA
+    method = (weightInKg > 0 && weightInKg < 1) ? 'air' : 'sea';
   }
 
   const domestic = domesticFee || 0;
 
   if (method === 'air') {
-    // Air Pricing logic: (Base Price + Domestic Fee + (Weight * Air Rate)) * 1.20
-    const airRate = 15400;
+    const airRate = (rates?.airShippingRate ?? rates?.airRate ?? 15400);
+    // No minimum floor for air shipping as per user request
     const shippingCost = weightInKg * airRate;
-    const price = (rawPrice + domestic + shippingCost) * 1.20;
+    
+    // Treat rawPrice as IQD (no heuristic conversion)
+    const basePrice = rawPrice;
+    
+    const price = (basePrice + domestic + shippingCost) * 1.20;
     return Math.ceil(price / 250) * 250;
   } else {
-    // Sea: (Base Price + Domestic Fee + Sea Shipping) * 1.20
-    const seaRate = 182000;
+    const seaRate = (rates?.seaShippingRate ?? rates?.seaRate ?? 182000);
+    const seaMinFloor = (rates?.seaShippingMinFloor ?? rates?.minFloor ?? 500);
     const l = extractNumber(length) || 0;
     const w = extractNumber(width) || 0;
     const h = extractNumber(height) || 0;
 
     const volumeCbm = (l * w * h) / 1000000;
-    const seaShippingCost = Math.max(volumeCbm * seaRate, 1000);
+    const seaShippingCost = Math.max(volumeCbm * seaRate, seaMinFloor);
+    
+    // Treat rawPrice as IQD (no heuristic conversion)
+    const basePrice = rawPrice;
 
-    const price = (rawPrice + domestic + seaShippingCost) * 1.20;
+    const price = (basePrice + domestic + seaShippingCost) * 1.20;
     return Math.ceil(price / 250) * 250;
   }
 };
+
+const estimateRawPriceFromStoredPrice = (storedPrice, domesticFee, weight, length, width, height, rates) => {
+  const stored = Number(storedPrice) || 0;
+  if (stored <= 0) return 0;
+
+  const domestic = Number(domesticFee) || 0;
+  const weightInKg = extractNumber(weight) || 0.5;
+  const method = (weightInKg > 0 && weightInKg < 1) ? 'air' : 'sea';
+
+  if (method === 'air') {
+    const airRate = (rates?.airShippingRate ?? rates?.airRate ?? 15400);
+    // No minimum floor
+    const shippingCost = weightInKg * airRate;
+    const raw = (stored / 1.20) - domestic - shippingCost;
+    return raw > 0 ? raw : 0;
+  }
+
+  const seaRate = (rates?.seaShippingRate ?? rates?.seaRate ?? 182000);
+  const l = extractNumber(length) || 0;
+  const w = extractNumber(width) || 0;
+  const h = extractNumber(height) || 0;
+  const volumeCbm = (l * w * h) / 1000000;
+  const seaShippingCost = Math.max(volumeCbm * seaRate, 500);
+  const raw = (stored / 1.20) - domestic - seaShippingCost;
+  return raw > 0 ? raw : 0;
+};
+
+// removed legacy applyDynamicPricingToProduct
+
+async function recalculateExistingProductPrices(oldRates, newRates) {
+  const batchSize = 150;
+  let lastId = 0;
+  let updatedProducts = 0;
+  let updatedVariants = 0;
+  const startedAt = Date.now();
+
+  console.log('[Settings] Recalculating product prices...', { oldRates, newRates });
+
+  while (true) {
+    const products = await prisma.product.findMany({
+      where: { id: { gt: lastId }, status: { not: 'DELETED' } },
+      orderBy: { id: 'asc' },
+      take: batchSize,
+      select: {
+        id: true,
+        price: true,
+        basePriceRMB: true,
+        domesticShippingFee: true,
+        weight: true,
+        length: true,
+        width: true,
+        height: true,
+        isPriceCombined: true,
+        variants: {
+          select: {
+            id: true,
+            price: true,
+            weight: true,
+            length: true,
+            width: true,
+            height: true,
+            isPriceCombined: true
+          }
+        }
+      }
+    });
+
+    if (products.length === 0) break;
+    lastId = products[products.length - 1].id;
+
+    const tasks = [];
+
+    for (const product of products) {
+      const domesticFee = Number(product.domesticShippingFee) || 0;
+
+      const hasBase = Number(product.basePriceRMB) > 0;
+      // Only reprice if not combined. If combined, we respect the stored price.
+      const shouldRepriceProduct = !product.isPriceCombined && (hasBase || product.price > 0);
+
+      if (shouldRepriceProduct) {
+        const raw = hasBase
+          ? Number(product.basePriceRMB)
+          : estimateRawPriceFromStoredPrice(product.price, domesticFee, product.weight, product.length, product.width, product.height, oldRates);
+
+        if (raw > 0) {
+          const priceInput = raw;
+          const newPrice = calculateBulkImportPrice(priceInput, domesticFee, product.weight, product.length, product.width, product.height, null, newRates);
+          if (Number.isFinite(newPrice) && newPrice > 0 && newPrice !== product.price) {
+            tasks.push(() => prisma.product.update({
+              where: { id: product.id },
+              data: hasBase ? { price: newPrice } : { price: newPrice, basePriceRMB: raw }
+            }).then(() => { updatedProducts += 1; }));
+          } else if (!hasBase) {
+            tasks.push(() => prisma.product.update({
+              where: { id: product.id },
+              data: { basePriceRMB: raw }
+            }).catch(() => {}).then(() => {}));
+          }
+        }
+      }
+
+      for (const v of product.variants) {
+        if (v.isPriceCombined) continue;
+        const vWeight = (v.weight ?? product.weight);
+        const vLength = (v.length ?? product.length);
+        const vWidth = (v.width ?? product.width);
+        const vHeight = (v.height ?? product.height);
+
+        const vRaw = estimateRawPriceFromStoredPrice(v.price, domesticFee, vWeight, vLength, vWidth, vHeight, oldRates);
+        if (vRaw > 0) {
+          const vNewPrice = calculateBulkImportPrice(vRaw, domesticFee, vWeight, vLength, vWidth, vHeight, null, newRates);
+          if (Number.isFinite(vNewPrice) && vNewPrice > 0 && vNewPrice !== v.price) {
+            tasks.push(() => prisma.productVariant.update({
+              where: { id: v.id },
+              data: { price: vNewPrice }
+            }).then(() => { updatedVariants += 1; }));
+          }
+        }
+      }
+    }
+
+    const concurrency = 20;
+    for (let i = 0; i < tasks.length; i += concurrency) {
+      const slice = tasks.slice(i, i + concurrency);
+      await Promise.allSettled(slice.map(fn => fn()));
+    }
+
+    await new Promise((r) => setImmediate(r));
+  }
+
+  console.log('[Settings] Price recalculation finished', {
+    updatedProducts,
+    updatedVariants,
+    elapsedMs: Date.now() - startedAt
+  });
+}
 
 // Helper to parse variant-specific values from a string like "200g (S), 300g (XL)"
 const parseVariantValues = (str) => {
@@ -160,8 +440,86 @@ const cleanStr = (s) => {
   return s.replace(/\bempty\b/gi, '').trim();
 };
 
+const extractGeneratedOptionEntries = (opt) => {
+  const out = [];
+  if (!opt || typeof opt !== 'object') return out;
+
+  const maybeParseJson = (val) => {
+    if (!val) return null;
+    if (typeof val === 'object') return val;
+    if (typeof val === 'string') {
+      try {
+        const parsed = JSON.parse(val);
+        return parsed && typeof parsed === 'object' ? parsed : null;
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  };
+
+  const metaKeys = new Set(['price', 'image', 'shippingmethod', 'method', 'stock']);
+
+  const pushEntry = (rawKey, rawVal) => {
+    const cleanedKey = cleanStr(String(rawKey));
+    if (!cleanedKey) return;
+    const lower = cleanedKey.toLowerCase();
+    if (metaKeys.has(lower)) return;
+
+    if (lower === 'options' || lower === 'combination' || lower === 'variant' || lower === 'variants') {
+      const nested = maybeParseJson(rawVal);
+      if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+        for (const [k, v] of Object.entries(nested)) pushEntry(k, v);
+        return;
+      }
+    }
+
+    out.push([cleanedKey, rawVal]);
+  };
+
+  for (const [k, v] of Object.entries(opt)) pushEntry(k, v);
+  return out;
+};
+
+const fieldMapping = {
+  'size': 'المقاس',
+  'Size': 'المقاس',
+  '尺码': 'المقاس',
+  'color': 'اللون',
+  'Color': 'اللون',
+  '颜色': 'اللون',
+  '颜色分类': 'اللون',
+  'اللون': 'اللون',
+  'تصنيف الألوان': 'اللون',
+  'المقاس': 'المقاس',
+  'style': 'الستايل',
+  'material': 'الخامة',
+  'type': 'النوع',
+  'model': 'الموديل',
+  'Model': 'الموديل',
+  '型号': 'الموديل'
+};
+
+const productVariantSelect = {
+  id: true,
+  productId: true,
+  combination: true,
+  price: true,
+  basePriceRMB: true,
+  weight: true,
+  height: true,
+  length: true,
+  width: true,
+  image: true,
+  isPriceCombined: true
+};
+
 // Server start - Build Trigger: 2026-01-26 22:00
 const app = express();
+console.log('-------------------------------------------');
+console.log('--- UPDATED VARIANT LOGIC LOADED (v4 - FINAL FIX) ---');
+console.log('--- STRICTLY NO CURRENCY CONVERSION ---');
+console.log('-------------------------------------------');
 const httpServer = createServer(app);
 
 // Health check endpoint for Render/Deployment
@@ -1444,7 +1802,7 @@ app.get('/api/admin/orders/:id', authenticateToken, isAdmin, hasPermission('mana
         items: {
           include: { 
             product: true,
-            variant: true
+            variant: { select: productVariantSelect }
           }
         }
       }
@@ -1706,7 +2064,7 @@ app.put('/api/admin/orders/:id/international-fee', authenticateToken, isAdmin, h
         user: { select: { id: true, name: true, email: true } },
         address: true,
         items: {
-          include: { product: true, variant: true }
+          include: { product: true, variant: { select: productVariantSelect } }
         }
       }
     });
@@ -1831,12 +2189,42 @@ app.put('/api/admin/notifications/read-all', authenticateToken, isAdmin, async (
   }
 });
 
+// ADMIN: Trigger AI processing for a product
+app.post('/api/admin/products/:id/process-ai', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const productId = safeParseId(id);
+    
+    console.log(`[Admin] Manually triggering AI processing for product ${productId}`);
+    
+    // Run asynchronously to not block response
+    processProductAI(productId).catch(err => {
+      console.error(`[Admin] Background AI processing failed for ${productId}:`, err);
+    });
+
+    res.json({ success: true, message: 'AI processing started in background' });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to trigger AI processing' });
+  }
+});
+
 // ADMIN: Bulk update products status
 app.post('/api/admin/products/bulk-status', authenticateToken, isAdmin, hasPermission('manage_products'), async (req, res) => {
   try {
     const { ids, isActive } = req.body;
+    
+    if (!ids || !Array.isArray(ids)) {
+      return res.status(400).json({ error: 'Invalid IDs' });
+    }
+
+    const parsedIds = ids.map(id => safeParseId(id)).filter(id => typeof id === 'number');
+
+    if (parsedIds.length === 0) {
+      return res.json({ success: true });
+    }
+
     await prisma.product.updateMany({
-      where: { id: { in: ids } },
+      where: { id: { in: parsedIds } },
       data: { isActive }
     });
     
@@ -1844,12 +2232,13 @@ app.post('/api/admin/products/bulk-status', authenticateToken, isAdmin, hasPermi
       req.user.id,
       req.user.name,
       'BULK_UPDATE_PRODUCT_STATUS',
-      { ids, isActive },
+      { ids: parsedIds, isActive },
       'PRODUCT'
     );
     
     res.json({ success: true });
   } catch (error) {
+    console.error('Bulk status update error:', error);
     res.status(500).json({ error: 'Failed to bulk update products' });
   }
 });
@@ -2467,6 +2856,13 @@ app.get('/api/products', async (req, res) => {
     const search = req.query.search || '';
     const maxPrice = req.query.maxPrice ? parseFloat(req.query.maxPrice) : null;
 
+    const storeSettings = await prisma.storeSettings.findUnique({ where: { id: 1 } });
+    const shippingRates = {
+      airShippingRate: storeSettings?.airShippingRate,
+      seaShippingRate: storeSettings?.seaShippingRate,
+      airShippingMinFloor: storeSettings?.airShippingMinFloor
+    };
+
     // Use AI Hybrid Search if searching and keys are available
     if (search && process.env.SILICONFLOW_API_KEY && process.env.HUGGINGFACE_API_KEY) {
       try {
@@ -2476,7 +2872,7 @@ app.get('/api/products', async (req, res) => {
         // Since hybrid search is dynamic, we estimate total for pagination or just return results
         // For better UX, we can return a large total if there are results
         return res.json({
-          products,
+          products: Array.isArray(products) ? products.map(p => applyDynamicPricingToProduct(p, shippingRates)) : products,
           total: products.length === limit ? page * limit + limit : (page - 1) * limit + products.length,
           page,
           totalPages: products.length === limit ? page + 1 : page
@@ -2495,7 +2891,8 @@ app.get('/api/products', async (req, res) => {
       where.OR = [
         { name: { contains: search } },
         { description: { contains: search } },
-        { chineseName: { contains: search } }
+        { chineseName: { contains: search } },
+        { purchaseUrl: { contains: search } }
       ];
     }
 
@@ -2506,12 +2903,29 @@ app.get('/api/products', async (req, res) => {
     const [products, total] = await Promise.all([
       prisma.product.findMany({
         where,
-        include: { 
-          options: true,
-          variants: true,
-          images: {
-            orderBy: {
-              order: 'asc'
+        select: {
+          id: true,
+          name: true,
+          chineseName: true,
+          price: true,
+          basePriceRMB: true,
+          image: true,
+          isFeatured: true,
+          weight: true,
+          length: true,
+          width: true,
+          height: true,
+          domesticShippingFee: true,
+          isPriceCombined: true,
+          variants: {
+            select: {
+              price: true,
+              basePriceRMB: true,
+              weight: true,
+              length: true,
+              width: true,
+              height: true,
+              isPriceCombined: true
             }
           }
         },
@@ -2523,12 +2937,13 @@ app.get('/api/products', async (req, res) => {
     ]);
 
     res.json({
-      products,
+      products: products.map(p => applyDynamicPricingToProduct(p, shippingRates)),
       total,
       page,
       totalPages: Math.ceil(total / limit)
     });
   } catch (error) {
+    console.error('[Products] Failed to fetch products:', error);
     res.status(500).json({ error: 'Failed to fetch products' });
   }
 });
@@ -2538,6 +2953,7 @@ app.get('/api/admin/products/check-existence', authenticateToken, isAdmin, async
   try {
     const products = await prisma.product.findMany({
       select: {
+        id: true,
         name: true,
         purchaseUrl: true,
         chineseName: true
@@ -2557,6 +2973,13 @@ app.get('/api/admin/products', authenticateToken, isAdmin, hasPermission('manage
     const skip = (page - 1) * limit;
     const search = req.query.search || '';
     const status = req.query.status || 'ALL';
+
+    const storeSettings = await prisma.storeSettings.findUnique({ where: { id: 1 } });
+    const shippingRates = {
+      airShippingRate: storeSettings?.airShippingRate,
+      seaShippingRate: storeSettings?.seaShippingRate,
+      airShippingMinFloor: storeSettings?.airShippingMinFloor
+    };
 
     const where = {};
     
@@ -2579,7 +3002,7 @@ app.get('/api/admin/products', authenticateToken, isAdmin, hasPermission('manage
         where,
         include: { 
           options: true,
-          variants: true,
+          variants: { select: productVariantSelect },
           images: {
             orderBy: {
               order: 'asc'
@@ -2594,7 +3017,7 @@ app.get('/api/admin/products', authenticateToken, isAdmin, hasPermission('manage
     ]);
 
     res.json({
-      products,
+      products: products.map(p => applyDynamicPricingToProduct(p, shippingRates)),
       total,
       page,
       totalPages: Math.ceil(total / limit)
@@ -2610,34 +3033,69 @@ app.post('/api/admin/check-links', authenticateToken, isAdmin, async (req, res) 
   res.json({ message: 'Link check started in background' });
 });
 
-// ADMIN: Create product
-app.post('/api/products/bulk', authenticateToken, isAdmin, hasPermission('manage_products'), async (req, res) => {
-  const { products, useSSE = false } = req.body;
+function emitBulkImportJobEvent(payload) {
+  io.to('admin_notifications').emit('bulk_import_job', payload);
+}
 
-  if (!Array.isArray(products)) {
-    return res.status(400).json({ error: 'Invalid products data' });
-  }
+function getBulkImportJobSnapshot(job) {
+  if (!job) return null;
+  return {
+    id: job.id,
+    userId: job.userId,
+    status: job.status,
+    total: job.total,
+    processed: job.processed,
+    createdAt: job.createdAt,
+    startedAt: job.startedAt,
+    finishedAt: job.finishedAt,
+    results: job.results,
+    error: job.error
+  };
+}
 
-  if (useSSE) {
-    // SSE Mode for large imports
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache, no-transform');
-    res.setHeader('Connection', 'keep-alive');
-    res.setHeader('X-Accel-Buffering', 'no');
-    res.flushHeaders();
-  }
-
+async function runBulkProductsImport(products, { onProgress } = {}) {
   const results = {
     total: products.length,
     imported: 0,
     skipped: 0,
+    requeued: 0,
     failed: 0,
     errors: [],
-    drafts: []
+    skippedDetails: []
   };
 
-  // Helper to clean strings and remove the word 'empty'
-  // Standardize option names
+  const storeSettings = await prisma.storeSettings.findUnique({ where: { id: 1 } });
+  const shippingRates = {
+    airShippingRate: storeSettings?.airShippingRate,
+    seaShippingRate: storeSettings?.seaShippingRate,
+    airShippingMinFloor: storeSettings?.airShippingMinFloor,
+    seaShippingMinFloor: storeSettings?.seaShippingMinFloor,
+    minFloor: storeSettings?.seaShippingMinFloor // Alias for compatibility
+  };
+
+  const parsePriceCandidate = (val) => {
+    if (val === undefined || val === null) return 0;
+    if (typeof val === 'number') return Number.isFinite(val) ? val : 0;
+    const matches = String(val).match(/(\d+(\.\d+)?)/g);
+    if (!matches) return 0;
+    let max = 0;
+    for (const m of matches) {
+      const n = parseFloat(m);
+      if (Number.isFinite(n) && n > max) max = n;
+    }
+    return max;
+  };
+
+  const isUnnamed = (val) => {
+    const s = String(val || '').trim().toLowerCase();
+    if (!s) return true;
+    if (s === 'unnamed') return true;
+    if (s === 'unnamed product') return true;
+    if (s.includes('unnamed')) return true;
+    if (s === 'n/a' || s === 'na' || s === '-' || s === 'null' || s === 'undefined') return true;
+    return false;
+  };
+
   const fieldMapping = {
     'size': 'المقاس',
     'Size': 'المقاس',
@@ -2651,7 +3109,26 @@ app.post('/api/products/bulk', authenticateToken, isAdmin, hasPermission('manage
     'المقاس': 'المقاس',
     'style': 'الستايل',
     'material': 'الخامة',
-    'type': 'النوع'
+    'type': 'النوع',
+    'model': 'المقاس',
+    'models': 'المقاس',
+    'colors': 'اللون',
+    'colours': 'اللون',
+    'color': 'اللون',
+    'colour': 'اللون',
+    'size': 'المقاس',
+    'sizes': 'المقاس'
+  };
+
+  const maybeReportProgress = () => {
+    if (typeof onProgress !== 'function') return;
+    const processed = results.imported + results.skipped + results.failed;
+    onProgress({
+      results,
+      processed,
+      total: results.total,
+      progress: results.total > 0 ? Math.round((processed / results.total) * 100) : 100
+    });
   };
 
   for (const p of products) {
@@ -2674,28 +3151,40 @@ app.post('/api/products/bulk', authenticateToken, isAdmin, hasPermission('manage
       };
       const aiMetadata = parseJsonObject(p.aiMetadata) || parseJsonObject(p.marketing_metadata);
       
-      // Existence check (by name or purchaseUrl)
-      const existingProduct = await prisma.product.findFirst({
-        where: {
-          OR: [
-            { name: name },
-            { purchaseUrl: purchaseUrl !== '' ? purchaseUrl : undefined },
-            { chineseName: chineseName !== '' ? chineseName : undefined }
-          ].filter(condition => Object.values(condition)[0] !== undefined)
+      let existingProduct = null;
+      if (purchaseUrl && !isUnnamed(name)) {
+        existingProduct = await prisma.product.findFirst({ where: { purchaseUrl, name } });
+        if (!existingProduct && chineseName) {
+          existingProduct = await prisma.product.findFirst({ where: { purchaseUrl, chineseName } });
         }
-      });
+      } else if (purchaseUrl) {
+        existingProduct = await prisma.product.findFirst({ where: { purchaseUrl } });
+      } else if (chineseName && !isUnnamed(name)) {
+        existingProduct = await prisma.product.findFirst({ where: { name, chineseName } });
+      } else if (!isUnnamed(name)) {
+        existingProduct = await prisma.product.findFirst({ where: { name } });
+      }
 
       if (existingProduct) {
         results.skipped++;
+        enqueueEmbeddingJob(existingProduct.id);
+        results.requeued++;
+        if (Array.isArray(results.skippedDetails) && results.skippedDetails.length < 25) {
+          const matchedBy = [];
+          if (purchaseUrl && existingProduct.purchaseUrl === purchaseUrl) matchedBy.push('purchaseUrl');
+          if (chineseName && existingProduct.chineseName === chineseName) matchedBy.push('chineseName');
+          if (!isUnnamed(name) && existingProduct.name === name) matchedBy.push('name');
+          results.skippedDetails.push({
+            name,
+            existingId: existingProduct.id,
+            matchedBy: matchedBy.length ? matchedBy : ['unknown']
+          });
+        }
+        maybeReportProgress();
         continue;
       }
 
-      // Enhanced price parsing
-      const parsePrice = (val) => {
-        if (val === undefined || val === null || val === '') return 0;
-        const cleanVal = String(val).replace(/[^\d.]/g, '');
-        return parseFloat(cleanVal) || 0;
-      };
+      const parsePrice = parsePriceCandidate;
 
       const parseNum = (val, isWeight = false) => {
         if (val === undefined || val === null || val === '') return null;
@@ -2703,39 +3192,147 @@ app.post('/api/products/bulk', authenticateToken, isAdmin, hasPermission('manage
         let num = parseFloat(cleanVal);
         if (isNaN(num)) return null;
         
-        // If the value is > 100 and it's weight, it's likely in grams (e.g. 300 means 300g)
-        // Convert to kg (300g -> 0.3kg)
         if (isWeight && num > 100) {
           num = num / 1000;
         }
         return num;
       };
       
-      const domesticShippingFee = parsePrice(p.domestic_shipping_fee || p.domesticShippingFee) || 0;
-      const rawPrice = parsePrice(p.general_price) || parsePrice(p.price) || parsePrice(p.basePriceRMB) || 0;
-      const price = calculateBulkImportPrice(rawPrice, domesticShippingFee, p.weight || p['重量'] || p.grossWeight, p.length || p['长'] || p['长度'], p.width || p['宽'] || p['宽度'], p.height || p['高'] || p['高度'], p.shippingMethod);
+      const domesticShippingFee = parsePrice(p.domestic_shipping_fee || p.domesticShippingFee || p.domestic_shipping) || 0;
 
-      // Skip products with 0 price
+      let rawPrice = 0;
+      rawPrice = Math.max(
+        rawPrice,
+        parsePrice(p.general_price),
+        parsePrice(p.price),
+        parsePrice(p.basePriceRMB),
+        parsePrice(p.rawPrice),
+        parsePrice(p.rawRmbPrice)
+      );
+
+      if (rawPrice <= 0 && p.priceModel && typeof p.priceModel === 'object') {
+        if (Array.isArray(p.priceModel.currentPrices)) {
+          rawPrice = Math.max(rawPrice, ...p.priceModel.currentPrices.map(parsePrice));
+        }
+        if (Array.isArray(p.priceModel.skuPrices)) {
+          rawPrice = Math.max(rawPrice, ...p.priceModel.skuPrices.map(parsePrice));
+        }
+      }
+
+      if (rawPrice <= 0 && Array.isArray(p.variants_data)) {
+        rawPrice = Math.max(rawPrice, ...p.variants_data.map(v => parsePrice(v?.price)));
+      }
+
+      if (rawPrice <= 0 && Array.isArray(p.generated_options)) {
+        rawPrice = Math.max(rawPrice, ...p.generated_options.map(v => parsePrice(v?.price)));
+      }
+
+      const isPriceCombined = p.isPriceCombined !== undefined 
+        ? (String(p.isPriceCombined) === 'true' || p.isPriceCombined === true) 
+        : (rawPrice > 1000);
+
+      const priceInput = rawPrice;
+      const price = isPriceCombined 
+        ? rawPrice 
+        : calculateBulkImportPrice(priceInput, domesticShippingFee, p.weight || p['重量'] || p.grossWeight, p.length || p['长'] || p['长度'], p.width || p['宽'] || p['宽度'], p.height || p['高'] || p['高度'], p.shippingMethod, shippingRates);
+
       if (price <= 0 || rawPrice <= 0) {
-        console.log(`[Bulk Import] Skipping product with 0 price: ${name}`);
-        results.skipped++;
+        console.log(`[Bulk Import] Failed product with 0 price: ${name}`);
+        results.failed++;
+        results.errors.push({ name, error: 'Invalid or missing price' });
+        maybeReportProgress();
         continue;
       }
 
-      // Process options
+      const extractGeneratedOptionEntries = (opt) => {
+        const out = [];
+        if (!opt || typeof opt !== 'object') return out;
+
+        const maybeParseJson = (val) => {
+          if (!val) return null;
+          if (typeof val === 'object') return val;
+          if (typeof val === 'string') {
+            try {
+              const parsed = JSON.parse(val);
+              return parsed && typeof parsed === 'object' ? parsed : null;
+            } catch {
+              return null;
+            }
+          }
+          return null;
+        };
+
+        const metaKeys = new Set(['price', 'image', 'shippingmethod', 'method']);
+
+        const pushEntry = (rawKey, rawVal) => {
+          const cleanedKey = cleanStr(String(rawKey));
+          if (!cleanedKey) return;
+          const lower = cleanedKey.toLowerCase();
+          if (metaKeys.has(lower)) return;
+
+          if (lower === 'options' || lower === 'combination' || lower === 'variant' || lower === 'variants') {
+            const nested = maybeParseJson(rawVal);
+            if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+              for (const [k, v] of Object.entries(nested)) pushEntry(k, v);
+              return;
+            }
+          }
+
+          out.push([cleanedKey, rawVal]);
+        };
+
+        for (const [k, v] of Object.entries(opt)) pushEntry(k, v);
+        return out;
+      };
+
       let rawOptions = [];
       if (Array.isArray(p.options)) {
         rawOptions = [...p.options];
       } else if (p.variants && typeof p.variants === 'object') {
-        if (Array.isArray(p.variants.sizes)) {
-          rawOptions.push({ name: 'المقاس', values: p.variants.sizes });
+        for (const [rawKey, rawVal] of Object.entries(p.variants)) {
+          const cleanedKey = cleanStr(String(rawKey));
+          if (!cleanedKey) continue;
+          if (!Array.isArray(rawVal)) continue;
+          const mappedName = (() => {
+            const lower = cleanedKey.toLowerCase();
+            if (lower === 'color' || lower === 'colour') return 'اللون';
+            if (lower === 'size' || lower === 'sizes') return 'المقاس';
+            return fieldMapping[cleanedKey] || cleanedKey;
+          })();
+          const values = rawVal.map(v => cleanStr(String(v))).filter(Boolean);
+          if (values.length > 0) rawOptions.push({ name: mappedName, values });
         }
-        if (Array.isArray(p.variants.colors)) {
-          rawOptions.push({ name: 'اللون', values: p.variants.colors });
+      } else if (Array.isArray(p.generated_options)) {
+        const valuesByName = new Map();
+        for (const opt of p.generated_options) {
+          for (const [cleanedKey, rawVal] of extractGeneratedOptionEntries(opt)) {
+            const lower = cleanedKey.toLowerCase();
+            const mappedName = (() => {
+              if (lower === 'color' || lower === 'colour') return 'اللون';
+              if (lower === 'size' || lower === 'sizes') return 'المقاس';
+              return fieldMapping[cleanedKey] || cleanedKey;
+            })();
+
+            const rawValues = Array.isArray(rawVal) ? rawVal : [rawVal];
+            const cleanedValues = rawValues
+              .map(v => {
+                if (v === null || v === undefined) return '';
+                if (typeof v === 'object') return cleanStr(String(v.value ?? v.name ?? JSON.stringify(v)));
+                return cleanStr(String(v));
+              })
+              .filter(Boolean);
+
+            if (cleanedValues.length === 0) continue;
+            if (!valuesByName.has(mappedName)) valuesByName.set(mappedName, new Set());
+            for (const cv of cleanedValues) valuesByName.get(mappedName).add(cv);
+          }
+        }
+        for (const [name, values] of valuesByName.entries()) {
+          const list = [...values];
+          if (list.length > 0) rawOptions.push({ name, values: list });
         }
       }
 
-      // Extract from direct properties
       Object.entries(fieldMapping).forEach(([field, standardName]) => {
         const val = p[field];
         if (val) {
@@ -2752,7 +3349,7 @@ app.post('/api/products/bulk', authenticateToken, isAdmin, hasPermission('manage
         }
       });
 
-      const processedOptions = rawOptions.map(opt => {
+      let processedOptions = rawOptions.map(opt => {
         const optName = cleanStr(opt.name);
         return {
           name: fieldMapping[optName] || optName,
@@ -2761,8 +3358,26 @@ app.post('/api/products/bulk', authenticateToken, isAdmin, hasPermission('manage
                   .filter(v => v !== '')
         };
       }).filter(opt => opt.name !== '' && opt.values.length > 0);
+      
+      console.log(`[Bulk Debug] Product: ${name}`);
+      console.log(`[Bulk Debug] Raw Options:`, JSON.stringify(rawOptions));
+      console.log(`[Bulk Debug] Processed Options (before unique):`, JSON.stringify(processedOptions));
+      
+      // Ensure unique option names by merging values
+      const uniqueOptionsMap = new Map();
+      for (const opt of processedOptions) {
+        if (!uniqueOptionsMap.has(opt.name)) {
+          uniqueOptionsMap.set(opt.name, new Set(opt.values));
+        } else {
+          for (const v of opt.values) uniqueOptionsMap.get(opt.name).add(v);
+        }
+      }
+      processedOptions = Array.from(uniqueOptionsMap.entries()).map(([name, valuesSet]) => ({
+        name,
+        values: Array.from(valuesSet)
+      }));
+      console.log(`[Bulk Debug] Processed Options (final):`, JSON.stringify(processedOptions));
 
-      // Specs and Reviews
       let specs = cleanStr(p.specs);
       if (!specs && p.product_details && typeof p.product_details === 'object') {
         specs = Object.entries(p.product_details)
@@ -2782,7 +3397,6 @@ app.post('/api/products/bulk', authenticateToken, isAdmin, hasPermission('manage
         specs = (specs || '') + '\n---REVIEW_SUMMARY---\n' + JSON.stringify(reviewSummary);
       }
 
-      // Handle images
       const rawImages = p.main_images || p.images || (p.image ? [p.image] : []);
       const imageUrls = (Array.isArray(rawImages) ? rawImages : [])
         .map(url => typeof url === 'string' ? url.replace(/[`"']/g, '').trim() : url)
@@ -2790,13 +3404,11 @@ app.post('/api/products/bulk', authenticateToken, isAdmin, hasPermission('manage
       
       const mainImage = imageUrls.length > 0 ? imageUrls[0] : (p.image || '');
 
-      // Dimensions and Weight parsing
       let weight = parseNum(p.weight || p['重量'] || p.grossWeight, true);
       let length = parseNum(p.length || p['长'] || p['长度']);
       let width = parseNum(p.width || p['宽'] || p['宽度']);
       let height = parseNum(p.height || p['高'] || p['高度']);
 
-      // Support "dimensions": "25x18x3" format
       if (p.dimensions && (!length || !width || !height)) {
         const parts = String(p.dimensions).toLowerCase().split(/[x*]/).map(s => parseFloat(s.trim()));
         if (parts.length === 3) {
@@ -2806,7 +3418,6 @@ app.post('/api/products/bulk', authenticateToken, isAdmin, hasPermission('manage
         }
       }
 
-      // AI Estimation Fallback
       if (!weight || !length || !width || !height) {
         try {
           console.log(`[AI] Estimating missing dimensions for: ${name}`);
@@ -2825,99 +3436,368 @@ app.post('/api/products/bulk', authenticateToken, isAdmin, hasPermission('manage
         }
       }
 
-      // Instead of creating in DB, add to drafts array for local storage
+      // Determine effective shipping method for consistency across variants
+      // (Moved calculation below to capture all data)
+
       const variantsInput = Array.isArray(p.variants_data) ? p.variants_data : [];
       if (variantsInput.length === 0 && Array.isArray(p.generated_options)) {
         const generated = [];
         for (const opt of p.generated_options) {
           if (!opt || typeof opt !== 'object') continue;
-          const color = cleanStr(opt.color ?? opt.colour);
-          const sizesRaw = Array.isArray(opt.sizes) ? opt.sizes : (opt.size ? [opt.size] : []);
-          const sizes = sizesRaw.map(s => cleanStr(String(s))).filter(Boolean);
           const optPrice = parsePrice(opt.price) || rawPrice;
           const optImage = cleanStr(opt.image);
 
-          const baseCombination = {};
-          if (color) baseCombination['اللون'] = color;
+          const dimensionsMap = new Map();
+          for (const [cleanedKey, rawVal] of extractGeneratedOptionEntries(opt)) {
+            const lower = cleanedKey.toLowerCase();
+            const mappedName = (() => {
+              if (lower === 'color' || lower === 'colour') return 'اللون';
+              if (lower === 'size' || lower === 'sizes') return 'المقاس';
+              return fieldMapping[cleanedKey] || cleanedKey;
+            })();
 
-          if (sizes.length === 0) {
-            if (Object.keys(baseCombination).length === 0) continue;
-            generated.push({ options: baseCombination, price: optPrice, image: optImage || null });
-          } else {
-            for (const size of sizes) {
-              generated.push({
-                options: { ...baseCombination, 'المقاس': size },
-                price: optPrice,
-                image: optImage || null
-              });
+            const rawValues = Array.isArray(rawVal) ? rawVal : [rawVal];
+            const cleanedValues = rawValues
+              .map(v => {
+                if (v === null || v === undefined) return '';
+                if (typeof v === 'object') return cleanStr(String(v.value ?? v.name ?? JSON.stringify(v)));
+                return cleanStr(String(v));
+              })
+              .filter(Boolean);
+
+            if (cleanedValues.length === 0) continue;
+            if (!dimensionsMap.has(mappedName)) dimensionsMap.set(mappedName, []);
+            dimensionsMap.get(mappedName).push(...cleanedValues);
+          }
+
+          const dimensions = [...dimensionsMap.entries()]
+            .map(([k, vals]) => [k, [...new Set(vals)]])
+            .filter(([, vals]) => vals.length > 0);
+
+          if (dimensions.length === 0) continue;
+
+          let combinations = [{}];
+          for (const [dimName, dimVals] of dimensions) {
+            const next = [];
+            for (const combo of combinations) {
+              for (const val of dimVals) {
+                next.push({ ...combo, [dimName]: val });
+              }
             }
+            combinations = next;
+          }
+
+          for (const combo of combinations) {
+            if (Object.keys(combo).length === 0) continue;
+            generated.push({ 
+              options: combo, 
+              price: optPrice, 
+              basePriceRMB: optPrice, // Explicitly set basePriceRMB
+              isPriceCombined: false, // Explicitly allow dynamic pricing
+              currency: 'IQD',
+              image: optImage || null 
+            });
           }
         }
         variantsInput.push(...generated);
       }
+      
+      const optionMap = new Map();
+      const normalizeOptionName = (optName) => cleanStr(optName).toLowerCase();
+      const addOptionValue = (optName, optValue) => {
+        const name = cleanStr(optName);
+        if (!name) return;
+        const value = cleanStr(optValue);
+        if (!value) return;
+        const key = normalizeOptionName(name);
+        if (!optionMap.has(key)) optionMap.set(key, { name, values: new Set() });
+        optionMap.get(key).values.add(value);
+      };
+      
+      for (const opt of processedOptions) {
+        if (!opt?.name) continue;
+        const vals = Array.isArray(opt.values) ? opt.values : [];
+        for (const v of vals) addOptionValue(opt.name, v);
+      }
+      
+      for (const v of variantsInput) {
+        let combo = v?.options ?? v?.combination ?? {};
+        if (typeof combo === 'string') {
+          try { combo = JSON.parse(combo); } catch { combo = {}; }
+        }
+        if (!combo || typeof combo !== 'object') continue;
+        for (const [k, rawVal] of Object.entries(combo)) {
+          const valString = typeof rawVal === 'object' && rawVal !== null
+            ? (rawVal.value ?? rawVal.name ?? JSON.stringify(rawVal))
+            : String(rawVal);
+          addOptionValue(fieldMapping[cleanStr(k)] || k, valString);
+        }
+      }
+      
+      processedOptions = [...optionMap.values()]
+        .map((entry) => ({ name: entry.name, values: [...entry.values] }))
+        .filter(opt => opt.name !== '' && opt.values.length > 0);
 
-      results.drafts.push({
-        name,
-        chineseName,
-        description: cleanStr(p.description) || '',
-        price,
-        basePriceRMB: rawPrice,
-        image: mainImage,
-        purchaseUrl,
-        status: 'DRAFT',
-        isActive: true,
-        isFeatured: !!p.isFeatured,
-        specs: specs,
-        storeEvaluation: p.storeEvaluation && typeof p.storeEvaluation === 'object' ? JSON.stringify(p.storeEvaluation) : (p.storeEvaluation || null),
-        reviewsCountShown: p.reviewsCountShown || null,
-        videoUrl: p.videoUrl || null,
-        aiMetadata: aiMetadata || null,
-        options: processedOptions,
-        variants: variantsInput.map(v => {
-          const variantRawPrice = parsePrice(v.price) || rawPrice;
-          const variantWeight = v.weight || weight || p['重量'] || p.grossWeight;
-          return {
-            combination: typeof v.options === 'object' ? v.options : {},
-            price: calculateBulkImportPrice(variantRawPrice, domesticShippingFee, variantWeight, v.length || length, v.width || width, v.height || height, v.shippingMethod || p.shippingMethod),
-            isPriceCombined: true,
-            image: v.image || null
-          };
-        }),
-        weight,
-        length,
-        width,
-        height,
-        domesticShippingFee,
-        isPriceCombined: true,
-        images: imageUrls.map((url, index) => ({
-          url: url,
-          order: index,
-          type: 'GALLERY'
-        })),
-        isLocal: true
+      // Determine effective shipping method for consistency across variants
+      let effectiveMethod = p.shippingMethod;
+      if (!effectiveMethod) {
+        const volCbm = (length || 0) * (width || 0) * (height || 0) / 1000000;
+        const w = weight || 0.5;
+        console.log(`[Bulk Debug] ${name}: VolCBM=${volCbm}, Weight=${w}, Dims=${length}x${width}x${height}`);
+        // If explicitly heavy or large volume, default to SEA
+        if (w >= 1 || volCbm > 0.02) {
+          effectiveMethod = 'sea';
+        } else {
+          effectiveMethod = 'air';
+        }
+        console.log(`[Bulk Debug] Effective Method: ${effectiveMethod}`);
+      }
+
+      // Re-calculate main price with resolved dimensions and effective method
+      const finalPriceInput = rawPrice;
+      const finalPrice = isPriceCombined 
+        ? rawPrice 
+        : calculateBulkImportPrice(finalPriceInput, domesticShippingFee, weight, length, width, height, effectiveMethod, shippingRates);
+      console.log(`[Bulk Debug] Final Main Price: ${finalPrice} (Raw=${rawPrice})`);
+
+      const product = await prisma.product.create({
+        data: {
+          name,
+          chineseName,
+          description: cleanStr(p.description) || '',
+          price: finalPrice,
+          basePriceRMB: rawPrice,
+          image: mainImage,
+          purchaseUrl,
+          status: 'PUBLISHED',
+          isActive: true,
+          isFeatured: !!p.isFeatured,
+          specs: specs,
+          storeEvaluation: p.storeEvaluation && typeof p.storeEvaluation === 'object' ? JSON.stringify(p.storeEvaluation) : (p.storeEvaluation || null),
+          reviewsCountShown: p.reviewsCountShown || null,
+          videoUrl: p.videoUrl || null,
+          aiMetadata: aiMetadata || null,
+          weight,
+          length,
+          width,
+          height,
+          domesticShippingFee,
+          isPriceCombined: isPriceCombined,
+          options: {
+            create: processedOptions.map(opt => ({
+              name: opt.name,
+              values: JSON.stringify(opt.values)
+            }))
+          },
+          variants: {
+            create: variantsInput.map(v => {
+              let variantRawPrice = parsePrice(v.price) || rawPrice;
+              let variantBaseRaw = parsePrice(v.basePriceRMB);
+              // Use explicit basePriceRMB if available (e.g. from generated options), otherwise fall back to price
+              const finalBasePrice = (variantBaseRaw && variantBaseRaw > 0) ? variantBaseRaw : variantRawPrice;
+              
+              const isGenerated = v.currency === 'IQD';
+              const variantIsPriceCombined = v.isPriceCombined !== undefined 
+                 ? (String(v.isPriceCombined) === 'true' || v.isPriceCombined === true) 
+                 : (isGenerated ? false : (isPriceCombined || variantRawPrice > 1000));
+              
+              const variantWeight = v.weight || weight || p['重量'] || p.grossWeight;
+              
+              const vPrice = variantIsPriceCombined
+                 ? finalBasePrice
+                 : calculateBulkImportPrice(finalBasePrice, domesticShippingFee, variantWeight, v.length || length, v.width || width, v.height || height, v.shippingMethod || effectiveMethod, shippingRates);
+
+              console.log(`[Bulk Debug] Variant Price: ${vPrice} (Raw=${variantRawPrice}, Method=${v.shippingMethod || effectiveMethod}, Dims=${v.length || length}x${v.width || width}x${v.height || height})`);
+
+              return {
+                combination: typeof v.options === 'object' ? JSON.stringify(v.options) : 
+                            (typeof v.combination === 'object' ? JSON.stringify(v.combination) : (v.combination || '{}')),
+                price: vPrice,
+                basePriceRMB: finalBasePrice,
+                isPriceCombined: variantIsPriceCombined,
+                image: v.image || null,
+                weight: variantWeight ? parseFloat(variantWeight) : null,
+                length: v.length ? parseFloat(v.length) : null,
+                width: v.width ? parseFloat(v.width) : null,
+                height: v.height ? parseFloat(v.height) : null
+              };
+            })
+          },
+          images: {
+            create: imageUrls.map((url, index) => ({
+              url: url,
+              order: index,
+              type: 'GALLERY'
+            }))
+          }
+        }
       });
 
+      enqueueEmbeddingJob(product.id);
+
       results.imported++;
-      
-      if (useSSE && results.imported % 5 === 0) {
-        res.write(`data: ${JSON.stringify({ 
-          progress: Math.round((results.imported / results.total) * 100),
-          imported: results.imported,
-          total: results.total
-        })}\n\n`);
-      }
+      maybeReportProgress();
     } catch (err) {
-      console.error(`Failed to process draft product ${p.name || p.product_name}:`, err);
+      console.error(`Failed to process bulk import product ${p.name || p.product_name}:`, err);
       results.failed++;
-      results.errors.push({ name: p.name || p.product_name, error: err.message });
+      if (results.errors.length < 50) {
+        results.errors.push({ name: p.name || p.product_name, error: err.message });
+      } else {
+        results.errorsTruncated = true;
+      }
+      maybeReportProgress();
     }
   }
 
+  return results;
+}
+
+function enqueueBulkImportJob({ userId, products }) {
+  const id = randomUUID();
+  const job = {
+    id,
+    userId,
+    status: 'queued',
+    total: Array.isArray(products) ? products.length : 0,
+    processed: 0,
+    products: Array.isArray(products) ? products : [],
+    lastProgressEmitAt: 0,
+    createdAt: new Date().toISOString(),
+    startedAt: null,
+    finishedAt: null,
+    results: null,
+    error: null
+  };
+
+  bulkImportJobs.set(id, job);
+  bulkImportJobQueue.push(id);
+
+  emitBulkImportJobEvent(getBulkImportJobSnapshot(job));
+  runBulkImportJobWorker();
+
+  return getBulkImportJobSnapshot(job);
+}
+
+async function runBulkImportJobWorker() {
+  if (bulkImportJobRunning) return;
+  bulkImportJobRunning = true;
+
+  try {
+    while (bulkImportJobQueue.length > 0) {
+      const jobId = bulkImportJobQueue.shift();
+      const job = bulkImportJobs.get(jobId);
+      if (!job) continue;
+
+      job.status = 'processing';
+      job.startedAt = new Date().toISOString();
+      job.processed = 0;
+      job.error = null;
+      job.results = null;
+      job.lastProgressEmitAt = 0;
+      emitBulkImportJobEvent(getBulkImportJobSnapshot(job));
+
+      try {
+        const results = await runBulkProductsImport(job.products, {
+          onProgress: ({ processed, total, progress }) => {
+            job.processed = processed;
+            const now = Date.now();
+            const shouldEmit = processed === total || now - (job.lastProgressEmitAt || 0) >= 750;
+            if (shouldEmit) {
+              job.lastProgressEmitAt = now;
+              emitBulkImportJobEvent({
+                ...getBulkImportJobSnapshot(job),
+                progress
+              });
+            }
+          }
+        });
+
+        job.results = results;
+        job.processed = results.imported + results.skipped + results.failed;
+        job.status = 'completed';
+        job.finishedAt = new Date().toISOString();
+        emitBulkImportJobEvent({
+          ...getBulkImportJobSnapshot(job),
+          progress: 100
+        });
+      } catch (err) {
+        job.status = 'failed';
+        job.finishedAt = new Date().toISOString();
+        job.error = String(err?.message || err);
+        emitBulkImportJobEvent({
+          ...getBulkImportJobSnapshot(job),
+          progress: job.total > 0 ? Math.round((job.processed / job.total) * 100) : 0
+        });
+      }
+    }
+  } finally {
+    bulkImportJobRunning = false;
+  }
+}
+
+app.post('/api/admin/products/bulk-import-jobs', authenticateToken, isAdmin, hasPermission('manage_products'), async (req, res) => {
+  try {
+    const { products } = req.body;
+    if (!products || !Array.isArray(products) || products.length === 0) {
+      return res.status(400).json({ error: 'No products provided' });
+    }
+
+    const job = enqueueBulkImportJob({ userId: req.user.id, products });
+    res.json({ success: true, job });
+  } catch (error) {
+    console.error('[Bulk Import Jobs] Error:', error);
+    res.status(500).json({ error: 'Failed to enqueue bulk import job' });
+  }
+});
+
+app.get('/api/admin/products/bulk-import-jobs/:jobId', authenticateToken, isAdmin, hasPermission('manage_products'), async (req, res) => {
+  const { jobId } = req.params;
+  const job = bulkImportJobs.get(jobId);
+  if (!job) return res.status(404).json({ error: 'Job not found' });
+  res.json({ success: true, job: getBulkImportJobSnapshot(job) });
+});
+
+app.post('/api/products/bulk', authenticateToken, isAdmin, hasPermission('manage_products'), async (req, res) => {
+  const { products, useSSE = false } = req.body;
+
+  if (!Array.isArray(products)) {
+    return res.status(400).json({ error: 'Invalid products data' });
+  }
+
   if (useSSE) {
-    res.write(`data: ${JSON.stringify({ complete: true, results })}\n\n`);
-    res.end();
-  } else {
-    res.json(results);
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders();
+  }
+  try {
+    const results = await runBulkProductsImport(products, {
+      onProgress: ({ results: r, processed, total }) => {
+        if (!useSSE) return;
+        if (processed % 5 !== 0 && processed !== total) return;
+        res.write(`data: ${JSON.stringify({ 
+          progress: total > 0 ? Math.round((processed / total) * 100) : 100,
+          imported: r.imported,
+          total
+        })}\n\n`);
+      }
+    });
+
+    if (useSSE) {
+      res.write(`data: ${JSON.stringify({ complete: true, results })}\n\n`);
+      res.end();
+    } else {
+      res.json(results);
+    }
+  } catch (error) {
+    console.error('[Bulk Import] Error:', error);
+    if (useSSE) {
+      res.write(`data: ${JSON.stringify({ complete: true, error: error.message || 'Failed to bulk import products' })}\n\n`);
+      res.end();
+    } else {
+      res.status(500).json({ error: error.message || 'Failed to bulk import products' });
+    }
   }
 });
 
@@ -3031,11 +3911,21 @@ app.post('/api/products', authenticateToken, isAdmin, hasPermission('manage_prod
     }
 
     const domesticFee = safeParseFloat(domesticShippingFee) || 0;
-    const isPriceCombined = req.body.isPriceCombined === true;
+    // Determine if price is combined using explicit flag or heuristic (price > 1000 implies IQD final price)
+    const isPriceCombined = req.body.isPriceCombined !== undefined 
+        ? (String(req.body.isPriceCombined) === 'true' || req.body.isPriceCombined === true) 
+        : (safeParseFloat(price) > 1000);
+        
+    const storeSettings = await prisma.storeSettings.findUnique({ where: { id: 1 } });
+    const shippingRates = {
+      airShippingRate: storeSettings?.airShippingRate,
+      seaShippingRate: storeSettings?.seaShippingRate,
+      airShippingMinFloor: storeSettings?.airShippingMinFloor
+    };
     
     // Use the same markup logic as bulk import
     const rawPrice = safeParseFloat(price) || 0;
-    const finalPrice = isPriceCombined ? rawPrice : calculateBulkImportPrice(rawPrice, domesticFee, weight, length, width, height, req.body.shippingMethod);
+    const finalPrice = isPriceCombined ? rawPrice : calculateBulkImportPrice(rawPrice, domesticFee, weight, length, width, height, req.body.shippingMethod, shippingRates);
 
     const product = await prisma.product.create({
       data: {
@@ -3081,24 +3971,30 @@ app.post('/api/products', authenticateToken, isAdmin, hasPermission('manage_prod
           }))
         },
         variants: {
-          create: (Array.isArray(variants) ? variants : []).map(v => ({
-            combination: typeof v.options === 'object' ? JSON.stringify(v.options) : 
-                        (typeof v.combination === 'object' ? JSON.stringify(v.combination) : (v.combination || '{}')),
-            price: (v.isPriceCombined || isPriceCombined) ? (safeParseFloat(v.price) || 0) : calculateBulkImportPrice(safeParseFloat(v.price) || 0, domesticFee, v.weight || weight, v.length || length, v.width || width, v.height || height, v.shippingMethod),
-            image: v.image || null,
-            weight: v.weight ? safeParseFloat(v.weight) : null,
-            height: v.height ? safeParseFloat(v.height) : null,
-            length: v.length ? safeParseFloat(v.length) : null,
-            width: v.width ? safeParseFloat(v.width) : null,
-            isPriceCombined: v.isPriceCombined || isPriceCombined
-          }))
+          create: (Array.isArray(variants) ? variants : []).map(v => {
+            const variantRawPrice = safeParseFloat(v.price) || 0;
+            // Determine if variant price is combined using explicit flag or heuristic
+            const variantIsPriceCombined = v.isPriceCombined !== undefined 
+                ? (String(v.isPriceCombined) === 'true' || v.isPriceCombined === true) 
+                : (isPriceCombined || variantRawPrice > 1000);
+            
+            return {
+              combination: typeof v.options === 'object' ? JSON.stringify(v.options) : 
+                          (typeof v.combination === 'object' ? JSON.stringify(v.combination) : (v.combination || '{}')),
+              price: variantIsPriceCombined ? variantRawPrice : calculateBulkImportPrice(variantRawPrice, domesticFee, v.weight || weight, v.length || length, v.width || width, v.height || height, v.shippingMethod, shippingRates),
+              image: v.image || null,
+              weight: v.weight ? safeParseFloat(v.weight) : null,
+              height: v.height ? safeParseFloat(v.height) : null,
+              length: v.length ? safeParseFloat(v.length) : null,
+              width: v.width ? safeParseFloat(v.width) : null,
+              isPriceCombined: variantIsPriceCombined
+            };
+          })
         }
       }
     });
 
-    if (process.env.HUGGINGFACE_API_KEY) {
-      processProductEmbedding(product.id).catch(err => console.error('Initial embedding processing failed:', err));
-    }
+    enqueueEmbeddingJob(product.id);
 
     res.status(201).json(product);
   } catch (error) {
@@ -3123,41 +4019,47 @@ app.post('/api/admin/products/bulk-import', authenticateToken, isAdmin, hasPermi
 
     // --- Duplicate Check ---
     const normalizeUrl = (u) => (typeof u === 'string' ? u.replace(/[`"']/g, '').trim() : u);
-    const purchaseUrls = products
+    const purchaseUrls = [...new Set(products
       .map(p => normalizeUrl(p.purchaseUrl ?? p.url))
-      .filter(url => !!url);
-    const chineseNames = products.map(p => p.chineseName).filter(name => !!name);
+      .filter(url => !!url))];
+    const chineseNames = [...new Set(products
+      .map(p => cleanStr(p.chineseName))
+      .filter(name => !!name))];
 
-    const existingProducts = await prisma.product.findMany({
-      where: {
-        OR: [
-          { purchaseUrl: { in: purchaseUrls } },
-          { chineseName: { in: chineseNames } }
-        ]
-      },
-      select: { purchaseUrl: true, chineseName: true }
-    });
+    const duplicateWhereOr = [];
+    if (purchaseUrls.length > 0) duplicateWhereOr.push({ purchaseUrl: { in: purchaseUrls } });
+    if (chineseNames.length > 0) duplicateWhereOr.push({ chineseName: { in: chineseNames } });
 
-    const existingUrlsSet = new Set(existingProducts.map(p => p.purchaseUrl).filter(url => !!url));
-    const existingNamesSet = new Set(existingProducts.map(p => p.chineseName).filter(name => !!name));
+    const existingProducts = duplicateWhereOr.length > 0
+      ? await prisma.product.findMany({
+          where: { OR: duplicateWhereOr },
+          select: { purchaseUrl: true, chineseName: true, name: true }
+        })
+      : [];
+
+    const existingUrlsSet = new Set(existingProducts.map(p => p.purchaseUrl).filter(Boolean));
+    const existingNamesSet = new Set(existingProducts.flatMap(p => [p.chineseName, p.name]).filter(Boolean));
 
     const seenInRequest = new Set();
     const uniqueProductsToImport = [];
 
     for (const p of products) {
       const normalizedPurchaseUrl = normalizeUrl(p.purchaseUrl ?? p.url);
-      const isDuplicateInDB = (normalizedPurchaseUrl && existingUrlsSet.has(normalizedPurchaseUrl)) || 
-                             (p.chineseName && existingNamesSet.has(p.chineseName));
+      const candidateName = cleanStr(p.chineseName) || cleanStr(p.name) || cleanStr(p.product_name);
+      const isDuplicateInDB =
+        (!!candidateName && existingNamesSet.has(candidateName)) ||
+        (normalizedPurchaseUrl && existingUrlsSet.has(normalizedPurchaseUrl) && !!candidateName && existingNamesSet.has(candidateName));
       
       const urlId = normalizedPurchaseUrl;
-      const nameId = p.chineseName;
+      const nameId = candidateName;
+      const productLocalId = cleanStr(p.product_id || p.productId || p.id);
+      const requestDedupKey = urlId && productLocalId ? `${urlId}::${productLocalId}` : (urlId || nameId);
       
-      const isDuplicateInRequest = (urlId && seenInRequest.has(urlId)) || (nameId && seenInRequest.has(nameId));
+      const isDuplicateInRequest = requestDedupKey ? seenInRequest.has(requestDedupKey) : false;
       
       if (!isDuplicateInDB && !isDuplicateInRequest) {
         uniqueProductsToImport.push(p);
-        if (urlId) seenInRequest.add(urlId);
-        if (nameId) seenInRequest.add(nameId);
+        if (requestDedupKey) seenInRequest.add(requestDedupKey);
       }
     }
 
@@ -3166,6 +4068,13 @@ app.post('/api/admin/products/bulk-import', authenticateToken, isAdmin, hasPermi
     if (uniqueProductsToImport.length === 0) {
       return res.json({ success: true, count: 0, message: 'All products already exist' });
     }
+
+    const storeSettings = await prisma.storeSettings.findUnique({ where: { id: 1 } });
+    const shippingRates = {
+      airShippingRate: storeSettings?.airShippingRate,
+      seaShippingRate: storeSettings?.seaShippingRate,
+      airShippingMinFloor: storeSettings?.airShippingMinFloor
+    };
 
     // Create products as DRAFT in batches
     const drafts = [];
@@ -3208,11 +4117,52 @@ app.post('/api/admin/products/bulk-import', authenticateToken, isAdmin, hasPermi
             return null;
           };
           
-          const domesticFee = parsePrice(p.domestic_shipping_fee) || 0;
-          const rawPrice = parsePrice(p.general_price) || parsePrice(p.price) || parsePrice(p.basePriceRMB) || 0;
+          const domesticFee = parsePrice(p.domestic_shipping_fee || p.domesticShippingFee || p.domestic_shipping) || 0;
           
-          // Use the new calculation logic with 90% markup for air items
-          const price = calculateBulkImportPrice(rawPrice, domesticFee, p.weight, p.length, p.width, p.height, p.shippingMethod);
+          let rawPrice = 0;
+          rawPrice = Math.max(
+            rawPrice,
+            parsePrice(p.general_price),
+            parsePrice(p.price),
+            parsePrice(p.basePriceRMB),
+            parsePrice(p.rawPrice),
+            parsePrice(p.rawRmbPrice)
+          );
+          
+          if (rawPrice <= 0 && p.priceModel && typeof p.priceModel === 'object') {
+            if (Array.isArray(p.priceModel.currentPrices)) {
+              rawPrice = Math.max(rawPrice, ...p.priceModel.currentPrices.map(parsePrice));
+            }
+            if (Array.isArray(p.priceModel.skuPrices)) {
+              rawPrice = Math.max(rawPrice, ...p.priceModel.skuPrices.map(parsePrice));
+            }
+          }
+          
+          if (rawPrice <= 0 && Array.isArray(p.variants_data)) {
+            rawPrice = Math.max(rawPrice, ...p.variants_data.map(v => parsePrice(v?.price)));
+          }
+          
+          if (rawPrice <= 0 && Array.isArray(p.generated_options)) {
+            rawPrice = Math.max(rawPrice, ...p.generated_options.map(v => parsePrice(v?.price)));
+          }
+          
+          // Determine if price is combined (default to true if not specified, based on user feedback)
+          // Heuristic: If explicitly set, use it. If > 1000, assume final IQD to avoid inflation.
+          const isPriceCombined = p.isPriceCombined !== undefined 
+            ? (String(p.isPriceCombined) === 'true' || p.isPriceCombined === true) 
+            : (rawPrice > 1000);
+           
+           // Use the new calculation logic with 20% markup
+          // WARNING: rawPrice is typically RMB from 1688. calculateBulkImportPrice expects IQD if we want to add IQD shipping.
+          // But calculateBulkImportPrice adds domestic (IQD) and shipping (IQD) to rawPrice.
+          // So rawPrice MUST be converted to IQD before passing if it is RMB.
+          // heuristic: if !isPriceCombined (meaning rawPrice < 1000), it is likely RMB.
+          // UPDATE: User requested to REMOVE automatic conversion. Input is guaranteed to be IQD.
+          const priceInput = rawPrice;
+          
+          const price = isPriceCombined 
+            ? rawPrice 
+            : calculateBulkImportPrice(priceInput, domesticFee, p.weight, p.length, p.width, p.height, p.shippingMethod, shippingRates);
           
           // Skip products with 0 price
           if (price <= 0 || rawPrice <= 0) {
@@ -3240,26 +4190,101 @@ app.post('/api/admin/products/bulk-import', authenticateToken, isAdmin, hasPermi
             }
           } else if (p.variants && typeof p.variants === 'object') {
             // Support user's "variants": { "sizes": [...], "colors": [...] } format
-            if (Array.isArray(p.variants.sizes)) {
-              rawOptions.push({ name: 'المقاس', values: p.variants.sizes });
+            for (const [rawKey, rawVal] of Object.entries(p.variants)) {
+              const cleanedKey = cleanStr(String(rawKey));
+              if (!cleanedKey) continue;
+              if (!Array.isArray(rawVal)) continue;
+
+              const lower = cleanedKey.toLowerCase();
+              const mappedName =
+                (lower === 'color' || lower === 'colour' || lower === 'colors' || lower === 'colours') ? 'اللون'
+                  : (lower === 'size' || lower === 'sizes') ? 'المقاس'
+                    : cleanedKey;
+
+              const values = rawVal.map(v => cleanStr(String(v))).filter(Boolean);
+              if (values.length > 0) rawOptions.push({ name: mappedName, values });
             }
-            if (Array.isArray(p.variants.colors)) {
-              rawOptions.push({ name: 'اللون', values: p.variants.colors });
+          } else if (Array.isArray(p.generated_options)) {
+            const valuesByName = new Map();
+            for (const opt of p.generated_options) {
+              if (!opt || typeof opt !== 'object') continue;
+              for (const [rawKey, rawVal] of Object.entries(opt)) {
+                const cleanedKey = cleanStr(String(rawKey));
+                if (!cleanedKey) continue;
+                const lower = cleanedKey.toLowerCase();
+                if (lower === 'price' || lower === 'image' || lower === 'shippingmethod' || lower === 'method') continue;
+
+                const mappedName =
+                  (lower === 'color' || lower === 'colour' || lower === 'colors' || lower === 'colours') ? 'اللون'
+                    : (lower === 'size' || lower === 'sizes') ? 'المقاس'
+                      : cleanedKey;
+
+                const rawValues = Array.isArray(rawVal) ? rawVal : [rawVal];
+                const cleanedValues = rawValues
+                  .map(v => {
+                    if (v === null || v === undefined) return '';
+                    if (typeof v === 'object') return cleanStr(String(v.value ?? v.name ?? JSON.stringify(v)));
+                    return cleanStr(String(v));
+                  })
+                  .filter(Boolean);
+
+                if (cleanedValues.length === 0) continue;
+                if (!valuesByName.has(mappedName)) valuesByName.set(mappedName, new Set());
+                for (const cv of cleanedValues) valuesByName.get(mappedName).add(cv);
+              }
+
+              const dimensions = [...dimensionsMap.entries()]
+                .map(([k, vals]) => [k, [...new Set(vals)]])
+                .filter(([, vals]) => vals.length > 0);
+
+              if (dimensions.length === 0) continue;
+
+              let combinations = [{}];
+              for (const [dimName, dimVals] of dimensions) {
+                const next = [];
+                for (const combo of combinations) {
+                  for (const val of dimVals) {
+                    next.push({ ...combo, [dimName]: val });
+                  }
+                }
+                combinations = next;
+              }
+
+              for (const combo of combinations) {
+                if (Object.keys(combo).length === 0) continue;
+                generated.push({ 
+                  options: combo, 
+                  price: optPrice, 
+                  basePriceRMB: optPrice, // Explicitly set basePriceRMB
+                  isPriceCombined: false, // Explicitly allow dynamic pricing
+                  currency: 'IQD',
+                  image: optImage || null 
+                });
+              }
+            }
+            for (const [name, values] of valuesByName.entries()) {
+              const list = [...values];
+              if (list.length > 0) rawOptions.push({ name, values: list });
             }
           }
           
           // Mapping of common fields to standardized names (Arabic preferred)
           const fieldMapping = {
             'size': 'المقاس',
+            'sizes': 'المقاس',
             'Size': 'المقاس',
             '尺码': 'المقاس',
             'color': 'اللون',
+            'colour': 'اللون',
             'Color': 'اللون',
             '颜色': 'اللون',
             '颜色分类': 'اللون',
             'اللون': 'اللون',
             'تصنيف الألوان': 'اللون',
             'المقاس': 'المقاس',
+            'model': 'الموديل',
+            'Model': 'الموديل',
+            '型号': 'الموديل',
             'style': 'الستايل',
             'material': 'الخامة',
             'type': 'النوع'
@@ -3283,7 +4308,7 @@ app.post('/api/admin/products/bulk-import', authenticateToken, isAdmin, hasPermi
             }
           });
 
-          const processedOptions = rawOptions.map((opt, optIdx) => {
+          let processedOptions = rawOptions.map((opt, optIdx) => {
             const name = cleanStr(opt.name);
             // Standardize name if it matches our mapping
             const standardName = fieldMapping[name] || name;
@@ -3365,30 +4390,106 @@ app.post('/api/admin/products/bulk-import', authenticateToken, isAdmin, hasPermi
             const generated = [];
             for (const opt of p.generated_options) {
               if (!opt || typeof opt !== 'object') continue;
-              const color = cleanStr(opt.color ?? opt.colour);
-              const sizesRaw = Array.isArray(opt.sizes) ? opt.sizes : (opt.size ? [opt.size] : []);
-              const sizes = sizesRaw.map(s => cleanStr(String(s))).filter(Boolean);
               const optPrice = parsePrice(opt.price) || rawPrice;
               const optImage = cleanStr(opt.image);
+              const dimensionsMap = new Map();
+              for (const [rawKey, rawVal] of Object.entries(opt)) {
+                const cleanedKey = cleanStr(String(rawKey));
+                if (!cleanedKey) continue;
+                const lower = cleanedKey.toLowerCase();
+                if (lower === 'price' || lower === 'image' || lower === 'shippingmethod' || lower === 'method') continue;
 
-              const baseCombination = {};
-              if (color) baseCombination['اللون'] = color;
+                const mappedName = fieldMapping[cleanedKey] || (lower === 'color' || lower === 'colour' ? 'اللون' : (lower === 'size' || lower === 'sizes' ? 'المقاس' : cleanedKey));
+                const rawValues = Array.isArray(rawVal) ? rawVal : [rawVal];
+                const cleanedValues = rawValues
+                  .map(v => {
+                    if (v === null || v === undefined) return '';
+                    if (typeof v === 'object') return cleanStr(String(v.value ?? v.name ?? JSON.stringify(v)));
+                    return cleanStr(String(v));
+                  })
+                  .filter(Boolean);
 
-              if (sizes.length === 0) {
-                if (Object.keys(baseCombination).length === 0) continue;
-                generated.push({ options: baseCombination, price: optPrice, image: optImage || null });
-              } else {
-                for (const size of sizes) {
-                  generated.push({
-                    options: { ...baseCombination, 'المقاس': size },
-                    price: optPrice,
-                    image: optImage || null
-                  });
+                if (cleanedValues.length === 0) continue;
+                if (!dimensionsMap.has(mappedName)) dimensionsMap.set(mappedName, []);
+                dimensionsMap.get(mappedName).push(...cleanedValues);
+              }
+
+              const dimensions = [...dimensionsMap.entries()]
+                .map(([k, vals]) => [k, [...new Set(vals)]])
+                .filter(([, vals]) => vals.length > 0);
+
+              if (dimensions.length === 0) continue;
+
+              let combinations = [{}];
+              for (const [dimName, dimVals] of dimensions) {
+                const next = [];
+                for (const combo of combinations) {
+                  for (const val of dimVals) {
+                    next.push({ ...combo, [dimName]: val });
+                  }
                 }
+                combinations = next;
+              }
+
+              for (const combo of combinations) {
+                if (Object.keys(combo).length === 0) continue;
+                generated.push({ 
+                  options: combo, 
+                  price: optPrice, 
+                  basePriceRMB: optPrice, // Explicitly set basePriceRMB
+                  isPriceCombined: false, // Explicitly allow dynamic pricing
+                  currency: 'IQD',
+                  image: optImage || null 
+                });
               }
             }
             variantsInput.push(...generated);
           }
+          
+          const optionMap = new Map();
+          const normalizeOptionName = (optName) => cleanStr(optName).toLowerCase();
+          const addOptionValue = (optName, optValue, optId) => {
+            const name = cleanStr(optName);
+            if (!name) return;
+            const value = cleanStr(optValue);
+            if (!value) return;
+            const key = normalizeOptionName(name);
+            if (!optionMap.has(key)) {
+              optionMap.set(key, { id: optId || null, name, values: new Set() });
+            } else if (!optionMap.get(key).id && optId) {
+              optionMap.get(key).id = optId;
+            }
+            optionMap.get(key).values.add(value);
+          };
+          
+          for (const opt of processedOptions) {
+            if (!opt?.name) continue;
+            const vals = Array.isArray(opt.values) ? opt.values : [];
+            for (const v of vals) addOptionValue(opt.name, v, opt.id);
+          }
+          
+          for (const v of variantsInput) {
+            let combo = v?.options ?? v?.combination ?? {};
+            if (typeof combo === 'string') {
+              try { combo = JSON.parse(combo); } catch { combo = {}; }
+            }
+            if (!combo || typeof combo !== 'object') continue;
+            for (const [k, rawVal] of Object.entries(combo)) {
+              const mappedName = fieldMapping[cleanStr(k)] || k;
+              const valString = typeof rawVal === 'object' && rawVal !== null
+                ? (rawVal.value ?? rawVal.name ?? JSON.stringify(rawVal))
+                : String(rawVal);
+              addOptionValue(mappedName, valString);
+            }
+          }
+          
+          processedOptions = [...optionMap.values()]
+            .map((entry, optIdx) => ({
+              id: entry.id || `opt-${Date.now()}-${productIndex}-${optIdx}-${Math.floor(Math.random() * 1000)}`,
+              name: entry.name,
+              values: [...entry.values]
+            }))
+            .filter(opt => opt.name !== '' && opt.values.length > 0);
 
           // Return as a draft object instead of creating in database
           return {
@@ -3418,6 +4519,9 @@ app.post('/api/admin/products/bulk-import', authenticateToken, isAdmin, hasPermi
             options: processedOptions,
             variants: variantsInput.map(v => {
               const variantRawPrice = parsePrice(v.price) || rawPrice;
+              const variantBaseRaw = parsePrice(v.basePriceRMB);
+              // Use explicit basePriceRMB if available (e.g. from generated options), otherwise fall back to price
+              const finalBasePrice = (variantBaseRaw && variantBaseRaw > 0) ? variantBaseRaw : variantRawPrice;
               
               // Find weight for this variant if specified in variations
               let variantWeight = v.weight || null;
@@ -3431,10 +4535,20 @@ app.post('/api/admin/products/bulk-import', authenticateToken, isAdmin, hasPermi
                 }
               }
 
+              // Respect explicit isPriceCombined flag
+              // If v.currency is 'IQD' (generated), default to false unless explicitly true
+              const isGenerated = v.currency === 'IQD';
+              const variantIsPriceCombined = v.isPriceCombined !== undefined 
+                ? (String(v.isPriceCombined) === 'true' || v.isPriceCombined === true) 
+                : (isGenerated ? false : (isPriceCombined || variantRawPrice > 1000));
+
               return {
                 combination: typeof v.options === 'object' ? v.options : {},
-                price: calculateBulkImportPrice(variantRawPrice, domesticFee, variantWeight || productWeight, v.length || p.length, v.width || p.width, v.height || p.height, v.shippingMethod || p.shippingMethod),
-                isPriceCombined: true,
+                basePriceRMB: finalBasePrice,
+                price: variantIsPriceCombined
+                  ? finalBasePrice
+                  : calculateBulkImportPrice(finalBasePrice, domesticFee, variantWeight || productWeight, v.length || p.length, v.width || p.width, v.height || p.height, v.shippingMethod || p.shippingMethod, shippingRates),
+                isPriceCombined: variantIsPriceCombined,
                 image: v.image || null,
                 weight: variantWeight,
                 height: v.height || null,
@@ -3597,16 +4711,45 @@ app.put('/api/admin/products/:id/options', authenticateToken, isAdmin, hasPermis
 
     // Create new variants
     if (variants && Array.isArray(variants)) {
+      const product = await prisma.product.findUnique({
+        where: { id: safeParseId(id) },
+        select: {
+          weight: true,
+          length: true,
+          width: true,
+          height: true,
+          domesticShippingFee: true
+        }
+      });
+      const storeSettings = await prisma.storeSettings.findUnique({ where: { id: 1 } });
+      const shippingRates = {
+        airShippingRate: storeSettings?.airShippingRate,
+        seaShippingRate: storeSettings?.seaShippingRate,
+        airShippingMinFloor: storeSettings?.airShippingMinFloor
+      };
+
       await prisma.productVariant.createMany({
         data: variants.map(v => ({
           productId: safeParseId(id),
           combination: JSON.stringify(v.combination),
-          price: parseFloat(v.price),
+          price: (() => {
+            const raw = safeParseFloat(v.basePriceRMB);
+            if (raw && raw > 0) {
+              const domesticFee = safeParseFloat(product?.domesticShippingFee) || 0;
+              const vWeight = safeParseFloat(v.weight) ?? product?.weight;
+              const vLength = safeParseFloat(v.length) ?? product?.length;
+              const vWidth = safeParseFloat(v.width) ?? product?.width;
+              const vHeight = safeParseFloat(v.height) ?? product?.height;
+              return calculateBulkImportPrice(raw, domesticFee, vWeight, vLength, vWidth, vHeight, null, shippingRates);
+            }
+            return safeParseFloat(v.price) || 0;
+          })(),
           weight: v.weight ? parseFloat(v.weight) : null,
           height: v.height ? parseFloat(v.height) : null,
           length: v.length ? parseFloat(v.length) : null,
           width: v.width ? parseFloat(v.width) : null,
-          image: v.image
+          image: v.image,
+          isPriceCombined: !!v.isPriceCombined
         }))
       });
     }
@@ -3629,7 +4772,7 @@ app.put('/api/admin/products/update-price', authenticateToken, isAdmin, hasPermi
     // 1. Get current product and its variants
     const product = await prisma.product.findUnique({
       where: { id: parsedProductId },
-      include: { variants: true }
+      include: { variants: { select: productVariantSelect } }
     });
 
     if (!product) {
@@ -3642,7 +4785,7 @@ app.put('/api/admin/products/update-price', authenticateToken, isAdmin, hasPermi
       const targetVariant = product.variants.find(v => v.id === parsedVariantId);
       if (!targetVariant) {
         console.error('[UpdatePrice] Variant not found in product variants:', parsedVariantId);
-        const v = await prisma.productVariant.findUnique({ where: { id: parsedVariantId } });
+        const v = await prisma.productVariant.findUnique({ where: { id: parsedVariantId }, select: productVariantSelect });
         if (!v) return res.status(404).json({ error: 'Variant not found' });
         oldPrice = v.price;
       } else {
@@ -3810,10 +4953,36 @@ app.post('/api/admin/products/bulk-ai-metadata', authenticateToken, isAdmin, has
   }
 });
 
+app.post('/api/admin/products/queue-missing-embeddings', authenticateToken, isAdmin, hasPermission('manage_products'), async (req, res) => {
+  try {
+    const rawLimit = req.body?.limit;
+    const limit = Math.min(1000, Math.max(1, Number(rawLimit ?? 200) || 200));
+    const rows = await prisma.$queryRawUnsafe(
+      `SELECT id FROM "Product" WHERE embedding IS NULL ORDER BY id DESC LIMIT ${limit}`
+    );
+    for (const row of rows || []) {
+      enqueueEmbeddingJob(row.id);
+    }
+    res.json({ success: true, queued: (rows || []).length, running: embeddingJobRunning, queueSize: embeddingJobQueue.length });
+  } catch (error) {
+    console.error('[Queue Missing Embeddings] Error:', error);
+    res.status(500).json({ error: 'Failed to queue embeddings' });
+  }
+});
+
 // ADMIN: Bulk Publish (Step 5)
 app.post('/api/admin/products/bulk-publish', authenticateToken, isAdmin, hasPermission('manage_products'), async (req, res) => {
   try {
-    const { ids } = req.body;
+    const rawIds = req.body.ids;
+    if (!Array.isArray(rawIds)) return res.status(400).json({ error: 'Invalid IDs' });
+    
+    // Ensure all IDs are numbers (Prisma requires Int for ID field)
+    const ids = rawIds.map(id => safeParseId(id)).filter(id => typeof id === 'number');
+
+    if (ids.length === 0) {
+      return res.json({ success: true });
+    }
+
     await prisma.product.updateMany({
       where: { id: { in: ids } },
       data: { 
@@ -3822,42 +4991,7 @@ app.post('/api/admin/products/bulk-publish', authenticateToken, isAdmin, hasPerm
       }
     });
 
-    // Trigger background processing for newly published products if they don't have metadata/embedding
-    if (process.env.HUGGINGFACE_API_KEY) {
-      ids.forEach((id, index) => {
-        (async () => {
-          try {
-            const productId = safeParseId(id);
-            const rows = await prisma.$queryRaw`
-              SELECT
-                "aiMetadata" as "aiMetadata",
-                (embedding IS NULL) as "missingEmbedding"
-              FROM "Product"
-              WHERE id = ${productId}
-              LIMIT 1
-            `;
-            const product = rows?.[0];
-
-            if (!product) return;
-            if (product.aiMetadata && !product.missingEmbedding) return;
-
-            await new Promise(r => setTimeout(r, index * 2000));
-            if (product.missingEmbedding) {
-              console.log(`[Bulk Publish AI] Processing embedding for product ${id}`);
-              await processProductEmbedding(productId);
-              return;
-            }
-
-            if (!product.aiMetadata && process.env.SILICONFLOW_API_KEY) {
-              console.log(`[Bulk Publish AI] Processing metadata for product ${id}`);
-              await processProductAI(productId);
-            }
-          } catch (aiErr) {
-            console.error(`[Bulk Publish AI] Failed for product ${id}:`, aiErr.message);
-          }
-        })();
-      });
-    }
+    ids.forEach((id) => enqueueEmbeddingJob(id));
 
     await logActivity(
       req.user.id,
@@ -3869,6 +5003,7 @@ app.post('/api/admin/products/bulk-publish', authenticateToken, isAdmin, hasPerm
 
     res.json({ success: true });
   } catch (error) {
+    console.error('Bulk publish error:', error);
     res.status(500).json({ error: 'Failed to bulk publish products' });
   }
 });
@@ -3931,12 +5066,19 @@ app.post('/api/admin/products/bulk-create', authenticateToken, isAdmin, hasPermi
 
     console.log('Images processed. Starting database transaction...');
 
+    const storeSettings = await prisma.storeSettings.findUnique({ where: { id: 1 } });
+    const shippingRates = {
+      airShippingRate: storeSettings?.airShippingRate,
+      seaShippingRate: storeSettings?.seaShippingRate,
+      airShippingMinFloor: storeSettings?.airShippingMinFloor
+    };
+
     // 2. We process DB operations in a transaction to ensure data consistency
     // Added explicit timeout for large bulk operations (60 seconds)
     await prisma.$transaction(async (tx) => {
       for (const p of processedProducts) {
         // Exclude local-only fields and relational fields
-        const { 
+        let { 
           id, 
           productId,
           isLocal, 
@@ -3947,9 +5089,141 @@ app.post('/api/admin/products/bulk-create', authenticateToken, isAdmin, hasPermi
           images = [], 
           ...rawProductData 
         } = p;
+
+        // Map alias fields from scraper payloads
+        if (!rawProductData.name && rawProductData.product_name) rawProductData.name = rawProductData.product_name;
+        if (!rawProductData.price && rawProductData.general_price) rawProductData.price = rawProductData.general_price;
+        if (!rawProductData.purchaseUrl && rawProductData.url) rawProductData.purchaseUrl = rawProductData.url;
+        // Fix: Restore domesticShippingFee if it was destructured out, or map from snake_case
+        if (!rawProductData.domesticShippingFee) {
+          if (domesticShippingFee) rawProductData.domesticShippingFee = domesticShippingFee;
+          else if (rawProductData.domestic_shipping) rawProductData.domesticShippingFee = rawProductData.domestic_shipping;
+        }
+
+        const extractGeneratedOptionEntries = (opt) => {
+          const out = [];
+          if (!opt || typeof opt !== 'object') return out;
+          
+          const metaKeys = new Set(['price', 'image', 'shippingmethod', 'method', 'stock', 'weight', 'sku', 'skuid', 'specid']);
+          
+          const pushEntry = (rawKey, rawVal) => {
+            const cleanedKey = cleanStr(String(rawKey));
+            if (!cleanedKey) return;
+            const lower = cleanedKey.toLowerCase();
+            if (metaKeys.has(lower)) return;
+            
+            // Recurse into nested objects like "combination" or "options"
+            if (lower === 'options' || lower === 'combination' || lower === 'variant' || lower === 'variants') {
+               if (rawVal && typeof rawVal === 'object' && !Array.isArray(rawVal)) {
+                 for (const [k, v] of Object.entries(rawVal)) pushEntry(k, v);
+                 return;
+               }
+            }
+            
+            out.push([cleanedKey, rawVal]);
+          };
+          
+          for (const [k, v] of Object.entries(opt)) pushEntry(k, v);
+          return out;
+        };
+
+        // Handle generated_options - Prioritize it if available as it contains detailed pricing/combinations
+        if (Array.isArray(rawProductData.generated_options) && rawProductData.generated_options.length > 0) {
+          const valuesByName = new Map();
+          const genVariants = [];
+          
+          for (const opt of rawProductData.generated_options) {
+            if (!opt || typeof opt !== 'object') continue;
+            
+            const optPrice = safeParseFloat(opt.price);
+            const optImage = cleanStr(opt.image);
+            const combination = {};
+            
+            for (const [cleanedKey, rawVal] of extractGeneratedOptionEntries(opt)) {
+            const lower = cleanedKey.toLowerCase();
+            const mappedName = (() => {
+              // Force common English terms to Arabic
+              if (lower.includes('color') || lower.includes('colour') || lower === 'yanse') return 'اللون';
+              if (lower.includes('size') || lower.includes('chima')) return 'المقاس';
+              
+              if (lower === 'model' || lower === 'models') return 'المقاس';
+              if (lower === 'style' || lower === 'styles') return 'الستايل';
+              
+              return fieldMapping[cleanedKey] || fieldMapping[lower] || cleanedKey;
+            })();
+              
+              const rawValues = Array.isArray(rawVal) ? rawVal : [rawVal];
+              const cleanedValues = rawValues.map(v => {
+                 if (v === null || v === undefined) return '';
+                 if (typeof v === 'object') return cleanStr(String(v.value ?? v.name ?? JSON.stringify(v)));
+                 return cleanStr(String(v));
+              }).filter(Boolean);
+              
+              if (cleanedValues.length > 0) {
+                if (!valuesByName.has(mappedName)) valuesByName.set(mappedName, new Set());
+                for (const cv of cleanedValues) valuesByName.get(mappedName).add(cv);
+                
+                // For variant combination, take the first value
+                combination[mappedName] = cleanedValues[0];
+              }
+            }
+            
+            if (Object.keys(combination).length > 0) {
+              const rmbPrice = (optPrice && optPrice > 0) ? optPrice : (safeParseFloat(opt.price) || 0);
+            
+            // Check for explicit currency/unit instruction
+            // User guarantees input is IQD. No x200 conversion.
+            const iqdBase = rmbPrice;
+            
+            console.log(`[DEBUG V4 GenVariant] optPriceRaw=${opt.price}, parsed=${optPrice}, iqdBase=${iqdBase}`);
+
+            // Calculate initial price using product dimensions as fallback
+              // This ensures the stored price is reasonably accurate even before user interaction
+              const initialPrice = calculateBulkImportPrice(
+                iqdBase, 
+                rawProductData.domesticShippingFee || 0,
+                rawProductData.weight,
+                rawProductData.length,
+                rawProductData.width,
+                rawProductData.height,
+                null, // Auto-detect Air/Sea based on weight
+                shippingRates
+              );
+              
+              // Ensure basePriceRMB is never null if we have a price
+              const finalBasePrice = iqdBase > 0 ? iqdBase : (initialPrice > 0 ? initialPrice : 0);
+
+              genVariants.push({
+                combination,
+                price: initialPrice,
+                image: optImage,
+                isPriceCombined: false, // Allow dynamic pricing based on shipping method
+                basePriceRMB: finalBasePrice, // Always store IQD value in basePriceRMB for consistency with frontend logic
+                currency: 'IQD' // Explicitly flag as IQD so variants loop doesn't double-convert
+              });
+            }
+          }
+          
+          // Populate options
+          if (valuesByName.size > 0) {
+            options = [];
+            for (const [name, values] of valuesByName.entries()) {
+              options.push({ name, values: [...values] });
+            }
+          }
+          
+          // Populate variants
+          if (genVariants.length > 0) {
+            variants = genVariants;
+          }
+        }
         
         const domesticFee = safeParseFloat(rawProductData.domesticShippingFee) || 0;
-        const isPriceCombined = rawProductData.isPriceCombined === true;
+        // Determine if price is combined using explicit flag
+        const isPriceCombined = rawProductData.isPriceCombined !== undefined 
+          ? (String(rawProductData.isPriceCombined) === 'true' || rawProductData.isPriceCombined === true) 
+          : false;
+        
         const parsedAiMetadata = (() => {
           const candidate = rawProductData.aiMetadata ?? rawProductData.marketing_metadata;
           if (!candidate) return null;
@@ -3967,7 +5241,14 @@ app.post('/api/admin/products/bulk-create', authenticateToken, isAdmin, hasPermi
         
         // Use the new calculation logic with 90% markup for air items
         const rawPrice = safeParseFloat(rawProductData.price) || 0;
-        const calculatedPrice = isPriceCombined ? rawPrice : calculateBulkImportPrice(rawPrice, domesticFee, rawProductData.weight, rawProductData.length, rawProductData.width, rawProductData.height, rawProductData.shippingMethod);
+        
+        console.log(`[DEBUG] Pricing calc for ${rawProductData.name}: rawPrice=${rawPrice}, domestic=${domesticFee}, isPriceCombined=${isPriceCombined}, weight=${rawProductData.weight}`);
+
+        // Determine if input is IQD or RMB
+        // User guarantees input is IQD. No x200 conversion.
+        const iqdPrice = rawPrice;
+
+        const calculatedPrice = isPriceCombined ? rawPrice : calculateBulkImportPrice(iqdPrice, domesticFee, rawProductData.weight, rawProductData.length, rawProductData.width, rawProductData.height, rawProductData.shippingMethod, shippingRates);
 
         // Skip products with 0 price
         if (calculatedPrice <= 0 || rawPrice <= 0) {
@@ -3975,13 +5256,21 @@ app.post('/api/admin/products/bulk-create', authenticateToken, isAdmin, hasPermi
           continue;
         }
 
+        // Determine final basePriceRMB in IQD (User confirmed input is IQD)
+        let finalBasePriceRMB = safeParseFloat(rawProductData.basePriceRMB);
+        if (!finalBasePriceRMB) {
+           finalBasePriceRMB = rawPrice;
+        }
+        
+        console.log(`[DEBUG] BasePriceRMB calc: raw=${rawProductData.basePriceRMB}, final=${finalBasePriceRMB} (Force IQD)`);
+
         // Pick only valid Prisma fields to avoid "Unknown arg" errors
         const productData = {
           name: rawProductData.name || 'Untitled Product',
           chineseName: rawProductData.chineseName || null,
           description: rawProductData.description || '',
           price: calculatedPrice,
-          basePriceRMB: safeParseFloat(rawProductData.basePriceRMB) || rawPrice,
+          basePriceRMB: finalBasePriceRMB,
           image: rawProductData.image || (images && images[0]) || '',
           purchaseUrl: rawProductData.purchaseUrl || null,
           videoUrl: rawProductData.videoUrl || null,
@@ -4026,36 +5315,168 @@ app.post('/api/admin/products/bulk-create', authenticateToken, isAdmin, hasPermi
           }
         }
 
-        // Create options
-        if (options && Array.isArray(options) && options.length > 0) {
-          const validOptions = options.filter(opt => opt && opt.name);
-          if (validOptions.length > 0) {
-            await tx.productOption.createMany({
-              data: validOptions.map(opt => ({
-                productId: product.id,
-                name: opt.name,
-                values: typeof opt.values === 'string' ? opt.values : JSON.stringify(opt.values || [])
-              }))
-            });
+        const optionMap = new Map();
+        const normalizeOptionName = (optName) => {
+          const cleaned = cleanStr(optName);
+          const lower = cleaned.toLowerCase();
+          
+          if (lower.includes('color') || lower.includes('colour')) return 'اللون';
+          if (lower.includes('size') || lower.includes('chima')) return 'المقاس';
+          
+          if (lower === 'model' || lower === 'models') return 'المقاس';
+          
+          return fieldMapping[cleaned] || fieldMapping[lower] || cleaned;
+        };
+        const addOptionValue = (optName, optValue) => {
+          const name = cleanStr(optName);
+          if (!name) return;
+          const value = cleanStr(optValue);
+          if (!value) return;
+          const key = normalizeOptionName(name);
+          // Use 'key' (normalized name) as the display name to ensure consistency and Arabic output
+          if (!optionMap.has(key)) optionMap.set(key, { name: key, values: new Set() });
+          optionMap.get(key).values.add(value);
+        };
+
+        if (options && Array.isArray(options)) {
+          for (const opt of options) {
+            const optName = cleanStr(opt?.name);
+            if (!optName) continue;
+            let vals = opt?.values;
+            if (typeof vals === 'string') {
+              try { vals = JSON.parse(vals); } catch { vals = []; }
+            }
+            if (!Array.isArray(vals)) vals = [];
+            for (const v of vals) addOptionValue(optName, String(v));
           }
+        }
+
+        const normalizeVariantKey = (rawKey) => {
+          const cleaned = cleanStr(String(rawKey));
+          const lower = cleaned.toLowerCase();
+          
+          if (lower.includes('color') || lower.includes('colour')) return 'اللون';
+          if (lower.includes('size') || lower.includes('chima')) return 'المقاس';
+          
+          if (lower === 'model' || lower === 'models') return 'المقاس';
+          
+          if (fieldMapping[cleaned]) return fieldMapping[cleaned];
+          if (fieldMapping[lower]) return fieldMapping[lower];
+          return cleaned;
+        };
+
+        if (variants && Array.isArray(variants)) {
+          for (const v of variants) {
+            let combo = v?.combination ?? v?.options ?? v?.variant ?? {};
+            if (typeof combo === 'string') {
+              try { combo = JSON.parse(combo); } catch { combo = {}; }
+            }
+            if (!combo || typeof combo !== 'object' || Array.isArray(combo)) continue;
+            for (const [k, rawVal] of Object.entries(combo)) {
+              const valString = typeof rawVal === 'object' && rawVal !== null
+                ? (rawVal.value ?? rawVal.name ?? JSON.stringify(rawVal))
+                : String(rawVal);
+              addOptionValue(normalizeVariantKey(k), valString);
+            }
+          }
+        }
+
+        const normalizedOptions = [...optionMap.values()]
+          .map((entry) => ({ name: entry.name, values: [...entry.values] }))
+          .filter(opt => opt.name !== '' && opt.values.length > 0);
+
+        if (normalizedOptions.length > 0) {
+          await tx.productOption.createMany({
+            data: normalizedOptions.map(opt => ({
+              productId: product.id,
+              name: opt.name,
+              values: JSON.stringify(opt.values)
+            }))
+          });
         }
 
         // Create variants
         if (variants && Array.isArray(variants) && variants.length > 0) {
-          const validVariants = variants.filter(v => v && v.combination);
+          const validVariants = variants.filter(v => v && (v.combination || v.options));
           if (validVariants.length > 0) {
             await tx.productVariant.createMany({
-              data: validVariants.map(v => ({
-                productId: product.id,
-                combination: typeof v.combination === 'string' ? v.combination : JSON.stringify(v.combination),
-                price: v.price ? ( (v.isPriceCombined || isPriceCombined) ? (safeParseFloat(v.price) || 0) : calculateBulkImportPrice(safeParseFloat(v.price) || 0, domesticFee, v.weight || rawProductData.weight, v.length || rawProductData.length, v.width || rawProductData.width, v.height || rawProductData.height, v.shippingMethod || rawProductData.shippingMethod) ) : product.price,
-                weight: safeParseFloat(v.weight),
-                height: safeParseFloat(v.height),
-                length: safeParseFloat(v.length),
-                width: safeParseFloat(v.width),
-                isPriceCombined: v.isPriceCombined || isPriceCombined,
-                image: v.image || product.image || ''
-              }))
+              data: validVariants.map(v => {
+                const variantRawPrice = safeParseFloat(v.price) || 0;
+                const variantBaseRaw = safeParseFloat(v.basePriceRMB);
+                const rawVal = (variantBaseRaw && variantBaseRaw > 0) ? variantBaseRaw : variantRawPrice;
+                
+                // User guarantees input is IQD. No x200 conversion.
+                const iqdBase = rawVal;
+                
+                // FORCE isPriceCombined to FALSE if this is a generated variant (currency='IQD')
+                // This overrides any accidental inheritance from the main product
+                // Also ensure we handle the string/boolean type mismatch correctly
+                const isGeneratedVariant = v.currency === 'IQD';
+                const variantIsPriceCombined = isGeneratedVariant 
+                  ? false 
+                  : (v.isPriceCombined !== undefined 
+                      ? (String(v.isPriceCombined) === 'true' || v.isPriceCombined === true) 
+                      : (isPriceCombined));
+
+                console.log(`[DEBUG V4 Variant] price=${v.price}, iqdBase=${iqdBase}, isCombined=${variantIsPriceCombined} (Was: ${isPriceCombined})`);
+
+                // FORCE basePriceRMB to be present if iqdBase is present
+                // This handles the case where safeParseFloat might have returned null/0 but we have a rawVal
+                const finalVariantBasePrice = iqdBase > 0 ? iqdBase : (safeParseFloat(product.basePriceRMB) || rawVal || 0);
+
+                // Use safeParseFloat(product.price) as fallback, not product.price directly
+                const fallbackPrice = safeParseFloat(product.price) || 0;
+
+                const finalVariantPrice = (() => {
+                  // If base price is valid, use it for calculation
+                  if (finalVariantBasePrice && finalVariantBasePrice > 0) {
+                     // If explicit instruction to combine price, return base
+                     if (variantIsPriceCombined) return finalVariantBasePrice;
+                     
+                     // Otherwise calculate dynamic price
+                     return calculateBulkImportPrice(
+                        finalVariantBasePrice, 
+                        domesticFee, 
+                        v.weight || rawProductData.weight, 
+                        v.length || rawProductData.length, 
+                        v.width || rawProductData.width, 
+                        v.height || rawProductData.height, 
+                        v.shippingMethod || rawProductData.shippingMethod, 
+                        shippingRates
+                     );
+                  }
+                  
+                  // Fallback to product price if no variant base price
+                  return fallbackPrice;
+                })();
+
+                return {
+                  productId: product.id,
+                  combination: (() => {
+                    let combo = v.combination ?? v.options ?? {};
+                    if (typeof combo === 'string') {
+                      try { combo = JSON.parse(combo); } catch { return combo; }
+                    }
+                    if (!combo || typeof combo !== 'object' || Array.isArray(combo)) return '{}';
+                    const normalizedCombo = {};
+                    for (const [k, rawVal] of Object.entries(combo)) {
+                      const valString = typeof rawVal === 'object' && rawVal !== null
+                        ? (rawVal.value ?? rawVal.name ?? JSON.stringify(rawVal))
+                        : String(rawVal);
+                      normalizedCombo[normalizeVariantKey(k)] = cleanStr(valString);
+                    }
+                    return JSON.stringify(normalizedCombo);
+                  })(),
+                  price: finalVariantPrice,
+                  weight: safeParseFloat(v.weight),
+                  height: safeParseFloat(v.height),
+                  length: safeParseFloat(v.length),
+                  width: safeParseFloat(v.width),
+                  isPriceCombined: variantIsPriceCombined,
+                  basePriceRMB: finalVariantBasePrice,
+                  image: v.image || product.image || ''
+                };
+              })
             });
           }
         }
@@ -4076,20 +5497,7 @@ app.post('/api/admin/products/bulk-create', authenticateToken, isAdmin, hasPermi
 
     res.json({ success: true, count: createdResults.length, products: createdResults });
 
-    // Trigger background embedding processing for each product
-    if (process.env.HUGGINGFACE_API_KEY) {
-      createdResults.forEach((product, index) => {
-        (async () => {
-          try {
-            await new Promise(r => setTimeout(r, index * 2000));
-            console.log(`[Bulk Create AI] Starting embedding processing for product ${product.id}`);
-            await processProductEmbedding(product.id);
-          } catch (aiErr) {
-            console.error(`[Bulk Create AI] Processing failed for product ${product.id}:`, aiErr.message);
-          }
-        })();
-      });
-    }
+    createdResults.forEach((product) => enqueueEmbeddingJob(product.id));
   } catch (error) {
     console.error('Detailed Bulk Create Error:', error);
     res.status(500).json({ 
@@ -4104,11 +5512,12 @@ app.post('/api/admin/products/bulk-create', authenticateToken, isAdmin, hasPermi
 app.get('/api/products/:id', async (req, res) => {
   try {
     const { id } = req.params;
+    console.log(`[DEBUG] Fetching product ${id}`);
     const product = await prisma.product.findUnique({
       where: { id: safeParseId(id) },
       include: { 
         options: true,
-        variants: true,
+        variants: { select: productVariantSelect },
         images: {
           orderBy: {
             order: 'asc'
@@ -4121,8 +5530,15 @@ app.get('/api/products/:id', async (req, res) => {
       }
     });
     if (!product) return res.status(404).json({ error: 'Product not found' });
-    res.json(product);
+    const storeSettings = await prisma.storeSettings.findUnique({ where: { id: 1 } });
+    const shippingRates = {
+      airShippingRate: storeSettings?.airShippingRate,
+      seaShippingRate: storeSettings?.seaShippingRate,
+      airShippingMinFloor: storeSettings?.airShippingMinFloor
+    };
+    res.json(applyDynamicPricingToProduct(product, shippingRates));
   } catch (error) {
+    console.error('Error fetching product:', error);
     res.status(500).json({ error: 'Failed to fetch product' });
   }
 });
@@ -4163,6 +5579,13 @@ app.get('/api/search', async (req, res) => {
       return res.json({ products: [], total: 0 });
     }
 
+    const storeSettings = await prisma.storeSettings.findUnique({ where: { id: 1 } });
+    const shippingRates = {
+      airShippingRate: storeSettings?.airShippingRate,
+      seaShippingRate: storeSettings?.seaShippingRate,
+      airShippingMinFloor: storeSettings?.airShippingMinFloor
+    };
+
     // Use AI Hybrid Search if API keys are available
     if (process.env.SILICONFLOW_API_KEY && process.env.HUGGINGFACE_API_KEY) {
       try {
@@ -4177,7 +5600,7 @@ app.get('/api/search', async (req, res) => {
             isActive: true
           },
           include: {
-            variants: true,
+            variants: { select: productVariantSelect },
             images: {
               take: 1,
               orderBy: { order: 'asc' }
@@ -4202,7 +5625,7 @@ app.get('/api/search', async (req, res) => {
           .filter(Boolean);
 
         return res.json({ 
-          products: mergedResults, 
+          products: mergedResults.map(p => applyDynamicPricingToProduct(p, shippingRates)), 
           total: results.length,
           hasMore: skip + limitNum < results.length
         });
@@ -4465,7 +5888,7 @@ app.get('/api/search', async (req, res) => {
         ]
       },
       include: { 
-        variants: true,
+        variants: { select: productVariantSelect },
         images: {
           take: 1,
           orderBy: { order: 'asc' }
@@ -4587,7 +6010,7 @@ app.get('/api/search', async (req, res) => {
     const paginatedProducts = sortedProducts.slice(skip, skip + limitNum);
 
     res.json({ 
-      products: paginatedProducts, 
+      products: paginatedProducts.map(p => applyDynamicPricingToProduct(p, shippingRates)), 
       total,
       hasMore: skip + limitNum < total
     });
@@ -4715,9 +6138,7 @@ app.put('/api/products/:id', authenticateToken, isAdmin, hasPermission('manage_p
       return updated;
     });
 
-    if (process.env.HUGGINGFACE_API_KEY) {
-      processProductEmbedding(product.id).catch(err => console.error('Embedding processing on update failed:', err));
-    }
+    enqueueEmbeddingJob(product.id);
 
     res.json(product);
   } catch (error) {
@@ -4762,27 +6183,7 @@ app.delete('/api/products/:id', authenticateToken, isAdmin, hasPermission('manag
 
 // Bulk delete products
 // Bulk update products status (isActive)
-app.post('/api/admin/products/bulk-status', authenticateToken, isAdmin, hasPermission('manage_products'), async (req, res) => {
-  try {
-    const { ids, isActive } = req.body;
-    await prisma.product.updateMany({
-      where: { id: { in: ids } },
-      data: { isActive }
-    });
-    
-    await logActivity(
-      req.user.id,
-      req.user.name,
-      'BULK_UPDATE_PRODUCTS_STATUS',
-      { ids, isActive },
-      'PRODUCT'
-    );
-    
-    res.json({ success: true });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to bulk update products' });
-  }
-});
+
 
 // ADMIN: Trigger AI dimension estimation for products without them
 app.post('/api/admin/products/estimate-dimensions', authenticateToken, isAdmin, hasPermission('manage_products'), async (req, res) => {
@@ -4971,7 +6372,7 @@ app.get('/api/cart', authenticateToken, async (req, res) => {
       where: { userId },
       include: { 
         product: true,
-        variant: true
+        variant: { select: productVariantSelect }
       }
     });
     res.json(cartItems);
@@ -5002,7 +6403,7 @@ app.post('/api/cart', authenticateToken, async (req, res) => {
 
     const product = await prisma.product.findUnique({
       where: { id: pId },
-      include: { variants: true }
+      include: { variants: { select: productVariantSelect } }
     });
 
     if (!product) {
@@ -5010,6 +6411,13 @@ app.post('/api/cart', authenticateToken, async (req, res) => {
     }
 
     const variant = vId ? product.variants.find(v => v.id === vId) : null;
+
+    const storeSettings = await prisma.storeSettings.findUnique({ where: { id: 1 } });
+    const shippingRates = {
+      airShippingRate: storeSettings?.airShippingRate,
+      seaShippingRate: storeSettings?.seaShippingRate,
+      airShippingMinFloor: storeSettings?.airShippingMinFloor
+    };
 
     // Calculate inclusive price (base price + shipping)
     const dbPrice = variant ? variant.price : product.price;
@@ -5022,7 +6430,8 @@ app.post('/api/cart', authenticateToken, async (req, res) => {
       shippingMethod,
       product.domesticShippingFee || 0,
       product.basePriceRMB,
-      product.isPriceCombined
+      product.isPriceCombined,
+      shippingRates
     );
     const shippingFee = await calculateProductShipping(product, shippingMethod, true, variant);
     const inclusivePrice = Math.ceil((adjustedBasePrice + shippingFee) / 250) * 250;
@@ -5048,7 +6457,7 @@ app.post('/api/cart', authenticateToken, async (req, res) => {
         },
         include: { 
           product: true,
-          variant: true
+          variant: { select: productVariantSelect }
         }
       });
     } else {
@@ -5064,7 +6473,7 @@ app.post('/api/cart', authenticateToken, async (req, res) => {
         },
         include: { 
           product: true,
-          variant: true
+          variant: { select: productVariantSelect }
         }
       });
     }
@@ -5111,7 +6520,7 @@ app.put('/api/cart/:id', authenticateToken, async (req, res) => {
       data: { quantity: qty },
       include: { 
         product: true,
-        variant: true
+        variant: { select: productVariantSelect }
       }
     });
     res.json(cartItem);
@@ -5162,7 +6571,7 @@ app.post('/api/orders', authenticateToken, async (req, res) => {
         const product = await prisma.product.findUnique({ where: { id: parseInt(item.productId) } });
         let variant = null;
         if (item.variantId) {
-          variant = await prisma.productVariant.findUnique({ where: { id: parseInt(item.variantId) } });
+          variant = await prisma.productVariant.findUnique({ where: { id: parseInt(item.variantId) }, select: productVariantSelect });
         }
         return {
           ...item,
@@ -5180,7 +6589,7 @@ app.post('/api/orders', authenticateToken, async (req, res) => {
         },
         include: { 
           product: true,
-          variant: true 
+          variant: { select: productVariantSelect }
         }
       });
     }
@@ -5188,6 +6597,13 @@ app.post('/api/orders', authenticateToken, async (req, res) => {
     if (!cartItems || cartItems.length === 0) {
       return res.status(400).json({ error: 'Cart is empty' });
     }
+
+    const storeSettings = await prisma.storeSettings.findUnique({ where: { id: 1 } });
+    const shippingRates = {
+      airShippingRate: storeSettings?.airShippingRate,
+      seaShippingRate: storeSettings?.seaShippingRate,
+      airShippingMinFloor: storeSettings?.airShippingMinFloor
+    };
 
     // 2. Prepare items with correct prices (adjusted based on shipping method)
     const processedItems = cartItems.map(item => {
@@ -5210,7 +6626,8 @@ app.post('/api/orders', authenticateToken, async (req, res) => {
         method,
         product.domesticShippingFee || 0,
         product.basePriceRMB,
-        product.isPriceCombined
+        product.isPriceCombined,
+        shippingRates
       );
       
       // Ensure selectedOptions is a string for Prisma
@@ -5327,7 +6744,7 @@ app.post('/api/orders', authenticateToken, async (req, res) => {
             items: {
               include: {
                 product: true,
-                variant: true
+                variant: { select: productVariantSelect }
               }
             } 
           }
@@ -5398,7 +6815,7 @@ app.get('/api/orders', authenticateToken, async (req, res) => {
         items: { 
           include: { 
             product: true,
-            variant: true
+            variant: { select: productVariantSelect }
           } 
         },
         address: true
@@ -5421,7 +6838,7 @@ app.get('/api/orders/:id', authenticateToken, async (req, res) => {
         items: { 
           include: { 
             product: true,
-            variant: true
+            variant: { select: productVariantSelect }
           } 
         },
         address: true
@@ -5712,12 +7129,14 @@ app.delete('/api/admin/banners/:id', authenticateToken, isAdmin, hasPermission('
 // --- Admin: Settings ---
 app.get('/api/settings', async (req, res) => {
   try {
-    let settings = await prisma.storeSettings.findUnique({ where: { id: 1 } });
-    if (!settings) {
-      settings = await prisma.storeSettings.create({ data: { id: 1 } });
-    }
+    const settings = await prisma.storeSettings.upsert({
+      where: { id: 1 },
+      update: {},
+      create: { id: 1 }
+    });
     res.json(settings);
   } catch (error) {
+    console.error('Fetch settings error:', error);
     res.status(500).json({ error: 'Failed to fetch settings' });
   }
 });
@@ -5737,22 +7156,44 @@ app.put('/api/admin/settings', authenticateToken, isAdmin, hasPermission('manage
       airShippingThreshold,
       seaShippingThreshold
     } = req.body;
+
+    const previousSettings = await prisma.storeSettings.findUnique({ where: { id: 1 } });
+    const oldRates = {
+      airShippingRate: previousSettings?.airShippingRate ?? 15400,
+      seaShippingRate: previousSettings?.seaShippingRate ?? 182000,
+      airShippingMinFloor: previousSettings?.airShippingMinFloor ?? 0
+    };
+
+    const parseFiniteFloat = (val) => {
+      if (val === null || val === undefined || val === '') return undefined;
+      const n = typeof val === 'number' ? val : parseFloat(val);
+      return Number.isFinite(n) ? n : undefined;
+    };
+
+    const updateData = {
+      ...(storeName !== undefined ? { storeName } : {}),
+      ...(contactEmail !== undefined ? { contactEmail } : {}),
+      ...(contactPhone !== undefined ? { contactPhone } : {}),
+      ...(currency !== undefined ? { currency } : {}),
+      ...(footerText !== undefined ? { footerText } : {}),
+      ...(socialLinks !== undefined ? { socialLinks: typeof socialLinks === 'object' ? JSON.stringify(socialLinks) : socialLinks } : {})
+    };
+
+    const parsedAirShippingRate = parseFiniteFloat(airShippingRate);
+    const parsedSeaShippingRate = parseFiniteFloat(seaShippingRate);
+    const parsedAirMinFloor = parseFiniteFloat(airShippingMinFloor);
+    const parsedAirThreshold = parseFiniteFloat(airShippingThreshold);
+    const parsedSeaThreshold = parseFiniteFloat(seaShippingThreshold);
+
+    if (parsedAirShippingRate !== undefined) updateData.airShippingRate = parsedAirShippingRate;
+    if (parsedSeaShippingRate !== undefined) updateData.seaShippingRate = parsedSeaShippingRate;
+    if (parsedAirMinFloor !== undefined) updateData.airShippingMinFloor = parsedAirMinFloor;
+    if (parsedAirThreshold !== undefined) updateData.airShippingThreshold = parsedAirThreshold;
+    if (parsedSeaThreshold !== undefined) updateData.seaShippingThreshold = parsedSeaThreshold;
     
     const settings = await prisma.storeSettings.upsert({
       where: { id: 1 },
-      update: { 
-        storeName, 
-        contactEmail, 
-        contactPhone, 
-        currency, 
-        socialLinks: typeof socialLinks === 'object' ? JSON.stringify(socialLinks) : socialLinks, 
-        footerText,
-        airShippingRate: parseFloat(airShippingRate),
-        seaShippingRate: parseFloat(seaShippingRate),
-        airShippingMinFloor: parseFloat(airShippingMinFloor),
-        airShippingThreshold: parseFloat(airShippingThreshold),
-        seaShippingThreshold: parseFloat(seaShippingThreshold)
-      },
+      update: updateData,
       create: { 
         id: 1, 
         storeName, 
@@ -5761,13 +7202,30 @@ app.put('/api/admin/settings', authenticateToken, isAdmin, hasPermission('manage
         currency, 
         socialLinks: typeof socialLinks === 'object' ? JSON.stringify(socialLinks) : socialLinks, 
         footerText,
-        airShippingRate: parseFloat(airShippingRate) || 15400,
-        seaShippingRate: parseFloat(seaShippingRate) || 182000,
-        airShippingMinFloor: parseFloat(airShippingMinFloor) || 0,
-        airShippingThreshold: parseFloat(airShippingThreshold) || 30000,
-        seaShippingThreshold: parseFloat(seaShippingThreshold) || 30000
+        airShippingRate: parsedAirShippingRate ?? 15400,
+        seaShippingRate: parsedSeaShippingRate ?? 182000,
+        airShippingMinFloor: parsedAirMinFloor ?? 0,
+        airShippingThreshold: parsedAirThreshold ?? 30000,
+        seaShippingThreshold: parsedSeaThreshold ?? 30000
       }
     });
+
+    const newRates = {
+      airShippingRate: settings.airShippingRate,
+      seaShippingRate: settings.seaShippingRate,
+      airShippingMinFloor: settings.airShippingMinFloor
+    };
+    const ratesChanged =
+      oldRates.airShippingRate !== newRates.airShippingRate ||
+      oldRates.seaShippingRate !== newRates.seaShippingRate ||
+      oldRates.airShippingMinFloor !== newRates.airShippingMinFloor;
+
+    if (ratesChanged) {
+      recalculateExistingProductPrices(oldRates, newRates).catch((e) => {
+        console.error('[Settings] Price recalculation failed:', e);
+      });
+    }
+
     res.json(settings);
   } catch (error) {
     res.status(500).json({ error: 'Failed to update settings' });

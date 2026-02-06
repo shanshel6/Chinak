@@ -24,6 +24,9 @@ interface ProductInfoProps {
   seaThreshold?: number;
   variant?: any;
   shippingMethod?: 'air' | 'sea';
+  onShippingMethodChange?: (method: 'air' | 'sea') => void;
+  calculatedAirPrice?: number;
+  calculatedSeaPrice?: number;
 }
 
 const ProductInfo: React.FC<ProductInfoProps> = ({
@@ -39,7 +42,9 @@ const ProductInfo: React.FC<ProductInfoProps> = ({
   domesticShippingFee,
   basePriceRMB,
   isPriceCombined,
-  shippingMethod = 'air'
+  shippingMethod = 'air',
+  calculatedAirPrice,
+  calculatedSeaPrice
 }) => {
   const [airRate, setAirRate] = useState<number>(15400); 
   const [seaRate, setSeaRate] = useState<number>(182000);
@@ -47,6 +52,9 @@ const ProductInfo: React.FC<ProductInfoProps> = ({
   const [shippingMinFloor, setShippingMinFloor] = useState<number>(2200);
   
   useEffect(() => {
+    // Only fetch settings if we don't have calculated prices passed down
+    if (calculatedAirPrice && calculatedSeaPrice) return;
+    
     const loadSettings = async () => {
       try {
         const settings = await fetchSettings();
@@ -59,25 +67,29 @@ const ProductInfo: React.FC<ProductInfoProps> = ({
       }
     };
     loadSettings();
-  }, []);
+  }, [calculatedAirPrice, calculatedSeaPrice]);
 
   const airPrice = React.useMemo(() => {
+    if (calculatedAirPrice) return calculatedAirPrice;
     return calculateInclusivePrice(price, weight, length, width, height, {
       airRate,
       seaRate,
       minFloor: shippingMinFloor
     }, 'air', domesticShippingFee || 0, basePriceRMB, isPriceCombined);
-  }, [price, weight, length, width, height, airRate, seaRate, shippingMinFloor, domesticShippingFee, basePriceRMB, isPriceCombined]);
+  }, [price, weight, length, width, height, airRate, seaRate, shippingMinFloor, domesticShippingFee, basePriceRMB, isPriceCombined, calculatedAirPrice]);
 
   const seaPrice = React.useMemo(() => {
+    if (calculatedSeaPrice) return calculatedSeaPrice;
     return calculateInclusivePrice(price, weight, length, width, height, {
       airRate,
       seaRate,
       minFloor: shippingMinFloor
     }, 'sea', domesticShippingFee || 0, basePriceRMB, isPriceCombined);
-  }, [price, weight, length, width, height, airRate, seaRate, shippingMinFloor, domesticShippingFee, basePriceRMB, isPriceCombined]);
+  }, [price, weight, length, width, height, airRate, seaRate, shippingMinFloor, domesticShippingFee, basePriceRMB, isPriceCombined, calculatedSeaPrice]);
 
-  const totalPrice = shippingMethod === 'air' ? airPrice : seaPrice;
+  const totalPrice = React.useMemo(() => {
+    return shippingMethod === 'air' ? airPrice : seaPrice;
+  }, [shippingMethod, airPrice, seaPrice]);
 
   const inclusiveOriginalPrice = React.useMemo(() => {
     if (!originalPrice) return null;

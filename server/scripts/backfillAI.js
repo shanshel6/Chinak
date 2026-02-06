@@ -15,8 +15,8 @@ dotenv.config({ path: path.join(__dirname, '../.env') });
 async function backfillAI() {
   console.log('Starting AI backfill for existing products...');
   
-  if (!process.env.HUGGINGFACE_API_KEY) {
-    console.error('ERROR: HUGGINGFACE_API_KEY not found in .env');
+  if (!process.env.SILICONFLOW_API_KEY && !process.env.HUGGINGFACE_API_KEY) {
+    console.error('ERROR: No embedding provider configured (set SILICONFLOW_API_KEY or HUGGINGFACE_API_KEY)');
     process.exit(1);
   }
 

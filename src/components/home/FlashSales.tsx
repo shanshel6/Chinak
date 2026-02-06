@@ -66,17 +66,39 @@ const FlashSales: React.FC<FlashSalesProps> = ({
           ))
         ) : (
           products.slice(0, 4).map((product, index) => {
+            const minVariant = (!product.variants || product.variants.length === 0) 
+              ? null 
+              : product.variants.reduce((prev, curr) => {
+                  if (!prev.price) return curr;
+                  if (!curr.price) return prev;
+                  return prev.price < curr.price ? prev : curr;
+                });
+
+            const minPrice = minVariant ? (minVariant.price || product.price) : product.price;
+            const effectiveWeight = minVariant ? (minVariant.weight || product.weight) : product.weight;
+            const effectiveLength = minVariant ? (minVariant.length || product.length) : product.length;
+            const effectiveWidth = minVariant ? (minVariant.width || product.width) : product.width;
+            const effectiveHeight = minVariant ? (minVariant.height || product.height) : product.height;
+
+            const isEffectivePriceCombined = minVariant 
+              ? (minVariant.isPriceCombined ?? product.isPriceCombined ?? false)
+              : (product.isPriceCombined ?? false);
+
+            const effectiveBasePriceRMB = (minVariant && minVariant.basePriceRMB && minVariant.basePriceRMB > 0)
+              ? minVariant.basePriceRMB
+              : product.basePriceRMB;
+
             const totalPrice = calculateInclusivePrice(
-              product.price,
-              product.weight,
-              product.length,
-              product.width,
-              product.height,
+              minPrice,
+              effectiveWeight,
+              effectiveLength,
+              effectiveWidth,
+              effectiveHeight,
               rates,
-              undefined,
+              'sea',
               product.domesticShippingFee || 0,
-              product.basePriceRMB,
-              product.isPriceCombined
+              effectiveBasePriceRMB,
+              isEffectivePriceCombined
             );
 
             return (

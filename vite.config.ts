@@ -7,17 +7,17 @@ export default defineConfig({
   base: './',
   server: {
     host: true,
-    strictPort: true,
+    strictPort: false,
     allowedHosts: [
       'duskiest-catastrophical-arnav.ngrok-free.dev'
     ],
     proxy: {
       '/api': {
-        target: 'http://localhost:5000',
+        target: 'http://localhost:5001',
         changeOrigin: true,
       },
       '/socket.io': {
-        target: 'http://localhost:5000',
+        target: 'http://localhost:5001',
         ws: true,
       }
     }

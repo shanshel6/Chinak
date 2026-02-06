@@ -50,7 +50,43 @@ const BestSellers: React.FC<BestSellersProps> = ({ products, onViewAll }) => {
         <button onClick={onViewAll} className="text-xs font-bold text-primary hover:underline">{t('common.view_all')}</button>
       </div>
       <div className="space-y-4 flex-1">
-        {productsWithStats.map((product, i) => (
+        {productsWithStats.map((product, i) => {
+          const minVariant = (product.variants && product.variants.length > 0)
+            ? product.variants.reduce((prev: any, curr: any) => {
+                if (!prev.price) return curr;
+                if (!curr.price) return prev;
+                return prev.price < curr.price ? prev : curr;
+              })
+            : null;
+
+          const minPrice = minVariant ? (minVariant.price || product.price) : product.price;
+          const effectiveWeight = minVariant ? (minVariant.weight || product.weight) : product.weight;
+          const effectiveLength = minVariant ? (minVariant.length || product.length) : product.length;
+          const effectiveWidth = minVariant ? (minVariant.width || product.width) : product.width;
+          const effectiveHeight = minVariant ? (minVariant.height || product.height) : product.height;
+
+          const isEffectivePriceCombined = minVariant 
+            ? (minVariant.isPriceCombined ?? product.isPriceCombined ?? false)
+            : (product.isPriceCombined ?? false);
+
+          const effectiveBasePriceRMB = (minVariant && minVariant.basePriceRMB && minVariant.basePriceRMB > 0)
+            ? minVariant.basePriceRMB
+            : product.basePriceRMB;
+
+          const totalPrice = calculateInclusivePrice(
+            minPrice, 
+            effectiveWeight, 
+            effectiveLength, 
+            effectiveWidth, 
+            effectiveHeight, 
+            rates, 
+            undefined, 
+            product.domesticShippingFee || 0, 
+            effectiveBasePriceRMB, 
+            isEffectivePriceCombined
+          );
+
+          return (
           <div key={i} className="flex items-center gap-3 p-2 rounded-2xl hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors flex-row-reverse">
             <div className="relative">
               <LazyImage 
@@ -72,7 +108,7 @@ const BestSellers: React.FC<BestSellersProps> = ({ products, onViewAll }) => {
                 <div className="flex items-center gap-1 text-primary">
                   <Truck size={10} className="opacity-70" />
                   <span className="text-[11px] font-black">
-                    {calculateInclusivePrice(product.price, product.weight, product.length, product.width, product.height, rates, undefined, product.domesticShippingFee || 0, product.basePriceRMB, product.isPriceCombined).toLocaleString()} {t('common.iqd')}
+                    {totalPrice.toLocaleString()} {t('common.iqd')}
                   </span>
                 </div>
               </div>
@@ -83,7 +119,8 @@ const BestSellers: React.FC<BestSellersProps> = ({ products, onViewAll }) => {
               </div>
             </div>
           </div>
-        ))}
+        );
+      })}
       </div>
     </div>
   );

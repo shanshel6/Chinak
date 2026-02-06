@@ -116,6 +116,7 @@ model ProductVariant {
   productId   Int
   combination String
   price       Float
+  basePriceRMB Float?
   weight      Float?
   height      Float?
   length      Float?

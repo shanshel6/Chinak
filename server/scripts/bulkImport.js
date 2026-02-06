@@ -40,8 +40,8 @@ const calculateBulkImportPrice = (rawPrice, domesticFee, weight, length, width, 
   let method = explicitMethod?.toLowerCase();
   
   if (!method) {
-    // Default logic matching frontend: < 2kg is AIR, >= 2kg is SEA
-    method = (weightInKg > 0 && weightInKg < 2) ? 'air' : 'sea';
+    // Default logic matching frontend: < 1kg is AIR, >= 1kg is SEA
+    method = (weightInKg > 0 && weightInKg < 1) ? 'air' : 'sea';
   }
 
   const domestic = domesticFee || 0;
@@ -50,7 +50,11 @@ const calculateBulkImportPrice = (rawPrice, domesticFee, weight, length, width, 
     // Air Pricing logic: (Base Price + Domestic Fee + (Weight * Air Rate)) * 1.20
     const airRate = 15400;
     const shippingCost = weightInKg * airRate;
-    return Math.ceil(((rawPrice + domestic + shippingCost) * 1.20) / 250) * 250;
+    
+    // Treat rawPrice as IQD (no heuristic conversion)
+    const basePrice = rawPrice;
+    
+    return Math.ceil(((basePrice + domestic + shippingCost) * 1.20) / 250) * 250;
   } else {
     // Sea: (Base Price + Domestic Fee + Sea Shipping) * 1.20
     const seaRate = 182000;
@@ -63,9 +67,12 @@ const calculateBulkImportPrice = (rawPrice, domesticFee, weight, length, width, 
     const paddedH = h > 0 ? h + 5 : 0;
 
     const volumeCbm = (paddedL * paddedW * paddedH) / 1000000;
-    const seaShippingCost = Math.max(volumeCbm * seaRate, 1000);
+    const seaShippingCost = Math.max(volumeCbm * seaRate, 500);
 
-    return Math.ceil(((rawPrice + domestic + seaShippingCost) * 1.20) / 250) * 250;
+    // Treat rawPrice as IQD (no heuristic conversion)
+    const basePrice = rawPrice;
+
+    return Math.ceil(((basePrice + domestic + seaShippingCost) * 1.20) / 250) * 250;
   }
 };
 
@@ -133,7 +140,15 @@ async function bulkImport(filePath) {
       if (!product) {
         const domesticFee = parseFloat(p.domestic_shipping_fee || p.domesticShippingFee) || 0;
         const rawPrice = parseFloat(p.general_price) || parseFloat(p.price) || parseFloat(p.basePriceRMB) || 0;
-        const price = calculateBulkImportPrice(rawPrice, domesticFee, p.weight, p.length, p.width, p.height, p.shippingMethod);
+        
+        // Determine if price is combined (default to true if not specified)
+         const isPriceCombined = p.isPriceCombined !== undefined 
+           ? (String(p.isPriceCombined) === 'true' || p.isPriceCombined === true) 
+           : (rawPrice > 1000);
+         
+         const price = isPriceCombined 
+          ? rawPrice 
+          : calculateBulkImportPrice(rawPrice, domesticFee, p.weight, p.length, p.width, p.height, p.shippingMethod);
 
         // Skip products with 0 price
         if (price <= 0 || rawPrice <= 0) {
@@ -154,6 +169,7 @@ async function bulkImport(filePath) {
             status: 'DRAFT', // Import as draft until published
             isActive: false, // Inactive by default when DRAFT
             isFeatured: !!p.isFeatured,
+            isPriceCombined: true,
             specs: p.specs,
             storeEvaluation: p.storeEvaluation,
             reviewsCountShown: p.reviewsCountShown,

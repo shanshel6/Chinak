@@ -138,6 +138,30 @@ const Favorites: React.FC = () => {
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 p-4">
             {wishlist.map((item) => {
               const product = item.product;
+              const variants = product.variants || [];
+              
+              // Find the cheapest variant to get the correct price AND weight
+              const minVariant = variants.reduce((min: any, curr: any) => {
+                if (!curr.price) return min;
+                if (!min) return curr;
+                return curr.price < min.price ? curr : min;
+              }, null);
+
+              const minPrice = minVariant ? minVariant.price : product.price;
+              const effectiveWeight = (minVariant && minVariant.weight) ? minVariant.weight : product.weight;
+              const effectiveLength = (minVariant && minVariant.length) ? minVariant.length : product.length;
+              const effectiveWidth = (minVariant && minVariant.width) ? minVariant.width : product.width;
+              const effectiveHeight = (minVariant && minVariant.height) ? minVariant.height : product.height;
+              
+              // Determine if the price is combined (strictly check minVariant or product)
+              const isEffectivePriceCombined = minVariant 
+                ? (minVariant.isPriceCombined ?? product.isPriceCombined ?? false)
+                : (product.isPriceCombined ?? false);
+
+              const effectiveBasePriceRMB = (minVariant && minVariant.basePriceRMB && minVariant.basePriceRMB > 0)
+                ? minVariant.basePriceRMB
+                : product.basePriceRMB;
+
               return (
                 <div 
                   key={product.id} 
@@ -184,16 +208,16 @@ const Favorites: React.FC = () => {
                     <div className="mt-2 flex items-center gap-2">
                       <p className="text-primary text-base font-bold">
                         {calculateInclusivePrice(
-                          product.price,
-                          product.weight,
-                          product.length,
-                          product.width,
-                          product.height,
+                          minPrice,
+                          effectiveWeight,
+                          effectiveLength,
+                          effectiveWidth,
+                          effectiveHeight,
                           rates,
-                          undefined,
+                          'sea',
                           product.domesticShippingFee || 0,
-                          product.basePriceRMB,
-                          product.isPriceCombined
+                          effectiveBasePriceRMB,
+                          isEffectivePriceCombined
                         ).toLocaleString()} د.ع
                       </p>
                     </div>
@@ -206,6 +230,30 @@ const Favorites: React.FC = () => {
           <div className="flex flex-col gap-4 px-4 pt-4">
             {wishlist.map((item) => {
               const product = item.product;
+              const variants = product.variants || [];
+              
+              // Find the cheapest variant to get the correct price AND weight
+              const minVariant = variants.reduce((min: any, curr: any) => {
+                if (!curr.price) return min;
+                if (!min) return curr;
+                return curr.price < min.price ? curr : min;
+              }, null);
+
+              const minPrice = minVariant ? minVariant.price : product.price;
+              const effectiveWeight = (minVariant && minVariant.weight) ? minVariant.weight : product.weight;
+              const effectiveLength = (minVariant && minVariant.length) ? minVariant.length : product.length;
+              const effectiveWidth = (minVariant && minVariant.width) ? minVariant.width : product.width;
+              const effectiveHeight = (minVariant && minVariant.height) ? minVariant.height : product.height;
+              
+              // Determine if the price is combined (strictly check minVariant or product)
+              const isEffectivePriceCombined = minVariant 
+                ? (minVariant.isPriceCombined ?? product.isPriceCombined ?? false)
+                : (product.isPriceCombined ?? false);
+
+              const effectiveBasePriceRMB = (minVariant && minVariant.basePriceRMB && minVariant.basePriceRMB > 0)
+                ? minVariant.basePriceRMB
+                : product.basePriceRMB;
+
               return (
                 <div 
                   key={product.id} 
@@ -226,16 +274,16 @@ const Favorites: React.FC = () => {
                     <div className="flex items-center gap-2 mt-2">
                       <span className="text-lg font-bold text-primary">
                         {calculateInclusivePrice(
-                          product.price,
-                          product.weight,
-                          product.length,
-                          product.width,
-                          product.height,
+                          minPrice,
+                          effectiveWeight,
+                          effectiveLength,
+                          effectiveWidth,
+                          effectiveHeight,
                           rates,
-                          undefined,
+                          'sea',
                           product.domesticShippingFee || 0,
-                          product.basePriceRMB,
-                          product.isPriceCombined
+                          effectiveBasePriceRMB,
+                          isEffectivePriceCombined
                         ).toLocaleString()} د.ع
                       </span>
                     </div>

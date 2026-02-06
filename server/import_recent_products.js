@@ -22,7 +22,7 @@ const calculateBulkImportPrice = (rawPrice, domesticFee, weight, length, width, 
   const weightInKg = extractNumber(weight) || 0.5;
   let method = explicitMethod?.toLowerCase();
   if (!method) {
-    method = (weightInKg > 0 && weightInKg < 2) ? 'air' : 'sea';
+    method = (weightInKg > 0 && weightInKg < 1) ? 'air' : 'sea';
   }
   const domestic = domesticFee || 0;
 
@@ -43,7 +43,7 @@ const calculateBulkImportPrice = (rawPrice, domesticFee, weight, length, width, 
     const paddedH = h > 0 ? h + 5 : 0;
 
     const volumeCbm = (paddedL * paddedW * paddedH) / 1000000;
-    const seaShippingCost = Math.max(volumeCbm * seaRate, 1000);
+    const seaShippingCost = Math.max(volumeCbm * seaRate, 500);
 
     return Math.ceil(((rawPrice + domestic + seaShippingCost) * 1.20) / 250) * 250;
   }
@@ -99,6 +99,7 @@ async function main() {
             status: 'DRAFT', // Import as draft
             isActive: false,
             isFeatured: !!p.isFeatured,
+            isPriceCombined: true,
             specs: p.specs,
             storeEvaluation: p.storeEvaluation,
             reviewsCountShown: p.reviewsCountShown,

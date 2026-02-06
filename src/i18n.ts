@@ -150,7 +150,8 @@ i18n
               },
               badges: {
                 featured: 'مميز',
-                inactive: 'غير نشط'
+                inactive: 'غير نشط',
+                draft: 'مسودة'
               },
               tooltips: {
                 activate: 'تنشيط',

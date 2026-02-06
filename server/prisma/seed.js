@@ -44,7 +44,8 @@ async function main() {
       basePriceRMB: 220,
       image: 'https://images.unsplash.com/photo-1579586337278-3befd40fd17a?q=80&w=1000&auto=format&fit=crop',
       isFeatured: true,
-      specs: 'شاشة: 1.96 بوصة AMOLED, بطارية: 10 أيام, مقاومة للماء: IP68'
+      specs: 'شاشة: 1.96 بوصة AMOLED, بطارية: 10 أيام, مقاومة للماء: IP68',
+      isPriceCombined: true
     },
     {
       name: 'سماعات بلوتوث عازلة للضوضاء',
@@ -54,7 +55,8 @@ async function main() {
       basePriceRMB: 155,
       image: 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?q=80&w=1000&auto=format&fit=crop',
       isFeatured: true,
-      specs: 'بلوتوث: 5.3, مدة العمل: 40 ساعة, شحن سريع: USB-C'
+      specs: 'بلوتوث: 5.3, مدة العمل: 40 ساعة, شحن سريع: USB-C',
+      isPriceCombined: true
     },
     {
       name: 'تيشيرت قطني كاجوال',
@@ -64,7 +66,8 @@ async function main() {
       basePriceRMB: 58,
       image: 'https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?q=80&w=1000&auto=format&fit=crop',
       isFeatured: false,
-      specs: 'الخامة: قطن 100%, المقاسات: S, M, L, XL, XXL'
+      specs: 'الخامة: قطن 100%, المقاسات: S, M, L, XL, XXL',
+      isPriceCombined: true
     }
   ];
 

@@ -42,22 +42,40 @@ const SearchProductCard: React.FC<SearchProductCardProps> = ({
 
   const totalPrice = React.useMemo(() => {
     const variants = (product as any).variants || [];
-    const variantPrices = variants
-      .map((v: any) => v?.price)
-      .filter((p: any) => typeof p === 'number' && p > 0);
-    const minPrice = variantPrices.length > 0 ? Math.min(...variantPrices) : product.price;
+    
+    // Find the cheapest variant to get the correct price AND weight
+    const minVariant = variants.reduce((min: any, curr: any) => {
+      if (!curr.price) return min;
+      if (!min) return curr;
+      return curr.price < min.price ? curr : min;
+    }, null);
+
+    const minPrice = minVariant ? minVariant.price : product.price;
+    const effectiveWeight = (minVariant && minVariant.weight) ? minVariant.weight : product.weight;
+    const effectiveLength = (minVariant && minVariant.length) ? minVariant.length : product.length;
+    const effectiveWidth = (minVariant && minVariant.width) ? minVariant.width : product.width;
+    const effectiveHeight = (minVariant && minVariant.height) ? minVariant.height : product.height;
+
+    // Determine if the price is combined (strictly check minVariant or product)
+    const isEffectivePriceCombined = minVariant 
+      ? (minVariant.isPriceCombined ?? product.isPriceCombined ?? false)
+      : (product.isPriceCombined ?? false);
+
+    const effectiveBasePriceRMB = (minVariant && minVariant.basePriceRMB && minVariant.basePriceRMB > 0)
+      ? minVariant.basePriceRMB
+      : product.basePriceRMB;
 
     return calculateInclusivePrice(
       minPrice,
-      product.weight,
-      product.length,
-      product.width,
-      product.height,
+      effectiveWeight,
+      effectiveLength,
+      effectiveWidth,
+      effectiveHeight,
       rates,
-      undefined,
+      'sea',
       product.domesticShippingFee || 0,
-      product.basePriceRMB,
-      product.isPriceCombined
+      effectiveBasePriceRMB,
+      isEffectivePriceCombined
     );
   }, [product, rates]);
 

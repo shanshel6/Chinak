@@ -38,7 +38,7 @@ const AddToCartBar: React.FC<AddToCartBarProps> = ({
           {/* Background Slider */}
           <div 
             className="absolute top-1 bottom-1 w-[calc(50%-4px)] bg-white dark:bg-slate-800 rounded-xl shadow-md transition-all duration-300 ease-out"
-            style={{ left: shippingMethod === 'sea' ? 'calc(50% + 4px)' : '4px' }}
+            style={{ left: shippingMethod === 'air' ? 'calc(50% + 4px)' : '4px' }}
           />
           
           <button
@@ -55,6 +55,11 @@ const AddToCartBar: React.FC<AddToCartBarProps> = ({
             <div className="flex flex-col items-start leading-tight">
               <span>شحن جوي</span>
               <span className="text-[9px] opacity-60 font-bold">7-14 يوم</span>
+              {typeof airPrice === 'number' && airPrice > 0 && (
+                <span className="text-[10px] font-black mt-1 text-slate-600 dark:text-slate-300">
+                  {airPrice.toLocaleString()} د.ع
+                </span>
+              )}
             </div>
           </button>
 
@@ -80,6 +85,11 @@ const AddToCartBar: React.FC<AddToCartBarProps> = ({
             <div className="flex flex-col items-start leading-tight">
               <span>شحن بحري</span>
               <span className="text-[9px] opacity-60 font-bold">35-60 يوم</span>
+              {typeof seaPrice === 'number' && seaPrice > 0 && (
+                <span className="text-[10px] font-black mt-1 text-slate-600 dark:text-slate-300">
+                  {seaPrice.toLocaleString()} د.ع
+                </span>
+              )}
             </div>
           </button>
         </div>

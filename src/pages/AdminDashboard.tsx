@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { 
   Users, 
   Package, 
@@ -39,7 +39,8 @@ import {
   updateCoupon,
   deleteCoupon,
   updateUserRole,
-  bulkImportProducts,
+  enqueueBulkImportProducts,
+  fetchBulkImportJob,
   updateProduct,
   saveProductOptions,
   deleteProduct,
@@ -54,6 +55,7 @@ import {
   estimateDimensions
 } from '../services/api';
 import { localProductService } from '../services/localProductService';
+import { socket } from '../services/socket';
 import { useToastStore } from '../store/useToastStore';
 import { useAuthStore } from '../store/useAuthStore';
 import StatsCards from '../components/admin/StatsCards';
@@ -66,6 +68,7 @@ import LazyImage from '../components/LazyImage';
 const AdminDashboard: React.FC = () => {
   const location = useLocation();
   const showToast = useToastStore((state) => state.showToast);
+  const currentUser = useAuthStore((state) => state.user);
   
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState<any>(null);
@@ -76,6 +79,7 @@ const AdminDashboard: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedProducts, setSelectedProducts] = useState<(number | string)[]>([]);
   const [isImporting, setIsImporting] = useState(false);
+  const [bulkImportJobs, setBulkImportJobs] = useState<Record<string, any>>({});
   const [showImportModal, setShowImportModal] = useState(false);
   const [showCouponModal, setShowCouponModal] = useState(false);
   const [selectedCoupon, setSelectedCoupon] = useState<any>(null);
@@ -137,6 +141,106 @@ const AdminDashboard: React.FC = () => {
     }
     return token;
   }, []);
+
+  const bulkImportJobsForUser = useMemo(() => {
+    if (!currentUser) return [];
+    return Object.values(bulkImportJobs)
+      .filter((j: any) => String(j?.userId || '') === String(currentUser.id || ''))
+      .sort((a: any, b: any) => {
+        const aTime = Date.parse(a?.createdAt || a?.startedAt || a?.finishedAt || '') || 0;
+        const bTime = Date.parse(b?.createdAt || b?.startedAt || b?.finishedAt || '') || 0;
+        return bTime - aTime;
+      })
+      .slice(0, 8);
+  }, [bulkImportJobs, currentUser]);
+
+  const bulkImportJobBufferRef = useRef<Record<string, any>>({});
+  const bulkImportJobFlushTimerRef = useRef<number | null>(null);
+  const bulkImportJobFlushVersionRef = useRef(0);
+  const scheduleProductsReloadTimerRef = useRef<number | null>(null);
+
+  const flushBulkImportJobs = useCallback(() => {
+    const buffered = bulkImportJobBufferRef.current;
+    const ids = Object.keys(buffered);
+    if (ids.length === 0) return;
+
+    bulkImportJobBufferRef.current = {};
+
+    setBulkImportJobs((prev) => {
+      let changed = false;
+      const next: Record<string, any> = { ...prev };
+
+      for (const id of ids) {
+        const incoming = buffered[id];
+        if (!incoming) continue;
+        const prevJob = prev[id] || {};
+
+        if (
+          prevJob.status === incoming.status &&
+          Number(prevJob.processed || 0) === Number(incoming.processed || 0) &&
+          Number(prevJob.total || 0) === Number(incoming.total || 0) &&
+          prevJob.finishedAt === incoming.finishedAt &&
+          prevJob.error === incoming.error
+        ) {
+          continue;
+        }
+
+        changed = true;
+        next[id] = { ...prevJob, ...incoming };
+      }
+
+      if (!changed) return prev;
+
+      const forUser = Object.values(next)
+        .filter((j: any) => String(j?.userId || '') === String(currentUser?.id || ''))
+        .sort((a: any, b: any) => {
+          const aTime = Date.parse(a?.createdAt || a?.startedAt || a?.finishedAt || '') || 0;
+          const bTime = Date.parse(b?.createdAt || b?.startedAt || b?.finishedAt || '') || 0;
+          return bTime - aTime;
+        });
+
+      const trimmed = forUser.slice(0, 25);
+      const trimmedIds = new Set(trimmed.map((j: any) => j.id));
+
+      for (const job of forUser.slice(25)) {
+        if (job?.status === 'queued' || job?.status === 'processing' || job?.status === 'running') continue;
+        delete next[job.id];
+      }
+
+      for (const id of Object.keys(next)) {
+        const job = next[id];
+        if (String(job?.userId || '') !== String(currentUser?.id || '')) continue;
+        if (!trimmedIds.has(id) && (job?.status === 'completed' || job?.status === 'failed')) {
+          delete next[id];
+        }
+      }
+
+      return next;
+    });
+  }, [currentUser]);
+
+  const bufferBulkImportJobUpdate = useCallback(
+    (job: any) => {
+      if (!job?.id) return;
+
+      bulkImportJobBufferRef.current[job.id] = {
+        ...(bulkImportJobBufferRef.current[job.id] || {}),
+        ...job
+      };
+
+      if (bulkImportJobFlushTimerRef.current) return;
+
+      bulkImportJobFlushVersionRef.current += 1;
+      const version = bulkImportJobFlushVersionRef.current;
+      bulkImportJobFlushTimerRef.current = window.setTimeout(() => {
+        if (bulkImportJobFlushVersionRef.current === version) {
+          flushBulkImportJobs();
+        }
+        bulkImportJobFlushTimerRef.current = null;
+      }, 250);
+    },
+    [flushBulkImportJobs]
+  );
 
   const loadData = useCallback(async (page = currentPage, silent = false) => {
     if (!silent) setLoading(true);
@@ -251,6 +355,16 @@ const AdminDashboard: React.FC = () => {
     }
   }, [activeTab, currentPage, getLimit, searchTerm, showToast]);
 
+  const scheduleProductsReload = useCallback(() => {
+    if (scheduleProductsReloadTimerRef.current) {
+      window.clearTimeout(scheduleProductsReloadTimerRef.current);
+    }
+    scheduleProductsReloadTimerRef.current = window.setTimeout(() => {
+      loadData(1, true);
+      scheduleProductsReloadTimerRef.current = null;
+    }, 1500);
+  }, [loadData]);
+
   useEffect(() => {
     // Initial data load
     loadData(1);
@@ -286,6 +400,97 @@ const AdminDashboard: React.FC = () => {
     loadData(1, true); // Load tab data silently
   }, [activeTab]);
 
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const handler = (payload: any) => {
+      if (!payload) return;
+      if (String(payload.userId || '') !== String(currentUser.id || '')) return;
+
+      bufferBulkImportJobUpdate(payload);
+
+      if (payload.status === 'completed' && payload.results) {
+        const result = payload.results;
+
+        let message = `تم استيراد ونشر ${result.imported} منتج بنجاح.`;
+        if (result.skipped > 0) message += ` تم تخطي ${result.skipped} منتج موجود مسبقاً.`;
+        if (result.requeued > 0) message += ` تم إعادة جدولة ${result.requeued} منتج للمعالجة (Embedding).`;
+        if (result.failed > 0) {
+          message += ` فشل استيراد ${result.failed} منتج.`;
+          const examples = Array.isArray(result.errors)
+            ? result.errors
+                .slice(0, 3)
+                .map((e: any) => `${e?.name || 'بدون اسم'}: ${e?.error || 'خطأ غير معروف'}`)
+                .join(' | ')
+            : '';
+          if (examples) message += ` أمثلة: ${examples}`;
+        }
+        if (result.skipped > 0 && Array.isArray(result.skippedDetails) && result.skippedDetails.length > 0) {
+          const first = result.skippedDetails[0];
+          const matchedBy = Array.isArray(first?.matchedBy) ? first.matchedBy.join(', ') : '';
+          const label = matchedBy ? `مطابق: ${matchedBy}` : 'مطابق';
+          message += ` مثال: ${first?.name || 'بدون اسم'} (#${first?.existingId || '?'}) - ${label}`;
+        }
+
+        showToast(message, result.failed === 0 ? 'success' : 'warning');
+        scheduleProductsReload();
+      }
+
+      if (payload.status === 'failed') {
+        showToast(`فشل استيراد المنتجات: ${payload.error || 'خطأ غير معروف'}`, 'error');
+      }
+    };
+
+    socket.off('bulk_import_job', handler);
+    socket.on('bulk_import_job', handler);
+
+    return () => {
+      socket.off('bulk_import_job', handler);
+    };
+  }, [currentUser, showToast, bufferBulkImportJobUpdate, scheduleProductsReload]);
+
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const activeJobIds = bulkImportJobsForUser
+      .filter((j: any) => j?.status === 'queued' || j?.status === 'processing' || j?.status === 'running')
+      .map((j: any) => j.id)
+      .filter(Boolean);
+
+    if (activeJobIds.length === 0) return;
+
+    let cancelled = false;
+
+    const refresh = async () => {
+      const token = getAuthToken();
+      if (!token) return;
+      try {
+        const results = await Promise.all(
+          activeJobIds.map(async (jobId) => {
+            try {
+              const res = await fetchBulkImportJob(String(jobId), token);
+              return res?.job;
+            } catch {
+              return null;
+            }
+          })
+        );
+
+        if (cancelled) return;
+        for (const job of results) {
+          if (job?.id) bufferBulkImportJobUpdate(job);
+        }
+      } catch {}
+    };
+
+    refresh();
+    const interval = window.setInterval(refresh, 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [bulkImportJobsForUser, currentUser, getAuthToken, bufferBulkImportJobUpdate]);
+
   const handlePasteImport = async () => {
     if (!importText.trim()) return;
 
@@ -300,27 +505,21 @@ const AdminDashboard: React.FC = () => {
       }
 
       const token = getAuthToken();
-      const result = await bulkImportProducts(productsToImport, token);
-      
-      // Save returned drafts to local storage
-      if (result.drafts && result.drafts.length > 0) {
-        result.drafts.forEach((draft: any) => {
-          // Use the ID from backend, it's already unique enough now
-          localProductService.saveDraft(draft);
-        });
-      }
+      const queued = await enqueueBulkImportProducts(productsToImport, token);
 
-      let message = `تم استيراد ${result.imported} منتج كمسودات.`;
-      if (result.skipped > 0) message += ` تم تخطي ${result.skipped} منتج موجود مسبقاً.`;
-      if (result.failed > 0) message += ` فشل استيراد ${result.failed} منتج.`;
-      
-      showToast(message, result.failed === 0 ? 'success' : 'warning');
-      setShowImportModal(false);
+      const jobId = queued?.job?.id;
+      const total = queued?.job?.total || productsToImport.length;
+      if (queued?.job) bufferBulkImportJobUpdate(queued.job);
+      showToast(`تم إرسال ${total} منتج للمعالجة في الخلفية.${jobId ? ` رقم المهمة: ${jobId}` : ''}`, 'success');
       setImportText('');
-      loadData();
     } catch (error) {
       console.error('Bulk import error:', error);
-      showToast('فشل استيراد المنتجات - تأكد من صحة تنسيق JSON', 'error');
+      const msg = String((error as any)?.message || '');
+      if (msg.includes('Unauthorized') || msg.includes('Authentication required') || msg.includes('Invalid or expired token')) {
+        showToast('انتهت الجلسة أو لا تملك صلاحية الاستيراد. يرجى تسجيل الدخول كمسؤول.', 'error');
+      } else {
+        showToast('فشل استيراد المنتجات - تأكد من صحة تنسيق JSON', 'error');
+      }
     } finally {
       setIsImporting(false);
     }
@@ -773,7 +972,7 @@ const AdminDashboard: React.FC = () => {
                   disabled={isImporting || !importText.trim()}
                   className="flex-1 bg-primary text-white py-3.5 sm:py-4 rounded-2xl font-bold shadow-lg shadow-primary/25 hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-50 disabled:scale-100"
                 >
-                  {isImporting ? 'جاري الاستيراد...' : 'بدء الاستيراد'}
+                  {isImporting ? 'جاري الإرسال...' : 'بدء الاستيراد'}
                 </button>
                 <button
                   onClick={() => setShowImportModal(false)}
@@ -782,6 +981,94 @@ const AdminDashboard: React.FC = () => {
                   إلغاء
                 </button>
               </div>
+
+              {bulkImportJobsForUser.length > 0 && (
+                <div className="mt-8">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-black text-slate-900 dark:text-white">مهام الاستيراد</div>
+                      <div className="text-xs text-slate-500 mt-1">تحديث مباشر أثناء المعالجة في الخلفية</div>
+                    </div>
+                    <button
+                      onClick={() =>
+                        setBulkImportJobs((prev) => {
+                          const next: Record<string, any> = { ...prev };
+                          for (const job of bulkImportJobsForUser) {
+                            if (job?.status === 'completed' || job?.status === 'failed') {
+                              delete next[job.id];
+                            }
+                          }
+                          return next;
+                        })
+                      }
+                      className="px-4 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-50 transition-all"
+                    >
+                      مسح المنتهية
+                    </button>
+                  </div>
+
+                  <div className="space-y-3 mt-4">
+                    {bulkImportJobsForUser.map((job: any) => {
+                      const total = Number(job?.total || 0) || 0;
+                      const processed = Number(job?.processed || 0) || 0;
+                      const percent = total > 0 ? Math.min(100, Math.max(0, Math.round((processed / total) * 100))) : 0;
+                      const status = String(job?.status || '');
+                      const statusLabel =
+                        status === 'queued'
+                          ? 'في الانتظار'
+                          : status === 'processing' || status === 'running'
+                            ? 'قيد المعالجة'
+                            : status === 'completed'
+                              ? 'مكتملة'
+                              : status === 'failed'
+                                ? 'فشلت'
+                                : status;
+                      const statusClass =
+                        status === 'completed'
+                          ? 'bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-300'
+                          : status === 'failed'
+                            ? 'bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-300'
+                            : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300';
+
+                      return (
+                        <div
+                          key={job.id}
+                          className="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl p-4"
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="text-xs font-bold text-slate-600 dark:text-slate-300">
+                              {job?.id ? `#${String(job.id).slice(0, 10)}` : 'مهمة'}
+                            </div>
+                            <div className={`px-3 py-1 rounded-full text-xs font-bold ${statusClass}`}>{statusLabel}</div>
+                          </div>
+
+                          <div className="mt-3">
+                            <div className="h-2.5 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden">
+                              <div className="h-full bg-primary transition-all" style={{ width: `${percent}%` }} />
+                            </div>
+                            <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
+                              <span>
+                                {processed}/{total || '?'}
+                              </span>
+                              <span>{percent}%</span>
+                            </div>
+                          </div>
+
+                          {status === 'failed' && job?.error && (
+                            <div className="mt-2 text-xs font-bold text-red-600 dark:text-red-300">{String(job.error)}</div>
+                          )}
+
+                          {status === 'completed' && job?.results && (
+                            <div className="mt-2 text-xs font-bold text-green-700 dark:text-green-300">
+                              تم استيراد {job.results.imported || 0} • تم تخطي {job.results.skipped || 0} • فشل {job.results.failed || 0}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>

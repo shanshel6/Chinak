@@ -75,7 +75,8 @@ async function main() {
           ...productData,
           price: productData.price * 1.7, // 70% markup for Air shipping (default for small items)
           status: "PUBLISHED",
-          isActive: true
+          isActive: true,
+          isPriceCombined: true
         }
       });
     }

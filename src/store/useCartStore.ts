@@ -18,12 +18,15 @@ interface CartItem {
     id: number | string;
     combination: string;
     price: number;
+    basePriceRMB?: number | null;
+    isPriceCombined?: boolean;
     image?: string;
     weight?: number;
     length?: number;
     width?: number;
     height?: number;
   };
+  lastUpdated?: number;
 }
 
 interface CartState {
@@ -121,34 +124,41 @@ export const useCartStore = create<CartState>()(
           const serverItems = Array.isArray(serverData) ? serverData : [];
           
           set((state) => {
-            // Merge logic:
-            // 1. Keep all local items that are currently syncing (id starts with 'local-')
-            // 2. Add all server items
-            // 3. For duplicate items (same productId, variantId, options, shippingMethod), 
-            //    prefer the server version but keep the local quantity if it's higher (optimistic)
+            const currentLocalItems = state.items;
             
-            const localOnly = state.items.filter(item => 
-              typeof item.id === 'string' && item.id.startsWith('local-')
-            );
-            
-            const mergedItems = [...serverItems];
-            
-            // Add local items if they don't exist in server items yet
-            localOnly.forEach(localItem => {
-              const existsOnServer = serverItems.some(serverItem => 
-                String(serverItem.productId) === String(localItem.productId) &&
-                serverItem.variantId === localItem.variantId &&
-                serverItem.selectedOptions === localItem.selectedOptions &&
-                serverItem.shippingMethod === localItem.shippingMethod
+            // Map server items, but prefer local optimistic state if it was updated recently (< 5s)
+            // This prevents race conditions where the server hasn't processed the latest update yet
+            const mergedItems = serverItems.map(serverItem => {
+              const localMatch = currentLocalItems.find(localItem => 
+                String(localItem.id) === String(serverItem.id) || 
+                (
+                  String(localItem.productId) === String(serverItem.productId) &&
+                  localItem.variantId === serverItem.variantId &&
+                  localItem.selectedOptions === serverItem.selectedOptions &&
+                  localItem.shippingMethod === serverItem.shippingMethod
+                )
               );
-              
-              if (!existsOnServer) {
-                mergedItems.push(localItem);
+
+              if (localMatch && localMatch.lastUpdated && (Date.now() - localMatch.lastUpdated < 5000)) {
+                return { ...serverItem, ...localMatch, id: serverItem.id }; // Keep server ID but local data
               }
+              
+              return serverItem;
             });
 
+            // Add purely local items (id starts with local-) that aren't in server items yet
+            const localOnly = currentLocalItems.filter(item => 
+              typeof item.id === 'string' && item.id.startsWith('local-') &&
+              !mergedItems.some(m => 
+                String(m.productId) === String(item.productId) &&
+                m.variantId === item.variantId &&
+                m.selectedOptions === item.selectedOptions &&
+                m.shippingMethod === item.shippingMethod
+              )
+            );
+
             return { 
-              items: mergedItems, 
+              items: [...mergedItems, ...localOnly], 
               lastSynced: Date.now(), 
               isLoading: false 
             };
@@ -181,7 +191,7 @@ export const useCartStore = create<CartState>()(
           set({
             items: items.map(item => 
               item.id === existingItem.id 
-                ? { ...item, quantity: item.quantity + quantity }
+                ? { ...item, quantity: item.quantity + quantity, lastUpdated: Date.now() }
                 : item
             )
           });
@@ -223,7 +233,8 @@ export const useCartStore = create<CartState>()(
               basePriceRMB: productInfo.basePriceRMB,
               isPriceCombined: productInfo.isPriceCombined
             },
-            variant: productInfo.variant
+            variant: productInfo.variant,
+            lastUpdated: Date.now()
           };
           set({ items: [...items, newItem] });
           
@@ -247,7 +258,7 @@ export const useCartStore = create<CartState>()(
          
          set({
            items: items.map(item => 
-             item.id === itemId ? { ...item, quantity } : item
+             item.id === itemId ? { ...item, quantity, lastUpdated: Date.now() } : item
            )
          });
  
@@ -316,8 +327,8 @@ export const useCartStore = create<CartState>()(
             rates,
             item.shippingMethod,
             item.product.domesticShippingFee || 0,
-            item.product.basePriceRMB,
-            item.product.isPriceCombined
+            item.variant?.basePriceRMB ?? item.product.basePriceRMB,
+            item.variant?.isPriceCombined ?? item.product.isPriceCombined
           );
           return acc + (currentPrice * item.quantity);
         }, 0);

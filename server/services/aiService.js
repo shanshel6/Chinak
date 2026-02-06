@@ -26,10 +26,11 @@ let genAI = null;
 
 function getClients() {
   if (!hf) {
-    if (!process.env.HUGGINGFACE_API_KEY) {
-      throw new Error('HUGGINGFACE_API_KEY is not defined in environment variables');
+    if (process.env.HUGGINGFACE_API_KEY) {
+      hf = new HfInference(process.env.HUGGINGFACE_API_KEY);
+    } else {
+      hf = null;
     }
-    hf = new HfInference(process.env.HUGGINGFACE_API_KEY);
   }
   
   if (!siliconflow) {
@@ -62,6 +63,7 @@ function getClients() {
  * This model is optimized for 50+ languages including Arabic.
  */
 async function generateEmbedding(text) {
+  const targetDim = 384;
   const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
   const getStatusCode = (err) => {
     if (!err) return null;
@@ -78,36 +80,82 @@ async function generateEmbedding(text) {
     return status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
   };
 
-  const { hf } = getClients();
+  const normalizeVector = (vector) => {
+    if (!Array.isArray(vector)) {
+      throw new Error('Invalid embedding vector');
+    }
+    const numeric = vector.map((n) => Number(n));
+    if (numeric.some((n) => !Number.isFinite(n))) {
+      throw new Error('Embedding vector contains non-numeric values');
+    }
+    if (numeric.length === targetDim) return numeric;
+    if (numeric.length > targetDim) return numeric.slice(0, targetDim);
+    return numeric.concat(new Array(targetDim - numeric.length).fill(0));
+  };
+
+  const { hf, siliconflow } = getClients();
   const maxAttempts = 5;
-  let lastErr = null;
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+  const generateWithSiliconFlow = async () => {
+    if (!siliconflow) return null;
+    const model = process.env.SILICONFLOW_EMBEDDING_MODEL || 'Qwen/Qwen3-Embedding-0.6B';
+    const rawDimensions = process.env.SILICONFLOW_EMBEDDING_DIMENSIONS;
+    const dimensions = rawDimensions !== undefined && rawDimensions !== null && rawDimensions !== '' ? Number(rawDimensions) : undefined;
+
+    const payload = { model, input: text };
+    if (Number.isFinite(dimensions) && dimensions > 0) {
+      payload.dimensions = dimensions;
+    }
+
+    const response = await siliconflow.embeddings.create(payload);
+    const embedding = response?.data?.[0]?.embedding;
+    return normalizeVector(embedding);
+  };
+
+  const generateWithHuggingFace = async () => {
+    if (!hf) {
+      throw new Error('HUGGINGFACE_API_KEY is not defined in environment variables');
+    }
+    const response = await hf.featureExtraction({
+      model: 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2',
+      inputs: text,
+    });
+
+    let result = response;
+    if (Array.isArray(result) && Array.isArray(result[0])) {
+      result = result[0];
+    }
+    return normalizeVector(result);
+  };
+
+  const tryGenerate = async (fn) => {
+    let lastErr = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const embedding = await fn();
+        if (embedding) return embedding;
+        return null;
+      } catch (error) {
+        lastErr = error;
+        if (!shouldRetry(error) || attempt === maxAttempts) break;
+        const base = Math.min(30000, 1000 * (2 ** (attempt - 1)));
+        const jitter = Math.floor(Math.random() * 250);
+        await sleep(base + jitter);
+      }
+    }
+    throw lastErr;
+  };
+
+  if (siliconflow) {
     try {
-      const response = await hf.featureExtraction({
-        model: 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2',
-        inputs: text,
-      });
-
-      let result = response;
-      if (Array.isArray(result) && Array.isArray(result[0])) {
-        result = result[0];
-      }
-      if (!Array.isArray(result) || result.length !== 384) {
-        throw new Error(`Unexpected embedding shape (len=${Array.isArray(result) ? result.length : 'n/a'})`);
-      }
-      return result;
-    } catch (error) {
-      lastErr = error;
-      if (!shouldRetry(error) || attempt === maxAttempts) break;
-      const base = Math.min(30000, 1000 * (2 ** (attempt - 1)));
-      const jitter = Math.floor(Math.random() * 250);
-      await sleep(base + jitter);
+      const embedding = await tryGenerate(generateWithSiliconFlow);
+      if (embedding) return embedding;
+    } catch (err) {
+      if (!hf) throw err;
     }
   }
 
-  console.error('Hugging Face embedding failed:', lastErr);
-  throw lastErr;
+  return tryGenerate(generateWithHuggingFace);
 }
 
 export async function processProductEmbedding(productId) {
@@ -437,7 +485,7 @@ export async function hybridSearch(query, limit = 50, skip = 0, maxPrice = null)
         LIMIT 100
       )
       SELECT 
-        p.id, p.name, p."chineseName", p.description, p.price, p."basePriceRMB", 
+        p.id, p.name, p."chineseName", p.description, p.price, p."basePriceRMB", p."isPriceCombined",
         p.image, p."purchaseUrl", p.status, p."isFeatured", 
         p."isActive", p.specs, p."storeEvaluation", p."reviewsCountShown", 
         p."createdAt", p."updatedAt", p."videoUrl", p."aiMetadata", 
@@ -458,9 +506,32 @@ export async function hybridSearch(query, limit = 50, skip = 0, maxPrice = null)
       OFFSET ${skip}
     `, queryVector, `%${query}%`, `%${normalizedQuery}%`);
 
+    // Fetch variants for the found products to ensure accurate pricing
+    const productIds = results.map(r => Number(r.id));
+    const variants = await prisma.productVariant.findMany({
+      where: { productId: { in: productIds } },
+      select: {
+        productId: true,
+        price: true,
+        basePriceRMB: true,
+        weight: true,
+        length: true,
+        width: true,
+        height: true,
+        isPriceCombined: true
+      }
+    });
+
+    const variantsMap = variants.reduce((acc, v) => {
+      if (!acc[v.productId]) acc[v.productId] = [];
+      acc[v.productId].push(v);
+      return acc;
+    }, {});
+
     return results.map(p => ({
       ...p,
       id: Number(p.id),
+      variants: variantsMap[Number(p.id)] || [],
       semantic_score: p.semantic_score,
       keyword_score: p.keyword_score,
       final_rank: p.final_rank
