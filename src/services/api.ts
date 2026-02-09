@@ -47,7 +47,7 @@ export const getBaseDomain = () => {
 
   // 4. Default local development (Browser)
   if (window.location.hostname === 'localhost') {
-    return '';
+    return 'http://localhost:5001';
   }
 
   return 'https://shanshal66-my-shop-backend.hf.space';
@@ -96,9 +96,9 @@ const persistentCache = {
       cache.set(key, { data, timestamp });
       
       // Update localStorage (only for safe GET requests)
-      // Limit: don't store objects larger than ~100KB in localStorage
+      // Limit: don't store objects larger than ~500KB in localStorage (increased from 100KB)
       const serialized = JSON.stringify({ data, timestamp });
-      if (serialized.length > 100000) {
+      if (serialized.length > 500000) {
         return;
       }
 

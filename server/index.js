@@ -925,7 +925,9 @@ const authenticateToken = async (req, res, next) => {
       }
     } catch (jwtError) {
       console.log('[Auth] Local JWT verification failed:', jwtError.message);
-      return res.status(401).json({ error: 'Invalid or expired token' });
+      // Debug: Log secret length/prefix to check consistency (DO NOT LOG FULL SECRET)
+      console.log('[Auth] JWT_SECRET prefix:', JWT_SECRET.substring(0, 5) + '...');
+      return res.status(401).json({ error: `Authentication failed: ${jwtError.message}` });
     }
   } catch (error) {
     console.error('[Auth] Unexpected error during authentication:', error);
@@ -2547,22 +2549,25 @@ app.get('/api/admin/reports/summary', authenticateToken, isAdmin, hasPermission(
       take: 5
     });
 
-    const productDetails = await prisma.product.findMany({
-      where: { id: { in: topProducts.map(p => p.productId) } },
-      select: { id: true, name: true }
-    });
+    let topProductsWithDetails = [];
+    if (topProducts && topProducts.length > 0) {
+      const productDetails = await prisma.product.findMany({
+        where: { id: { in: topProducts.map(p => p.productId) } },
+        select: { id: true, name: true }
+      });
 
-    const topProductsWithDetails = topProducts.map(p => {
-      const details = productDetails.find(pd => pd.id === p.productId);
-      // Calculate revenue for this product
-      // For simplicity in this mock, we'll just use quantity
-      return {
-        id: p.productId,
-        name: details?.name || 'Unknown',
-        count: p._sum.quantity,
-        revenue: p._sum.quantity * 30000 // Mock revenue calculation
-      };
-    });
+      topProductsWithDetails = topProducts.map(p => {
+        const details = productDetails.find(pd => pd.id === p.productId);
+        // Calculate revenue for this product
+        // For simplicity in this mock, we'll just use quantity
+        return {
+          id: p.productId,
+          name: details?.name || 'Unknown',
+          count: p._sum.quantity,
+          revenue: p._sum.quantity * 30000 // Mock revenue calculation
+        };
+      });
+    }
 
     res.json({
       daily: {
@@ -2936,6 +2941,16 @@ app.get('/api/products', async (req, res) => {
       prisma.product.count({ where })
     ]);
 
+    // If no products found, return empty result immediately to avoid processing overhead
+    if (!products || products.length === 0) {
+      return res.json({
+        products: [],
+        total: 0,
+        page,
+        totalPages: 0
+      });
+    }
+
     res.json({
       products: products.map(p => applyDynamicPricingToProduct(p, shippingRates)),
       total,
@@ -2989,6 +3004,11 @@ app.get('/api/admin/products', authenticateToken, isAdmin, hasPermission('manage
         { description: { contains: search } },
         { chineseName: { contains: search } }
       ];
+      
+      const searchAsInt = parseInt(search);
+      if (!isNaN(searchAsInt)) {
+        where.OR.push({ id: searchAsInt });
+      }
     }
     
     if (status !== 'ALL') {
@@ -3015,6 +3035,16 @@ app.get('/api/admin/products', authenticateToken, isAdmin, hasPermission('manage
       }),
       prisma.product.count({ where })
     ]);
+
+    // Handle empty products array gracefully
+    if (!products || products.length === 0) {
+      return res.json({
+        products: [],
+        total: total || 0,
+        page,
+        totalPages: 0
+      });
+    }
 
     res.json({
       products: products.map(p => applyDynamicPricingToProduct(p, shippingRates)),
@@ -3807,7 +3837,7 @@ app.post('/api/products', authenticateToken, isAdmin, hasPermission('manage_prod
       name, chineseName, description, price, basePriceRMB, image, 
       isFeatured, isActive, status, purchaseUrl, videoUrl, 
       specs, storeEvaluation, reviewsCountShown, images, detailImages,
-      weight, length, width, height, domesticShippingFee, options, variants, aiMetadata
+      weight, length, width, height, domesticShippingFee, options, variants, aiMetadata, deliveryTime
     } = req.body;
 
     const parsedAiMetadata = (() => {
@@ -3950,6 +3980,7 @@ app.post('/api/products', authenticateToken, isAdmin, hasPermission('manage_prod
         domesticShippingFee: domesticFee,
         isPriceCombined: isPriceCombined,
         aiMetadata: parsedAiMetadata,
+        deliveryTime: deliveryTime || null,
         images: {
           create: [
             ...imageUrls.map((url, i) => ({
@@ -4177,6 +4208,9 @@ app.post('/api/admin/products/bulk-import', authenticateToken, isAdmin, hasPermi
           const description = cleanStr(p.description);
           const chineseName = cleanStr(p.chineseName) || cleanStr(p.name) || cleanStr(p.product_name);
           const aiMetadata = parseJsonObject(p.aiMetadata) || parseJsonObject(p.marketing_metadata);
+
+          // Map Delivery_time from input to deliveryTime
+          const deliveryTime = cleanStr(p.Delivery_time || p.deliveryTime || p.delivery_time) || "10-15 يوم";
 
           // Enhanced Options processing - extract from p.options OR p.variants OR direct properties
           let rawOptions = [];
@@ -4509,6 +4543,7 @@ app.post('/api/admin/products/bulk-import', authenticateToken, isAdmin, hasPermi
             isLocal: true,
             specs: specs,
             aiMetadata: aiMetadata || null,
+            deliveryTime: deliveryTime || "10-15 يوم",
             weight: productWeight,
             length: length,
             width: width,
@@ -5286,7 +5321,8 @@ app.post('/api/admin/products/bulk-create', authenticateToken, isAdmin, hasPermi
           height: safeParseFloat(rawProductData.height),
           domesticShippingFee: domesticFee,
           isPriceCombined: isPriceCombined,
-          aiMetadata: parsedAiMetadata
+          aiMetadata: parsedAiMetadata,
+          deliveryTime: rawProductData.deliveryTime || null
         };
         
         // Create the product

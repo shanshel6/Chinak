@@ -78,6 +78,7 @@ model Product {
   width             Float?
   domesticShippingFee Float?
   isPriceCombined   Boolean                @default(false)
+  deliveryTime      String?
   cartItems         CartItem[]
   orderItems        OrderItem[]
   images            ProductImage[]

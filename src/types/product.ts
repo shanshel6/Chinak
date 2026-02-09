@@ -30,4 +30,5 @@ export interface Product {
   reviews?: any[];
   originalPrice?: number;
   stock?: number;
+  deliveryTime?: string;
 }

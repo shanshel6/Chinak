@@ -99,6 +99,7 @@ const AdminDashboard: React.FC = () => {
   const [importText, setImportText] = useState('');
   const [editingPriceId, setEditingPriceId] = useState<number | string | null>(null);
   const [tempPrice, setTempPrice] = useState('');
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
   const showProductEditor = useState(false)[0];
   const setShowProductEditor = useState(false)[1];
   const editingProductId = useState<number | string | null>(null)[0];
@@ -121,6 +122,8 @@ const AdminDashboard: React.FC = () => {
     }
   });
   const [isSavingSettings, setIsSavingSettings] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const loaderRef = useRef<HTMLDivElement>(null);
   
   // Determine active tab from path
   const activeTab = location.pathname === '/admin' ? 'stats' : location.pathname.split('/').pop() || 'stats';
@@ -242,8 +245,10 @@ const AdminDashboard: React.FC = () => {
     [flushBulkImportJobs]
   );
 
-  const loadData = useCallback(async (page = currentPage, silent = false) => {
-    if (!silent) setLoading(true);
+  const loadData = useCallback(async (page = currentPage, silent = false, append = false) => {
+    if (!silent && !append) setLoading(true);
+    if (append) setIsLoadingMore(true);
+    
     const limit = getLimit();
     
     // Get token from store or localStorage
@@ -257,7 +262,8 @@ const AdminDashboard: React.FC = () => {
       page, 
       limit, 
       hasToken: !!token,
-      tokenLength: token?.length || 0
+      tokenLength: token?.length || 0,
+      append
     });
 
     if (!token) {
@@ -269,6 +275,7 @@ const AdminDashboard: React.FC = () => {
       if (!token) {
         showToast('يرجى تسجيل الدخول للوصول إلى لوحة التحكم', 'error');
         setLoading(false);
+        setIsLoadingMore(false);
         return;
       }
     }
@@ -280,7 +287,11 @@ const AdminDashboard: React.FC = () => {
         setStats(data);
       } else if (activeTab === 'users') {
         const data = await fetchAdminUsers(page, limit, searchTerm, token);
-        setUsers(data.users || []);
+        if (append) {
+          setUsers(prev => [...prev, ...data.users || []]);
+        } else {
+          setUsers(data.users || []);
+        }
         setTotalPages(data.totalPages || 1);
         setTotalItems(data.total || 0);
       } else if (activeTab === 'products') {
@@ -304,7 +315,12 @@ const AdminDashboard: React.FC = () => {
           allProducts = [...filteredDrafts, ...uniqueServerProducts];
         }
 
-        setProducts(allProducts);
+        if (append) {
+          setProducts(prev => [...prev, ...allProducts]);
+        } else {
+          setProducts(allProducts);
+        }
+
         const localDraftsCount = localProductService.getAllDrafts().length;
         const total = (data.total || 0) + localDraftsCount;
         setTotalItems(total);
@@ -315,7 +331,11 @@ const AdminDashboard: React.FC = () => {
           limit: limit,
           search: searchTerm 
         }, token);
-        setOrders(data.orders || []);
+        if (append) {
+          setOrders(prev => [...prev, ...data.orders || []]);
+        } else {
+          setOrders(data.orders || []);
+        }
         setTotalPages(data.totalPages || 1);
         setTotalItems(data.total || 0);
       } else if (activeTab === 'coupons') {
@@ -352,8 +372,28 @@ const AdminDashboard: React.FC = () => {
       }
     } finally {
       setLoading(false);
+      setIsLoadingMore(false);
     }
   }, [activeTab, currentPage, getLimit, searchTerm, showToast]);
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && !loading && !isLoadingMore && currentPage < totalPages) {
+          const nextPage = currentPage + 1;
+          setCurrentPage(nextPage);
+          loadData(nextPage, true, true);
+        }
+      },
+      { threshold: 0.1 }
+    );
+
+    if (loaderRef.current) {
+      observer.observe(loaderRef.current);
+    }
+
+    return () => observer.disconnect();
+  }, [loading, isLoadingMore, currentPage, totalPages, loadData]);
 
   const scheduleProductsReload = useCallback(() => {
     if (scheduleProductsReloadTimerRef.current) {
@@ -366,9 +406,6 @@ const AdminDashboard: React.FC = () => {
   }, [loadData]);
 
   useEffect(() => {
-    // Initial data load
-    loadData(1);
-
     // Load store settings once on mount to get shipping rates for price calculations
     const loadStoreSettings = async () => {
       try {
@@ -393,11 +430,11 @@ const AdminDashboard: React.FC = () => {
       }
     };
     loadStoreSettings();
-  }, [loadData]);
+  }, []);
 
   useEffect(() => {
     setCurrentPage(1); // Reset page when tab changes
-    loadData(1, true); // Load tab data silently
+    loadData(1, false); // Load tab data with loading state
   }, [activeTab]);
 
   useEffect(() => {
@@ -783,11 +820,7 @@ const AdminDashboard: React.FC = () => {
     }
   };
 
-  const handlePageChange = (newPage: number) => {
-    setCurrentPage(newPage);
-    loadData(newPage);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
+
 
   const handleRoleUpdate = async (userId: string, newRole: string) => {
     try {
@@ -815,67 +848,6 @@ const AdminDashboard: React.FC = () => {
   };
 
   const checkPermission = (_permission: string) => true;
-
-  const renderPagination = () => {
-    if (totalPages <= 1) return null;
-    const limit = getLimit();
-
-    return (
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-4 px-6 py-4 bg-white dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800">
-        <div className="text-sm text-slate-500 font-medium text-center sm:text-right">
-          عرض <span className="font-bold text-slate-900 dark:text-white">{(currentPage - 1) * limit + 1}</span> إلى <span className="font-bold text-slate-900 dark:text-white">{Math.min(currentPage * limit, totalItems)}</span> من <span className="font-bold text-slate-900 dark:text-white">{totalItems}</span> نتيجة
-        </div>
-        <div className="flex gap-2 overflow-x-auto pb-2 sm:pb-0 w-full sm:w-auto justify-center">
-          <button
-            onClick={() => handlePageChange(currentPage - 1)}
-            disabled={currentPage === 1}
-            className="p-2 min-w-[40px] h-10 rounded-xl border border-slate-200 dark:border-slate-700 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-slate-50 dark:hover:bg-slate-800 transition-all shrink-0"
-          >
-            <ChevronRight size={20} />
-          </button>
-          
-          <div className="flex gap-2">
-            {[...Array(totalPages)].map((_, i) => {
-              const pageNum = i + 1;
-              if (
-                pageNum === 1 || 
-                pageNum === totalPages || 
-                (pageNum >= currentPage - 1 && pageNum <= currentPage + 1)
-              ) {
-                return (
-                  <button
-                    key={pageNum}
-                    onClick={() => handlePageChange(pageNum)}
-                    className={`w-10 h-10 rounded-xl font-bold text-sm transition-all shrink-0 ${
-                      currentPage === pageNum 
-                        ? 'bg-primary text-white shadow-lg shadow-primary/25' 
-                        : 'hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400'
-                    }`}
-                  >
-                    {pageNum}
-                  </button>
-                );
-              } else if (
-                pageNum === currentPage - 2 || 
-                pageNum === currentPage + 2
-              ) {
-                return <span key={pageNum} className="flex items-center justify-center w-6 text-slate-400 shrink-0">...</span>;
-              }
-              return null;
-            })}
-          </div>
-
-          <button
-            onClick={() => handlePageChange(currentPage + 1)}
-            disabled={currentPage === totalPages}
-            className="p-2 min-w-[40px] h-10 rounded-xl border border-slate-200 dark:border-slate-700 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-slate-50 dark:hover:bg-slate-800 transition-all shrink-0"
-          >
-            <ChevronLeft size={20} />
-          </button>
-        </div>
-      </div>
-    );
-  };
 
   const renderStats = () => (
     <div className="space-y-8 animate-in fade-in duration-500">
@@ -1173,9 +1145,19 @@ const AdminDashboard: React.FC = () => {
         ))}
       </div>
 
-      <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-100 dark:border-slate-800 overflow-hidden shadow-sm">
-        {renderPagination()}
-      </div>
+      {/* Infinite Scroll Loader */}
+      {(isLoadingMore || currentPage < totalPages) && (
+        <div ref={loaderRef} className="py-8 flex justify-center w-full">
+          {isLoadingMore ? (
+            <div className="flex flex-col items-center gap-2">
+              <div className="w-8 h-8 border-4 border-primary/20 border-t-primary rounded-full animate-spin" />
+              <p className="text-xs text-slate-400 font-bold">جاري تحميل المزيد...</p>
+            </div>
+          ) : (
+            <div className="h-8" />
+          )}
+        </div>
+      )}
 
       {/* Floating Bulk Actions Bar */}
       {selectedProducts.length > 0 && (
@@ -1516,8 +1498,20 @@ const AdminDashboard: React.FC = () => {
           </tbody>
         </table>
         </div>
-        {renderPagination()}
       </div>
+      {/* Infinite Scroll Loader */}
+      {(isLoadingMore || currentPage < totalPages) && (
+        <div ref={loaderRef} className="py-8 flex justify-center w-full">
+          {isLoadingMore ? (
+            <div className="flex flex-col items-center gap-2">
+              <div className="w-8 h-8 border-4 border-primary/20 border-t-primary rounded-full animate-spin" />
+              <p className="text-xs text-slate-400 font-bold">جاري تحميل المزيد...</p>
+            </div>
+          ) : (
+            <div className="h-8" />
+          )}
+        </div>
+      )}
     </div>
   );
 
@@ -1639,14 +1633,20 @@ const AdminDashboard: React.FC = () => {
                         <tr key={item.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
                           <td className="px-4 py-4">
                             <div className="flex items-center gap-3">
-                              <LazyImage 
-                                src={item.variant?.image || item.product?.image} 
-                                alt={item.product?.name} 
-                                className="w-10 h-10 sm:w-12 sm:h-12 rounded-lg object-cover bg-slate-100 shrink-0"
-                                isThumbnail={true}
-                              />
+                              <div 
+                                onClick={() => setPreviewImage(item.variant?.image || item.product?.image)}
+                                className="cursor-pointer hover:opacity-80 transition-opacity"
+                              >
+                                <LazyImage 
+                                  src={item.variant?.image || item.product?.image} 
+                                  alt={item.product?.name} 
+                                  className="w-10 h-10 sm:w-12 sm:h-12 rounded-lg object-cover bg-slate-100 shrink-0"
+                                  isThumbnail={true}
+                                />
+                              </div>
                               <div className="min-w-0">
                                 <p className="font-bold truncate lg:max-w-none">{item.product?.name}</p>
+                                <p className="text-[10px] text-slate-400 font-mono mt-0.5">#{item.product?.id || item.productId}</p>
                               </div>
                             </div>
                           </td>
@@ -1734,19 +1734,33 @@ const AdminDashboard: React.FC = () => {
                             {(Math.ceil(item.price / 250) * 250 * item.quantity).toLocaleString()} د.ع
                           </td>
                           <td className="px-4 py-4 text-center">
-                            {item.product?.purchaseUrl ? (
+                            <div className="flex items-center justify-center gap-2">
+                              {/* Internal App Link */}
                               <a 
-                                href={item.product.purchaseUrl} 
+                                href={`/product?id=${item.product?.id || item.productId}`}
                                 target="_blank" 
                                 rel="noopener noreferrer"
-                                className="inline-flex items-center justify-center p-2 bg-blue-50 dark:bg-blue-900/20 text-blue-500 rounded-lg hover:scale-110 transition-all"
-                                title="رابط شراء المنتج"
+                                className="inline-flex items-center justify-center p-2 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 rounded-lg hover:scale-110 transition-all"
+                                title="عرض في التطبيق"
                               >
-                                <ArrowLeft size={16} className="rotate-[135deg]" />
+                                <Eye size={16} />
                               </a>
-                            ) : (
-                              <span className="text-slate-300 text-[10px]">لا يوجد رابط</span>
-                            )}
+
+                              {/* External 1688 Link */}
+                              {item.product?.purchaseUrl ? (
+                                <a 
+                                  href={item.product.purchaseUrl} 
+                                  target="_blank" 
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center justify-center p-2 bg-blue-50 dark:bg-blue-900/20 text-blue-500 rounded-lg hover:scale-110 transition-all"
+                                  title="رابط شراء المنتج (1688)"
+                                >
+                                  <ArrowLeft size={16} className="rotate-[135deg]" />
+                                </a>
+                              ) : (
+                                <span className="text-slate-300 text-[10px]">لا يوجد رابط 1688</span>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       ))}
@@ -1817,6 +1831,28 @@ const AdminDashboard: React.FC = () => {
               طباعة
             </button>
           </div>
+          {/* Image Preview Modal */}
+          {previewImage && (
+            <div 
+              className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm animate-in fade-in duration-300"
+              onClick={() => setPreviewImage(null)}
+            >
+              <div className="relative max-w-4xl max-h-[90vh] w-full h-full flex items-center justify-center">
+                <button 
+                  onClick={() => setPreviewImage(null)}
+                  className="absolute top-4 right-4 p-2 bg-white/10 hover:bg-white/20 text-white rounded-full transition-all z-10"
+                >
+                  <X size={24} />
+                </button>
+                <img 
+                  src={previewImage} 
+                  alt="Preview" 
+                  className="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
+                  onClick={(e) => e.stopPropagation()} 
+                />
+              </div>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -1967,8 +2003,20 @@ const AdminDashboard: React.FC = () => {
             <h3 className="text-lg font-black text-slate-400">لا توجد طلبات حالياً</h3>
           </div>
         )}
-        {renderPagination()}
       </div>
+      {/* Infinite Scroll Loader */}
+      {(isLoadingMore || currentPage < totalPages) && (
+        <div ref={loaderRef} className="py-8 flex justify-center w-full">
+          {isLoadingMore ? (
+            <div className="flex flex-col items-center gap-2">
+              <div className="w-8 h-8 border-4 border-primary/20 border-t-primary rounded-full animate-spin" />
+              <p className="text-xs text-slate-400 font-bold">جاري تحميل المزيد...</p>
+            </div>
+          ) : (
+            <div className="h-8" />
+          )}
+        </div>
+      )}
     </div>
   );
 

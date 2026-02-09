@@ -1,5 +1,5 @@
 import React from 'react';
-import { ShoppingCart, RefreshCw, Plus, ShoppingBag, Plane, Ship, Flame } from 'lucide-react';
+import { ShoppingCart, RefreshCw, Plus, ShoppingBag, Plane, Ship, Flame, AlertCircle } from 'lucide-react';
 
 interface AddToCartBarProps {
   price: number;
@@ -11,6 +11,7 @@ interface AddToCartBarProps {
   onShippingMethodChange: (method: 'air' | 'sea') => void;
   airPrice?: number;
   seaPrice?: number;
+  weight?: number;
 }
 
 const AddToCartBar: React.FC<AddToCartBarProps> = ({
@@ -23,6 +24,7 @@ const AddToCartBar: React.FC<AddToCartBarProps> = ({
   onShippingMethodChange,
   airPrice,
   seaPrice,
+  weight = 0,
 }) => {
   const discountPercentage = React.useMemo(() => {
     if (airPrice && seaPrice && airPrice > seaPrice) {
@@ -30,6 +32,9 @@ const AddToCartBar: React.FC<AddToCartBarProps> = ({
     }
     return 0;
   }, [airPrice, seaPrice]);
+
+  const isAirDisabled = weight > 2;
+
   return (
     <div className="fixed bottom-0 left-0 right-0 z-40 w-full bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl border-t border-slate-900/5 dark:border-white/10 px-6 py-4 pb-safe transition-colors shadow-[0_-8px_30px_rgba(0,0,0,0.08)]">
       <div className="flex flex-col gap-5">
@@ -42,20 +47,28 @@ const AddToCartBar: React.FC<AddToCartBarProps> = ({
           />
           
           <button
-            onClick={() => onShippingMethodChange('air')}
+            onClick={() => !isAirDisabled && onShippingMethodChange('air')}
+            disabled={isAirDisabled}
             className={`relative flex-1 flex items-center justify-center gap-2.5 py-3 px-4 rounded-xl text-xs font-black transition-all duration-300 ${
               shippingMethod === 'air'
                 ? 'text-primary'
                 : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'
-            }`}
+            } ${isAirDisabled ? 'opacity-50 cursor-not-allowed' : ''}`}
           >
             <div className={`p-1.5 rounded-lg transition-colors ${shippingMethod === 'air' ? 'bg-primary/10' : 'bg-transparent'}`}>
               <Plane size={16} strokeWidth={2.5} />
             </div>
             <div className="flex flex-col items-start leading-tight">
-              <span>شحن جوي</span>
+              <div className="flex items-center gap-1">
+                <span>شحن جوي</span>
+                {isAirDisabled && (
+                  <span className="text-[9px] text-red-500 bg-red-50 dark:bg-red-900/20 px-1 rounded flex items-center gap-0.5">
+                     غير متاح
+                  </span>
+                )}
+              </div>
               <span className="text-[9px] opacity-60 font-bold">7-14 يوم</span>
-              {typeof airPrice === 'number' && airPrice > 0 && (
+              {typeof airPrice === 'number' && airPrice > 0 && !isAirDisabled && (
                 <span className="text-[10px] font-black mt-1 text-slate-600 dark:text-slate-300">
                   {airPrice.toLocaleString()} د.ع
                 </span>
@@ -71,7 +84,7 @@ const AddToCartBar: React.FC<AddToCartBarProps> = ({
                 : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'
             }`}
           >
-            {discountPercentage > 0 && (
+            {discountPercentage > 0 && !isAirDisabled && (
               <div className="absolute -top-2 -right-1 z-10 flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-600 bg-gradient-to-r from-red-500 to-orange-500 shadow-[0_4px_12px_rgba(239,68,68,0.4)] animate-[bounce_2s_infinite] rotate-3 border border-white dark:border-slate-800">
                 <Flame size={10} className="text-white fill-white" />
                 <span className="text-white text-[9px] font-black whitespace-nowrap">
@@ -93,6 +106,13 @@ const AddToCartBar: React.FC<AddToCartBarProps> = ({
             </div>
           </button>
         </div>
+        
+        {isAirDisabled && (
+          <div className="flex items-center gap-2 px-2 text-amber-600 dark:text-amber-500 text-[10px] font-bold">
+            <AlertCircle size={12} />
+            <span>الشحن الجوي غير متاح للمنتجات الثقيلة (أكثر من 2 كجم)</span>
+          </div>
+        )}
 
         <div className="flex items-center justify-between gap-4">
           <div className="flex flex-col min-w-[120px]">

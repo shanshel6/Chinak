@@ -68,7 +68,7 @@ const ProductDetails: React.FC = () => {
       const saved = localStorage.getItem(`shipping_pref_${productId}`);
       if (saved === 'air' || saved === 'sea') return saved;
     }
-    return 'air';
+    return 'sea';
   });
   const userChangedShipping = useRef(false);
   const [shouldRenderDetails, setShouldRenderDetails] = useState(false);
@@ -153,19 +153,75 @@ const ProductDetails: React.FC = () => {
 
   }, [product]);
 
+  const pricingParams = useMemo(() => {
+    if (!product) return null;
+    
+    const variants = product.variants || [];
+    const minVariant = !currentVariant && variants.length > 0 
+      ? variants.reduce((min: any, curr: any) => {
+          if (!curr.price) return min;
+          if (!min) return curr;
+          return curr.price < min.price ? curr : min;
+        }, null)
+      : null;
+
+    const target = currentVariant || minVariant || product;
+    
+    const basePrice = target.price || 0;
+    const weight = target.weight || product.weight;
+    const length = target.length || product.length;
+    const width = target.width || product.width;
+    const height = target.height || product.height;
+    
+    const basePriceRMB = (target.basePriceRMB && target.basePriceRMB > 0) 
+      ? target.basePriceRMB 
+      : (product.basePriceRMB ?? null);
+      
+    // Strict check for the target (current variant or min variant)
+    // Use nullish coalescing to respect explicit false values
+    const effectiveIsPriceCombined = target.isPriceCombined ?? product.isPriceCombined ?? false;
+
+    // FORCE recalculation if basePriceRMB exists, even if isPriceCombined is true.
+    // This fixes the issue where variants with different weights/shipping costs wouldn't update the price
+    // because the frontend thought the price was "fixed" (combined).
+    const shouldForceRecalculate = !!basePriceRMB;
+
+    return {
+      basePrice,
+      weight,
+      length,
+      width,
+      height,
+      basePriceRMB,
+      effectiveIsPriceCombined: shouldForceRecalculate ? false : effectiveIsPriceCombined
+    };
+  }, [product, currentVariant]);
+
   useEffect(() => {
-    if (!product || userChangedShipping.current) return;
+    if (!product) return;
+    
+    // Force SEA shipping if weight > 2kg (Heavy item logic)
+    const effectiveWeight = pricingParams?.weight || product.weight || 0;
+    if (effectiveWeight > 2) {
+      if (shippingMethod !== 'sea') {
+        setShippingMethod('sea');
+      }
+      return; // Skip other checks if forced by weight
+    }
+
+    if (userChangedShipping.current) return;
     const savedPref = localStorage.getItem(`shipping_pref_${product.id}`);
     if (savedPref) return;
 
-    const weight = currentVariant?.weight ?? product.weight;
-    const length = currentVariant?.length ?? product.length;
-    const width = currentVariant?.width ?? product.width;
-    const height = currentVariant?.height ?? product.height;
-
-    const nextMethod = getDefaultShippingMethod(weight, length, width, height);
-    setShippingMethod((prev) => (prev === nextMethod ? prev : nextMethod));
-  }, [product, currentVariant]);
+    // Force Sea shipping as default regardless of weight/dimensions
+    // const weight = currentVariant?.weight ?? product.weight;
+    // const length = currentVariant?.length ?? product.length;
+    // const width = currentVariant?.width ?? product.width;
+    // const height = currentVariant?.height ?? product.height;
+    // const nextMethod = getDefaultShippingMethod(weight, length, width, height);
+    
+    setShippingMethod('sea');
+  }, [product, currentVariant, pricingParams, shippingMethod]);
 
   // Defer rendering of heavy detail images
   useEffect(() => {
@@ -278,49 +334,7 @@ const ProductDetails: React.FC = () => {
       : '4.8';
   }, [allReviews]);
 
-  const pricingParams = useMemo(() => {
-    if (!product) return null;
-    
-    const variants = product.variants || [];
-    const minVariant = !currentVariant && variants.length > 0 
-      ? variants.reduce((min: any, curr: any) => {
-          if (!curr.price) return min;
-          if (!min) return curr;
-          return curr.price < min.price ? curr : min;
-        }, null)
-      : null;
 
-    const target = currentVariant || minVariant || product;
-    
-    const basePrice = target.price || 0;
-    const weight = target.weight || product.weight;
-    const length = target.length || product.length;
-    const width = target.width || product.width;
-    const height = target.height || product.height;
-    
-    const basePriceRMB = (target.basePriceRMB && target.basePriceRMB > 0) 
-      ? target.basePriceRMB 
-      : (product.basePriceRMB ?? null);
-      
-    // Strict check for the target (current variant or min variant)
-    // Use nullish coalescing to respect explicit false values
-    const effectiveIsPriceCombined = target.isPriceCombined ?? product.isPriceCombined ?? false;
-
-    // FORCE recalculation if basePriceRMB exists, even if isPriceCombined is true.
-    // This fixes the issue where variants with different weights/shipping costs wouldn't update the price
-    // because the frontend thought the price was "fixed" (combined).
-    const shouldForceRecalculate = !!basePriceRMB;
-
-    return {
-      basePrice,
-      weight,
-      length,
-      width,
-      height,
-      basePriceRMB,
-      effectiveIsPriceCombined: shouldForceRecalculate ? false : effectiveIsPriceCombined
-    };
-  }, [product, currentVariant]);
 
   const { inclusivePrice, airPrice, seaPrice } = useMemo(() => {
     if (!product || !pricingParams) return { inclusivePrice: 0, airPrice: 0, seaPrice: 0 };
@@ -435,7 +449,8 @@ const ProductDetails: React.FC = () => {
       } else {
         // Only if no initial data, try local storage cache
         const cacheKey = `/products/${productId}`;
-        const cachedProduct = localStorage.getItem(`app_cache_${cacheKey}`);
+        // Use v2 prefix to match api.ts
+        const cachedProduct = localStorage.getItem(`app_cache_v2_${cacheKey}`);
         
         if (cachedProduct) {
           try {
@@ -478,7 +493,9 @@ const ProductDetails: React.FC = () => {
       // 1. Fetch main product info first (high priority)
       const fetchMainProduct = async () => {
         try {
+          console.log('[ProductDetails] Fetching product from server:', productId);
           const productData = await fetchProductById(productId);
+          console.log('[ProductDetails] Product fetched successfully:', productData);
           
           // Merge with initial data if present to avoid losing already-rendered info
           setProduct(prev => {
@@ -724,6 +741,7 @@ const ProductDetails: React.FC = () => {
             name={product.name}
             chineseName={product.chineseName}
             videoUrl={product.videoUrl}
+            deliveryTime={product.deliveryTime}
             storeEvaluation={product.storeEvaluation}
             reviewsCountShown={product.reviewsCountShown}
             averageRating={averageRating}
@@ -750,6 +768,9 @@ const ProductDetails: React.FC = () => {
                 options={product.options}
                 selectedOptions={selectedOptions}
                 onOptionSelect={(name, val) => setSelectedOptions(prev => ({ ...prev, [name]: val }))}
+                variants={product.variants}
+                onVariantSelect={(combination) => setSelectedOptions(combination)}
+                selectedVariantId={currentVariant?.id}
               />
             </div>
           )}
@@ -917,6 +938,7 @@ const ProductDetails: React.FC = () => {
             onShippingMethodChange={handleShippingMethodChange}
             airPrice={airPrice}
             seaPrice={seaPrice}
+            weight={pricingParams?.weight}
           />
       </div>
     </div>

@@ -56,6 +56,8 @@ const TermsOfService = lazy(() => import('./pages/TermsOfService'));
 import { performCacheMaintenance } from './services/api';
 
 import { App as CapApp } from '@capacitor/app';
+import { Capacitor } from '@capacitor/core';
+import type { PluginListenerHandle } from '@capacitor/core';
 
 const AdminLayout = lazy(() => import('./components/AdminLayout'));
 
@@ -82,37 +84,58 @@ function BackButtonHandler() {
   const location = useLocation();
   const showToast = useToastStore((state) => state.showToast);
   const lastBackPress = useRef<number>(0);
+  const locationPathRef = useRef(location.pathname);
+
+  // Update ref when location changes so the listener always has the latest path
+  useEffect(() => {
+    locationPathRef.current = location.pathname;
+  }, [location.pathname]);
 
   useEffect(() => {
-    let backButtonListener: any = null;
+    let backButtonListener: PluginListenerHandle | undefined;
+    let isMounted = true;
     
-    // Defensive check for Capacitor
-    const isNative = (window as any).Capacitor?.isNative;
-    
-    if (isNative) {
-      backButtonListener = CapApp.addListener('backButton', ({ canGoBack }) => {
-        if (location.pathname === '/') {
-          const now = Date.now();
-          if (now - lastBackPress.current < 2000) {
-            CapApp.exitApp();
+    const setupBackButton = async () => {
+      if (Capacitor.isNativePlatform()) {
+        try {
+          const listener = await CapApp.addListener('backButton', ({ canGoBack }) => {
+            const currentPath = locationPathRef.current;
+            
+            if (currentPath === '/') {
+              const now = Date.now();
+              if (now - lastBackPress.current < 2000) {
+                CapApp.exitApp();
+              } else {
+                lastBackPress.current = now;
+                showToast('اضغط مرة أخرى للخروج', 'info', 2000);
+              }
+            } else if (canGoBack) {
+              window.history.back();
+            } else {
+              navigate('/', { replace: true });
+            }
+          });
+
+          if (isMounted) {
+            backButtonListener = listener;
           } else {
-            lastBackPress.current = now;
-            showToast('اضغط مرة أخرى للخروج', 'info', 2000);
+            listener.remove();
           }
-        } else if (canGoBack) {
-          window.history.back();
-        } else {
-          navigate('/', { replace: true });
+        } catch (error) {
+          console.error('Error adding back button listener:', error);
         }
-      });
-    }
+      }
+    };
+
+    setupBackButton();
 
     return () => {
+      isMounted = false;
       if (backButtonListener) {
         backButtonListener.remove();
       }
     };
-  }, [location, navigate, showToast]);
+  }, [navigate, showToast]); // Removed location dependency to avoid re-binding
 
   return null;
 }

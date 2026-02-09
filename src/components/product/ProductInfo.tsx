@@ -9,6 +9,7 @@ interface ProductInfoProps {
   name: string;
   chineseName?: string;
   videoUrl?: string;
+  deliveryTime?: string;
   storeEvaluation?: string;
   reviewsCountShown?: string | number;
   averageRating: string;
@@ -35,6 +36,7 @@ const ProductInfo: React.FC<ProductInfoProps> = ({
   name,
   chineseName,
   videoUrl,
+  deliveryTime,
   weight,
   length,
   width,
