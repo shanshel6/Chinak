@@ -79,6 +79,7 @@ model Product {
   domesticShippingFee Float?
   isPriceCombined   Boolean                @default(false)
   deliveryTime      String?
+  minOrder          Int                    @default(1)
   cartItems         CartItem[]
   orderItems        OrderItem[]
   images            ProductImage[]

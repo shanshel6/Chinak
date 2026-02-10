@@ -1,0 +1,172 @@
+[
+  {
+    "id": "734829156103",
+    "title": {
+      "en": "Women's Fashion Product",
+      "ar": "نساء's موضة منتج"
+    },
+    "price": {
+      "yuan": "¥99.00",
+      "iqd": "19,800 IQD"
+    },
+    "moq": {
+      "en": "10 pieces",
+      "ar": "10 pieces"
+    },
+    "company": {
+      "en": "China Manufacturer",
+      "ar": "China Manufacturer"
+    },
+    "location": {
+      "en": "China",
+      "ar": "China"
+    },
+    "productUrl": "http://detail.m.1688.com/page/index.html?offerId=734829156103",
+    "images": [
+      "https://example.com/product.jpg"
+    ],
+    "details": {
+      "en": "Product details",
+      "ar": "منتج تفاصيل"
+    },
+    "variants": [
+      "One Size"
+    ]
+  },
+  {
+    "id": "9876543210",
+    "title": {
+      "en": "Women's Fashion Product",
+      "ar": "نساء's موضة منتج"
+    },
+    "price": {
+      "yuan": "¥99.00",
+      "iqd": "19,800 IQD"
+    },
+    "moq": {
+      "en": "10 pieces",
+      "ar": "10 pieces"
+    },
+    "company": {
+      "en": "China Manufacturer",
+      "ar": "China Manufacturer"
+    },
+    "location": {
+      "en": "China",
+      "ar": "China"
+    },
+    "productUrl": "http://detail.m.1688.com/page/index.html?offerId=9876543210",
+    "images": [
+      "https://example.com/product.jpg"
+    ],
+    "details": {
+      "en": "Product details",
+      "ar": "منتج تفاصيل"
+    },
+    "variants": [
+      "One Size"
+    ]
+  },
+  {
+    "id": "1234567890",
+    "title": {
+      "en": "Women's Fashion Product",
+      "ar": "نساء's موضة منتج"
+    },
+    "price": {
+      "yuan": "¥99.00",
+      "iqd": "19,800 IQD"
+    },
+    "moq": {
+      "en": "10 pieces",
+      "ar": "10 pieces"
+    },
+    "company": {
+      "en": "China Manufacturer",
+      "ar": "China Manufacturer"
+    },
+    "location": {
+      "en": "China",
+      "ar": "China"
+    },
+    "productUrl": "http://detail.m.1688.com/page/index.html?offerId=1234567890",
+    "images": [
+      "https://example.com/product.jpg"
+    ],
+    "details": {
+      "en": "Product details",
+      "ar": "منتج تفاصيل"
+    },
+    "variants": [
+      "One Size"
+    ]
+  },
+  {
+    "id": "5555555555",
+    "title": {
+      "en": "Women's Fashion Product",
+      "ar": "نساء's موضة منتج"
+    },
+    "price": {
+      "yuan": "¥99.00",
+      "iqd": "19,800 IQD"
+    },
+    "moq": {
+      "en": "10 pieces",
+      "ar": "10 pieces"
+    },
+    "company": {
+      "en": "China Manufacturer",
+      "ar": "China Manufacturer"
+    },
+    "location": {
+      "en": "China",
+      "ar": "China"
+    },
+    "productUrl": "http://detail.m.1688.com/page/index.html?offerId=5555555555",
+    "images": [
+      "https://example.com/product.jpg"
+    ],
+    "details": {
+      "en": "Product details",
+      "ar": "منتج تفاصيل"
+    },
+    "variants": [
+      "One Size"
+    ]
+  },
+  {
+    "id": "6666666666",
+    "title": {
+      "en": "Women's Fashion Product",
+      "ar": "نساء's موضة منتج"
+    },
+    "price": {
+      "yuan": "¥99.00",
+      "iqd": "19,800 IQD"
+    },
+    "moq": {
+      "en": "10 pieces",
+      "ar": "10 pieces"
+    },
+    "company": {
+      "en": "China Manufacturer",
+      "ar": "China Manufacturer"
+    },
+    "location": {
+      "en": "China",
+      "ar": "China"
+    },
+    "productUrl": "http://detail.m.1688.com/page/index.html?offerId=6666666666",
+    "images": [
+      "https://example.com/product.jpg"
+    ],
+    "details": {
+      "en": "Product details",
+      "ar": "منتج تفاصيل"
+    },
+    "variants": [
+      "One Size"
+    ]
+  }
+]

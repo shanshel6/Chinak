@@ -5,7 +5,7 @@ import { useWishlistStore } from '../store/useWishlistStore';
 import { useCartStore } from '../store/useCartStore';
 import { useAuthStore } from '../store/useAuthStore';
 import { useToastStore } from '../store/useToastStore';
-import { calculateInclusivePrice, getDefaultShippingMethod } from '../utils/shipping';
+import { calculateInclusivePrice } from '../utils/shipping';
 import type { ShippingRates } from '../types/shipping';
 import type { Product } from '../types/product';
 import { Clipboard } from '@capacitor/clipboard';
@@ -659,7 +659,9 @@ const ProductDetails: React.FC = () => {
         width: product.width,
         height: product.height,
         domesticShippingFee: product.domesticShippingFee,
-        basePriceRMB: product.basePriceRMB
+        basePriceRMB: product.basePriceRMB,
+        minOrder: product.minOrder,
+        deliveryTime: product.deliveryTime
       }, selectedOptions, shippingMethod);
     } catch (err) {
       // Rollback UI state if API fails
@@ -760,6 +762,7 @@ const ProductDetails: React.FC = () => {
             isPriceCombined={pricingParams?.effectiveIsPriceCombined || false}
             calculatedAirPrice={airPrice}
             calculatedSeaPrice={seaPrice}
+            minOrder={product.minOrder}
           />
 
           {product.options && product.options.length > 0 && (
@@ -926,6 +929,9 @@ const ProductDetails: React.FC = () => {
             }}
             rates={shippingRates}
           />
+
+          {/* Spacer for mobile bottom bar */}
+          <div className="h-56"></div>
         </main>
 
         <AddToCartBar 

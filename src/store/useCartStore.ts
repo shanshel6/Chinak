@@ -55,6 +55,8 @@ interface CartState {
       domesticShippingFee?: number;
       basePriceRMB?: number;
       isPriceCombined?: boolean;
+      minOrder?: number;
+      deliveryTime?: string;
     }, 
     selectedOptions?: any,
     shippingMethod?: 'air' | 'sea'

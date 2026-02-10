@@ -2922,6 +2922,7 @@ app.get('/api/products', async (req, res) => {
           height: true,
           domesticShippingFee: true,
           isPriceCombined: true,
+          deliveryTime: true,
           variants: {
             select: {
               price: true,
@@ -3124,6 +3125,13 @@ async function runBulkProductsImport(products, { onProgress } = {}) {
     if (s.includes('unnamed')) return true;
     if (s === 'n/a' || s === 'na' || s === '-' || s === 'null' || s === 'undefined') return true;
     return false;
+  };
+
+  const cleanDeliveryTime = (val) => {
+    if (!val) return null;
+    const s = String(val).trim();
+    if (s === '10-15 يوم' || s === '3' || s === '10-15 days' || s === '10-15') return null;
+    return s;
   };
 
   const fieldMapping = {
@@ -3612,6 +3620,7 @@ async function runBulkProductsImport(products, { onProgress } = {}) {
           width,
           height,
           domesticShippingFee,
+          deliveryTime: cleanDeliveryTime(p.deliveryTime || p.delivery_time || p.Delivery_time),
           isPriceCombined: isPriceCombined,
           options: {
             create: processedOptions.map(opt => ({
@@ -3929,6 +3938,7 @@ app.post('/api/products', authenticateToken, isAdmin, hasPermission('manage_prod
         width: safeParseFloat(width),
         height: safeParseFloat(height),
         domesticShippingFee: safeParseFloat(domesticShippingFee),
+        deliveryTime: deliveryTime || null,
         images: [
           ...imageUrls.map((url, i) => ({ url, order: i, type: 'GALLERY' })),
           ...detailImageUrls.map((url, i) => ({ url, order: i, type: 'DETAIL' }))
@@ -3957,6 +3967,13 @@ app.post('/api/products', authenticateToken, isAdmin, hasPermission('manage_prod
     const rawPrice = safeParseFloat(price) || 0;
     const finalPrice = isPriceCombined ? rawPrice : calculateBulkImportPrice(rawPrice, domesticFee, weight, length, width, height, req.body.shippingMethod, shippingRates);
 
+    const cleanDeliveryTime = (val) => {
+      if (!val) return null;
+      const s = String(val).trim();
+      if (s === '10-15 يوم' || s === '3' || s === '10-15 days' || s === '10-15') return null;
+      return s;
+    };
+
     const product = await prisma.product.create({
       data: {
         name,
@@ -3980,7 +3997,7 @@ app.post('/api/products', authenticateToken, isAdmin, hasPermission('manage_prod
         domesticShippingFee: domesticFee,
         isPriceCombined: isPriceCombined,
         aiMetadata: parsedAiMetadata,
-        deliveryTime: deliveryTime || null,
+        deliveryTime: cleanDeliveryTime(deliveryTime),
         images: {
           create: [
             ...imageUrls.map((url, i) => ({
@@ -4210,7 +4227,7 @@ app.post('/api/admin/products/bulk-import', authenticateToken, isAdmin, hasPermi
           const aiMetadata = parseJsonObject(p.aiMetadata) || parseJsonObject(p.marketing_metadata);
 
           // Map Delivery_time from input to deliveryTime
-          const deliveryTime = cleanStr(p.Delivery_time || p.deliveryTime || p.delivery_time) || "10-15 يوم";
+          const deliveryTime = cleanStr(p.Delivery_time || p.deliveryTime || p.delivery_time);
 
           // Enhanced Options processing - extract from p.options OR p.variants OR direct properties
           let rawOptions = [];
@@ -4543,7 +4560,7 @@ app.post('/api/admin/products/bulk-import', authenticateToken, isAdmin, hasPermi
             isLocal: true,
             specs: specs,
             aiMetadata: aiMetadata || null,
-            deliveryTime: deliveryTime || "10-15 يوم",
+            deliveryTime: deliveryTime || null,
             weight: productWeight,
             length: length,
             width: width,
@@ -5322,7 +5339,7 @@ app.post('/api/admin/products/bulk-create', authenticateToken, isAdmin, hasPermi
           domesticShippingFee: domesticFee,
           isPriceCombined: isPriceCombined,
           aiMetadata: parsedAiMetadata,
-          deliveryTime: rawProductData.deliveryTime || null
+          deliveryTime: rawProductData.deliveryTime || rawProductData.delivery_time || rawProductData.Delivery_time || null
         };
         
         // Create the product
@@ -6065,7 +6082,7 @@ app.put('/api/products/:id', authenticateToken, isAdmin, hasPermission('manage_p
       name, chineseName, price, basePriceRMB, description, image, 
       isFeatured, isActive, status, purchaseUrl, videoUrl, 
       specs, images, detailImages, storeEvaluation, reviewsCountShown,
-      weight, length, width, height, domesticShippingFee
+      weight, length, width, height, domesticShippingFee, deliveryTime
     } = req.body;
     
     // Handle main image conversion if needed
@@ -6118,7 +6135,8 @@ app.put('/api/products/:id', authenticateToken, isAdmin, hasPermission('manage_p
       length: length !== undefined ? (length === '' ? null : parseFloat(length)) : undefined,
       width: width !== undefined ? (width === '' ? null : parseFloat(width)) : undefined,
       height: height !== undefined ? (height === '' ? null : parseFloat(height)) : undefined,
-      domesticShippingFee: domesticShippingFee !== undefined ? (domesticShippingFee === '' ? null : parseFloat(domesticShippingFee)) : undefined
+      domesticShippingFee: domesticShippingFee !== undefined ? (domesticShippingFee === '' ? null : parseFloat(domesticShippingFee)) : undefined,
+      deliveryTime: deliveryTime !== undefined ? (deliveryTime === '' ? null : deliveryTime) : undefined
     };
 
     // Remove undefined fields

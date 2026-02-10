@@ -23,6 +23,7 @@ export interface LocalProduct {
   detailImages?: unknown[];
   createdAt: string;
   updatedAt: string;
+  deliveryTime?: string;
 }
 
 export const localProductService = {

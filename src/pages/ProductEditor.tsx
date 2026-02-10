@@ -80,7 +80,8 @@ const ProductEditor: React.FC<ProductEditorProps> = ({ productId, storeSettings,
     images: [],
     detailImages: [],
     storeEvaluation: { score: 5, tags: [] },
-    reviewsCountShown: 0
+    reviewsCountShown: 0,
+    deliveryTime: ''
   });
 
   const [options, setOptions] = useState<ProductOption[]>([]);
@@ -525,6 +526,19 @@ const ProductEditor: React.FC<ProductEditorProps> = ({ productId, storeSettings,
                     className="w-full bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-primary/20 focus:bg-white dark:focus:bg-slate-900 rounded-xl px-4 py-3 outline-none transition-all font-bold"
                   />
                   <p className="text-[10px] text-slate-400 font-medium">هذا السعر يضاف مباشرة إلى تكلفة الشحن النهائية لكل قطعة من هذا المنتج.</p>
+                </div>
+
+                <div className="pt-4 space-y-2">
+                  <label className="text-xs font-black text-slate-500 uppercase tracking-wider">وقت التوصيل</label>
+                  <input 
+                    type="text"
+                    name="deliveryTime"
+                    value={formData.deliveryTime || ''}
+                    onChange={handleInputChange}
+                    placeholder="مثال: 10-15 يوم"
+                    className="w-full bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-primary/20 focus:bg-white dark:focus:bg-slate-900 rounded-xl px-4 py-3 outline-none transition-all font-bold"
+                  />
+                  <p className="text-[10px] text-slate-400 font-medium">اكتب المدة المتوقعة للتوصيل (اختياري).</p>
                 </div>
 
                 <div className="pt-4 flex items-center gap-3 cursor-pointer group">

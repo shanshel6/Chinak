@@ -28,6 +28,7 @@ interface ProductInfoProps {
   onShippingMethodChange?: (method: 'air' | 'sea') => void;
   calculatedAirPrice?: number;
   calculatedSeaPrice?: number;
+  minOrder?: number;
 }
 
 const ProductInfo: React.FC<ProductInfoProps> = ({
@@ -46,7 +47,8 @@ const ProductInfo: React.FC<ProductInfoProps> = ({
   isPriceCombined,
   shippingMethod = 'air',
   calculatedAirPrice,
-  calculatedSeaPrice
+  calculatedSeaPrice,
+  minOrder
 }) => {
   const [airRate, setAirRate] = useState<number>(15400); 
   const [seaRate, setSeaRate] = useState<number>(182000);
@@ -131,6 +133,22 @@ const ProductInfo: React.FC<ProductInfoProps> = ({
       <h2 className="text-slate-900 dark:text-white text-xl font-bold leading-tight mt-3">{name}</h2>
       {chineseName && chineseName !== name && (
         <p className="text-slate-400 dark:text-slate-500 text-sm mt-1 font-medium">{chineseName}</p>
+      )}
+
+      {deliveryTime && (
+        <div className="flex items-center gap-2 mt-2">
+          <span className="text-xs font-bold text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-800 px-2 py-1 rounded-lg border border-slate-100 dark:border-slate-700">
+            وقت تجهيز البضاعة: {deliveryTime} يوم
+          </span>
+        </div>
+      )}
+
+      {minOrder && minOrder > 1 && (
+        <div className="flex items-center gap-2 mt-2">
+          <span className="text-xs font-bold text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 px-2 py-1 rounded-lg border border-amber-100 dark:border-amber-900/30">
+            أقل كمية للطلب: {minOrder} قطعة
+          </span>
+        </div>
       )}
     </div>
   );

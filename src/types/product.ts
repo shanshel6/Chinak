@@ -31,4 +31,5 @@ export interface Product {
   originalPrice?: number;
   stock?: number;
   deliveryTime?: string;
+  minOrder?: number;
 }

@@ -7,8 +7,6 @@ import {
   Plus, 
   Filter,
   MoreVertical,
-  ChevronRight,
-  ChevronLeft,
   TrendingUp as _TrendingUp,
   CheckCircle2,
   Clock,
@@ -131,7 +129,7 @@ const AdminDashboard: React.FC = () => {
   // Pagination State
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
-  const [totalItems, setTotalItems] = useState(0);
+  const [, setTotalItems] = useState(0);
   const ITEMS_PER_PAGE = 20;
   const PRODUCTS_PER_PAGE = 21;
 
@@ -554,8 +552,10 @@ const AdminDashboard: React.FC = () => {
       const msg = String((error as any)?.message || '');
       if (msg.includes('Unauthorized') || msg.includes('Authentication required') || msg.includes('Invalid or expired token')) {
         showToast('انتهت الجلسة أو لا تملك صلاحية الاستيراد. يرجى تسجيل الدخول كمسؤول.', 'error');
+      } else if (error instanceof SyntaxError) {
+        showToast(`خطأ في تنسيق JSON: ${msg}`, 'error');
       } else {
-        showToast('فشل استيراد المنتجات - تأكد من صحة تنسيق JSON', 'error');
+        showToast(`فشل استيراد المنتجات: ${msg}`, 'error');
       }
     } finally {
       setIsImporting(false);

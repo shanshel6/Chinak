@@ -234,19 +234,30 @@ async function visionAnalyzeImage(imageUrl, productName) {
  * Estimate weight and dimensions for a product using Vision AI -> Text AI
  */
 export async function estimateProductPhysicals(product) {
+  const withTimeout = (promise, ms) => {
+    return Promise.race([
+      promise,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), ms))
+    ]);
+  };
+
   try {
     // 1. Try Vision AI first (Moderate Accuracy)
     if (product.image) {
       console.log(`[AI Debug] Attempting Vision AI for ${product.name}...`);
-      const visionResult = await visionAnalyzeImage(product.image, product.name);
-      if (visionResult && (visionResult.weight || visionResult.length)) {
-        console.log(`[AI Debug] Vision AI success for ${product.name}`);
-        return {
-          weight: parseFloat(visionResult.weight) || 0.5,
-          length: parseFloat(visionResult.length) || 10,
-          width: parseFloat(visionResult.width) || 10,
-          height: parseFloat(visionResult.height) || 10
-        };
+      try {
+        const visionResult = await withTimeout(visionAnalyzeImage(product.image, product.name), 10000);
+        if (visionResult && (visionResult.weight || visionResult.length)) {
+          console.log(`[AI Debug] Vision AI success for ${product.name}`);
+          return {
+            weight: parseFloat(visionResult.weight) || 0.5,
+            length: parseFloat(visionResult.length) || 10,
+            width: parseFloat(visionResult.width) || 10,
+            height: parseFloat(visionResult.height) || 10
+          };
+        }
+      } catch (visionErr) {
+        console.warn(`[AI Debug] Vision AI failed or timed out: ${visionErr.message}`);
       }
     }
 
@@ -254,6 +265,11 @@ export async function estimateProductPhysicals(product) {
     console.log(`[AI Debug] Falling back to text-based estimation for ${product.name}...`);
     const { siliconflow } = getClients();
     
+    if (!siliconflow) {
+        console.warn('[AI Debug] SiliconFlow client not initialized. Skipping text-based estimation.');
+        return null;
+    }
+
     const prompt = `Estimate the physical dimensions and weight for the following product.
     Product: ${product.name}
     Description: ${product.description || ''}
@@ -269,11 +285,11 @@ export async function estimateProductPhysicals(product) {
     If you're not sure, provide a reasonable average for that category of product.
     Return ONLY JSON, no markdown.`;
 
-    const response = await siliconflow.chat.completions.create({
+    const response = await withTimeout(siliconflow.chat.completions.create({
       model: 'deepseek-ai/DeepSeek-V3',
       messages: [{ role: 'user', content: prompt }],
       response_format: { type: 'json_object' }
-    });
+    }), 15000);
 
     const text = response.choices[0].message.content.trim();
     const cleanJson = text.replace(/^```json\s*/, '').replace(/\s*```$/, '').trim();
@@ -489,7 +505,7 @@ export async function hybridSearch(query, limit = 50, skip = 0, maxPrice = null)
         p.image, p."purchaseUrl", p.status, p."isFeatured", 
         p."isActive", p.specs, p."storeEvaluation", p."reviewsCountShown", 
         p."createdAt", p."updatedAt", p."videoUrl", p."aiMetadata", 
-        p."clickCount", p."conversionRate",
+        p."clickCount", p."conversionRate", p."deliveryTime",
         COALESCE(s.semantic_score, 0) as semantic_score,
         COALESCE(k.keyword_score, 0) as keyword_score,
         (

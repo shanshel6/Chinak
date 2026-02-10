@@ -174,7 +174,9 @@ async function bulkImport(filePath) {
             storeEvaluation: p.storeEvaluation,
             reviewsCountShown: p.reviewsCountShown,
             videoUrl: p.videoUrl,
-            domesticShippingFee: domesticFee
+            domesticShippingFee: domesticFee,
+            minOrder: parseInt(p.min_order || p.minOrder) || 1,
+            deliveryTime: p.delivery_time || p.deliveryTime || p.Delivery_time || null
           }
         });
         results.imported++;

@@ -1,0 +1,169 @@
+{
+  "products": [
+    {
+      "product_name": "قميص نسائي بياقة U وأكمام طويلة، مبطن بالصوف، سترة تحتية ضيقة لخريف وشتاء 2025",
+      "category": "ملابس نسائية - تيشرتات وبديات",
+      "main_images": [
+        "https://cbu01.alicdn.com/img/ibank/O1CN01eodaik1OJJzMqULs5_!!2218903091684-0-cib.jpg_.webp",
+        "https://cbu01.alicdn.com/img/ibank/O1CN01k8i7Xn1OJJzL4ocYs_!!2218903091684-0-cib.jpg_.webp",
+        "https://cbu01.alicdn.com/img/ibank/O1CN01i8U9P41OJJzOdoFpT_!!2218903091684-0-cib.jpg_.webp",
+        "https://cbu01.alicdn.com/img/ibank/O1CN01UKgk6f1OJJzMY2IqO_!!2218903091684-0-cib.jpg_.webp"
+      ],
+      "url": "http://detail.m.1688.com/page/index.html?offerId=857391907810",
+      "product_details": {
+        "المادة": "92% قطن، 8% سباندكس",
+        "التصميم": "نمط بلوفر سحب",
+        "القصة": "ضيق (Slim Fit)",
+        "نوع الياقة": "ياقة على شكل U",
+        "الأكمام": "أكمام طويلة",
+        "العناصر الشعبية": "تأثير ثلاثي الأبعاد 3D",
+        "الموسم": "ربيع/شتاء 2025",
+        "الطول": "قصير (40سم < طول ≤ 50سم)"
+      },
+      "weight": "1.0",
+      "dimensions": "35*25*5",
+      "reviews": [],
+      "domestic_shipping_fee": 1000,
+      "general_price": 4200,
+      "variants": {
+        "sizes": [
+          "S",
+          "M",
+          "L",
+          "XL",
+          "2XL"
+        ],
+        "colors": [
+          "أبيض",
+          "أسود",
+          "مشمشي",
+          "أزرق فاتح",
+          "رمادي",
+          "أبيض (مبطن)",
+          "أسود (مبطن)",
+          "رمادي (مبطن)",
+          "مشمشي (مبطن)",
+          "أزرق (مبطن)"
+        ]
+      },
+      "generated_options": [
+        {
+          "color": "أبيض",
+          "sizes": [
+            "S",
+            "M",
+            "L",
+            "XL",
+            "2XL"
+          ],
+          "price": 4200
+        },
+        {
+          "color": "أسود",
+          "sizes": [
+            "S",
+            "M",
+            "L",
+            "XL",
+            "2XL"
+          ],
+          "price": 4200
+        },
+        {
+          "color": "رمادي",
+          "sizes": [
+            "S",
+            "M",
+            "L",
+            "XL",
+            "2XL"
+          ],
+          "price": 4200
+        },
+        {
+          "color": "أبيض (مبطن)",
+          "sizes": [
+            "S",
+            "M",
+            "L",
+            "XL",
+            "2XL"
+          ],
+          "price": 4200
+        }
+      ]
+    },
+    {
+      "product_name": "بلوزة نسائية شتوية دافئة، ياقة عالية، أكمام طويلة، تصميم أنيق لعام 2025",
+      "category": "ملابس نسائية - بلوزات وسترات",
+      "main_images": [
+        "https://cbu01.alicdn.com/img/ibank/O1CN01Xy8Zk21OJJzNqLQ3F_!!2218903091684-0-cib.jpg_.webp",
+        "https://cbu01.alicdn.com/img/ibank/O1CN01Yt9Wm21OJJzOdoFpT_!!2218903091684-0-cib.jpg_.webp",
+        "https://cbu01.alicdn.com/img/ibank/O1CN01Z3pKl21OJJzMY2IqO_!!2218903091684-0-cib.jpg_.webp"
+      ],
+      "url": "http://detail.m.1688.com/page/index.html?offerId=9876543210",
+      "product_details": {
+        "المادة": "100% صوف",
+        "التصميم": "نمط كلاسيكي",
+        "القصة": "مناسب (Regular Fit)",
+        "نوع الياقة": "ياقة عالية",
+        "الأكمام": "أكمام طويلة",
+        "العناصر الشعبية": "تأثير دافئ",
+        "الموسم": "شتاء 2025",
+        "الطول": "طويل (60سم < طول ≤ 70سم)"
+      },
+      "weight": "1.2",
+      "dimensions": "38*28*6",
+      "reviews": [],
+      "domestic_shipping_fee": 1200,
+      "general_price": 5500,
+      "variants": {
+        "sizes": [
+          "S",
+          "M",
+          "L",
+          "XL"
+        ],
+        "colors": [
+          "أسود",
+          "رمادي",
+          "بني",
+          "أحمر",
+          "أزرق داكن"
+        ]
+      },
+      "generated_options": [
+        {
+          "color": "أسود",
+          "sizes": [
+            "S",
+            "M",
+            "L",
+            "XL"
+          ],
+          "price": 5500
+        },
+        {
+          "color": "رمادي",
+          "sizes": [
+            "S",
+            "M",
+            "L",
+            "XL"
+          ],
+          "price": 5500
+        },
+        {
+          "color": "بني",
+          "sizes": [
+            "S",
+            "M",
+            "L",
+            "XL"
+          ],
+          "price": 5500
+        }
+      ]
+    }
+  ]
+}
