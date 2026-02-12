@@ -1,5 +1,9 @@
 import prisma from './prismaClient.js';
 import fs from 'fs';
+import { processProductAI } from './services/aiService.js';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 const extractNumber = (val) => {
   if (val === null || val === undefined || val === '') return null;
@@ -87,11 +91,9 @@ async function main() {
           continue;
         }
 
-        await prisma.product.create({
+        const product = await prisma.product.create({
           data: {
             name: p.name || 'Unnamed Product',
-            chineseName: p.chineseName,
-            description: p.description,
             price: price,
             basePriceRMB: rawPrice,
             image: p.image || '',
@@ -103,13 +105,24 @@ async function main() {
             specs: p.specs,
             storeEvaluation: p.storeEvaluation,
             reviewsCountShown: p.reviewsCountShown,
-            videoUrl: p.videoUrl,
             domesticShippingFee: domesticFee,
-            minOrder: parseInt(p.min_order || p.minOrder) || 1,
-            deliveryTime: p.delivery_time || p.deliveryTime || p.Delivery_time || null
+            deliveryTime: p.delivery_time || p.deliveryTime || p.Delivery_time || null,
+            aiMetadata: p.aiMetadata || p.ai_metadata || p.aimetatags || null
           }
         });
         console.log(`Imported: ${p.name}`);
+        
+        // Trigger AI processing
+        if (process.env.SILICONFLOW_API_KEY || process.env.HUGGINGFACE_API_KEY) {
+          try {
+            console.log(`  -> AI Processing for ${p.name}...`);
+            await processProductAI(product.id);
+            // 2-second delay to be safe with SiliconFlow free tier
+            await new Promise(r => setTimeout(r, 2000));
+          } catch (aiErr) {
+            console.error(`  !! AI Processing failed for ${p.name}:`, aiErr.message);
+          }
+        }
       } else {
         console.log(`Skipped (exists): ${p.name}`);
       }

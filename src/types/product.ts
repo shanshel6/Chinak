@@ -1,17 +1,10 @@
 export interface Product {
   id: number | string;
   name: string;
-  chineseName?: string;
   price: number;
   image: string;
-  description?: string;
-  weight?: number;
-  length?: number;
-  width?: number;
-  height?: number;
   domesticShippingFee?: number;
-  basePriceRMB?: number;
-  isPriceCombined?: boolean;
+  basePriceIQD?: number;
   category?: string;
   status?: string;
   isActive?: boolean;
@@ -21,9 +14,6 @@ export interface Product {
   options?: any[];
   variants?: any[];
   purchaseUrl?: string;
-  videoUrl?: string;
-  storeEvaluation?: string;
-  reviewsCountShown?: number | string;
   isFeatured?: boolean;
   averageRating?: string;
   totalReviews?: number;
@@ -31,5 +21,4 @@ export interface Product {
   originalPrice?: number;
   stock?: number;
   deliveryTime?: string;
-  minOrder?: number;
 }

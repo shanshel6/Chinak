@@ -57,7 +57,7 @@ const applyDynamicPricingToProduct = (product, rates) => {
           .filter(p => p > 0 && Number.isFinite(p));
       if (validVariantPrices.length > 0) {
           const minVariantPrice = Math.min(...validVariantPrices);
-          if (minVariantPrice < finalPrice || !isCombined) finalPrice = minVariantPrice;
+          if (minVariantPrice < finalPrice) finalPrice = minVariantPrice;
       }
   }
 

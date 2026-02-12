@@ -49,18 +49,6 @@ const ProductCard: React.FC<ProductCardProps> = ({
   const effectiveWidth = (minVariant && minVariant.width) ? minVariant.width : product.width;
   const effectiveHeight = (minVariant && minVariant.height) ? minVariant.height : product.height;
 
-  // Determine if the price is combined (strictly check minVariant or product)
-  const isEffectivePriceCombined = React.useMemo(() => {
-    if (minVariant) {
-      return minVariant.isPriceCombined ?? product.isPriceCombined ?? false;
-    }
-    return product.isPriceCombined ?? false;
-  }, [product.isPriceCombined, minVariant]);
-
-  const effectiveBasePriceRMB = (minVariant && minVariant.basePriceRMB && minVariant.basePriceRMB > 0)
-    ? minVariant.basePriceRMB
-    : product.basePriceRMB;
-
   // Simulated discovery data
   const soldCount = React.useMemo(() => {
     const numericId = typeof product.id === 'number' ? product.id : Number.parseInt(String(product.id), 10) || 0;
@@ -113,19 +101,9 @@ const ProductCard: React.FC<ProductCardProps> = ({
   }, []);
 
   const totalPrice = React.useMemo(() => {
-    return calculateInclusivePrice(
-      minPrice,
-      effectiveWeight,
-      effectiveLength,
-      effectiveWidth,
-      effectiveHeight,
-      { airRate: _airRate, seaRate: _seaRate, minFloor: _minFloor },
-      'sea',
-      product.domesticShippingFee || 0,
-      effectiveBasePriceRMB,
-      isEffectivePriceCombined
-    );
-  }, [minPrice, effectiveWeight, effectiveLength, effectiveWidth, effectiveHeight, _airRate, _seaRate, _minFloor, effectiveBasePriceRMB, isEffectivePriceCombined]);
+    // Just return the minPrice which is already the final price from DB
+    return minPrice;
+  }, [minPrice]);
 
   return (
     <div 

@@ -22,6 +22,7 @@ const Cart: React.FC = () => {
   const cartItems = allCartItems.filter(item => item.shippingMethod === activeTab);
   
   const loading = useCartStore((state) => state.isLoading);
+  const isSyncing = useCartStore((state) => state.isSyncing);
   const error = useCartStore((state) => state.error);
   const updateQuantity = useCartStore((state) => state.updateQuantity);
   const removeItem = useCartStore((state) => state.removeItem);
@@ -435,12 +436,6 @@ const Cart: React.FC = () => {
                     const basePrice = item.variant?.price || item.product.price;
                     const inclusivePrice = calculateInclusivePrice(
                       basePrice,
-                      item.product.weight,
-                      item.product.length,
-                      item.product.width,
-                      item.product.height,
-                      rates,
-                      item.shippingMethod,
                       item.product.domesticShippingFee || 0,
                       item.variant?.basePriceRMB ?? item.product.basePriceRMB,
                       item.variant?.isPriceCombined ?? item.product.isPriceCombined
@@ -615,10 +610,10 @@ const Cart: React.FC = () => {
         )}
 
         <button 
-          onClick={() => !isUnderThreshold && navigate('/checkout/shipping')}
-          disabled={isUnderThreshold}
+          onClick={() => !isUnderThreshold && !isSyncing && navigate('/checkout/shipping')}
+          disabled={isUnderThreshold || isSyncing}
           className={`w-full h-16 rounded-2xl transition-all text-white font-bold text-base shadow-lg flex items-center justify-between px-6 ${
-            isUnderThreshold 
+            isUnderThreshold || isSyncing
               ? 'bg-slate-300 dark:bg-slate-700 cursor-not-allowed grayscale' 
               : 'bg-primary hover:bg-primary/90 active:scale-[0.98] shadow-primary/25'
           }`}
@@ -628,8 +623,14 @@ const Cart: React.FC = () => {
             <span className="text-xl font-black">{total.toLocaleString()} د.ع</span>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-lg">{isUnderThreshold ? 'أضف المزيد للطلب' : 'إتمام الشراء'}</span>
-            <ArrowRight size={22} className={isUnderThreshold ? 'opacity-30' : ''} />
+            <span className="text-lg">
+              {isSyncing ? 'جاري التحديث...' : isUnderThreshold ? 'أضف المزيد للطلب' : 'إتمام الشراء'}
+            </span>
+            {isSyncing ? (
+              <RefreshCw size={22} className="animate-spin" />
+            ) : (
+              <ArrowRight size={22} className={isUnderThreshold ? 'opacity-30' : ''} />
+            )}
           </div>
         </button>
       </div>

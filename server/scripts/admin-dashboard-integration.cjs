@@ -110,7 +110,7 @@ function convertToAdminProduct(scrapedProduct) {
   const weight = extractNumber(scrapedProduct.weight) || 0.5;
   const domesticFee = extractNumber(scrapedProduct.domestic_shipping_fee) || 0;
   const basePriceRMB = rawPrice + domesticFee;
-  const aiMetadata = cleanMetadata(scrapedProduct.marketing_metadata);
+  const aiMetadata = cleanMetadata(scrapedProduct.marketing_metadata) || scrapedProduct.aimetatags || scrapedProduct.aiMetadata;
   
   // Calculate final price using the bulk import logic
   const finalPrice = calculateBulkImportPrice(rawPrice, domesticFee, weight, length, width, height);
@@ -193,10 +193,6 @@ function convertToAdminProduct(scrapedProduct) {
     isFeatured: true,
     purchaseUrl: scrapedProduct.url || '',
     specs: specsStr,
-    storeEvaluation: {
-      responseRate: '',
-      transactionRate: ''
-    },
     weight: parseFloat(weight),
     length: parseFloat(length),
     width: parseFloat(width),

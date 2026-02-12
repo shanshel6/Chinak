@@ -56,6 +56,42 @@ const calculateBulkImportPrice = (rawPrice, domesticFee, weight, length, width, 
 };
 
 async function main() {
+  const RESTRICTED_KEYWORDS = [
+    // Dangerous Goods (Batteries, Liquids, etc.)
+    'battery', 'lithium', 'power bank', 'powerbank', 'batteries',
+    'بطارية', 'ليثيوم', 'باور بانك', 'شاحن متنقل',
+    'liquid', 'oil', 'cream', 'gel', 'paste', 'shampoo', 'perfume', 'spray', 'aerosol',
+    'سائل', 'زيت', 'كريم', 'جل', 'معجون', 'شامبو', 'عطر', 'بخاخ',
+    'powder', 'dust', 'مسحوق', 'بودرة',
+    'magnet', 'magnetic', 'مغناطيس', 'مغناطيسي',
+    'knife', 'sword', 'dagger', 'weapon', 'gun', 'rifle',
+    'سكين', 'سيف', 'خنجر', 'سلاح', 'بندقية',
+    'flammable', 'lighter', 'gas', 'قابل للاشتعال', 'ولاعة', 'غاز',
+    // Furniture / Bulky Items
+    'furniture', 'sofa', 'couch', 'chair', 'table', 'desk', 'wardrobe', 'cabinet', 'cupboard', 
+    'bed', 'mattress', 'bookshelf', 'shelf', 'shelves', 'dresser', 'sideboard', 'stool', 'bench',
+    'armchair', 'recliner', 'ottoman', 'bean bag', 'dining set', 'tv stand', 'shoe rack',
+    'أثاث', 'كنبة', 'أريكة', 'كرسي', 'طاولة', 'مكتب', 'دولاب', 'خزانة', 'سرير', 'مرتبة', 
+    'رف', 'ارفف', 'تسريحة', 'كومودينو', 'بوفيه', 'مقعد', 'بنش', 'طقم جلوس', 'طاولة طعام', 
+    'حامل تلفزيون', 'جزامة', 'طقم صالون', 'غرفة نوم'
+  ];
+  const EXCEPTIONS = [
+    'cover', 'cloth', 'slipcover', 'cushion case', 'pillow case', 'protector', 'accessory', 'accessories', 'toy', 'miniature', 'model',
+    'غطاء', 'مفرش', 'تلبيسة', 'كيس وسادة', 'حماية', 'اكسسوار', 'لعبة', 'نموذج', 'مجسم'
+  ];
+
+  const detectAirRestriction = (text) => {
+    if (!text) return false;
+    const lowerText = String(text).toLowerCase();
+    for (const keyword of RESTRICTED_KEYWORDS) {
+      if (lowerText.includes(keyword.toLowerCase())) {
+        const isException = EXCEPTIONS.some(ex => lowerText.includes(ex.toLowerCase()));
+        if (!isException) return true;
+      }
+    }
+    return false;
+  };
+
   const content = fs.readFileSync('../recent_products.json', 'utf8');
   
   // The content is a PowerShell dump. We need to extract the part between "[" and "]"
@@ -109,12 +145,12 @@ async function main() {
             isFeatured: !!p.isFeatured,
             isPriceCombined: true,
             specs: p.specs,
-            storeEvaluation: p.storeEvaluation,
-            reviewsCountShown: p.reviewsCountShown,
             videoUrl: p.videoUrl,
             domesticShippingFee: domesticFee,
+            isAirRestricted: p.isAirRestricted === true || p.isAirRestricted === 'true' || p.isAirRestricted === 1 || p.is_air_restricted === true || p.is_air_restricted === 'true' || p.is_air_restricted === 1 || p.IsAirRestricted === true || p.IsAirRestricted === 'true' || p.IsAirRestricted === 1 || detectAirRestriction(`${name} ${p.specs || ''}`),
             minOrder: parseInt(p.min_order || p.minOrder) || 1,
-            deliveryTime: p.delivery_time || p.deliveryTime || p.Delivery_time || null
+            deliveryTime: p.delivery_time || p.deliveryTime || p.Delivery_time || null,
+            aiMetadata: p.aiMetadata || p.ai_metadata || p.aimetatags || null
           }
         });
         console.log(`Imported: ${name}`);

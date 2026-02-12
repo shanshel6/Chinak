@@ -53,33 +53,21 @@ model Message {
 model Product {
   id                Int                    @id @default(autoincrement())
   name              String
-  chineseName       String?
-  description       String?
   price             Float
-  basePriceRMB      Float?
+  basePriceIQD      Float?
   image             String
   purchaseUrl       String?
   status            String                 @default("PUBLISHED")
   isFeatured        Boolean                @default(false)
   isActive          Boolean                @default(true)
   specs             String?
-  storeEvaluation   String?
-  reviewsCountShown String?
   createdAt         DateTime               @default(now())
   updatedAt         DateTime               @updatedAt
-  videoUrl          String?
   aiMetadata        Json?
   embedding         Unsupported("vector")?
-  clickCount        Int                    @default(0)
-  conversionRate    Float                  @default(0)
-  height            Float?
-  length            Float?
-  weight            Float?
-  width             Float?
   domesticShippingFee Float?
-  isPriceCombined   Boolean                @default(false)
+  isAirRestricted   Boolean                @default(false)
   deliveryTime      String?
-  minOrder          Int                    @default(1)
   cartItems         CartItem[]
   orderItems        OrderItem[]
   images            ProductImage[]
@@ -91,7 +79,6 @@ model Product {
   @@index([status])
   @@index([isActive])
   @@index([name])
-  @@index([chineseName])
 }
 
 model ProductImage {
@@ -118,7 +105,7 @@ model ProductVariant {
   productId   Int
   combination String
   price       Float
-  basePriceRMB Float?
+  basePriceIQD Float?
   weight      Float?
   height      Float?
   length      Float?

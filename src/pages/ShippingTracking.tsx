@@ -84,13 +84,16 @@ const ShippingTracking: React.FC = () => {
     const lang = 'ar-IQ';
     
     // Define logical status sequence
-    const statusSequence = ['AWAITING_PAYMENT', 'PENDING', 'PREPARING', 'SHIPPED', 'ARRIVED_IRAQ', 'DELIVERED'];
+    const statusSequence = ['PENDING', 'AWAITING_PAYMENT', 'PREPARING', 'SHIPPED', 'ARRIVED_IRAQ', 'DELIVERED'];
     // Normalize status to uppercase for comparison
-    const normalizedStatus = (order.status || 'PENDING').toUpperCase();
+    let normalizedStatus = (order.status || 'PENDING').toUpperCase();
+    if (normalizedStatus === 'NEED_PAYMENT') normalizedStatus = 'AWAITING_PAYMENT';
+
     const currentStatusIndex = statusSequence.indexOf(normalizedStatus);
-    // Always show at least 2 steps for new orders (Paid & Under Review)
-    // unless it's already further along in the process
-    const displayIndex = Math.max(1, currentStatusIndex);
+    
+    // Show up to current status + 1 for next step
+    // But if it's PENDING (0), show only PENDING as requested
+    const displayIndex = currentStatusIndex;
     
     // Helper to calculate date for future steps
     const getFutureDate = (hours: number) => {
@@ -101,32 +104,32 @@ const ShippingTracking: React.FC = () => {
       };
     };
 
-    // 1. Paid / Awaiting Payment
-    events.push({
-      status: 'AWAITING_PAYMENT',
-      title: normalizedStatus === 'AWAITING_PAYMENT' ? t('status.awaiting_payment') : t('status.paid'),
-      description: normalizedStatus === 'AWAITING_PAYMENT' ? t('tracking.status_desc_awaiting_payment') : t('tracking.status_desc_paid'),
-      time: date.toLocaleTimeString(lang, { hour: '2-digit', minute: '2-digit' }),
-      date: date.toLocaleDateString(lang, { day: 'numeric', month: 'long' }),
-      completed: currentStatusIndex > 0 || currentStatusIndex === -1,
-      active: currentStatusIndex === 0,
-      icon: normalizedStatus === 'AWAITING_PAYMENT' ? CreditCard : CheckCircle2
-    });
-    
-    // 2. Under Review (PENDING)
-    const reviewDates = getFutureDate(2);
+    // 1. Under Review (PENDING) - قيد المراجعة
     events.push({
       status: 'PENDING',
       title: t('status.pending'),
       description: t('tracking.status_desc_pending'),
-      time: reviewDates.time,
-      date: reviewDates.date,
-      completed: currentStatusIndex > 1,
-      active: currentStatusIndex === 1 || currentStatusIndex === -1,
+      time: date.toLocaleTimeString(lang, { hour: '2-digit', minute: '2-digit' }),
+      date: date.toLocaleDateString(lang, { day: 'numeric', month: 'long' }),
+      completed: currentStatusIndex > 0,
+      active: currentStatusIndex === 0 || currentStatusIndex === -1,
       icon: ReceiptText
     });
 
-    // 3. Preparing
+    // 2. Awaiting Payment - بانتظار الدفع
+    const paymentDates = getFutureDate(2);
+    events.push({
+      status: 'AWAITING_PAYMENT',
+      title: t('status.awaiting_payment'),
+      description: t('tracking.status_desc_awaiting_payment'),
+      time: paymentDates.time,
+      date: paymentDates.date,
+      completed: currentStatusIndex > 1,
+      active: currentStatusIndex === 1,
+      icon: CreditCard
+    });
+
+    // 3. Preparing - قيد التجهيز
     const prepDates = getFutureDate(6);
     events.push({
       status: 'PREPARING',
@@ -139,7 +142,7 @@ const ShippingTracking: React.FC = () => {
       icon: Package
     });
 
-    // 4. Shipped
+    // 4. Shipped - تم الشحن
     const shipDates = getFutureDate(24);
     let arrivalMessage = '';
     const arrivalDate = new Date(date.getTime() + 24 * 60 * 60 * 1000);
@@ -162,7 +165,7 @@ const ShippingTracking: React.FC = () => {
       icon: Truck
     });
 
-    // 5. Arrived to Iraq
+    // 5. Arrived to Iraq - وصل الى العراق
     const iraqDates = getFutureDate(48);
     events.push({
       status: 'ARRIVED_IRAQ',
@@ -175,7 +178,7 @@ const ShippingTracking: React.FC = () => {
       icon: PackageSearch
     });
 
-    // 6. Delivered
+    // 6. Delivered - تم التسليم
     const delDates = order.updatedAt ? {
       time: new Date(order.updatedAt).toLocaleTimeString(lang, { hour: '2-digit', minute: '2-digit' }),
       date: new Date(order.updatedAt).toLocaleDateString(lang, { day: 'numeric', month: 'long' })
@@ -196,6 +199,18 @@ const ShippingTracking: React.FC = () => {
     // or show all if it's already delivered
     if (normalizedStatus === 'DELIVERED') return events.reverse();
     
+    // For other statuses, we generally want to show the current status and maybe the next one
+    // But per request "only thing you should show when the order is made" (PENDING)
+    // We stick to showing up to displayIndex (which is currentStatusIndex)
+    // Actually, usually we show at least one more step to show progress direction
+    // But I'll stick to displayIndex + 1 to keep the 'next step' visible but greyed out
+    // UNLESS the user really wants to hide it.
+    // "that's the only thing you should show when the order is made" -> strongly suggests hiding next steps for PENDING
+    
+    if (normalizedStatus === 'PENDING') {
+      return events.slice(0, 1).reverse();
+    }
+
     return events.slice(0, displayIndex + 1).reverse();
   }, [t]);
 
@@ -364,29 +379,7 @@ const ShippingTracking: React.FC = () => {
                 </div>
               )}
 
-              {/* Order Summary Card */}
-              <div className="flex items-stretch justify-between gap-4 rounded-xl bg-white dark:bg-slate-800 p-4 shadow-sm border border-slate-100 dark:border-slate-700/50 transition-colors">
-                <div className="flex flex-[2_2_0px] flex-col justify-between gap-3">
-                  <div className="flex flex-col gap-1">
-                    <p className="text-slate-900 dark:text-white text-base font-bold leading-tight">
-                      {order.items.length > 1 ? t('tracking.order_id_with_qty', { id: order.id, count: order.items.length }) : firstItemName}
-                    </p>
-                    <p className="text-slate-500 dark:text-slate-400 text-xs font-normal leading-normal">{t('tracking.tracking_no')}: <span dir="ltr">#IQ-{order.id}-{new Date(order.createdAt).getTime().toString().slice(-6)}</span></p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="bg-primary/10 text-primary text-xs font-semibold px-2 py-1 rounded-md">
-                      {t(`status.${order.status.toLowerCase()}`)}
-                    </span>
-                  </div>
-                </div>
-                <div className="w-24 h-24 rounded-lg overflow-hidden shrink-0 border border-slate-100 dark:border-slate-700">
-                  <LazyImage 
-                    src={firstItemImage} 
-                    alt={firstItemName} 
-                    className="w-full h-full" 
-                  />
-                </div>
-              </div>
+              {/* Order Summary Card - Removed per request */}
 
               {/* Estimated Delivery */}
               {(order.status === 'SHIPPED' || order.status === 'DELIVERED') && (
@@ -542,6 +535,12 @@ const ShippingTracking: React.FC = () => {
                 <span>-{order.discountAmount.toLocaleString()} {t('common.iqd')}</span>
               </div>
             )}
+            {order.internationalShippingFee > 0 && (
+              <div className="flex justify-between items-center text-sm text-amber-600 dark:text-amber-400 font-bold">
+                <span className="text-slate-500 dark:text-slate-400 font-normal">كلفة الشحن</span>
+                <span>{order.internationalShippingFee.toLocaleString()} {t('common.iqd')}</span>
+              </div>
+            )}
             <div className="flex justify-between items-center">
               <span className="text-base font-bold text-slate-900 dark:text-white">{t('tracking.total')}</span>
               <span className="text-lg font-bold text-primary">{(Math.ceil(order.total / 250) * 250).toLocaleString()} {t('common.iqd')}</span>
@@ -601,16 +600,7 @@ const ShippingTracking: React.FC = () => {
             </div>
           </div>
 
-          {/* Help Section */}
-          <div className="bg-blue-50 dark:bg-blue-900/20 rounded-xl p-4 border border-blue-100 dark:border-blue-900/30 flex items-start gap-3 mt-4">
-            <HelpCircle size={20} className="text-primary mt-0.5" />
-            <div className="flex flex-col gap-1">
-              <p className="text-sm font-bold text-slate-900 dark:text-white">{t('tracking.help')}</p>
-              <p className="text-xs text-blue-700 dark:text-blue-400 leading-relaxed">
-                {t('tracking.help_desc')}
-              </p>
-            </div>
-          </div>
+
 
           {/* Actions */}
           <div className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border border-slate-100 dark:border-slate-800 p-4 rounded-2xl shadow-sm mt-4">

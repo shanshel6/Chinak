@@ -1,139 +1,94 @@
 import React, { useEffect, useState } from 'react';
-import { Video, Info as _Info } from 'lucide-react';
-import { fetchSettings } from '../../services/api';
+import { Info, Plane, Ship } from 'lucide-react';
 import { calculateInclusivePrice } from '../../utils/shipping';
 
 interface ProductInfoProps {
   price: number;
   originalPrice?: number;
   name: string;
-  chineseName?: string;
-  videoUrl?: string;
   deliveryTime?: string;
-  storeEvaluation?: string;
-  reviewsCountShown?: string | number;
-  averageRating: string;
+  averageRating: string | number;
   totalReviews: number;
-  weight?: number;
-  length?: number;
-  width?: number;
-  height?: number;
   domesticShippingFee?: number;
-  basePriceRMB?: number;
-  isPriceCombined?: boolean;
-  airThreshold?: number;
-  seaThreshold?: number;
-  variant?: any;
-  shippingMethod?: 'air' | 'sea';
-  onShippingMethodChange?: (method: 'air' | 'sea') => void;
+  basePriceIQD?: number;
   calculatedAirPrice?: number;
   calculatedSeaPrice?: number;
-  minOrder?: number;
+  shippingMethod?: 'air' | 'sea';
+  onShippingMethodChange?: (method: 'air' | 'sea') => void;
 }
 
 const ProductInfo: React.FC<ProductInfoProps> = ({
   price,
   originalPrice,
   name,
-  chineseName,
-  videoUrl,
   deliveryTime,
-  weight,
-  length,
-  width,
-  height,
   domesticShippingFee,
-  basePriceRMB,
-  isPriceCombined,
-  shippingMethod = 'air',
+  basePriceIQD,
   calculatedAirPrice,
   calculatedSeaPrice,
-  minOrder
+  shippingMethod,
+  onShippingMethodChange,
 }) => {
-  const [airRate, setAirRate] = useState<number>(15400); 
-  const [seaRate, setSeaRate] = useState<number>(182000);
-  const [_chinaDomesticRate, setChinaDomesticRate] = useState<number>(1500);
-  const [shippingMinFloor, setShippingMinFloor] = useState<number>(2200);
-  
-  useEffect(() => {
-    // Only fetch settings if we don't have calculated prices passed down
-    if (calculatedAirPrice && calculatedSeaPrice) return;
-    
-    const loadSettings = async () => {
-      try {
-        const settings = await fetchSettings();
-        if (settings?.airShippingRate) setAirRate(settings.airShippingRate);
-        if (settings?.seaShippingRate) setSeaRate(settings.seaShippingRate);
-        if (settings?.chinaDomesticShipping) setChinaDomesticRate(settings.chinaDomesticShipping);
-        if (settings?.shippingMinFloor) setShippingMinFloor(settings.shippingMinFloor);
-      } catch (error) {
-        console.error('Failed to load shipping rates:', error);
-      }
-    };
-    loadSettings();
-  }, [calculatedAirPrice, calculatedSeaPrice]);
-
-  const airPrice = React.useMemo(() => {
-    if (calculatedAirPrice) return calculatedAirPrice;
-    return calculateInclusivePrice(price, weight, length, width, height, {
-      airRate,
-      seaRate,
-      minFloor: shippingMinFloor
-    }, 'air', domesticShippingFee || 0, basePriceRMB, isPriceCombined);
-  }, [price, weight, length, width, height, airRate, seaRate, shippingMinFloor, domesticShippingFee, basePriceRMB, isPriceCombined, calculatedAirPrice]);
-
-  const seaPrice = React.useMemo(() => {
-    if (calculatedSeaPrice) return calculatedSeaPrice;
-    return calculateInclusivePrice(price, weight, length, width, height, {
-      airRate,
-      seaRate,
-      minFloor: shippingMinFloor
-    }, 'sea', domesticShippingFee || 0, basePriceRMB, isPriceCombined);
-  }, [price, weight, length, width, height, airRate, seaRate, shippingMinFloor, domesticShippingFee, basePriceRMB, isPriceCombined, calculatedSeaPrice]);
-
   const totalPrice = React.useMemo(() => {
-    return shippingMethod === 'air' ? airPrice : seaPrice;
-  }, [shippingMethod, airPrice, seaPrice]);
+    // If explicit calculated prices are passed, use them based on method
+    if (shippingMethod === 'air' && calculatedAirPrice) return calculatedAirPrice;
+    if (shippingMethod === 'sea' && calculatedSeaPrice) return calculatedSeaPrice;
+    
+    // Otherwise fallback to default calculation (usually air)
+    return calculateInclusivePrice(price, domesticShippingFee || 0, basePriceIQD);
+  }, [price, domesticShippingFee, basePriceIQD, calculatedAirPrice, calculatedSeaPrice, shippingMethod]);
 
   const inclusiveOriginalPrice = React.useMemo(() => {
     if (!originalPrice) return null;
-    return calculateInclusivePrice(originalPrice, weight, length, width, height, {
-      airRate,
-      seaRate,
-      minFloor: shippingMinFloor
-    }, shippingMethod, domesticShippingFee || 0, basePriceRMB, isPriceCombined);
-  }, [originalPrice, weight, length, width, height, airRate, seaRate, shippingMinFloor, shippingMethod, domesticShippingFee, basePriceRMB, isPriceCombined]);
+    return calculateInclusivePrice(originalPrice, domesticShippingFee || 0, basePriceIQD);
+  }, [originalPrice, domesticShippingFee, basePriceIQD]);
 
   return (
     <div className="mb-6">
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex flex-col">
-          <h1 className="text-primary text-2xl font-black tracking-tight drop-shadow-sm">
-            {totalPrice > 0 ? `${totalPrice.toLocaleString()} د.ع` : 'السعر عند الطلب'}
-          </h1>
-          {inclusiveOriginalPrice && inclusiveOriginalPrice > totalPrice && (
-            <span className="text-slate-400 text-sm line-through">
-              {inclusiveOriginalPrice.toLocaleString()} د.ع
-            </span>
-          )}
+      <div className="flex flex-col gap-4 mb-4">
+        <div className="flex items-start justify-between">
+          <div className="flex flex-col">
+            <h1 className="text-primary text-3xl font-black tracking-tight drop-shadow-sm">
+              {totalPrice > 0 ? `${totalPrice.toLocaleString()} د.ع` : 'السعر عند الطلب'}
+            </h1>
+            {inclusiveOriginalPrice && inclusiveOriginalPrice > totalPrice && (
+              <span className="text-slate-400 text-sm line-through font-bold mt-1">
+                {inclusiveOriginalPrice.toLocaleString()} د.ع
+              </span>
+            )}
+          </div>
         </div>
-        {videoUrl && (
-          <a 
-            href={videoUrl} 
-            target="_blank" 
-            rel="noopener noreferrer"
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 rounded-xl text-xs font-bold transition-all hover:scale-105 active:scale-95 border border-red-100 dark:border-red-500/20"
-          >
-            <Video size={16} />
-            <span>مشاهدة الفيديو</span>
-          </a>
+
+        {/* Shipping Method Toggles - Enhanced UI */}
+        {onShippingMethodChange && (
+          <div className="flex bg-slate-100 dark:bg-slate-800 p-1.5 rounded-2xl border border-slate-200 dark:border-slate-700/50 w-full sm:w-fit">
+            <button
+              onClick={() => onShippingMethodChange('air')}
+              className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-sm font-black transition-all duration-300 ${
+                shippingMethod === 'air'
+                  ? 'bg-white dark:bg-slate-700 text-primary shadow-sm ring-1 ring-black/5 dark:ring-white/10 scale-[1.02]'
+                  : 'text-slate-500 dark:text-slate-400 hover:bg-white/50 dark:hover:bg-slate-700/50'
+              }`}
+            >
+              <Plane size={18} className={shippingMethod === 'air' ? 'text-primary' : 'text-slate-400'} />
+              شحن جوي
+            </button>
+            <button
+              onClick={() => onShippingMethodChange('sea')}
+              className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-sm font-black transition-all duration-300 ${
+                shippingMethod === 'sea'
+                  ? 'bg-white dark:bg-slate-700 text-primary shadow-sm ring-1 ring-black/5 dark:ring-white/10 scale-[1.02]'
+                  : 'text-slate-500 dark:text-slate-400 hover:bg-white/50 dark:hover:bg-slate-700/50'
+              }`}
+            >
+              <Ship size={18} className={shippingMethod === 'sea' ? 'text-primary' : 'text-slate-400'} />
+              شحن بحري
+            </button>
+          </div>
         )}
       </div>
 
       <h2 className="text-slate-900 dark:text-white text-xl font-bold leading-tight mt-3">{name}</h2>
-      {chineseName && chineseName !== name && (
-        <p className="text-slate-400 dark:text-slate-500 text-sm mt-1 font-medium">{chineseName}</p>
-      )}
 
       {deliveryTime && (
         <div className="flex items-center gap-2 mt-2">
@@ -143,13 +98,12 @@ const ProductInfo: React.FC<ProductInfoProps> = ({
         </div>
       )}
 
-      {minOrder && minOrder > 1 && (
-        <div className="flex items-center gap-2 mt-2">
-          <span className="text-xs font-bold text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 px-2 py-1 rounded-lg border border-amber-100 dark:border-amber-900/30">
-            أقل كمية للطلب: {minOrder} قطعة
-          </span>
-        </div>
-      )}
+      <div className="mt-3 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-xl border border-blue-100 dark:border-blue-900/30">
+           <p className="text-sm text-blue-700 dark:text-blue-300 font-medium flex items-center gap-2">
+             <Info size={16} />
+             سيتم احتساب رسوم التوصيل وإرسالها إليك عبر الواتساب بعد إتمام الطلب
+           </p>
+      </div>
     </div>
   );
 };

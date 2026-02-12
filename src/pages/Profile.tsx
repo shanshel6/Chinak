@@ -14,7 +14,7 @@ import {
   LogOut,
   Settings,
   FileText,
-  Trash2
+  Trash2,
 } from 'lucide-react';
 import { updateProfile, fetchOrders, fetchAddresses, fetchCoupons, fetchMe } from '../services/api';
 import { useAuthStore } from '../store/useAuthStore';

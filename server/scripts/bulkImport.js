@@ -35,45 +35,18 @@ const extractNumber = (val) => {
 };
 
 const calculateBulkImportPrice = (rawPrice, domesticFee, weight, length, width, height, explicitMethod) => {
-  const weightInKg = extractNumber(weight) || 0.5; // Default 0.5kg if missing
+  // Simplified pricing logic: (Base + Domestic) * 1.15
+  // International shipping components are removed.
   
-  let method = explicitMethod?.toLowerCase();
-  
-  if (!method) {
-    // Default logic matching frontend: < 1kg is AIR, >= 1kg is SEA
-    method = (weightInKg > 0 && weightInKg < 1) ? 'air' : 'sea';
-  }
-
   const domestic = domesticFee || 0;
-
-  if (method === 'air') {
-    // Air Pricing logic: (Base Price + Domestic Fee + (Weight * Air Rate)) * 1.20
-    const airRate = 15400;
-    const shippingCost = weightInKg * airRate;
-    
-    // Treat rawPrice as IQD (no heuristic conversion)
-    const basePrice = rawPrice;
-    
-    return Math.ceil(((basePrice + domestic + shippingCost) * 1.20) / 250) * 250;
-  } else {
-    // Sea: (Base Price + Domestic Fee + Sea Shipping) * 1.20
-    const seaRate = 182000;
-    const l = extractNumber(length) || 0;
-    const w = extractNumber(width) || 0;
-    const h = extractNumber(height) || 0;
-
-    const paddedL = l > 0 ? l + 5 : 0;
-    const paddedW = w > 0 ? w + 5 : 0;
-    const paddedH = h > 0 ? h + 5 : 0;
-
-    const volumeCbm = (paddedL * paddedW * paddedH) / 1000000;
-    const seaShippingCost = Math.max(volumeCbm * seaRate, 500);
-
-    // Treat rawPrice as IQD (no heuristic conversion)
-    const basePrice = rawPrice;
-
-    return Math.ceil(((basePrice + domestic + seaShippingCost) * 1.20) / 250) * 250;
-  }
+  
+  // Treat rawPrice as IQD (no heuristic conversion)
+  const basePrice = rawPrice;
+  
+  // Formula: (Base + Domestic) * 1.15
+  const finalPrice = (basePrice + domestic) * 1.15;
+  
+  return Math.ceil(finalPrice / 250) * 250;
 };
 
 async function bulkImport(filePath) {
@@ -120,6 +93,42 @@ async function bulkImport(filePath) {
 
   console.log(`Found ${rawData.length} products to import.`);
 
+  const RESTRICTED_KEYWORDS = [
+    // Dangerous Goods (Batteries, Liquids, etc.)
+    'battery', 'lithium', 'power bank', 'powerbank', 'batteries',
+    'بطارية', 'ليثيوم', 'باور بانك', 'شاحن متنقل',
+    'liquid', 'oil', 'cream', 'gel', 'paste', 'shampoo', 'perfume', 'spray', 'aerosol',
+    'سائل', 'زيت', 'كريم', 'جل', 'معجون', 'شامبو', 'عطر', 'بخاخ',
+    'powder', 'dust', 'مسحوق', 'بودرة',
+    'magnet', 'magnetic', 'مغناطيس', 'مغناطيسي',
+    'knife', 'sword', 'dagger', 'weapon', 'gun', 'rifle',
+    'سكين', 'سيف', 'خنجر', 'سلاح', 'بندقية',
+    'flammable', 'lighter', 'gas', 'قابل للاشتعال', 'ولاعة', 'غاز',
+    // Furniture / Bulky Items
+    'furniture', 'sofa', 'couch', 'chair', 'table', 'desk', 'wardrobe', 'cabinet', 'cupboard', 
+    'bed', 'mattress', 'bookshelf', 'shelf', 'shelves', 'dresser', 'sideboard', 'stool', 'bench',
+    'armchair', 'recliner', 'ottoman', 'bean bag', 'dining set', 'tv stand', 'shoe rack',
+    'أثاث', 'كنبة', 'أريكة', 'كرسي', 'طاولة', 'مكتب', 'دولاب', 'خزانة', 'سرير', 'مرتبة', 
+    'رف', 'ارفف', 'تسريحة', 'كومودينو', 'بوفيه', 'مقعد', 'بنش', 'طقم جلوس', 'طاولة طعام', 
+    'حامل تلفزيون', 'جزامة', 'طقم صالون', 'غرفة نوم'
+  ];
+  const EXCEPTIONS = [
+    'cover', 'cloth', 'slipcover', 'cushion case', 'pillow case', 'protector', 'accessory', 'accessories', 'toy', 'miniature', 'model',
+    'غطاء', 'مفرش', 'تلبيسة', 'كيس وسادة', 'حماية', 'اكسسوار', 'لعبة', 'نموذج', 'مجسم'
+  ];
+
+  const detectAirRestriction = (text) => {
+    if (!text) return false;
+    const lowerText = String(text).toLowerCase();
+    for (const keyword of RESTRICTED_KEYWORDS) {
+      if (lowerText.includes(keyword.toLowerCase())) {
+        const isException = EXCEPTIONS.some(ex => lowerText.includes(ex.toLowerCase()));
+        if (!isException) return true;
+      }
+    }
+    return false;
+  };
+
   const results = {
     imported: 0,
     skipped: 0,
@@ -139,14 +148,12 @@ async function bulkImport(filePath) {
 
       if (!product) {
         const domesticFee = parseFloat(p.domestic_shipping_fee || p.domesticShippingFee) || 0;
-        const rawPrice = parseFloat(p.general_price) || parseFloat(p.price) || parseFloat(p.basePriceRMB) || 0;
+        const rawPrice = parseFloat(p.general_price) || parseFloat(p.price) || parseFloat(p.basePriceIQD) || parseFloat(p.basePriceRMB) || 0;
         
-        // Determine if price is combined (default to true if not specified)
-         const isPriceCombined = p.isPriceCombined !== undefined 
-           ? (String(p.isPriceCombined) === 'true' || p.isPriceCombined === true) 
-           : (rawPrice > 1000);
+        // If rawPrice > 1000, assume it is already IQD (combined). Otherwise treat as RMB and calculate.
+        const isLikelyIQD = rawPrice > 1000;
          
-         const price = isPriceCombined 
+        const price = isLikelyIQD 
           ? rawPrice 
           : calculateBulkImportPrice(rawPrice, domesticFee, p.weight, p.length, p.width, p.height, p.shippingMethod);
 
@@ -160,33 +167,32 @@ async function bulkImport(filePath) {
         product = await prisma.product.create({
           data: {
             name: name,
-            chineseName: p.chineseName,
-            description: p.description,
+            // chineseName: p.chineseName,
+            // description: p.description,
             price: price, // Now uses 90% markup for Air items
-            basePriceRMB: rawPrice,
+            basePriceIQD: rawPrice,
             image: p.image || '',
             purchaseUrl: p.purchaseUrl,
             status: 'DRAFT', // Import as draft until published
             isActive: false, // Inactive by default when DRAFT
             isFeatured: !!p.isFeatured,
-            isPriceCombined: true,
             specs: p.specs,
-            storeEvaluation: p.storeEvaluation,
-            reviewsCountShown: p.reviewsCountShown,
             videoUrl: p.videoUrl,
             domesticShippingFee: domesticFee,
+            isAirRestricted: p.isAirRestricted === true || p.isAirRestricted === 'true' || p.isAirRestricted === 1 || p.is_air_restricted === true || p.is_air_restricted === 'true' || p.is_air_restricted === 1 || p.IsAirRestricted === true || p.IsAirRestricted === 'true' || p.IsAirRestricted === 1 || detectAirRestriction(`${name} ${p.specs || ''}`),
             minOrder: parseInt(p.min_order || p.minOrder) || 1,
-            deliveryTime: p.delivery_time || p.deliveryTime || p.Delivery_time || null
+            deliveryTime: p.delivery_time || p.deliveryTime || p.Delivery_time || null,
+            aiMetadata: p.aiMetadata || p.ai_metadata || p.aimetatags || null
           }
         });
         results.imported++;
         console.log(`[${results.imported + results.skipped + results.failed}/${rawData.length}] Imported: ${name}`);
 
-        // Trigger embedding processing
-        if (process.env.HUGGINGFACE_API_KEY) {
+        // Trigger AI processing (Metadata + Embedding)
+        if (process.env.SILICONFLOW_API_KEY || process.env.HUGGINGFACE_API_KEY) {
           try {
-            console.log(`  -> Embedding processing for product ${product.id}...`);
-            await processProductEmbedding(product.id);
+            console.log(`  -> AI processing for product ${product.id}...`);
+            await processProductAI(product.id);
             results.aiProcessed++;
             // 2-second delay to be safe with SiliconFlow free tier
             await new Promise(r => setTimeout(r, 2000));

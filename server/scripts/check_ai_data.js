@@ -4,6 +4,8 @@ console.log('[check_ai_data] starting');
 
 async function checkData() {
   try {
+    await prisma.$connect();
+    console.log('[check_ai_data] Connected to DB');
     console.log('[check_ai_data] querying counts');
     const withTimeout = (promise, ms) => Promise.race([
       promise,

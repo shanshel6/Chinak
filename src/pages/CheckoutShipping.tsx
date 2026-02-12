@@ -362,7 +362,7 @@ const CheckoutShipping: React.FC = () => {
 
           <div className="flex justify-between items-center text-sm">
             <span className="text-slate-500 dark:text-slate-400">الشحن الدولي</span>
-            <span className="font-bold text-slate-900 dark:text-white">مشمول في سعر المنتجات</span>
+            <span className="font-bold text-slate-900 dark:text-white">سيتم إرسالها إليك عبر الواتساب</span>
           </div>
 
           {shippingInfo && !shippingInfo.isThresholdMet && (

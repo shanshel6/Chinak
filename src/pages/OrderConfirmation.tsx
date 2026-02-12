@@ -105,7 +105,7 @@ const OrderConfirmation: React.FC = () => {
                 <div className="flex flex-col gap-1">
                   <h3 className="text-green-900 dark:text-green-300 font-bold text-lg">سيتم التواصل معك عبر الواتساب</h3>
                   <p className="text-green-800 dark:text-green-400 text-sm leading-relaxed">
-                    يرجى مراقبة الواتساب لتأكيد الطلب وتلقي تحديثات الشحن.
+                    سيتم إرسال تكلفة الشحن الكاملة إليك قريباً جداً عبر الواتساب.
                   </p>
                 </div>
               </div>

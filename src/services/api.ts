@@ -47,7 +47,7 @@ export const getBaseDomain = () => {
 
   // 4. Default local development (Browser)
   if (window.location.hostname === 'localhost') {
-    return 'http://localhost:5001';
+    return '';
   }
 
   return 'https://shanshal66-my-shop-backend.hf.space';
@@ -60,7 +60,7 @@ const MOCK_SETTINGS_KEY = 'mock_admin_settings';
 const cache = new Map<string, { data: any; timestamp: number }>();
 
 // Persistent Cache Implementation
-const CACHE_PREFIX = 'app_cache_v2_'; // Changed prefix to invalidate old cache
+const CACHE_PREFIX = 'app_cache_v4_'; // Changed prefix to invalidate old cache
 const CACHE_TTL = 2 * 60 * 1000; // 2 minutes cache for faster updates during dev
 
 const persistentCache = {

@@ -38,15 +38,9 @@ const ProductPerformance: React.FC<ProductPerformanceProps> = ({ products }) => 
   const data = useMemo(() => products.slice(0, 8).map((p, i) => {
     const inclusivePrice = calculateInclusivePrice(
       p.price, 
-      p.weight, 
-      p.length, 
-      p.width, 
-      p.height, 
-      rates,
-      undefined,
       p.domesticShippingFee || 0,
-      p.basePriceRMB,
-      p.isPriceCombined
+      p.basePriceIQD,
+      rates
     );
     return {
       name: p.name.length > 15 ? p.name.substring(0, 15) + '...' : p.name,

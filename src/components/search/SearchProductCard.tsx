@@ -56,27 +56,7 @@ const SearchProductCard: React.FC<SearchProductCardProps> = ({
     const effectiveWidth = (minVariant && minVariant.width) ? minVariant.width : product.width;
     const effectiveHeight = (minVariant && minVariant.height) ? minVariant.height : product.height;
 
-    // Determine if the price is combined (strictly check minVariant or product)
-    const isEffectivePriceCombined = minVariant 
-      ? (minVariant.isPriceCombined ?? product.isPriceCombined ?? false)
-      : (product.isPriceCombined ?? false);
-
-    const effectiveBasePriceRMB = (minVariant && minVariant.basePriceRMB && minVariant.basePriceRMB > 0)
-      ? minVariant.basePriceRMB
-      : product.basePriceRMB;
-
-    return calculateInclusivePrice(
-      minPrice,
-      effectiveWeight,
-      effectiveLength,
-      effectiveWidth,
-      effectiveHeight,
-      rates,
-      'sea',
-      product.domesticShippingFee || 0,
-      effectiveBasePriceRMB,
-      isEffectivePriceCombined
-    );
+    return minPrice;
   }, [product, rates]);
 
   return (

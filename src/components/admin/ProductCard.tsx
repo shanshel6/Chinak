@@ -94,71 +94,25 @@ const ProductCard: React.FC<ProductCardProps> = ({
   const maxPrice = variantPrices.length > 0 ? Math.max(...variantPrices) : product.price;
   const hasPriceRange = minPrice !== maxPrice;
 
-  const isEffectivePriceCombined = React.useMemo(() => {
-    if (product.isPriceCombined) return true;
-    if (variants.length > 0) {
-      return variants.some((v: any) => v.isPriceCombined);
-    }
-    return false;
-  }, [product.isPriceCombined, variants]);
-
   const { minInclusivePrice, maxInclusivePrice, hasInclusivePriceRange } = React.useMemo(() => {
     if (variants.length === 0) {
-      const price = calculateInclusivePrice(
-        product.price,
-        product.weight,
-        product.length,
-        product.width,
-        product.height,
-        rates,
-        undefined,
-        product.domesticShippingFee || 0,
-        product.basePriceRMB,
-        isEffectivePriceCombined
-      );
+      const price = product.price;
       return { minInclusivePrice: price, maxInclusivePrice: price, hasInclusivePriceRange: false };
     }
 
-    const inclusivePrices = variants.map((v: any) => {
-      const isVariantCombined = v.isPriceCombined || product.isPriceCombined || false;
-      const variantBasePriceRMB = v.basePriceRMB && v.basePriceRMB > 0 ? v.basePriceRMB : product.basePriceRMB;
-      
-      return calculateInclusivePrice(
-        v.price,
-        v.weight || product.weight,
-        v.length || product.length,
-        v.width || product.width,
-        v.height || product.height,
-        rates,
-        undefined,
-        product.domesticShippingFee || 0,
-        variantBasePriceRMB,
-        isVariantCombined
-      );
-    }).filter((p: number) => p > 0);
+    const inclusivePrices = variants.map((v: any) => v.price).filter((p: any) => p > 0);
 
     if (inclusivePrices.length === 0) {
        // Fallback if variants exist but have 0 price?
        // Use product price
-       const price = calculateInclusivePrice(
-        product.price,
-        product.weight,
-        product.length,
-        product.width,
-        product.height,
-        rates,
-        undefined,
-        product.domesticShippingFee || 0,
-        product.basePriceRMB,
-        isEffectivePriceCombined
-      );
+       const price = product.price;
       return { minInclusivePrice: price, maxInclusivePrice: price, hasInclusivePriceRange: false };
     }
 
     const min = Math.min(...inclusivePrices);
     const max = Math.max(...inclusivePrices);
     return { minInclusivePrice: min, maxInclusivePrice: max, hasInclusivePriceRange: min !== max };
-  }, [product, variants, rates, isEffectivePriceCombined]);
+  }, [product, variants, rates]);
 
 
   const handleWeightSubmit = () => {
@@ -167,18 +121,11 @@ const ProductCard: React.FC<ProductCardProps> = ({
       const updates: any = { weight: newWeight };
       
       // Also update price immediately if RMB price is available
-      if (product.basePriceRMB) {
+      if (product.basePriceIQD) {
         const newPrice = calculateInclusivePrice(
           product.price,
-          newWeight,
-          product.length,
-          product.width,
-          product.height,
-          rates,
-          undefined,
           product.domesticShippingFee || 0,
-          product.basePriceRMB,
-          isEffectivePriceCombined
+          product.basePriceIQD
         );
         if (newPrice !== product.price) {
           updates.price = newPrice;
@@ -201,18 +148,11 @@ const ProductCard: React.FC<ProductCardProps> = ({
           const updates: any = { length, width, height };
           
           // Also update price immediately if RMB price is available
-          if (product.basePriceRMB) {
+          if (product.basePriceIQD) {
             const newPrice = calculateInclusivePrice(
               product.price,
-              product.weight,
-              length,
-              width,
-              height,
-              rates,
-              undefined,
               product.domesticShippingFee || 0,
-          product.basePriceRMB,
-          isEffectivePriceCombined
+          product.basePriceIQD
         );
             if (newPrice !== product.price) {
               updates.price = newPrice;

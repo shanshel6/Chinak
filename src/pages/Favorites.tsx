@@ -148,19 +148,10 @@ const Favorites: React.FC = () => {
               }, null);
 
               const minPrice = minVariant ? minVariant.price : product.price;
-              const effectiveWeight = (minVariant && minVariant.weight) ? minVariant.weight : product.weight;
-              const effectiveLength = (minVariant && minVariant.length) ? minVariant.length : product.length;
-              const effectiveWidth = (minVariant && minVariant.width) ? minVariant.width : product.width;
-              const effectiveHeight = (minVariant && minVariant.height) ? minVariant.height : product.height;
               
-              // Determine if the price is combined (strictly check minVariant or product)
-              const isEffectivePriceCombined = minVariant 
-                ? (minVariant.isPriceCombined ?? product.isPriceCombined ?? false)
-                : (product.isPriceCombined ?? false);
-
-              const effectiveBasePriceRMB = (minVariant && minVariant.basePriceRMB && minVariant.basePriceRMB > 0)
-                ? minVariant.basePriceRMB
-                : product.basePriceRMB;
+              const effectiveBasePriceIQD = (minVariant && minVariant.basePriceIQD && minVariant.basePriceIQD > 0)
+                ? minVariant.basePriceIQD
+                : product.basePriceIQD;
 
               return (
                 <div 
@@ -209,15 +200,8 @@ const Favorites: React.FC = () => {
                       <p className="text-primary text-base font-bold">
                         {calculateInclusivePrice(
                           minPrice,
-                          effectiveWeight,
-                          effectiveLength,
-                          effectiveWidth,
-                          effectiveHeight,
-                          rates,
-                          'sea',
                           product.domesticShippingFee || 0,
-                          effectiveBasePriceRMB,
-                          isEffectivePriceCombined
+                          effectiveBasePriceIQD
                         ).toLocaleString()} د.ع
                       </p>
                     </div>
@@ -245,14 +229,9 @@ const Favorites: React.FC = () => {
               const effectiveWidth = (minVariant && minVariant.width) ? minVariant.width : product.width;
               const effectiveHeight = (minVariant && minVariant.height) ? minVariant.height : product.height;
               
-              // Determine if the price is combined (strictly check minVariant or product)
-              const isEffectivePriceCombined = minVariant 
-                ? (minVariant.isPriceCombined ?? product.isPriceCombined ?? false)
-                : (product.isPriceCombined ?? false);
-
-              const effectiveBasePriceRMB = (minVariant && minVariant.basePriceRMB && minVariant.basePriceRMB > 0)
-                ? minVariant.basePriceRMB
-                : product.basePriceRMB;
+              const effectiveBasePriceIQD = (minVariant && minVariant.basePriceIQD && minVariant.basePriceIQD > 0)
+                ? minVariant.basePriceIQD
+                : product.basePriceIQD;
 
               return (
                 <div 
@@ -275,15 +254,8 @@ const Favorites: React.FC = () => {
                       <span className="text-lg font-bold text-primary">
                         {calculateInclusivePrice(
                           minPrice,
-                          effectiveWeight,
-                          effectiveLength,
-                          effectiveWidth,
-                          effectiveHeight,
-                          rates,
-                          'sea',
                           product.domesticShippingFee || 0,
-                          effectiveBasePriceRMB,
-                          isEffectivePriceCombined
+                          effectiveBasePriceIQD
                         ).toLocaleString()} د.ع
                       </span>
                     </div>

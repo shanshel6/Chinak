@@ -18,8 +18,7 @@ interface CartItem {
     id: number | string;
     combination: string;
     price: number;
-    basePriceRMB?: number | null;
-    isPriceCombined?: boolean;
+    basePriceIQD?: number | null;
     image?: string;
     weight?: number;
     length?: number;
@@ -32,6 +31,8 @@ interface CartItem {
 interface CartState {
   items: CartItem[];
   isLoading: boolean;
+  isSyncing: boolean;
+  syncRequestCount: number;
   error: string | null;
   deletingIds: (number | string)[];
   rates: ShippingRates;
@@ -53,8 +54,7 @@ interface CartState {
       width?: number; 
       height?: number; 
       domesticShippingFee?: number;
-      basePriceRMB?: number;
-      isPriceCombined?: boolean;
+      basePriceIQD?: number;
       minOrder?: number;
       deliveryTime?: string;
     }, 
@@ -77,6 +77,8 @@ export const useCartStore = create<CartState>()(
     (set, get) => ({
       items: [],
       isLoading: false,
+      isSyncing: false,
+      syncRequestCount: 0,
       error: null,
       deletingIds: [],
       lastSynced: null,
@@ -268,8 +270,22 @@ export const useCartStore = create<CartState>()(
          if (typeof itemId === 'string' && itemId.startsWith('local-')) return;
  
          try {
-           updateCartItem(itemId, quantity).catch(() => {});
-         } catch (_e) {}
+           set((state) => ({ 
+             isSyncing: true, 
+             syncRequestCount: (state.syncRequestCount || 0) + 1 
+           }));
+           await updateCartItem(itemId, quantity);
+         } catch (_e) {
+           // Silent fail for now, optimistic update persists
+         } finally {
+           set((state) => {
+             const newCount = Math.max(0, (state.syncRequestCount || 0) - 1);
+             return { 
+               syncRequestCount: newCount,
+               isSyncing: newCount > 0
+             };
+           });
+         }
        },
  
        removeItem: async (itemId) => {

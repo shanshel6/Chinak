@@ -2,9 +2,13 @@ import { PrismaClient } from '@prisma/client';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { processProductAI } from '../services/aiService.js';
+import dotenv from 'dotenv';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+dotenv.config({ path: path.join(__dirname, '../.env') });
 
 const prisma = new PrismaClient();
 
@@ -29,16 +33,13 @@ async function insertProducts() {
         const product = await prisma.product.create({
           data: {
             name: productData.product_name,
-            chineseName: productData.product_name, // You might want to extract Chinese name separately
-            description: JSON.stringify(productData.product_details),
             price: parseFloat(productData.general_price) || 0,
             basePriceRMB: parseFloat(productData.general_price) || 0,
             image: productData.main_images[0] || '',
             purchaseUrl: productData.url,
-            weight: parseFloat(productData.weight) || null,
             domesticShippingFee: parseFloat(productData.domestic_shipping_fee) || 0,
-            minOrder: parseInt(productData.min_order || productData.minOrder) || 1,
             deliveryTime: productData.delivery_time || productData.deliveryTime || productData.Delivery_time || null,
+            aiMetadata: productData.aiMetadata || productData.ai_metadata || productData.aimetatags || productData.marketing_metadata || null,
             isPriceCombined: true,
             specs: JSON.stringify({
               category: productData.category,
@@ -72,7 +73,10 @@ async function insertProducts() {
                 {
                   combination: 'افتراضي',
                   price: parseFloat(productData.general_price) || 0,
-                  weight: parseFloat(productData.weight) || null
+                  weight: 0,
+                  length: 0,
+                  width: 0,
+                  height: 0
                 }
               ]
             }
@@ -86,6 +90,18 @@ async function insertProducts() {
         
         console.log(`✅ Product inserted successfully: ${product.name}`);
         successCount++;
+
+        // Trigger AI processing
+        if (process.env.SILICONFLOW_API_KEY || process.env.HUGGINGFACE_API_KEY) {
+          try {
+            console.log(`  -> AI Processing for ${product.name}...`);
+            await processProductAI(product.id);
+            // 2-second delay to be safe with SiliconFlow free tier
+            await new Promise(r => setTimeout(r, 2000));
+          } catch (aiErr) {
+            console.error(`  !! AI Processing failed for ${product.name}:`, aiErr.message);
+          }
+        }
         
       } catch (error) {
         console.error(`❌ Error inserting product ${productData.product_name}:`, error.message);

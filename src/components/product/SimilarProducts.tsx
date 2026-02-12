@@ -1,16 +1,14 @@
 import React from 'react';
 import LazyImage from '../LazyImage';
 import { calculateInclusivePrice } from '../../utils/shipping';
-import type { ShippingRates } from '../../types/shipping';
 import type { Product } from '../../types/product';
 
 interface SimilarProductsProps {
   products: Product[];
   onProductClick: (id: number | string) => void;
-  rates: ShippingRates;
 }
 
-const SimilarProducts: React.FC<SimilarProductsProps> = ({ products, onProductClick, rates }) => {
+const SimilarProducts: React.FC<SimilarProductsProps> = ({ products, onProductClick }) => {
   if (products.length === 0) return null;
 
   return (
@@ -27,31 +25,15 @@ const SimilarProducts: React.FC<SimilarProductsProps> = ({ products, onProductCl
           }, null);
 
           const minPrice = minVariant ? minVariant.price : p.price;
-          const effectiveWeight = (minVariant && minVariant.weight) ? minVariant.weight : p.weight;
-          const effectiveLength = (minVariant && minVariant.length) ? minVariant.length : p.length;
-          const effectiveWidth = (minVariant && minVariant.width) ? minVariant.width : p.width;
-          const effectiveHeight = (minVariant && minVariant.height) ? minVariant.height : p.height;
           
-          // Determine if the price is combined (strictly check minVariant or product)
-          const isEffectivePriceCombined = minVariant 
-            ? (minVariant.isPriceCombined ?? p.isPriceCombined ?? false)
-            : (p.isPriceCombined ?? false);
-
-          const effectiveBasePriceRMB = (minVariant && minVariant.basePriceRMB && minVariant.basePriceRMB > 0)
-            ? minVariant.basePriceRMB
-            : p.basePriceRMB;
+          const effectiveBasePriceIQD = (minVariant && minVariant.basePriceIQD && minVariant.basePriceIQD > 0)
+            ? minVariant.basePriceIQD
+            : p.basePriceIQD;
 
           const totalPrice = calculateInclusivePrice(
             minPrice,
-            effectiveWeight,
-            effectiveLength,
-            effectiveWidth,
-            effectiveHeight,
-            rates,
-            'sea',
             p.domesticShippingFee || 0,
-            effectiveBasePriceRMB,
-            isEffectivePriceCombined
+            effectiveBasePriceIQD
           );
 
           return (

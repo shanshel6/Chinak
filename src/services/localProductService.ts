@@ -16,7 +16,6 @@ export interface LocalProduct {
   purchaseUrl?: string;
   videoUrl?: string;
   specs?: unknown;
-  storeEvaluation?: unknown;
   options?: unknown[];
   variants?: unknown[];
   images?: unknown[];

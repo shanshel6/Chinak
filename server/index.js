@@ -61,18 +61,14 @@ const applyDynamicPricingToProduct = (product, rates) => {
   // Helper to calculate price for a specific target (product or variant)
   const calcPrice = (target, method) => {
     const basePrice = target.price || 0;
-    const weight = target.weight || product.weight || 0.5;
-    const length = target.length || product.length || 0;
-    const width = target.width || product.width || 0;
-    const height = target.height || product.height || 0;
-    // Use target's basePriceRMB if available, else product's
-    const basePriceRMB = (target.basePriceRMB && target.basePriceRMB > 0) ? target.basePriceRMB : (product.basePriceRMB || null);
-    const isPriceCombined = target.isPriceCombined ?? product.isPriceCombined ?? false;
+    // Use target's basePriceIQD if available, else product's
+    const basePriceIQD = (target.basePriceIQD && target.basePriceIQD > 0) ? target.basePriceIQD : (product.basePriceIQD || null);
     const domesticShippingFee = product.domesticShippingFee || 0;
 
     return getAdjustedPrice(
-      basePrice, weight, length, width, height, method,
-      domesticShippingFee, basePriceRMB, isPriceCombined, rates
+      basePrice, 
+      domesticShippingFee, 
+      basePriceIQD
     );
   };
 
@@ -164,7 +160,7 @@ const runEmbeddingJobs = async () => {
       embeddingJobSet.delete(productId);
 
       try {
-        await processProductEmbedding(productId);
+        await processProductAI(productId);
         embeddingJobAttempts.delete(productId);
         await sleep(2500);
       } catch (err) {
@@ -251,23 +247,14 @@ const calculateBulkImportPrice = (rawPrice, domesticFee, weight, length, width, 
     // Treat rawPrice as IQD (no heuristic conversion)
     const basePrice = rawPrice;
     
-    const price = (basePrice + domestic + shippingCost) * 1.20;
-    return Math.ceil(price / 250) * 250;
+    // Formula: (Base + Domestic) * 1.15
+    const finalPrice = (basePrice + domestic) * 1.15;
+    return Math.ceil(finalPrice / 250) * 250;
   } else {
-    const seaRate = (rates?.seaShippingRate ?? rates?.seaRate ?? 182000);
-    const seaMinFloor = (rates?.seaShippingMinFloor ?? rates?.minFloor ?? 500);
-    const l = extractNumber(length) || 0;
-    const w = extractNumber(width) || 0;
-    const h = extractNumber(height) || 0;
-
-    const volumeCbm = (l * w * h) / 1000000;
-    const seaShippingCost = Math.max(volumeCbm * seaRate, seaMinFloor);
-    
-    // Treat rawPrice as IQD (no heuristic conversion)
+    // Sea logic matches Air now
     const basePrice = rawPrice;
-
-    const price = (basePrice + domestic + seaShippingCost) * 1.20;
-    return Math.ceil(price / 250) * 250;
+    const finalPrice = (basePrice + domestic) * 1.15;
+    return Math.ceil(finalPrice / 250) * 250;
   }
 };
 
@@ -276,24 +263,12 @@ const estimateRawPriceFromStoredPrice = (storedPrice, domesticFee, weight, lengt
   if (stored <= 0) return 0;
 
   const domestic = Number(domesticFee) || 0;
-  const weightInKg = extractNumber(weight) || 0.5;
-  const method = (weightInKg > 0 && weightInKg < 1) ? 'air' : 'sea';
-
-  if (method === 'air') {
-    const airRate = (rates?.airShippingRate ?? rates?.airRate ?? 15400);
-    // No minimum floor
-    const shippingCost = weightInKg * airRate;
-    const raw = (stored / 1.20) - domestic - shippingCost;
-    return raw > 0 ? raw : 0;
-  }
-
-  const seaRate = (rates?.seaShippingRate ?? rates?.seaRate ?? 182000);
-  const l = extractNumber(length) || 0;
-  const w = extractNumber(width) || 0;
-  const h = extractNumber(height) || 0;
-  const volumeCbm = (l * w * h) / 1000000;
-  const seaShippingCost = Math.max(volumeCbm * seaRate, 500);
-  const raw = (stored / 1.20) - domestic - seaShippingCost;
+  
+  // Inverse of (Base + Domestic) * 1.15 = Stored
+  // Base + Domestic = Stored / 1.15
+  // Base = (Stored / 1.15) - Domestic
+  
+  const raw = (stored / 1.15) - domestic;
   return raw > 0 ? raw : 0;
 };
 
@@ -316,22 +291,12 @@ async function recalculateExistingProductPrices(oldRates, newRates) {
       select: {
         id: true,
         price: true,
-        basePriceRMB: true,
+        basePriceIQD: true,
         domesticShippingFee: true,
-        weight: true,
-        length: true,
-        width: true,
-        height: true,
-        isPriceCombined: true,
         variants: {
           select: {
             id: true,
-            price: true,
-            weight: true,
-            length: true,
-            width: true,
-            height: true,
-            isPriceCombined: true
+            price: true
           }
         }
       }
@@ -345,42 +310,38 @@ async function recalculateExistingProductPrices(oldRates, newRates) {
     for (const product of products) {
       const domesticFee = Number(product.domesticShippingFee) || 0;
 
-      const hasBase = Number(product.basePriceRMB) > 0;
-      // Only reprice if not combined. If combined, we respect the stored price.
-      const shouldRepriceProduct = !product.isPriceCombined && (hasBase || product.price > 0);
+      const hasBase = Number(product.basePriceIQD) > 0;
+      // Only reprice if basePriceIQD is low (assume RMB if < 1000). 
+      // If it's > 1000, we treat it as IQD/Combined and respect the stored price.
+      const shouldRepriceProduct = (hasBase && Number(product.basePriceIQD) < 1000);
 
       if (shouldRepriceProduct) {
         const raw = hasBase
-          ? Number(product.basePriceRMB)
-          : estimateRawPriceFromStoredPrice(product.price, domesticFee, product.weight, product.length, product.width, product.height, oldRates);
+          ? Number(product.basePriceIQD)
+          : estimateRawPriceFromStoredPrice(product.price, domesticFee, 0, 0, 0, 0, oldRates);
 
         if (raw > 0) {
           const priceInput = raw;
-          const newPrice = calculateBulkImportPrice(priceInput, domesticFee, product.weight, product.length, product.width, product.height, null, newRates);
+          const newPrice = calculateBulkImportPrice(priceInput, domesticFee, 0, 0, 0, 0, null, newRates);
           if (Number.isFinite(newPrice) && newPrice > 0 && newPrice !== product.price) {
             tasks.push(() => prisma.product.update({
               where: { id: product.id },
-              data: hasBase ? { price: newPrice } : { price: newPrice, basePriceRMB: raw }
+              data: hasBase ? { price: newPrice } : { price: newPrice, basePriceIQD: raw }
             }).then(() => { updatedProducts += 1; }));
           } else if (!hasBase) {
             tasks.push(() => prisma.product.update({
               where: { id: product.id },
-              data: { basePriceRMB: raw }
+              data: { basePriceIQD: raw }
             }).catch(() => {}).then(() => {}));
           }
         }
       }
 
       for (const v of product.variants) {
-        if (v.isPriceCombined) continue;
-        const vWeight = (v.weight ?? product.weight);
-        const vLength = (v.length ?? product.length);
-        const vWidth = (v.width ?? product.width);
-        const vHeight = (v.height ?? product.height);
-
-        const vRaw = estimateRawPriceFromStoredPrice(v.price, domesticFee, vWeight, vLength, vWidth, vHeight, oldRates);
-        if (vRaw > 0) {
-          const vNewPrice = calculateBulkImportPrice(vRaw, domesticFee, vWeight, vLength, vWidth, vHeight, null, newRates);
+        // Variants also follow the < 1000 logic for recalculation
+        const vRaw = estimateRawPriceFromStoredPrice(v.price, domesticFee, 0, 0, 0, 0, oldRates);
+        if (vRaw > 0 && vRaw < 1000) {
+          const vNewPrice = calculateBulkImportPrice(vRaw, domesticFee, 0, 0, 0, 0, null, newRates);
           if (Number.isFinite(vNewPrice) && vNewPrice > 0 && vNewPrice !== v.price) {
             tasks.push(() => prisma.productVariant.update({
               where: { id: v.id },
@@ -505,13 +466,8 @@ const productVariantSelect = {
   productId: true,
   combination: true,
   price: true,
-  basePriceRMB: true,
-  weight: true,
-  height: true,
-  length: true,
-  width: true,
-  image: true,
-  isPriceCombined: true
+  basePriceIQD: true,
+  image: true
 };
 
 // Server start - Build Trigger: 2026-01-26 22:00
@@ -2895,8 +2851,6 @@ app.get('/api/products', async (req, res) => {
     if (search) {
       where.OR = [
         { name: { contains: search } },
-        { description: { contains: search } },
-        { chineseName: { contains: search } },
         { purchaseUrl: { contains: search } }
       ];
     }
@@ -2911,27 +2865,18 @@ app.get('/api/products', async (req, res) => {
         select: {
           id: true,
           name: true,
-          chineseName: true,
           price: true,
-          basePriceRMB: true,
+          basePriceIQD: true,
           image: true,
           isFeatured: true,
-          weight: true,
-          length: true,
-          width: true,
-          height: true,
           domesticShippingFee: true,
-          isPriceCombined: true,
           deliveryTime: true,
           variants: {
             select: {
+              id: true,
+              combination: true,
               price: true,
-              basePriceRMB: true,
-              weight: true,
-              length: true,
-              width: true,
-              height: true,
-              isPriceCombined: true
+              basePriceIQD: true,
             }
           }
         },
@@ -2971,8 +2916,7 @@ app.get('/api/admin/products/check-existence', authenticateToken, isAdmin, async
       select: {
         id: true,
         name: true,
-        purchaseUrl: true,
-        chineseName: true
+        purchaseUrl: true
       }
     });
     res.json(products);
@@ -3001,9 +2945,7 @@ app.get('/api/admin/products', authenticateToken, isAdmin, hasPermission('manage
     
     if (search) {
       where.OR = [
-        { name: { contains: search } },
-        { description: { contains: search } },
-        { chineseName: { contains: search } }
+        { name: { contains: search } }
       ];
       
       const searchAsInt = parseInt(search);
@@ -3134,6 +3076,42 @@ async function runBulkProductsImport(products, { onProgress } = {}) {
     return s;
   };
 
+  const RESTRICTED_KEYWORDS = [
+    // Dangerous Goods (Batteries, Liquids, etc.)
+    'battery', 'lithium', 'power bank', 'powerbank', 'batteries',
+    'بطارية', 'ليثيوم', 'باور بانك', 'شاحن متنقل',
+    'liquid', 'oil', 'cream', 'gel', 'paste', 'shampoo', 'perfume', 'spray', 'aerosol',
+    'سائل', 'زيت', 'كريم', 'جل', 'معجون', 'شامبو', 'عطر', 'بخاخ',
+    'powder', 'dust', 'مسحوق', 'بودرة',
+    'magnet', 'magnetic', 'مغناطيس', 'مغناطيسي',
+    'knife', 'sword', 'dagger', 'weapon', 'gun', 'rifle',
+    'سكين', 'سيف', 'خنجر', 'سلاح', 'بندقية',
+    'flammable', 'lighter', 'gas', 'قابل للاشتعال', 'ولاعة', 'غاز',
+    // Furniture / Bulky Items
+    'furniture', 'sofa', 'couch', 'chair', 'table', 'desk', 'wardrobe', 'cabinet', 'cupboard', 
+    'bed', 'mattress', 'bookshelf', 'shelf', 'shelves', 'dresser', 'sideboard', 'stool', 'bench',
+    'armchair', 'recliner', 'ottoman', 'bean bag', 'dining set', 'tv stand', 'shoe rack',
+    'أثاث', 'كنبة', 'أريكة', 'كرسي', 'طاولة', 'مكتب', 'دولاب', 'خزانة', 'سرير', 'مرتبة', 
+    'رف', 'ارفف', 'تسريحة', 'كومودينو', 'بوفيه', 'مقعد', 'بنش', 'طقم جلوس', 'طاولة طعام', 
+    'حامل تلفزيون', 'جزامة', 'طقم صالون', 'غرفة نوم'
+  ];
+  const EXCEPTIONS = [
+    'cover', 'cloth', 'slipcover', 'cushion case', 'pillow case', 'protector', 'accessory', 'accessories', 'toy', 'miniature', 'model',
+    'غطاء', 'مفرش', 'تلبيسة', 'كيس وسادة', 'حماية', 'اكسسوار', 'لعبة', 'نموذج', 'مجسم'
+  ];
+
+  const detectAirRestriction = (text) => {
+    if (!text) return false;
+    const lowerText = String(text).toLowerCase();
+    for (const keyword of RESTRICTED_KEYWORDS) {
+      if (lowerText.includes(keyword.toLowerCase())) {
+        const isException = EXCEPTIONS.some(ex => lowerText.includes(ex.toLowerCase()));
+        if (!isException) return true;
+      }
+    }
+    return false;
+  };
+
   const fieldMapping = {
     'size': 'المقاس',
     'Size': 'المقاس',
@@ -3187,7 +3165,7 @@ async function runBulkProductsImport(products, { onProgress } = {}) {
         }
         return null;
       };
-      const aiMetadata = parseJsonObject(p.aiMetadata) || parseJsonObject(p.marketing_metadata);
+      const aiMetadata = parseJsonObject(p.aiMetadata) || parseJsonObject(p.marketing_metadata) || parseJsonObject(p.aimetatags);
       
       let existingProduct = null;
       if (purchaseUrl && !isUnnamed(name)) {
@@ -3243,7 +3221,7 @@ async function runBulkProductsImport(products, { onProgress } = {}) {
         rawPrice,
         parsePrice(p.general_price),
         parsePrice(p.price),
-        parsePrice(p.basePriceRMB),
+        parsePrice(p.basePriceIQD),
         parsePrice(p.rawPrice),
         parsePrice(p.rawRmbPrice)
       );
@@ -3265,9 +3243,7 @@ async function runBulkProductsImport(products, { onProgress } = {}) {
         rawPrice = Math.max(rawPrice, ...p.generated_options.map(v => parsePrice(v?.price)));
       }
 
-      const isPriceCombined = p.isPriceCombined !== undefined 
-        ? (String(p.isPriceCombined) === 'true' || p.isPriceCombined === true) 
-        : (rawPrice > 1000);
+      const isPriceCombined = true;
 
       const priceInput = rawPrice;
       const price = isPriceCombined 
@@ -3530,7 +3506,7 @@ async function runBulkProductsImport(products, { onProgress } = {}) {
             generated.push({ 
               options: combo, 
               price: optPrice, 
-              basePriceRMB: optPrice, // Explicitly set basePriceRMB
+              basePriceIQD: optPrice, // Explicitly set basePriceIQD
               isPriceCombined: false, // Explicitly allow dynamic pricing
               currency: 'IQD',
               image: optImage || null 
@@ -3591,37 +3567,51 @@ async function runBulkProductsImport(products, { onProgress } = {}) {
         console.log(`[Bulk Debug] Effective Method: ${effectiveMethod}`);
       }
 
+      // Extract new fields
+      const shippingPriceIncluded = p.shipping_price_included !== undefined ? (p.shipping_price_included === true || String(p.shipping_price_included) === 'true') : true;
+
       // Re-calculate main price with resolved dimensions and effective method
       const finalPriceInput = rawPrice;
-      const finalPrice = isPriceCombined 
-        ? rawPrice 
-        : calculateBulkImportPrice(finalPriceInput, domesticShippingFee, weight, length, width, height, effectiveMethod, shippingRates);
+      let finalPrice;
+      
+      if (isPriceCombined) {
+        finalPrice = rawPrice;
+      } else if (!shippingPriceIncluded) {
+        // Exclude shipping cost but keep markup and domestic fee
+        // Formula: (Base + Domestic) * 1.20
+        const domestic = domesticShippingFee || 0;
+        const price = (finalPriceInput + domestic) * 1.20;
+        finalPrice = Math.ceil(price / 250) * 250;
+      } else {
+        finalPrice = calculateBulkImportPrice(finalPriceInput, domesticShippingFee, weight, length, width, height, effectiveMethod, shippingRates);
+      }
       console.log(`[Bulk Debug] Final Main Price: ${finalPrice} (Raw=${rawPrice})`);
 
       const product = await prisma.product.create({
         data: {
           name,
-          chineseName,
-          description: cleanStr(p.description) || '',
+          // chineseName, // Removed as it is not in schema
+          // description: cleanStr(p.description) || '',
           price: finalPrice,
-          basePriceRMB: rawPrice,
+          basePriceIQD: rawPrice,
           image: mainImage,
           purchaseUrl,
           status: 'PUBLISHED',
           isActive: true,
           isFeatured: !!p.isFeatured,
           specs: specs,
-          storeEvaluation: p.storeEvaluation && typeof p.storeEvaluation === 'object' ? JSON.stringify(p.storeEvaluation) : (p.storeEvaluation || null),
-          reviewsCountShown: p.reviewsCountShown || null,
-          videoUrl: p.videoUrl || null,
+          // storeEvaluation: p.storeEvaluation && typeof p.storeEvaluation === 'object' ? JSON.stringify(p.storeEvaluation) : (p.storeEvaluation || null),
+          // reviewsCountShown: p.reviewsCountShown || null,
+          // // videoUrl: p.videoUrl || null,
           aiMetadata: aiMetadata || null,
-          weight,
-          length,
-          width,
-          height,
+          // weight,
+          // length,
+          // width,
+          // height,
           domesticShippingFee,
+          isAirRestricted: p.isAirRestricted === true || p.isAirRestricted === 'true' || p.isAirRestricted === 1 || p.is_air_restricted === true || p.is_air_restricted === 'true' || p.is_air_restricted === 1 || p.IsAirRestricted === true || p.IsAirRestricted === 'true' || p.IsAirRestricted === 1 || detectAirRestriction(`${name} ${specs || ''}`),
           deliveryTime: cleanDeliveryTime(p.deliveryTime || p.delivery_time || p.Delivery_time),
-          isPriceCombined: isPriceCombined,
+          // shippingPriceIncluded: shippingPriceIncluded, // Removed as it is not in schema
           options: {
             create: processedOptions.map(opt => ({
               name: opt.name,
@@ -3631,20 +3621,27 @@ async function runBulkProductsImport(products, { onProgress } = {}) {
           variants: {
             create: variantsInput.map(v => {
               let variantRawPrice = parsePrice(v.price) || rawPrice;
-              let variantBaseRaw = parsePrice(v.basePriceRMB);
-              // Use explicit basePriceRMB if available (e.g. from generated options), otherwise fall back to price
+              let variantBaseRaw = parsePrice(v.basePriceIQD);
+              // Use explicit basePriceIQD if available (e.g. from generated options), otherwise fall back to price
               const finalBasePrice = (variantBaseRaw && variantBaseRaw > 0) ? variantBaseRaw : variantRawPrice;
               
               const isGenerated = v.currency === 'IQD';
-              const variantIsPriceCombined = v.isPriceCombined !== undefined 
-                 ? (String(v.isPriceCombined) === 'true' || v.isPriceCombined === true) 
+              const variantIsPriceCombined = true !== undefined 
+                 ? (String(true) === 'true' || true === true) 
                  : (isGenerated ? false : (isPriceCombined || variantRawPrice > 1000));
               
               const variantWeight = v.weight || weight || p['重量'] || p.grossWeight;
               
-              const vPrice = variantIsPriceCombined
-                 ? finalBasePrice
-                 : calculateBulkImportPrice(finalBasePrice, domesticShippingFee, variantWeight, v.length || length, v.width || width, v.height || height, v.shippingMethod || effectiveMethod, shippingRates);
+              let vPrice;
+              if (variantIsPriceCombined) {
+                 vPrice = finalBasePrice;
+              } else if (!shippingPriceIncluded) {
+                 const domestic = domesticShippingFee || 0;
+                 const price = (finalBasePrice + domestic) * 1.20;
+                 vPrice = Math.ceil(price / 250) * 250;
+              } else {
+                 vPrice = calculateBulkImportPrice(finalBasePrice, domesticShippingFee, variantWeight, v.length || length, v.width || width, v.height || height, v.shippingMethod || effectiveMethod, shippingRates);
+              }
 
               console.log(`[Bulk Debug] Variant Price: ${vPrice} (Raw=${variantRawPrice}, Method=${v.shippingMethod || effectiveMethod}, Dims=${v.length || length}x${v.width || width}x${v.height || height})`);
 
@@ -3652,8 +3649,7 @@ async function runBulkProductsImport(products, { onProgress } = {}) {
                 combination: typeof v.options === 'object' ? JSON.stringify(v.options) : 
                             (typeof v.combination === 'object' ? JSON.stringify(v.combination) : (v.combination || '{}')),
                 price: vPrice,
-                basePriceRMB: finalBasePrice,
-                isPriceCombined: variantIsPriceCombined,
+                basePriceIQD: finalBasePrice,
                 image: v.image || null,
                 weight: variantWeight ? parseFloat(variantWeight) : null,
                 length: v.length ? parseFloat(v.length) : null,
@@ -3843,14 +3839,14 @@ app.post('/api/products/bulk', authenticateToken, isAdmin, hasPermission('manage
 app.post('/api/products', authenticateToken, isAdmin, hasPermission('manage_products'), async (req, res) => {
   try {
     const { 
-      name, chineseName, description, price, basePriceRMB, image, 
+      name, chineseName, description, price, basePriceIQD, image, 
       isFeatured, isActive, status, purchaseUrl, videoUrl, 
-      specs, storeEvaluation, reviewsCountShown, images, detailImages,
-      weight, length, width, height, domesticShippingFee, options, variants, aiMetadata, deliveryTime
+      specs, images, detailImages,
+      weight, length, width, height, domesticShippingFee, options, variants, aiMetadata, deliveryTime, isAirRestricted
     } = req.body;
 
     const parsedAiMetadata = (() => {
-      const candidate = aiMetadata ?? req.body.marketing_metadata;
+      const candidate = aiMetadata ?? req.body.marketing_metadata ?? req.body.aimetatags;
       if (!candidate) return null;
       if (typeof candidate === 'object') return candidate;
       if (typeof candidate === 'string') {
@@ -3923,16 +3919,16 @@ app.post('/api/products', authenticateToken, isAdmin, hasPermission('manage_prod
         chineseName,
         description,
         price,
-        basePriceRMB,
+        basePriceIQD,
         image: mainImage,
         purchaseUrl,
-        videoUrl,
+        // videoUrl,
         isFeatured: isFeatured || false,
         isActive: isActive !== undefined ? isActive : true,
         status: 'DRAFT',
         specs: specs && typeof specs === 'object' ? JSON.stringify(specs) : (specs || null),
-        storeEvaluation: storeEvaluation && typeof storeEvaluation === 'object' ? JSON.stringify(storeEvaluation) : (storeEvaluation || null),
-        reviewsCountShown: reviewsCountShown || null,
+        // storeEvaluation: storeEvaluation && typeof storeEvaluation === 'object' ? JSON.stringify(storeEvaluation) : (storeEvaluation || null),
+        // reviewsCountShown: reviewsCountShown || null,
         weight: safeParseFloat(weight),
         length: safeParseFloat(length),
         width: safeParseFloat(width),
@@ -3952,10 +3948,11 @@ app.post('/api/products', authenticateToken, isAdmin, hasPermission('manage_prod
 
     const domesticFee = safeParseFloat(domesticShippingFee) || 0;
     // Determine if price is combined using explicit flag or heuristic (price > 1000 implies IQD final price)
-    const isPriceCombined = req.body.isPriceCombined !== undefined 
-        ? (String(req.body.isPriceCombined) === 'true' || req.body.isPriceCombined === true) 
-        : (safeParseFloat(price) > 1000);
-        
+    const isPriceCombined = true;
+    
+    // Extract new fields for shipping exclusion
+    const shippingPriceIncluded = req.body.shippingPriceIncluded !== undefined ? (req.body.shippingPriceIncluded === true || String(req.body.shippingPriceIncluded) === 'true') : true;
+
     const storeSettings = await prisma.storeSettings.findUnique({ where: { id: 1 } });
     const shippingRates = {
       airShippingRate: storeSettings?.airShippingRate,
@@ -3965,7 +3962,19 @@ app.post('/api/products', authenticateToken, isAdmin, hasPermission('manage_prod
     
     // Use the same markup logic as bulk import
     const rawPrice = safeParseFloat(price) || 0;
-    const finalPrice = isPriceCombined ? rawPrice : calculateBulkImportPrice(rawPrice, domesticFee, weight, length, width, height, req.body.shippingMethod, shippingRates);
+    let finalPrice;
+    
+    if (isPriceCombined) {
+      finalPrice = rawPrice;
+    } else if (!shippingPriceIncluded) {
+      // Exclude shipping cost but keep markup and domestic fee
+      // Formula: (Base + Domestic) * 1.20
+      const domestic = domesticFee || 0;
+      const calculatedPrice = (rawPrice + domestic) * 1.20;
+      finalPrice = Math.ceil(calculatedPrice / 250) * 250;
+    } else {
+      finalPrice = calculateBulkImportPrice(rawPrice, domesticFee, weight, length, width, height, req.body.shippingMethod, shippingRates);
+    }
 
     const cleanDeliveryTime = (val) => {
       if (!val) return null;
@@ -3977,25 +3986,26 @@ app.post('/api/products', authenticateToken, isAdmin, hasPermission('manage_prod
     const product = await prisma.product.create({
       data: {
         name,
-        chineseName,
-        description,
+        // chineseName,
+        // description,
         price: finalPrice,
-        basePriceRMB: safeParseFloat(basePriceRMB),
+        basePriceIQD: safeParseFloat(basePriceIQD),
         image: mainImage,
         purchaseUrl,
-        videoUrl,
+        // videoUrl,
         isFeatured: isFeatured || false,
         isActive: isActive !== undefined ? isActive : true,
         status: status || 'PUBLISHED',
         specs: specs && typeof specs === 'object' ? JSON.stringify(specs) : (specs || null),
-        storeEvaluation: storeEvaluation && typeof storeEvaluation === 'object' ? JSON.stringify(storeEvaluation) : (storeEvaluation || null),
-        reviewsCountShown: reviewsCountShown || null,
-        weight: safeParseFloat(weight),
-        length: safeParseFloat(length),
-        width: safeParseFloat(width),
-        height: safeParseFloat(height),
+        // storeEvaluation: storeEvaluation && typeof storeEvaluation === 'object' ? JSON.stringify(storeEvaluation) : (storeEvaluation || null),
+        // reviewsCountShown: reviewsCountShown || null,
+        // weight: safeParseFloat(weight),
+        // length: safeParseFloat(length),
+        // width: safeParseFloat(width),
+        // height: safeParseFloat(height),
         domesticShippingFee: domesticFee,
-        isPriceCombined: isPriceCombined,
+        // shippingPriceIncluded: shippingPriceIncluded,
+        isAirRestricted: isAirRestricted === true || isAirRestricted === 'true' || isAirRestricted === 1,
         aiMetadata: parsedAiMetadata,
         deliveryTime: cleanDeliveryTime(deliveryTime),
         images: {
@@ -4022,20 +4032,30 @@ app.post('/api/products', authenticateToken, isAdmin, hasPermission('manage_prod
           create: (Array.isArray(variants) ? variants : []).map(v => {
             const variantRawPrice = safeParseFloat(v.price) || 0;
             // Determine if variant price is combined using explicit flag or heuristic
-            const variantIsPriceCombined = v.isPriceCombined !== undefined 
-                ? (String(v.isPriceCombined) === 'true' || v.isPriceCombined === true) 
+            const variantIsPriceCombined = true !== undefined 
+                ? (String(true) === 'true' || true === true) 
                 : (isPriceCombined || variantRawPrice > 1000);
             
+            let vPrice;
+            if (variantIsPriceCombined) {
+               vPrice = variantRawPrice;
+            } else if (!shippingPriceIncluded) {
+               const domestic = domesticFee || 0;
+               const calculatedPrice = (variantRawPrice + domestic) * 1.20;
+               vPrice = Math.ceil(calculatedPrice / 250) * 250;
+            } else {
+               vPrice = calculateBulkImportPrice(variantRawPrice, domesticFee, v.weight || weight, v.length || length, v.width || width, v.height || height, v.shippingMethod, shippingRates);
+            }
+
             return {
               combination: typeof v.options === 'object' ? JSON.stringify(v.options) : 
                           (typeof v.combination === 'object' ? JSON.stringify(v.combination) : (v.combination || '{}')),
-              price: variantIsPriceCombined ? variantRawPrice : calculateBulkImportPrice(variantRawPrice, domesticFee, v.weight || weight, v.length || length, v.width || width, v.height || height, v.shippingMethod, shippingRates),
+              price: vPrice,
               image: v.image || null,
               weight: v.weight ? safeParseFloat(v.weight) : null,
               height: v.height ? safeParseFloat(v.height) : null,
               length: v.length ? safeParseFloat(v.length) : null,
               width: v.width ? safeParseFloat(v.width) : null,
-              isPriceCombined: variantIsPriceCombined
             };
           })
         }
@@ -4172,7 +4192,7 @@ app.post('/api/admin/products/bulk-import', authenticateToken, isAdmin, hasPermi
             rawPrice,
             parsePrice(p.general_price),
             parsePrice(p.price),
-            parsePrice(p.basePriceRMB),
+            parsePrice(p.basePriceIQD),
             parsePrice(p.rawPrice),
             parsePrice(p.rawRmbPrice)
           );
@@ -4196,10 +4216,12 @@ app.post('/api/admin/products/bulk-import', authenticateToken, isAdmin, hasPermi
           
           // Determine if price is combined (default to true if not specified, based on user feedback)
           // Heuristic: If explicitly set, use it. If > 1000, assume final IQD to avoid inflation.
-          const isPriceCombined = p.isPriceCombined !== undefined 
-            ? (String(p.isPriceCombined) === 'true' || p.isPriceCombined === true) 
-            : (rawPrice > 1000);
+          const isPriceCombined = true;
            
+          // Extract new fields
+          const shippingPriceIncluded = p.shipping_price_included !== undefined ? (p.shipping_price_included === true || String(p.shipping_price_included) === 'true') : true;
+          const estimatedShippingCost = p.estimated_shipping_cost ? parseFloat(p.estimated_shipping_cost) : null;
+
            // Use the new calculation logic with 20% markup
           // WARNING: rawPrice is typically RMB from 1688. calculateBulkImportPrice expects IQD if we want to add IQD shipping.
           // But calculateBulkImportPrice adds domestic (IQD) and shipping (IQD) to rawPrice.
@@ -4208,9 +4230,16 @@ app.post('/api/admin/products/bulk-import', authenticateToken, isAdmin, hasPermi
           // UPDATE: User requested to REMOVE automatic conversion. Input is guaranteed to be IQD.
           const priceInput = rawPrice;
           
-          const price = isPriceCombined 
-            ? rawPrice 
-            : calculateBulkImportPrice(priceInput, domesticFee, p.weight, p.length, p.width, p.height, p.shippingMethod, shippingRates);
+          let price;
+          if (isPriceCombined) {
+            price = rawPrice;
+          } else if (!shippingPriceIncluded) {
+            const domestic = domesticFee || 0;
+            const calculatedPrice = (priceInput + domestic) * 1.20;
+            price = Math.ceil(calculatedPrice / 250) * 250;
+          } else {
+            price = calculateBulkImportPrice(priceInput, domesticFee, p.weight, p.length, p.width, p.height, p.shippingMethod, shippingRates);
+          }
           
           // Skip products with 0 price
           if (price <= 0 || rawPrice <= 0) {
@@ -4306,8 +4335,7 @@ app.post('/api/admin/products/bulk-import', authenticateToken, isAdmin, hasPermi
                 generated.push({ 
                   options: combo, 
                   price: optPrice, 
-                  basePriceRMB: optPrice, // Explicitly set basePriceRMB
-                  isPriceCombined: false, // Explicitly allow dynamic pricing
+                  basePriceIQD: optPrice, // Explicitly set basePriceIQD
                   currency: 'IQD',
                   image: optImage || null 
                 });
@@ -4417,7 +4445,7 @@ app.post('/api/admin/products/bulk-import', authenticateToken, isAdmin, hasPermi
           
           const mainImage = imageUrls.length > 0 ? imageUrls[0] : (typeof p.image === 'string' ? p.image.replace(/[`"']/g, '').trim() : '');
           
-          const basePriceRMB = extractNumber(p.basePriceRMB) || extractNumber(p.base_price) || rawPrice || 0;
+          const basePriceIQD = extractNumber(p.basePriceIQD) || extractNumber(p.base_price) || rawPrice || 0;
           
           // Try to parse dimensions and weight using robust extractor
           const productWeight = extractNumber(p.weight) || extractNumber(p.shipping_weight);
@@ -4487,7 +4515,7 @@ app.post('/api/admin/products/bulk-import', authenticateToken, isAdmin, hasPermi
                 generated.push({ 
                   options: combo, 
                   price: optPrice, 
-                  basePriceRMB: optPrice, // Explicitly set basePriceRMB
+                  basePriceIQD: optPrice, // Explicitly set basePriceIQD
                   isPriceCombined: false, // Explicitly allow dynamic pricing
                   currency: 'IQD',
                   image: optImage || null 
@@ -4549,8 +4577,9 @@ app.post('/api/admin/products/bulk-import', authenticateToken, isAdmin, hasPermi
             chineseName: chineseName,
             description: description,
             price: price,
-            isPriceCombined: true,
-            basePriceRMB: basePriceRMB,
+            shippingPriceIncluded: shippingPriceIncluded,
+            estimatedShippingCost: estimatedShippingCost,
+            basePriceIQD: basePriceIQD,
             image: mainImage,
             purchaseUrl: p.purchaseUrl ? p.purchaseUrl.replace(/[`"']/g, '').trim() : (p.url ? p.url.replace(/[`"']/g, '').trim() : null),
             videoUrl: p.videoUrl ? p.videoUrl.replace(/[`"']/g, '').trim() : null,
@@ -4571,8 +4600,8 @@ app.post('/api/admin/products/bulk-import', authenticateToken, isAdmin, hasPermi
             options: processedOptions,
             variants: variantsInput.map(v => {
               const variantRawPrice = parsePrice(v.price) || rawPrice;
-              const variantBaseRaw = parsePrice(v.basePriceRMB);
-              // Use explicit basePriceRMB if available (e.g. from generated options), otherwise fall back to price
+              const variantBaseRaw = parsePrice(v.basePriceIQD);
+              // Use explicit basePriceIQD if available (e.g. from generated options), otherwise fall back to price
               const finalBasePrice = (variantBaseRaw && variantBaseRaw > 0) ? variantBaseRaw : variantRawPrice;
               
               // Find weight for this variant if specified in variations
@@ -4590,17 +4619,25 @@ app.post('/api/admin/products/bulk-import', authenticateToken, isAdmin, hasPermi
               // Respect explicit isPriceCombined flag
               // If v.currency is 'IQD' (generated), default to false unless explicitly true
               const isGenerated = v.currency === 'IQD';
-              const variantIsPriceCombined = v.isPriceCombined !== undefined 
-                ? (String(v.isPriceCombined) === 'true' || v.isPriceCombined === true) 
+              const variantIsPriceCombined = true !== undefined 
+                ? (String(true) === 'true' || true === true) 
                 : (isGenerated ? false : (isPriceCombined || variantRawPrice > 1000));
+
+              let vPrice;
+              if (variantIsPriceCombined) {
+                 vPrice = finalBasePrice;
+              } else if (!shippingPriceIncluded) {
+                 const domestic = domesticFee || 0;
+                 const calculatedPrice = (finalBasePrice + domestic) * 1.20;
+                 vPrice = Math.ceil(calculatedPrice / 250) * 250;
+              } else {
+                 vPrice = calculateBulkImportPrice(finalBasePrice, domesticFee, variantWeight || productWeight, v.length || p.length, v.width || p.width, v.height || p.height, v.shippingMethod || p.shippingMethod, shippingRates);
+              }
 
               return {
                 combination: typeof v.options === 'object' ? v.options : {},
-                basePriceRMB: finalBasePrice,
-                price: variantIsPriceCombined
-                  ? finalBasePrice
-                  : calculateBulkImportPrice(finalBasePrice, domesticFee, variantWeight || productWeight, v.length || p.length, v.width || p.width, v.height || p.height, v.shippingMethod || p.shippingMethod, shippingRates),
-                isPriceCombined: variantIsPriceCombined,
+                basePriceIQD: finalBasePrice,
+                price: vPrice,
                 image: v.image || null,
                 weight: variantWeight,
                 height: v.height || null,
@@ -4785,7 +4822,7 @@ app.put('/api/admin/products/:id/options', authenticateToken, isAdmin, hasPermis
           productId: safeParseId(id),
           combination: JSON.stringify(v.combination),
           price: (() => {
-            const raw = safeParseFloat(v.basePriceRMB);
+            const raw = safeParseFloat(v.basePriceIQD);
             if (raw && raw > 0) {
               const domesticFee = safeParseFloat(product?.domesticShippingFee) || 0;
               const vWeight = safeParseFloat(v.weight) ?? product?.weight;
@@ -4801,7 +4838,6 @@ app.put('/api/admin/products/:id/options', authenticateToken, isAdmin, hasPermis
           length: v.length ? parseFloat(v.length) : null,
           width: v.width ? parseFloat(v.width) : null,
           image: v.image,
-          isPriceCombined: !!v.isPriceCombined
         }))
       });
     }
@@ -5242,15 +5278,14 @@ app.post('/api/admin/products/bulk-create', authenticateToken, isAdmin, hasPermi
                 shippingRates
               );
               
-              // Ensure basePriceRMB is never null if we have a price
+              // Ensure basePriceIQD is never null if we have a price
               const finalBasePrice = iqdBase > 0 ? iqdBase : (initialPrice > 0 ? initialPrice : 0);
 
               genVariants.push({
                 combination,
                 price: initialPrice,
-                image: optImage,
-                isPriceCombined: false, // Allow dynamic pricing based on shipping method
-                basePriceRMB: finalBasePrice, // Always store IQD value in basePriceRMB for consistency with frontend logic
+                image: optImage, // Allow dynamic pricing based on shipping method
+                basePriceIQD: finalBasePrice, // Always store IQD value in basePriceIQD for consistency with frontend logic
                 currency: 'IQD' // Explicitly flag as IQD so variants loop doesn't double-convert
               });
             }
@@ -5272,9 +5307,7 @@ app.post('/api/admin/products/bulk-create', authenticateToken, isAdmin, hasPermi
         
         const domesticFee = safeParseFloat(rawProductData.domesticShippingFee) || 0;
         // Determine if price is combined using explicit flag
-        const isPriceCombined = rawProductData.isPriceCombined !== undefined 
-          ? (String(rawProductData.isPriceCombined) === 'true' || rawProductData.isPriceCombined === true) 
-          : false;
+        const isPriceCombined = true;
         
         const parsedAiMetadata = (() => {
           const candidate = rawProductData.aiMetadata ?? rawProductData.marketing_metadata;
@@ -5294,7 +5327,7 @@ app.post('/api/admin/products/bulk-create', authenticateToken, isAdmin, hasPermi
         // Use the new calculation logic with 90% markup for air items
         const rawPrice = safeParseFloat(rawProductData.price) || 0;
         
-        console.log(`[DEBUG] Pricing calc for ${rawProductData.name}: rawPrice=${rawPrice}, domestic=${domesticFee}, isPriceCombined=${isPriceCombined}, weight=${rawProductData.weight}`);
+        console.log(`[DEBUG] Pricing calc for ${rawProductData.name}: rawPrice=${rawPrice}, domestic=${domesticFee}=${isPriceCombined}, weight=${rawProductData.weight}`);
 
         // Determine if input is IQD or RMB
         // User guarantees input is IQD. No x200 conversion.
@@ -5308,13 +5341,13 @@ app.post('/api/admin/products/bulk-create', authenticateToken, isAdmin, hasPermi
           continue;
         }
 
-        // Determine final basePriceRMB in IQD (User confirmed input is IQD)
-        let finalBasePriceRMB = safeParseFloat(rawProductData.basePriceRMB);
+        // Determine final basePriceIQD in IQD (User confirmed input is IQD)
+        let finalBasePriceRMB = safeParseFloat(rawProductData.basePriceIQD);
         if (!finalBasePriceRMB) {
            finalBasePriceRMB = rawPrice;
         }
         
-        console.log(`[DEBUG] BasePriceRMB calc: raw=${rawProductData.basePriceRMB}, final=${finalBasePriceRMB} (Force IQD)`);
+        console.log(`[DEBUG] BasePriceRMB calc: raw=${rawProductData.basePriceIQD}, final=${finalBasePriceRMB} (Force IQD)`);
 
         // Pick only valid Prisma fields to avoid "Unknown arg" errors
         const productData = {
@@ -5322,7 +5355,7 @@ app.post('/api/admin/products/bulk-create', authenticateToken, isAdmin, hasPermi
           chineseName: rawProductData.chineseName || null,
           description: rawProductData.description || '',
           price: calculatedPrice,
-          basePriceRMB: finalBasePriceRMB,
+          basePriceIQD: finalBasePriceRMB,
           image: rawProductData.image || (images && images[0]) || '',
           purchaseUrl: rawProductData.purchaseUrl || null,
           videoUrl: rawProductData.videoUrl || null,
@@ -5337,7 +5370,6 @@ app.post('/api/admin/products/bulk-create', authenticateToken, isAdmin, hasPermi
           width: safeParseFloat(rawProductData.width),
           height: safeParseFloat(rawProductData.height),
           domesticShippingFee: domesticFee,
-          isPriceCombined: isPriceCombined,
           aiMetadata: parsedAiMetadata,
           deliveryTime: rawProductData.deliveryTime || rawProductData.delivery_time || rawProductData.Delivery_time || null
         };
@@ -5455,7 +5487,7 @@ app.post('/api/admin/products/bulk-create', authenticateToken, isAdmin, hasPermi
             await tx.productVariant.createMany({
               data: validVariants.map(v => {
                 const variantRawPrice = safeParseFloat(v.price) || 0;
-                const variantBaseRaw = safeParseFloat(v.basePriceRMB);
+                const variantBaseRaw = safeParseFloat(v.basePriceIQD);
                 const rawVal = (variantBaseRaw && variantBaseRaw > 0) ? variantBaseRaw : variantRawPrice;
                 
                 // User guarantees input is IQD. No x200 conversion.
@@ -5467,15 +5499,15 @@ app.post('/api/admin/products/bulk-create', authenticateToken, isAdmin, hasPermi
                 const isGeneratedVariant = v.currency === 'IQD';
                 const variantIsPriceCombined = isGeneratedVariant 
                   ? false 
-                  : (v.isPriceCombined !== undefined 
-                      ? (String(v.isPriceCombined) === 'true' || v.isPriceCombined === true) 
+                  : (true !== undefined 
+                      ? (String(true) === 'true' || true === true) 
                       : (isPriceCombined));
 
                 console.log(`[DEBUG V4 Variant] price=${v.price}, iqdBase=${iqdBase}, isCombined=${variantIsPriceCombined} (Was: ${isPriceCombined})`);
 
-                // FORCE basePriceRMB to be present if iqdBase is present
+                // FORCE basePriceIQD to be present if iqdBase is present
                 // This handles the case where safeParseFloat might have returned null/0 but we have a rawVal
-                const finalVariantBasePrice = iqdBase > 0 ? iqdBase : (safeParseFloat(product.basePriceRMB) || rawVal || 0);
+                const finalVariantBasePrice = iqdBase > 0 ? iqdBase : (safeParseFloat(product.basePriceIQD) || rawVal || 0);
 
                 // Use safeParseFloat(product.price) as fallback, not product.price directly
                 const fallbackPrice = safeParseFloat(product.price) || 0;
@@ -5525,8 +5557,7 @@ app.post('/api/admin/products/bulk-create', authenticateToken, isAdmin, hasPermi
                   height: safeParseFloat(v.height),
                   length: safeParseFloat(v.length),
                   width: safeParseFloat(v.width),
-                  isPriceCombined: variantIsPriceCombined,
-                  basePriceRMB: finalVariantBasePrice,
+                  basePriceIQD: finalVariantBasePrice,
                   image: v.image || product.image || ''
                 };
               })
@@ -5583,13 +5614,16 @@ app.get('/api/products/:id', async (req, res) => {
       }
     });
     if (!product) return res.status(404).json({ error: 'Product not found' });
-    const storeSettings = await prisma.storeSettings.findUnique({ where: { id: 1 } });
-    const shippingRates = {
-      airShippingRate: storeSettings?.airShippingRate,
-      seaShippingRate: storeSettings?.seaShippingRate,
-      airShippingMinFloor: storeSettings?.airShippingMinFloor
-    };
-    res.json(applyDynamicPricingToProduct(product, shippingRates));
+    
+    console.log('[DEBUG] Product found, applying pricing...');
+    try {
+        const processed = applyDynamicPricingToProduct(product, null);
+        console.log('[DEBUG] Pricing applied successfully');
+        res.json(processed);
+    } catch (pricingError) {
+        console.error('[DEBUG] Pricing error:', pricingError);
+        throw pricingError;
+    }
   } catch (error) {
     console.error('Error fetching product:', error);
     res.status(500).json({ error: 'Failed to fetch product' });
@@ -6079,9 +6113,9 @@ app.put('/api/products/:id', authenticateToken, isAdmin, hasPermission('manage_p
   try {
     const { id } = req.params;
     const { 
-      name, chineseName, price, basePriceRMB, description, image, 
+      name, chineseName, price, basePriceIQD, description, image, 
       isFeatured, isActive, status, purchaseUrl, videoUrl, 
-      specs, images, detailImages, storeEvaluation, reviewsCountShown,
+      specs, images, detailImages,
       weight, length, width, height, domesticShippingFee, deliveryTime
     } = req.body;
     
@@ -6120,7 +6154,7 @@ app.put('/api/products/:id', authenticateToken, isAdmin, hasPermission('manage_p
       name,
       chineseName,
       price: price !== undefined ? parseFloat(price) : undefined,
-      basePriceRMB: basePriceRMB !== undefined ? (basePriceRMB ? parseFloat(basePriceRMB) : null) : undefined,
+      basePriceIQD: basePriceIQD !== undefined ? (basePriceIQD ? parseFloat(basePriceIQD) : null) : undefined,
       description,
       image: finalMainImage,
       purchaseUrl,
@@ -6129,8 +6163,6 @@ app.put('/api/products/:id', authenticateToken, isAdmin, hasPermission('manage_p
       isActive: isActive !== undefined ? !!isActive : undefined,
       status: status !== undefined ? status : undefined,
       specs: specs !== undefined ? (specs && typeof specs === 'object' ? JSON.stringify(specs) : specs) : undefined,
-      storeEvaluation: storeEvaluation !== undefined ? (storeEvaluation && typeof storeEvaluation === 'object' ? JSON.stringify(storeEvaluation) : storeEvaluation) : undefined,
-      reviewsCountShown: reviewsCountShown !== undefined ? reviewsCountShown : undefined,
       weight: weight !== undefined ? (weight === '' ? null : parseFloat(weight)) : undefined,
       length: length !== undefined ? (length === '' ? null : parseFloat(length)) : undefined,
       width: width !== undefined ? (width === '' ? null : parseFloat(width)) : undefined,
@@ -6478,15 +6510,7 @@ app.post('/api/cart', authenticateToken, async (req, res) => {
     const adjustedBasePrice = getAdjustedPrice(
       dbPrice,
       variant?.weight || product.weight,
-      variant?.length || product.length,
-      variant?.width || product.width,
-      variant?.height || product.height,
-      shippingMethod,
-      product.domesticShippingFee || 0,
-      product.basePriceRMB,
-      product.isPriceCombined,
-      shippingRates
-    );
+      variant?.length || product.length);
     const shippingFee = await calculateProductShipping(product, shippingMethod, true, variant);
     const inclusivePrice = Math.ceil((adjustedBasePrice + shippingFee) / 250) * 250;
 
@@ -6674,15 +6698,7 @@ app.post('/api/orders', authenticateToken, async (req, res) => {
       const adjustedPrice = getAdjustedPrice(
         dbPrice,
         variant?.weight || product.weight,
-        variant?.length || product.length,
-        variant?.width || product.width,
-        variant?.height || product.height,
-        method,
-        product.domesticShippingFee || 0,
-        product.basePriceRMB,
-        product.isPriceCombined,
-        shippingRates
-      );
+        variant?.length || product.length);
       
       // Ensure selectedOptions is a string for Prisma
       let sOptions = item.selectedOptions;

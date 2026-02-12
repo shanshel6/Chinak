@@ -193,12 +193,6 @@ const GlobalSearch: React.FC<GlobalSearchProps> = ({
                           #{product.id} • {
                             calculateInclusivePrice(
                               product.price,
-                              product.weight,
-                              product.length,
-                              product.width,
-                              product.height,
-                              rates,
-                              undefined,
                               product.domesticShippingFee || 0,
                               product.basePriceRMB,
                               product.isPriceCombined

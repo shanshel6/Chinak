@@ -1,12 +1,11 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
-import { fetchProductById, fetchProductReviews, checkProductPurchase, findProductInGlobalCache, fetchSettings } from '../services/api';
+import { fetchProductById, fetchProductReviews, checkProductPurchase, findProductInGlobalCache } from '../services/api';
 import { useWishlistStore } from '../store/useWishlistStore';
 import { useCartStore } from '../store/useCartStore';
 import { useAuthStore } from '../store/useAuthStore';
 import { useToastStore } from '../store/useToastStore';
 import { calculateInclusivePrice } from '../utils/shipping';
-import type { ShippingRates } from '../types/shipping';
 import type { Product } from '../types/product';
 import { Clipboard } from '@capacitor/clipboard';
 import LazyImage from '../components/LazyImage';
@@ -63,44 +62,39 @@ const ProductDetails: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [isAdding, setIsAdding] = useState(false);
   const [isAdded, setIsAdded] = useState(false);
-  const [shippingMethod, setShippingMethod] = useState<'air' | 'sea'>(() => {
-    if (productId) {
-      const saved = localStorage.getItem(`shipping_pref_${productId}`);
-      if (saved === 'air' || saved === 'sea') return saved;
-    }
-    return 'sea';
-  });
-  const userChangedShipping = useRef(false);
+  
   const [shouldRenderDetails, setShouldRenderDetails] = useState(false);
-  const [shippingRates, setShippingRates] = useState<ShippingRates & { airThreshold?: number, seaThreshold?: number }>({
-    airRate: 15400,
-    seaRate: 182000,
-    minFloor: 0,
-    airThreshold: 30000,
-    seaThreshold: 80000
-  });
-
-  useEffect(() => {
-    const loadSettings = async () => {
-      try {
-        const settings = await fetchSettings();
-        if (settings) {
-          setShippingRates({
-            airRate: settings.airShippingRate || 15400,
-            seaRate: settings.seaShippingRate || 182000,
-            minFloor: 0,
-            airThreshold: settings.airShippingThreshold || 30000,
-            seaThreshold: settings.seaShippingThreshold || 80000
-          });
-        }
-      } catch (e) { }
-    };
-    loadSettings();
-  }, []);
+  const [shippingMethod, setShippingMethod] = useState<'air' | 'sea'>('air');
+  const userChangedShipping = useRef(false);
+  const [currentVariant, setCurrentVariant] = useState<any>(null);
 
   const [selectedOptions, setSelectedOptions] = useState<Record<string, string>>(() => {
     // Try to get initial options from navigation state or global cache
     const initialProd = (location.state as any)?.initialProduct || (productId ? findProductInGlobalCache(productId) : null);
+    
+    // Priority: Set options based on the cheapest variant to show the lowest price initially
+    if (initialProd?.variants?.length > 0) {
+      const minVariant = initialProd.variants.reduce((min: any, curr: any) => {
+        if (!curr.price) return min;
+        if (!min) return curr;
+        return curr.price < min.price ? curr : min;
+      }, null);
+
+      if (minVariant?.combination) {
+        try {
+          const combination = typeof minVariant.combination === 'string' 
+            ? JSON.parse(minVariant.combination) 
+            : minVariant.combination;
+          if (combination && Object.keys(combination).length > 0) {
+            return combination;
+          }
+        } catch (e) {
+          console.warn('Failed to parse minVariant combination', e);
+        }
+      }
+    }
+
+    // Fallback: Use first value of each option
     if (initialProd?.options?.length) {
       const options: Record<string, string> = {};
       initialProd.options.forEach((opt: any) => {
@@ -121,7 +115,74 @@ const ProductDetails: React.FC = () => {
     return {};
   });
 
-  const [currentVariant, setCurrentVariant] = useState<any>(null);
+  const allReviews = useMemo(() => reviews || [], [reviews]);
+
+  const averageRating = useMemo(() => {
+    if (!allReviews.length) return 0;
+    return allReviews.reduce((acc, r) => acc + r.rating, 0) / allReviews.length;
+  }, [allReviews]);
+
+  const reviewSummary = useMemo(() => {
+    const summary = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 };
+    allReviews.forEach(r => {
+      const rating = Math.round(r.rating) as 1 | 2 | 3 | 4 | 5;
+      if (summary[rating] !== undefined) summary[rating]++;
+    });
+    return summary;
+  }, [allReviews]);
+
+  const displaySpecs = useMemo(() => {
+    if (!product) return [];
+    
+    // If we have a dedicated description field, return it first if specs are empty
+    // But actually, the user said "product descriptions and features are stored in specs col"
+    // So we should prioritize parsing specs correctly.
+    
+    const specs: any[] = [];
+    // Parse specs if it's a string (JSON) or use as is if array
+    if (product.specs) {
+      if (Array.isArray(product.specs)) {
+        specs.push(...product.specs);
+      } else if (typeof product.specs === 'string') {
+        try {
+          // Check if it's a JSON string
+          if (product.specs.trim().startsWith('{') || product.specs.trim().startsWith('[')) {
+             const parsed = JSON.parse(product.specs);
+             if (Array.isArray(parsed)) specs.push(...parsed);
+             else Object.entries(parsed).forEach(([k, v]) => specs.push({ name: k, value: String(v) }));
+          } else {
+             // Treat as plain text description if not JSON
+             // But ProductDescription expects an array or object for 'specs' prop to be treated as specs
+             // If it's just a string, we might want to return it as a description-like object?
+             // Or maybe ProductDescription handles string specs? Yes it does.
+             // But here we are returning an array.
+             // Let's just split by newlines if it looks like key-value pairs
+             if (product.specs.includes(':')) {
+                product.specs.split('\n').forEach(line => {
+                  const parts = line.split(':');
+                  if (parts.length >= 2) {
+                    specs.push({ name: parts[0].trim(), value: parts.slice(1).join(':').trim() });
+                  } else if (line.trim()) {
+                    specs.push({ name: '', value: line.trim() });
+                  }
+                });
+             } else {
+                // Just a plain string description
+                specs.push({ name: '', value: product.specs });
+             }
+          }
+        } catch (e) {
+           // Fallback for failed JSON parse -> treat as string
+           if (typeof product.specs === 'string') {
+              specs.push({ name: '', value: product.specs });
+           }
+        }
+      } else if (typeof product.specs === 'object') {
+        Object.entries(product.specs).forEach(([k, v]) => specs.push({ name: k, value: String(v) }));
+      }
+    }
+    return specs;
+  }, [product]);
 
   // Effect to initialize options when product data arrives (if not already set)
   useEffect(() => {
@@ -168,218 +229,38 @@ const ProductDetails: React.FC = () => {
     const target = currentVariant || minVariant || product;
     
     const basePrice = target.price || 0;
-    const weight = target.weight || product.weight;
-    const length = target.length || product.length;
-    const width = target.width || product.width;
-    const height = target.height || product.height;
     
-    const basePriceRMB = (target.basePriceRMB && target.basePriceRMB > 0) 
-      ? target.basePriceRMB 
-      : (product.basePriceRMB ?? null);
-      
-    // Strict check for the target (current variant or min variant)
-    // Use nullish coalescing to respect explicit false values
-    const effectiveIsPriceCombined = target.isPriceCombined ?? product.isPriceCombined ?? false;
-
-    // FORCE recalculation if basePriceRMB exists, even if isPriceCombined is true.
-    // This fixes the issue where variants with different weights/shipping costs wouldn't update the price
-    // because the frontend thought the price was "fixed" (combined).
-    const shouldForceRecalculate = !!basePriceRMB;
+    const basePriceIQD = (target.basePriceIQD && target.basePriceIQD > 0) 
+      ? target.basePriceIQD 
+      : (product.basePriceIQD ?? null);
 
     return {
       basePrice,
-      weight,
-      length,
-      width,
-      height,
-      basePriceRMB,
-      effectiveIsPriceCombined: shouldForceRecalculate ? false : effectiveIsPriceCombined
+      basePriceIQD
     };
   }, [product, currentVariant]);
-
-  useEffect(() => {
-    if (!product) return;
-    
-    // Force SEA shipping if weight > 2kg (Heavy item logic)
-    const effectiveWeight = pricingParams?.weight || product.weight || 0;
-    if (effectiveWeight > 2) {
-      if (shippingMethod !== 'sea') {
-        setShippingMethod('sea');
-      }
-      return; // Skip other checks if forced by weight
-    }
-
-    if (userChangedShipping.current) return;
-    const savedPref = localStorage.getItem(`shipping_pref_${product.id}`);
-    if (savedPref) return;
-
-    // Force Sea shipping as default regardless of weight/dimensions
-    // const weight = currentVariant?.weight ?? product.weight;
-    // const length = currentVariant?.length ?? product.length;
-    // const width = currentVariant?.width ?? product.width;
-    // const height = currentVariant?.height ?? product.height;
-    // const nextMethod = getDefaultShippingMethod(weight, length, width, height);
-    
-    setShippingMethod('sea');
-  }, [product, currentVariant, pricingParams, shippingMethod]);
-
-  // Defer rendering of heavy detail images
-  useEffect(() => {
-    if (!loading) {
-      const timer = setTimeout(() => {
-        setShouldRenderDetails(true);
-      }, 800);
-      return () => clearTimeout(timer);
-    }
-  }, [loading]);
-
-  const cartItems = useCartStore((state) => state.items);
-
-  // Extract review summary and actual specs from the specs string
-  const { displaySpecs, reviewSummary } = useMemo(() => {
-    if (!product?.specs) return { displaySpecs: '', reviewSummary: null };
-    
-    // If it's already an object, check if it contains review data
-    if (typeof product.specs === 'object' && product.specs !== null) {
-      const specsObj = product.specs as any;
-      if (specsObj.reviews || specsObj.detailedReviews || specsObj.comments) {
-        return { displaySpecs: '', reviewSummary: specsObj };
-      }
-      return { displaySpecs: JSON.stringify(product.specs), reviewSummary: null };
-    }
-
-    const specsStr = String(product.specs);
-    
-    // Case 1: Contains the delimiter
-    if (specsStr.includes('---REVIEW_SUMMARY---')) {
-      const parts = specsStr.split('---REVIEW_SUMMARY---');
-      try {
-        return {
-          displaySpecs: parts[0].trim(),
-          reviewSummary: JSON.parse(parts[1].trim())
-        };
-      } catch (e) {
-        console.error('Error parsing review summary from specs string:', e);
-        return { displaySpecs: specsStr, reviewSummary: null };
-      }
-    }
-    
-    // Case 2: The entire string is a JSON object
-    if (specsStr.trim().startsWith('{') && specsStr.trim().endsWith('}')) {
-      try {
-        const parsed = JSON.parse(specsStr);
-        if (parsed.reviews || parsed.detailedReviews || parsed.comments) {
-          return { displaySpecs: '', reviewSummary: parsed };
-        }
-      } catch (e) {
-        // Not valid JSON or not a review summary, continue to default
-      }
-    }
-    
-    return { displaySpecs: specsStr, reviewSummary: null };
-  }, [product?.specs]);
-
-  const allReviews = useMemo(() => {
-    const combined: Review[] = [...reviews];
-    
-    // Merge reviews from summary if they aren't already in the reviews array
-    if (reviewSummary?.reviews && Array.isArray(reviewSummary.reviews)) {
-      reviewSummary.reviews.forEach((r: any, idx: number) => {
-        const comment = r.comment || r.text || r.content || r.body || '';
-        const userName = r.user || r.username || r.name || 'عميل';
-        const userObj = typeof userName === 'string' ? { name: userName } : (userName.name ? userName : { name: 'عميل' });
-        
-        if (comment) {
-          combined.push({
-            id: -(idx + 100),
-            rating: Number(r.rating) || 5,
-            comment: String(comment),
-            createdAt: r.date || r.createdAt || new Date().toISOString(),
-            user: userObj,
-            images: Array.isArray(r.images) ? r.images : []
-          });
-        }
-      });
-    }
-    
-    if (reviewSummary?.detailedReviews && Array.isArray(reviewSummary.detailedReviews)) {
-      reviewSummary.detailedReviews.forEach((r: any, idx: number) => {
-        const comment = Array.isArray(r.comments) ? r.comments.join(' ') : (r.comment || r.comments || r.text || '');
-        if (comment) {
-          combined.push({
-            id: -(idx + 200),
-            rating: r.rating || 5,
-            comment: String(comment),
-            createdAt: r.date || r.createdAt || new Date().toISOString(),
-            user: { name: r.user || r.username || r.name || 'عميل' },
-            images: r.images || []
-          });
-        }
-      });
-    }
-
-    // Deduplicate by user and comment
-    const seen = new Set();
-    return combined.filter(r => {
-      const key = `${r.user?.name || 'anonymous'}-${r.comment}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-  }, [reviews, reviewSummary]);
-
-  const averageRating = useMemo(() => {
-    return allReviews.length > 0 
-      ? (allReviews.reduce((acc, rev) => acc + (rev.rating || 5), 0) / allReviews.length).toFixed(1)
-      : '4.8';
-  }, [allReviews]);
-
-
 
   const { inclusivePrice, airPrice, seaPrice } = useMemo(() => {
     if (!product || !pricingParams) return { inclusivePrice: 0, airPrice: 0, seaPrice: 0 };
     
-    const { basePrice, weight, length, width, height, basePriceRMB, effectiveIsPriceCombined } = pricingParams;
+    const { basePrice, basePriceIQD } = pricingParams;
 
     const air = calculateInclusivePrice(
       basePrice,
-      weight,
-      length,
-      width,
-      height,
-      shippingRates,
-      'air',
       product.domesticShippingFee || 0,
-      basePriceRMB,
-      effectiveIsPriceCombined
+      basePriceIQD
     );
 
     const sea = calculateInclusivePrice(
       basePrice,
-      weight,
-      length,
-      width,
-      height,
-      shippingRates,
-      'sea',
       product.domesticShippingFee || 0,
-      basePriceRMB,
-      effectiveIsPriceCombined
+      basePriceIQD
     );
 
-    return { inclusivePrice: shippingMethod === 'air' ? air : sea, airPrice: air, seaPrice: sea };
-  }, [product, pricingParams, shippingRates, shippingMethod]);
+    return { inclusivePrice: sea, airPrice: air, seaPrice: sea };
+  }, [product, pricingParams]);
 
-  useEffect(() => {
-    if (product) {
-      const exists = cartItems.some(item => 
-        item.productId === product.id && 
-        (!currentVariant || item.variantId === currentVariant.id) &&
-        item.shippingMethod === shippingMethod
-      );
-      setIsAdded(exists);
-    }
-  }, [product, currentVariant, cartItems, shippingMethod]);
+
 
   const galleryImages = useMemo(() => {
     if (!product) return [];
@@ -449,8 +330,8 @@ const ProductDetails: React.FC = () => {
       } else {
         // Only if no initial data, try local storage cache
         const cacheKey = `/products/${productId}`;
-        // Use v2 prefix to match api.ts
-        const cachedProduct = localStorage.getItem(`app_cache_v2_${cacheKey}`);
+        // Use v4 prefix to match api.ts
+        const cachedProduct = localStorage.getItem(`app_cache_v4_${cacheKey}`);
         
         if (cachedProduct) {
           try {
@@ -611,20 +492,7 @@ const ProductDetails: React.FC = () => {
     }
   }, [selectedOptions, product]);
 
-  const allCartItems = useCartStore((state) => state.items);
 
-  useEffect(() => {
-    if (product && allCartItems.length > 0) {
-      const isAlreadyInCart = allCartItems.some(item => 
-        String(item.productId) === String(product.id) && 
-        (item.variantId === currentVariant?.id || (!item.variantId && !currentVariant)) &&
-        item.shippingMethod === shippingMethod
-      );
-      setIsAdded(isAlreadyInCart);
-    } else {
-      setIsAdded(false);
-    }
-  }, [product, currentVariant, shippingMethod, allCartItems]);
 
   const handleShippingMethodChange = (method: 'air' | 'sea') => {
     setShippingMethod(method);
@@ -654,13 +522,8 @@ const ProductDetails: React.FC = () => {
         price: currentVariant?.price || product.price || 0,
         image: currentVariant?.image || product.image,
         variant: currentVariant,
-        weight: product.weight,
-        length: product.length,
-        width: product.width,
-        height: product.height,
         domesticShippingFee: product.domesticShippingFee,
-        basePriceRMB: product.basePriceRMB,
-        minOrder: product.minOrder,
+        basePriceIQD: product.basePriceIQD,
         deliveryTime: product.deliveryTime
       }, selectedOptions, shippingMethod);
     } catch (err) {
@@ -674,7 +537,7 @@ const ProductDetails: React.FC = () => {
 
   const handleShare = async () => {
     if (!product) return;
-    const shareData = { title: product.name, text: product.description, url: window.location.href };
+    const shareData = { title: product.name, url: window.location.href };
     try {
       if (navigator.share) await navigator.share(shareData);
       else {
@@ -741,28 +604,15 @@ const ProductDetails: React.FC = () => {
             price={pricingParams?.basePrice || 0}
             originalPrice={product.originalPrice}
             name={product.name}
-            chineseName={product.chineseName}
-            videoUrl={product.videoUrl}
             deliveryTime={product.deliveryTime}
-            storeEvaluation={product.storeEvaluation}
-            reviewsCountShown={product.reviewsCountShown}
             averageRating={averageRating}
             totalReviews={allReviews.length}
-            weight={pricingParams?.weight}
-            length={pricingParams?.length}
-            width={pricingParams?.width}
-            height={pricingParams?.height}
             domesticShippingFee={product.domesticShippingFee}
-            basePriceRMB={pricingParams?.basePriceRMB}
-            airThreshold={shippingRates.airThreshold}
-            seaThreshold={shippingRates.seaThreshold}
-            variant={currentVariant}
-            shippingMethod={shippingMethod}
-            onShippingMethodChange={handleShippingMethodChange}
-            isPriceCombined={pricingParams?.effectiveIsPriceCombined || false}
+            basePriceIQD={pricingParams?.basePriceIQD}
             calculatedAirPrice={airPrice}
             calculatedSeaPrice={seaPrice}
-            minOrder={product.minOrder}
+            shippingMethod={shippingMethod}
+            onShippingMethodChange={handleShippingMethodChange}
           />
 
           {product.options && product.options.length > 0 && (
@@ -778,118 +628,9 @@ const ProductDetails: React.FC = () => {
             </div>
           )}
 
-          {/* Store Evaluation & Reviews Summary Section (Right below options) */}
-          {(product.reviewsCountShown || product.storeEvaluation) && (
-            <div className="mb-8 p-4 bg-white dark:bg-slate-800/40 rounded-2xl border border-slate-100 dark:border-white/5 shadow-sm">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-1.5 h-6 bg-primary rounded-full" />
-                <h3 className="text-slate-900 dark:text-white text-lg font-black">تقييم المتجر والمنتج</h3>
-              </div>
-              
-              <div className="space-y-4">
-                {product.reviewsCountShown && (
-                  <div className="flex items-center justify-between py-2 border-b border-slate-50 dark:border-white/5 last:border-0">
-                    <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
-                      <MessageSquareText size={20} className="text-primary" />
-                      <span className="text-sm font-bold">إجمالي المراجعات</span>
-                    </div>
-                    <span className="text-slate-900 dark:text-white font-black">{product.reviewsCountShown}</span>
-                  </div>
-                )}
-                
-                {product.storeEvaluation && (() => {
-                  try {
-                    const evalData = typeof product.storeEvaluation === 'string' 
-                      ? (product.storeEvaluation.startsWith('{') ? JSON.parse(product.storeEvaluation) : { raw: product.storeEvaluation })
-                      : product.storeEvaluation;
-                    
-                    if (!evalData) return null;
-                    
-                    // If it's just a raw string (not JSON), show it as individual tags split by commas or newlines
-                    if (evalData.raw) {
-                      const tags = evalData.raw
-                        .replace('تقييم المتجر:', '')
-                        .split(/[،,\n]/)
-                        .map((s: string) => s.trim())
-                        .filter((s: string) => s.length > 0);
-
-                      return (
-                        <div className="flex flex-wrap gap-2 pt-2">
-                          {tags.map((tag: string, idx: number) => (
-                            <span key={idx} className="px-2 py-1 bg-primary/5 dark:bg-primary/10 text-primary rounded-lg text-[11px] font-bold border border-primary/10">
-                              {tag}
-                            </span>
-                          ))}
-                        </div>
-                      );
-                    }
-                    
-                    return (
-                      <div className="space-y-3">
-                        {evalData.shopName && (
-                          <div className="flex items-center justify-between py-2 border-b border-slate-50 dark:border-white/5 last:border-0">
-                            <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
-                              <Store size={20} className="text-primary" />
-                              <span className="text-sm font-bold">اسم المتجر</span>
-                            </div>
-                            <span className="text-slate-900 dark:text-white font-black">{evalData.shopName}</span>
-                          </div>
-                        )}
-                        {evalData.score && (
-                          <div className="flex items-center justify-between py-2 border-b border-slate-50 dark:border-white/5 last:border-0">
-                            <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
-                              <Star size={20} className="text-yellow-400 fill-yellow-400" />
-                              <span className="text-sm font-bold">تقييم المتجر</span>
-                            </div>
-                            <div className="flex items-center gap-1">
-                              <span className="text-primary font-black">{evalData.score}</span>
-                              <span className="text-slate-400 text-xs">/ 5</span>
-                            </div>
-                          </div>
-                        )}
-                        {evalData.tags && Array.isArray(evalData.tags) && evalData.tags.length > 0 && (
-                          <div className="flex flex-wrap gap-2 pt-2">
-                            {evalData.tags.map((tag: any, idx: number) => (
-                              <span key={idx} className="px-2 py-1 bg-primary/5 dark:bg-primary/10 text-primary rounded-lg text-[11px] font-bold border border-primary/10">
-                                {typeof tag === 'string' ? tag : (tag.text || tag.label)}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                        {/* Show detailed evaluation items as tags if available */}
-                        {evalData.evaluation && Array.isArray(evalData.evaluation) && evalData.evaluation.length > 0 && (
-                          <div className="flex flex-wrap gap-2 pt-2 border-t border-slate-50 dark:border-white/5 mt-2">
-                            {evalData.evaluation.map((item: any, idx: number) => (
-                              <div key={idx} className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-100 dark:bg-white/5 rounded-xl border border-slate-200 dark:border-white/10">
-                                <span className="text-[11px] text-slate-500 dark:text-slate-400 font-bold">{item.title || item.name}</span>
-                                <span className="text-[11px] text-primary font-black">{item.score}</span>
-                                {item.level && (
-                                  <span className={`text-[9px] font-black px-1 rounded-md ${
-                                    item.level.toLowerCase() === 'high' ? 'text-emerald-500 bg-emerald-500/10' : 
-                                    item.level.toLowerCase() === 'medium' ? 'text-amber-500 bg-amber-500/10' : 
-                                    'text-slate-400 bg-slate-400/10'
-                                  }`}>
-                                    {item.level.toUpperCase()}
-                                  </span>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  } catch (e) {
-                    return null;
-                  }
-                })()}
-              </div>
-            </div>
-          )}
-
           <ProductDescription 
             productName={product.name}
             description={product.description}
-            specs={displaySpecs}
           />
 
           <ReviewsSection 
@@ -927,11 +668,10 @@ const ProductDetails: React.FC = () => {
               const selectedProduct = similarProducts.find(p => p.id === id);
               navigate(`/product?id=${id}`, { state: { initialProduct: selectedProduct } });
             }}
-            rates={shippingRates}
           />
 
           {/* Spacer for mobile bottom bar */}
-          <div className="h-56"></div>
+          <div className="h-24 md:h-12"></div>
         </main>
 
         <AddToCartBar 
@@ -940,11 +680,6 @@ const ProductDetails: React.FC = () => {
             isAdding={isAdding}
             isAdded={isAdded}
             onGoToCart={() => navigate('/cart')}
-            shippingMethod={shippingMethod}
-            onShippingMethodChange={handleShippingMethodChange}
-            airPrice={airPrice}
-            seaPrice={seaPrice}
-            weight={pricingParams?.weight}
           />
       </div>
     </div>

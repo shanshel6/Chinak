@@ -15,7 +15,7 @@ import {
   Tag,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { fetchAddresses, placeOrder, fetchCoupons, confirmOrderPayment } from '../services/api';
+import { fetchAddresses, placeOrder, fetchCoupons } from '../services/api';
 import { useCartStore } from '../store/useCartStore';
 import { useCheckoutStore } from '../store/useCheckoutStore';
 import { useToastStore } from '../store/useToastStore';
@@ -52,7 +52,6 @@ const CheckoutPaymentAddress: React.FC = () => {
   const [snapshottedSubtotal, setSnapshottedSubtotal] = useState(0);
   const [snapshottedTotal, setSnapshottedTotal] = useState(0);
   const [snapshottedDiscount, setSnapshottedDiscount] = useState(0);
-  const [showPaymentConfirmation, setShowPaymentConfirmation] = useState(false);
 
   const checkAvailableCoupons = useCallback(async () => {
     try {
@@ -115,7 +114,8 @@ const CheckoutPaymentAddress: React.FC = () => {
     setSnapshottedDiscount(currentDiscount);
     setOrderedItems([...cartItems]);
 
-    setShowPaymentConfirmation(true);
+    // Directly process order without confirmation modal
+    await processOrderPlacement();
     return null;
   };
 
@@ -136,13 +136,8 @@ const CheckoutPaymentAddress: React.FC = () => {
       const currentItems = [...cartItems];
       setCreatedOrderId(order.id);
 
-      // If electronic payment, confirm it
-      if (paymentMethod === 'zain_cash' || paymentMethod === 'super_key') {
-        await confirmOrderPayment(order.id);
-        showToast('تم تأكيد الدفع والطلب بنجاح', 'success');
-      } else {
-        showToast("ستصلك رسالة عبر الواتساب بتفاصيل طلبك قريباً", 'success', 5000);
-      }
+      // Show success message as requested
+      showToast("سيتم إرسال تكلفة الشحن إليك عبر رقم الواتساب الخاص بك قريباً جداً", 'success', 5000);
 
       // Clear cart items for the ordered shipping method in store
       useCartStore.getState().clearShippingMethodItems(shippingMethod);
@@ -410,62 +405,6 @@ const CheckoutPaymentAddress: React.FC = () => {
               </div>
             </button>
           </div>
-
-          {/* QR Code Section for Electronic Payments */}
-          <AnimatePresence>
-            {(paymentMethod === 'zain_cash' || paymentMethod === 'super_key') && (
-              <motion.div
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: 'auto' }}
-                exit={{ opacity: 0, height: 0 }}
-                className="overflow-hidden"
-              >
-                <div className="p-5 rounded-3xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700 space-y-4">
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm font-bold text-slate-700 dark:text-slate-300">
-                      امسح الكود لإتمام عملية الدفع:
-                    </p>
-                    <span className="text-[10px] px-2 py-0.5 bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 rounded-full font-bold">نشط</span>
-                  </div>
-
-                  <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-100 dark:border-slate-800 flex flex-col items-center justify-center gap-1 shadow-sm">
-                    <span className="text-[10px] text-slate-400 font-black uppercase tracking-[0.2em]">المبلغ الكلي للدفع</span>
-                    <div className="flex items-baseline gap-1">
-                      <span className="text-3xl font-black text-slate-900 dark:text-white tracking-tighter">{total.toLocaleString()}</span>
-                      <span className="text-xs font-black text-slate-400">د.ع</span>
-                    </div>
-                  </div>
-
-                  <div className="aspect-square w-full max-w-[200px] mx-auto bg-white rounded-xl p-2 shadow-inner border border-slate-100 flex items-center justify-center overflow-hidden">
-                    <img 
-                      src={paymentMethod === 'zain_cash' ? "/assets/payment/zaincash_qr.png" : "/assets/payment/qicard_qr.png"} 
-                      alt="Payment QR" 
-                      className="w-full h-full object-contain"
-                      onError={(e) => {
-                        e.currentTarget.src = `https://placehold.co/400x400?text=${paymentMethod === 'zain_cash' ? 'ZainCash' : 'QiCard'}+QR`;
-                      }}
-                    />
-                  </div>
-
-                  <div className="bg-blue-50 dark:bg-blue-900/20 rounded-xl p-4 border border-blue-100 dark:border-blue-900/30">
-                    <p className="text-xs font-bold text-blue-900 dark:text-blue-300 mb-1 text-center">أو الدفع المباشر للرقم:</p>
-                    <div className="flex items-center justify-between">
-                      <span className="text-lg font-black text-primary font-sans" dir="ltr">07779786420</span>
-                      <button 
-                        onClick={() => {
-                          navigator.clipboard.writeText('07779786420');
-                          showToast('تم نسخ الرقم', 'success');
-                        }}
-                        className="text-xs bg-white dark:bg-slate-800 px-3 py-1.5 rounded-lg shadow-sm border border-blue-100 dark:border-blue-900/30 font-bold text-blue-600 dark:text-blue-400"
-                      >
-                        نسخ الرقم
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
         </section>
 
         {/* Order Summary */}
@@ -577,7 +516,7 @@ const CheckoutPaymentAddress: React.FC = () => {
             </div>
 
             <p className="text-[10px] text-slate-400 font-medium leading-relaxed bg-slate-100 dark:bg-slate-800/50 p-3 rounded-2xl">
-              * سيتم شحن طلبك فوراً وتزويدك برقم التتبع عبر الواتساب فور توفره.
+              * سيتم إرسال تكلفة الشحن إليك عبر رقم الواتساب الخاص بك قريباً جداً.
             </p>
           </div>
         </section>
@@ -676,56 +615,6 @@ const CheckoutPaymentAddress: React.FC = () => {
           </div>
         </div>
       </div>
-
-      {/* Payment Confirmation Modal */}
-      <AnimatePresence>
-        {showPaymentConfirmation && (
-          <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setShowPaymentConfirmation(false)}
-              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-            ></motion.div>
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.9, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.9, y: 20 }}
-              className="relative w-full max-w-sm bg-white dark:bg-slate-900 rounded-[32px] p-8 shadow-2xl border border-slate-100 dark:border-slate-800 text-center"
-            >
-              <div className="w-20 h-20 rounded-full bg-primary/10 text-primary flex items-center justify-center mx-auto mb-6">
-                <Wallet size={40} />
-              </div>
-              <h3 className="text-xl font-black mb-2 text-slate-900 dark:text-white">
-                {paymentMethod === 'cash' ? 'تأكيد الطلب' : 'تأكيد عملية الدفع'}
-              </h3>
-              <p className="text-slate-500 dark:text-slate-400 mb-8 leading-relaxed">
-                {paymentMethod === 'cash' 
-                  ? 'هل أنت متأكد من رغبتك في إتمام الطلب؟'
-                  : 'هل أنت متأكد من قيامك بتحويل المبلغ؟ يرجى التأكد من إتمام العملية لتجنب إلغاء الطلب.'}
-              </p>
-              <div className="flex flex-col gap-3">
-                <button 
-                  onClick={() => {
-                    setShowPaymentConfirmation(false);
-                    processOrderPlacement();
-                  }}
-                  className="w-full py-4 bg-primary text-white rounded-2xl font-black shadow-lg shadow-primary/20 hover:shadow-primary/30 active:scale-95 transition-all"
-                >
-                  {paymentMethod === 'cash' ? 'نعم، أكمل الطلب' : 'نعم، قمت بالتحويل'}
-                </button>
-                <button 
-                  onClick={() => setShowPaymentConfirmation(false)}
-                  className="w-full py-4 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-2xl font-bold hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
-                >
-                  إلغاء
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
 
       {/* Address Selection Sheet */}
       {showAddressSheet && (

@@ -163,7 +163,7 @@ export async function processProductEmbedding(productId) {
     console.log(`[AI Debug] Starting embedding-only processing for product ${productId}`);
     const product = await prisma.product.findUnique({
       where: { id: productId },
-      select: { id: true, name: true, description: true, specs: true, image: true }
+      select: { id: true, name: true, specs: true, image: true }
     });
 
     if (!product) {
@@ -171,7 +171,7 @@ export async function processProductEmbedding(productId) {
       return;
     }
 
-    const content = `Title: ${product.name}\nDescription: ${product.description || ''}\nSpecs: ${product.specs || ''}\nMain Image URL: ${product.image || ''}`;
+    const content = `Title: ${product.name}\nSpecs: ${product.specs || ''}\nMain Image URL: ${product.image || ''}`;
     const embedding = await generateEmbedding(content);
 
     const vectorStr = `[${embedding.join(',')}]`;
@@ -324,7 +324,7 @@ export async function processProductAI(productId) {
       return;
     }
 
-    const content = `Title: ${product.name}\nDescription: ${product.description || ''}\nSpecs: ${product.specs || ''}\nMain Image URL: ${product.image || ''}`;
+    const content = `Title: ${product.name}\nSpecs: ${product.specs || ''}\nMain Image URL: ${product.image || ''}`;
     
     let aiMetadata = null;
     if (!product.aiMetadata && siliconflow) {
@@ -333,7 +333,6 @@ export async function processProductAI(productId) {
       
       Product Details:
       Title: ${product.name}
-      Description: ${product.description || ''}
       Specs: ${product.specs || ''}
       
       Return ONLY a valid JSON object with:
@@ -372,37 +371,12 @@ export async function processProductAI(productId) {
     // 3. Update Product in Database
     console.log(`[AI Debug] Saving AI metadata and embedding for product ${productId}...`);
     
-    // 4. Estimate Physical Dimensions if missing
-    let physicalUpdate = '';
-    if (!product.weight || !product.length || !product.width || !product.height) {
-      console.log(`[AI Debug] Estimating physical dimensions for product ${productId}...`);
-      try {
-        const physicals = await estimateProductPhysicals({
-          name: product.name,
-          description: product.description,
-          specs: product.specs,
-          purchaseUrl: product.purchaseUrl,
-          image: product.image
-        });
-        
-        if (physicals) {
-          if (!product.weight && physicals.weight) physicalUpdate += `, weight = ${physicals.weight}`;
-          if (!product.length && physicals.length) physicalUpdate += `, length = ${physicals.length}`;
-          if (!product.width && physicals.width) physicalUpdate += `, width = ${physicals.width}`;
-          if (!product.height && physicals.height) physicalUpdate += `, height = ${physicals.height}`;
-        }
-      } catch (physErr) {
-        console.warn(`[AI Debug] Physical estimation failed for product ${productId}:`, physErr.message);
-      }
-    }
-
     // Use raw SQL to update the vector field
     const vectorStr = `[${embedding.join(',')}]`;
     const query = `
       UPDATE "Product" 
       SET "aiMetadata" = CASE WHEN "aiMetadata" IS NULL THEN $1::jsonb ELSE "aiMetadata" END,
           "embedding" = $2::vector 
-          ${physicalUpdate}
       WHERE "id" = $3
     `;
 
@@ -462,13 +436,12 @@ export async function hybridSearch(query, limit = 50, skip = 0, maxPrice = null)
 
     // Split query into words for better keyword matching
     const queryWords = query.split(/\s+/).filter(w => w.length > 2);
-    const wordFilters = queryWords.map(w => `(name ILIKE '%${w}%' OR description ILIKE '%${w}%' OR "aiMetadata"::text ILIKE '%${w}%')`).join(' OR ');
+    const wordFilters = queryWords.map(w => `(name ILIKE '%${w}%' OR "aiMetadata"::text ILIKE '%${w}%')`).join(' OR ');
     const keywordCondition = wordFilters ? `OR (${wordFilters})` : '';
     
     // Case statement for word matches
     const wordScores = queryWords.map(w => `
       (CASE WHEN name ILIKE '%${w}%' THEN 0.5 ELSE 0.0 END) +
-      (CASE WHEN description ILIKE '%${w}%' THEN 0.2 ELSE 0.0 END) +
       (CASE WHEN "aiMetadata"::text ILIKE '%${w}%' THEN 0.3 ELSE 0.0 END)
     `).join(' + ');
     const wordScoreSql = wordScores ? `+ (${wordScores})` : '';
@@ -488,7 +461,6 @@ export async function hybridSearch(query, limit = 50, skip = 0, maxPrice = null)
           id,
           (
             (CASE WHEN name ILIKE $2 OR name ILIKE $3 THEN 1.0 ELSE 0.0 END) +
-            (CASE WHEN description ILIKE $2 OR description ILIKE $3 THEN 0.5 ELSE 0.0 END) +
             (CASE WHEN "aiMetadata"::text ILIKE $2 OR "aiMetadata"::text ILIKE $3 THEN 0.8 ELSE 0.0 END)
             ${wordScoreSql}
           ) as keyword_score
@@ -496,12 +468,11 @@ export async function hybridSearch(query, limit = 50, skip = 0, maxPrice = null)
         WHERE 
           ("isActive" = true AND status = 'PUBLISHED') ${keywordPriceFilter} AND
           (name ILIKE $2 OR name ILIKE $3 OR 
-          description ILIKE $2 OR description ILIKE $3 OR
           "aiMetadata"::text ILIKE $2 OR "aiMetadata"::text ILIKE $3 ${keywordCondition})
         LIMIT 100
       )
       SELECT 
-        p.id, p.name, p."chineseName", p.description, p.price, p."basePriceRMB", p."isPriceCombined",
+        p.id, p.name, p."chineseName", p.price, p."basePriceRMB", p."isPriceCombined",
         p.image, p."purchaseUrl", p.status, p."isFeatured", 
         p."isActive", p.specs, p."storeEvaluation", p."reviewsCountShown", 
         p."createdAt", p."updatedAt", p."videoUrl", p."aiMetadata", 
@@ -527,7 +498,9 @@ export async function hybridSearch(query, limit = 50, skip = 0, maxPrice = null)
     const variants = await prisma.productVariant.findMany({
       where: { productId: { in: productIds } },
       select: {
+        id: true,
         productId: true,
+        combination: true,
         price: true,
         basePriceRMB: true,
         weight: true,

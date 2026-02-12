@@ -60,30 +60,16 @@ const BestSellers: React.FC<BestSellersProps> = ({ products, onViewAll }) => {
             : null;
 
           const minPrice = minVariant ? (minVariant.price || product.price) : product.price;
-          const effectiveWeight = minVariant ? (minVariant.weight || product.weight) : product.weight;
-          const effectiveLength = minVariant ? (minVariant.length || product.length) : product.length;
-          const effectiveWidth = minVariant ? (minVariant.width || product.width) : product.width;
-          const effectiveHeight = minVariant ? (minVariant.height || product.height) : product.height;
 
-          const isEffectivePriceCombined = minVariant 
-            ? (minVariant.isPriceCombined ?? product.isPriceCombined ?? false)
-            : (product.isPriceCombined ?? false);
-
-          const effectiveBasePriceRMB = (minVariant && minVariant.basePriceRMB && minVariant.basePriceRMB > 0)
-            ? minVariant.basePriceRMB
-            : product.basePriceRMB;
+          const effectiveBasePriceIQD = (minVariant && minVariant.basePriceIQD && minVariant.basePriceIQD > 0)
+            ? minVariant.basePriceIQD
+            : product.basePriceIQD;
 
           const totalPrice = calculateInclusivePrice(
             minPrice, 
-            effectiveWeight, 
-            effectiveLength, 
-            effectiveWidth, 
-            effectiveHeight, 
-            rates, 
-            undefined, 
             product.domesticShippingFee || 0, 
-            effectiveBasePriceRMB, 
-            isEffectivePriceCombined
+            effectiveBasePriceIQD,
+            rates
           );
 
           return (

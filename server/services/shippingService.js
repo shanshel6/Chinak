@@ -10,67 +10,20 @@ const WEIGHT_BUFFER_FACTOR = 1.25; // Increased to 25% for "safe side" guessing
  * Reverses the 90% air markup or 15% sea markup from the DB price
  * and applies the new markup based on the selected method.
  */
-export function getAdjustedPrice(basePrice, weight, length, width, height, selectedMethod, domesticShippingFee, basePriceRMB, isPriceCombined, rates) {
-  const weightInKg = (weight || 0.5);
-  const method = (selectedMethod || (weightInKg > 0 && weightInKg < 1 ? 'AIR' : 'SEA')).toUpperCase();
-  const airRate = (rates?.airShippingRate ?? rates?.airRate ?? 15400);
-  const seaRate = (rates?.seaShippingRate ?? rates?.seaRate ?? 182000);
+export function getAdjustedPrice(basePrice, domesticShippingFee, basePriceIQD) {
+  // Simplified pricing logic: (Base + Domestic) * 1.15
+  // International shipping components are removed.
   
-  // 1. If we have basePriceRMB, it's our source of truth
-  if (basePriceRMB && basePriceRMB > 0) {
-    const originalPrice = basePriceRMB;
+  // 1. If we have basePriceIQD, it's our source of truth
+  if (basePriceIQD && basePriceIQD > 0) {
+    const originalPrice = basePriceIQD;
     const domesticFee = domesticShippingFee || 0;
     
-    if (method === 'AIR') {
-      const shippingCost = weightInKg * airRate;
-      
-      // Treat rawPrice as IQD (no heuristic conversion)
-      const basePrice = originalPrice;
-      
-      const airPrice = (basePrice + domesticFee + shippingCost) * 1.20;
-      return Math.ceil(airPrice / 250) * 250;
-    } else {
-      const l = length || 0;
-      const w = width || 0;
-      const h = height || 0;
-      const volumeCbm = (l * w * h) / 1000000;
-      
-      const seaShippingCost = Math.max(volumeCbm * seaRate, 500);
-
-      // Treat rawPrice as IQD (no heuristic conversion)
-      const basePrice = originalPrice;
-
-      const seaPrice = (basePrice + domesticFee + seaShippingCost) * 1.20;
-      return Math.ceil(seaPrice / 250) * 250;
-    }
+    const finalPrice = (originalPrice + domesticFee) * 1.15;
+    return Math.ceil(finalPrice / 250) * 250;
   }
 
-  // 2. Fallback: if isPriceCombined, return basePrice as is
-  if (isPriceCombined) {
-    // Check if we can recalculate from basePriceRMB
-    if (basePriceRMB && basePriceRMB > 0) {
-      const originalPrice = basePriceRMB;
-      const domesticFee = domesticShippingFee || 0;
-      
-      if (method === 'AIR') {
-        const shippingCost = weightInKg * airRate;
-        const airPrice = (originalPrice + domesticFee + shippingCost) * 1.20;
-        return Math.ceil(airPrice / 250) * 250;
-      } else {
-        const l = length || 0;
-        const w = width || 0;
-        const h = height || 0;
-        const volumeCbm = (l * w * h) / 1000000;
-        const seaShippingCost = Math.max(volumeCbm * seaRate, 500);
-        const seaPrice = (originalPrice + domesticFee + seaShippingCost) * 1.20;
-        return Math.ceil(seaPrice / 250) * 250;
-      }
-    }
-
-    return Math.ceil(basePrice / 250) * 250;
-  }
-
-  // 3. Final fallback
+  // 2. Fallback: return basePrice as is (assumed to be final)
   return Math.ceil(basePrice / 250) * 250;
 }
 
@@ -100,11 +53,8 @@ export async function calculateOrderShipping(items, defaultMethod = 'SEA') {
       const qty = item.quantity || 1;
       const method = (item.shippingMethod || defaultMethod || 'SEA').toUpperCase();
       
-      // Use variant dimensions/weight if available, otherwise fallback to product
-      const currentWeight = (variant && variant.weight !== null && variant.weight !== undefined) ? variant.weight : product.weight;
-      const currentLength = (variant && variant.length !== null && variant.length !== undefined) ? variant.length : product.length;
-      const currentWidth = (variant && variant.width !== null && variant.width !== undefined) ? variant.width : product.width;
-      const currentHeight = (variant && variant.height !== null && variant.height !== undefined) ? variant.height : product.height;
+      // Use variant dimensions/weight if available, otherwise default to 0
+      const currentWeight = (variant && variant.weight !== null && variant.weight !== undefined) ? variant.weight : 0;
 
       if (method === 'AIR') {
         // Air is always available now with estimation
@@ -114,37 +64,14 @@ export async function calculateOrderShipping(items, defaultMethod = 'SEA') {
       const dbPrice = item.variant?.price || item.product?.price || 0;
       const adjustedBasePrice = getAdjustedPrice(
         dbPrice, 
-        currentWeight, 
-        currentLength, 
-        currentWidth, 
-        currentHeight, 
-        method,
         product.domesticShippingFee || 0,
-        product.basePriceRMB,
-        product.isPriceCombined,
-        {
-          airShippingRate: airRate,
-          seaShippingRate: seaRate,
-          airShippingMinFloor: settings?.airShippingMinFloor || 0
-        }
+        product.basePriceIQD
       );
       
       totalSubtotal += adjustedBasePrice * qty;
 
       // Domestic shipping fee is now included in the product price
       totalChinaDomestic = 0;
-
-      // Apply Packaging Padding & Buffer
-      const rawW = currentWeight || 0.5; // Estimated weight on the safe side
-      const rawL = currentLength || 0;
-      const rawWi = currentWidth || 0;
-      const rawH = currentHeight || 0;
-
-      // Boxed Dimensions
-      const boxedL = rawL > 0 ? rawL + BOX_PADDING_CM : 0;
-      const boxedWi = rawWi > 0 ? rawWi + BOX_PADDING_CM : 0;
-      const boxedH = rawH > 0 ? rawH + BOX_PADDING_CM : 0;
-      const boxedW = rawW * WEIGHT_BUFFER_FACTOR;
 
       let itemShipping = 0;
       // International shipping is now free for all methods as per request

@@ -62,7 +62,7 @@ const ProductEditor: React.FC<ProductEditorProps> = ({ productId, storeSettings,
     name: '',
     chineseName: '',
     price: 0,
-    basePriceRMB: '',
+    basePriceIQD: '',
     description: '',
     image: '',
     isFeatured: false,
@@ -75,12 +75,9 @@ const ProductEditor: React.FC<ProductEditorProps> = ({ productId, storeSettings,
     width: '',
     height: '',
     domesticShippingFee: 0,
-    isPriceCombined: true,
     specs: {},
     images: [],
     detailImages: [],
-    storeEvaluation: { score: 5, tags: [] },
-    reviewsCountShown: 0,
     deliveryTime: ''
   });
 
@@ -124,7 +121,6 @@ const ProductEditor: React.FC<ProductEditorProps> = ({ productId, storeSettings,
       setFormData({
         ...product,
         specs: safeParse(product.specs, {}),
-        storeEvaluation: safeParse(product.storeEvaluation, { score: 5, tags: [] }),
         images: Array.isArray(product.images) ? product.images.filter((img: any) => img.type === 'GALLERY') : [],
         detailImages: Array.isArray(product.images) ? product.images.filter((img: any) => img.type === 'DETAIL') : []
       });
@@ -160,7 +156,7 @@ const ProductEditor: React.FC<ProductEditorProps> = ({ productId, storeSettings,
 
   // Immediately update price when weight, size, or RMB price changes
   useEffect(() => {
-    if (formData.basePriceRMB && storeSettings) {
+    if (formData.basePriceIQD && storeSettings) {
       const rates = {
         airRate: storeSettings.airShippingRate || 15400,
         seaRate: storeSettings.seaShippingRate || 182000,
@@ -169,15 +165,8 @@ const ProductEditor: React.FC<ProductEditorProps> = ({ productId, storeSettings,
 
       const newPrice = calculateInclusivePrice(
         formData.price,
-        formData.weight,
-        formData.length,
-        formData.width,
-        formData.height,
-        rates,
-        undefined, // default method logic
         formData.domesticShippingFee || 0,
-        formData.basePriceRMB,
-        formData.isPriceCombined
+        formData.basePriceIQD
       );
 
       if (newPrice !== formData.price) {
@@ -188,13 +177,8 @@ const ProductEditor: React.FC<ProductEditorProps> = ({ productId, storeSettings,
       }
     }
   }, [
-    formData.basePriceRMB, 
-    formData.weight, 
-    formData.length, 
-    formData.width, 
-    formData.height, 
+    formData.basePriceIQD, 
     formData.domesticShippingFee,
-    formData.isPriceCombined,
     storeSettings
   ]);
 
@@ -241,8 +225,8 @@ const ProductEditor: React.FC<ProductEditorProps> = ({ productId, storeSettings,
       const productData = {
         ...formData,
         price: parseFloat(formData.price) || 0,
-        isPriceCombined: formData.isPriceCombined,
-        basePriceRMB: formData.basePriceRMB ? parseFloat(formData.basePriceRMB) : null,
+        // isPriceCombined removed
+        basePriceIQD: formData.basePriceIQD ? parseFloat(formData.basePriceIQD) : null,
         reviewsCountShown: parseInt(formData.reviewsCountShown) || 0,
         images: [
           ...formData.images.map((img: any, idx: number) => ({ ...img, type: 'GALLERY', order: idx })),
@@ -425,98 +409,20 @@ const ProductEditor: React.FC<ProductEditorProps> = ({ productId, storeSettings,
                 <div className="space-y-2">
                   <label className="text-sm font-black text-slate-700 dark:text-slate-300 flex items-center gap-2">
                     <DollarSign size={16} className="text-primary" />
-                    السعر (RMB)
+                    السعر (IQD)
                   </label>
                   <input 
                     type="number"
-                    name="basePriceRMB"
-                    value={formData.basePriceRMB}
-                    onChange={handleInputChange}
-                    className="w-full bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-primary/20 focus:bg-white dark:focus:bg-slate-900 rounded-2xl px-5 py-4 outline-none transition-all font-bold"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-black text-slate-700 dark:text-slate-300 flex items-center gap-2">
-                    <Star size={16} className="text-primary" />
-                    التقييمات
-                  </label>
-                  <input 
-                    type="number"
-                    name="reviewsCountShown"
-                    value={formData.reviewsCountShown}
+                    name="basePriceIQD"
+                    value={formData.basePriceIQD}
                     onChange={handleInputChange}
                     className="w-full bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-primary/20 focus:bg-white dark:focus:bg-slate-900 rounded-2xl px-5 py-4 outline-none transition-all font-bold"
                   />
                 </div>
               </div>
 
-              <div className="space-y-2">
-                <label className="text-sm font-black text-slate-700 dark:text-slate-300">وصف المنتج</label>
-                <textarea 
-                  name="description"
-                  value={formData.description}
-                  onChange={handleInputChange}
-                  rows={6}
-                  className="w-full bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-primary/20 focus:bg-white dark:focus:bg-slate-900 rounded-2xl px-5 py-4 outline-none transition-all font-medium resize-none"
-                />
-              </div>
-
-              {/* Shipping Dimensions Section */}
-              <div className="pt-6 border-t border-slate-100 dark:border-slate-800">
-                <h3 className="text-lg font-black text-slate-800 dark:text-white mb-6 flex items-center gap-2">
-                  <Layout size={20} className="text-primary" />
-                  أبعاد الشحن والوزن
-                </h3>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6">
-                  <div className="space-y-2">
-                    <label className="text-xs font-black text-slate-500 uppercase tracking-wider">الوزن (كجم)</label>
-                    <input 
-                      type="number"
-                      step="0.01"
-                      name="weight"
-                      value={formData.weight}
-                      onChange={handleInputChange}
-                      placeholder="0.5"
-                      className="w-full bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-primary/20 focus:bg-white dark:focus:bg-slate-900 rounded-xl px-4 py-3 outline-none transition-all font-bold"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-xs font-black text-slate-500 uppercase tracking-wider">الطول (سم)</label>
-                    <input 
-                      type="number"
-                      name="length"
-                      value={formData.length}
-                      onChange={handleInputChange}
-                      placeholder="10"
-                      className="w-full bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-primary/20 focus:bg-white dark:focus:bg-slate-900 rounded-xl px-4 py-3 outline-none transition-all font-bold"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-xs font-black text-slate-500 uppercase tracking-wider">العرض (سم)</label>
-                    <input 
-                      type="number"
-                      name="width"
-                      value={formData.width}
-                      onChange={handleInputChange}
-                      placeholder="10"
-                      className="w-full bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-primary/20 focus:bg-white dark:focus:bg-slate-900 rounded-xl px-4 py-3 outline-none transition-all font-bold"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-xs font-black text-slate-500 uppercase tracking-wider">الارتفاع (سم)</label>
-                    <input 
-                      type="number"
-                      name="height"
-                      value={formData.height}
-                      onChange={handleInputChange}
-                      placeholder="10"
-                      className="w-full bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-primary/20 focus:bg-white dark:focus:bg-slate-900 rounded-xl px-4 py-3 outline-none transition-all font-bold"
-                    />
-                  </div>
-                </div>
-
-                <div className="pt-4 space-y-2">
-                  <label className="text-xs font-black text-slate-500 uppercase tracking-wider">سعر التوصيل داخل الصين (د.ع)</label>
+              <div className="pt-4 space-y-2">
+                <label className="text-xs font-black text-slate-500 uppercase tracking-wider">سعر التوصيل داخل الصين (د.ع)</label>
                   <input 
                     type="number"
                     name="domesticShippingFee"
@@ -539,19 +445,6 @@ const ProductEditor: React.FC<ProductEditorProps> = ({ productId, storeSettings,
                     className="w-full bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-primary/20 focus:bg-white dark:focus:bg-slate-900 rounded-xl px-4 py-3 outline-none transition-all font-bold"
                   />
                   <p className="text-[10px] text-slate-400 font-medium">اكتب المدة المتوقعة للتوصيل (اختياري).</p>
-                </div>
-
-                <div className="pt-4 flex items-center gap-3 cursor-pointer group">
-                  <div 
-                    onClick={() => setFormData((prev: any) => ({ ...prev, isPriceCombined: !prev.isPriceCombined }))}
-                    className={`w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all ${formData.isPriceCombined ? 'bg-primary border-primary' : 'border-slate-300 group-hover:border-primary/50'}`}
-                  >
-                    {formData.isPriceCombined && <Plus size={16} className="text-white" />}
-                  </div>
-                  <div onClick={() => setFormData((prev: any) => ({ ...prev, isPriceCombined: !prev.isPriceCombined }))}>
-                    <span className="text-sm font-bold">السعر المعروض نهائي (يتضمن الربح 20%)</span>
-                    <p className="text-[10px] text-slate-400 font-medium">إذا تم تفعيله، لن يقوم النظام بإضافة 20% ربح عند النشر.</p>
-                  </div>
                 </div>
 
                 <p className="mt-4 text-xs text-slate-400 font-medium">
@@ -622,7 +515,6 @@ const ProductEditor: React.FC<ProductEditorProps> = ({ productId, storeSettings,
                 </p>
               </div>
             </div>
-          </div>
         )}
 
         {activeTab === 'media' && (
@@ -636,11 +528,10 @@ const ProductEditor: React.FC<ProductEditorProps> = ({ productId, storeSettings,
                 <div className="w-48 h-48 rounded-3xl bg-slate-50 dark:bg-slate-800 border-2 border-dashed border-slate-200 dark:border-slate-700 overflow-hidden flex items-center justify-center relative group shrink-0">
                   {formData.image ? (
                     <>
-                      <LazyImage 
+                      <img 
                         src={formData.image} 
                         className="w-full h-full object-cover" 
                         alt="Main" 
-                        isThumbnail={true}
                       />
                       <button 
                         onClick={() => setFormData((prev: any) => ({ ...prev, image: '' }))}
