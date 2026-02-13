@@ -35,8 +35,39 @@ model User {
   orders               Order[]
   reviews              Review[]
   wishlist             WishlistItem[]
+  interactions         UserInteraction[]
+  searchHistory        SearchHistory[]
 
   @@index([name])
+}
+
+model UserInteraction {
+  id        Int      @id @default(autoincrement())
+  userId    Int?
+  sessionId String?  // For guest users
+  productId Int
+  type      String   // VIEW, CART, PURCHASE, SHARE
+  weight    Float    @default(1.0)
+  createdAt DateTime @default(now())
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([sessionId])
+  @@index([productId])
+  @@index([createdAt])
+}
+
+model SearchHistory {
+  id        Int      @id @default(autoincrement())
+  userId    Int?
+  sessionId String?
+  query     String
+  createdAt DateTime @default(now())
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([sessionId])
 }
 
 model Message {
@@ -75,10 +106,12 @@ model Product {
   variants          ProductVariant[]
   reviews           Review[]
   wishlistItems     WishlistItem[]
+  interactions      UserInteraction[]
 
   @@index([status])
   @@index([isActive])
   @@index([name])
+  @@index([updatedAt])
 }
 
 model ProductImage {

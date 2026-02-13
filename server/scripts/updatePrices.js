@@ -1,24 +1,28 @@
 import prisma from '../prismaClient.js';
 
 async function updatePrices() {
-  console.log('Starting price update: Adding 10% to all products...');
+  console.log('Starting price update: Recalculating all prices with 15% profit...');
   
   try {
     const products = await prisma.product.findMany({
       select: {
         id: true,
+        basePriceIQD: true,
         price: true,
-        name: true
+        domesticShippingFee: true
       }
     });
 
-    // Update Product prices
     console.log(`Found ${products.length} products to update.`);
     let updatedCount = 0;
+
     for (const product of products) {
-      // Logic changed: Don't just add 10% to whatever is there.
-      // This script is now intended for manual price adjustments if needed.
-      const newPrice = product.price; // Keep price as is by default
+      // Logic: (BaseIQD + Domestic) * 1.15 -> Rounded to 250
+      const base = product.basePriceIQD || product.price; // Fallback to current price if base is missing
+      const domestic = product.domesticShippingFee || 0;
+      
+      const newPrice = Math.ceil(((base + domestic) * 1.15) / 250) * 250;
+      
       await prisma.product.update({
         where: { id: product.id },
         data: { price: newPrice }
@@ -29,12 +33,23 @@ async function updatePrices() {
 
     // Update ProductVariant prices
     const variants = await prisma.productVariant.findMany({
-      select: { id: true, price: true }
+      select: { 
+        id: true, 
+        basePriceIQD: true,
+        price: true 
+      }
     });
     console.log(`Found ${variants.length} variants to update.`);
     let updatedVariantsCount = 0;
+    
     for (const variant of variants) {
-      const newPrice = variant.price; // Keep price as is
+      const base = variant.basePriceIQD || variant.price;
+      // Note: Variants usually inherit domestic fee from product, but simplified here as 0 or included in base
+      // If we need domestic fee, we'd need to fetch product relation. 
+      // For now, assuming basePriceIQD on variant is the full cost basis.
+      
+      const newPrice = Math.ceil((base * 1.15) / 250) * 250;
+      
       await prisma.productVariant.update({
         where: { id: variant.id },
         data: { price: newPrice }

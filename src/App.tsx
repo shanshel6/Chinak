@@ -299,10 +299,11 @@ function App() {
   const fetchCart = useCartStore((state) => state.fetchCart);
   // const fetchWishlist = useWishlistStore((state) => state.fetchWishlist); // Removed unused
   
-  const { isAuthenticated, user } = useAuthStore(
+  const { isAuthenticated, user, isLoading } = useAuthStore(
     useShallow((state) => ({ 
       isAuthenticated: state.isAuthenticated,
-      user: state.user 
+      user: state.user,
+      isLoading: state.isLoading
     }))
   );
   
@@ -340,23 +341,28 @@ function App() {
   }, [isDarkMode]);
 
   useEffect(() => {
-    if (isAuthenticated && user) {
+    // Only connect socket and fetch user data when we are fully authenticated and done loading
+    if (isAuthenticated && user && !isLoading) {
       fetchCart();
       // fetchWishlist(); // Removed as wishlist is now local storage only
       fetchNotifications();
-      connectSocket();
-      if (String(user.role || '').toUpperCase() === 'ADMIN') {
-        socket.emit('join_admin_room');
-      }
-      initNotificationSocket(user.id);
+      
+      // OPTIMIZATION: Delay socket connection to prevent startup lag
+      setTimeout(() => {
+        connectSocket();
+        if (String(user.role || '').toUpperCase() === 'ADMIN') {
+          socket.emit('join_admin_room');
+        }
+        initNotificationSocket(user.id);
+      }, 2000);
 
       return () => {
         cleanupNotificationSocket(user.id);
       };
-    } else {
+    } else if (!isAuthenticated && !isLoading) {
       disconnectSocket();
     }
-  }, [isAuthenticated, user, fetchCart, fetchNotifications, initNotificationSocket, cleanupNotificationSocket]);
+  }, [isAuthenticated, user, isLoading, fetchCart, fetchNotifications, initNotificationSocket, cleanupNotificationSocket]);
 
   if (isServerDown) {
     return <MaintenanceScreen />;

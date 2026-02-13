@@ -388,6 +388,10 @@ export async function request(endpoint: string, options: any = {}, retries = 2) 
 
     const fullUrl = endpoint.startsWith('http') ? endpoint : `${currentBaseUrl}${endpoint}`;
     
+    // Add timeout handling
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), options.timeout || 30000); // Default 30s timeout
+
     try {
       if (import.meta.env.DEV) {
         console.log(`[API Request] ${options.method || 'GET'} ${fullUrl}`, {
@@ -399,7 +403,9 @@ export async function request(endpoint: string, options: any = {}, retries = 2) 
       const response = await fetch(fullUrl, {
         ...options,
         headers,
+        signal: controller.signal,
       });
+      clearTimeout(timeoutId);
 
       // If we got any response from the server, it's not down
       if (useMaintenanceStore.getState().isServerDown) {
@@ -493,6 +499,20 @@ export async function request(endpoint: string, options: any = {}, retries = 2) 
 
       return data;
     } catch (error: any) {
+      clearTimeout(timeoutId);
+
+      // Handle Timeout
+      if (error.name === 'AbortError') {
+        console.warn(`[API Timeout] Request to ${endpoint} timed out after ${options.timeout || 30000}ms`);
+        // We can treat timeout as a network error for retry purposes
+        if (attempt < retries) {
+           const delay = Math.pow(2, attempt) * 1000;
+           await new Promise(resolve => setTimeout(resolve, delay));
+           return executeRequest(attempt + 1, authRetry);
+        }
+        throw new Error('Request timed out. Please check your connection.');
+      }
+
       // Check if it's a network error
       const isNetworkError = 
         error.name === 'TypeError' || 
@@ -808,7 +828,33 @@ export function logout() {
   supabase.auth.signOut();
 }
 
-export async function fetchProducts(page = 1, limit = 20, search = '', maxPrice?: number) {
+// --- Tracking Service ---
+export const trackInteraction = async (productId: number | string, type: 'VIEW' | 'CART' | 'PURCHASE' | 'SHARE', weight: number = 1.0) => {
+  try {
+    let sessionId = localStorage.getItem('session_id');
+    if (!sessionId) {
+      sessionId = Math.random().toString(36).substring(2) + Date.now().toString(36);
+      localStorage.setItem('session_id', sessionId);
+    }
+
+    await fetch(`${API_BASE_URL}/track`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({
+        productId: Number(productId),
+        type,
+        weight,
+        sessionId
+      })
+    });
+  } catch (error) {
+    // Silent fail for tracking
+    console.warn('Tracking failed:', error);
+  }
+};
+
+// --- Product API ---
+export const fetchProducts = async (page = 1, limit = 20, search = '', maxPrice?: number) => {
   let url = `/products?page=${page}&limit=${limit}&search=${encodeURIComponent(search)}`;
   if (maxPrice !== undefined) {
     url += `&maxPrice=${maxPrice}`;

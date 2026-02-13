@@ -10,7 +10,8 @@ import axios from 'axios';
 
 // Setup the proxy dispatcher globally for undici (used by native fetch in Node 18+)
 // Only use proxy in local development if explicitly requested via environment variable
-if (process.env.USE_AI_PROXY === 'true' || (process.env.NODE_ENV !== 'production' && !process.env.RENDER)) {
+// CHANGED: Default to FALSE to prevent "hanging" if no proxy is running
+if (process.env.USE_AI_PROXY === 'true') {
   const proxyUrl = process.env.AI_PROXY_URL || 'http://127.0.0.1:7890';
   console.log(`[AI Debug] Using proxy for AI services: ${proxyUrl}`);
   const agent = new ProxyAgent(proxyUrl);
@@ -398,7 +399,8 @@ export async function processProductAI(productId) {
  */
 function normalizeArabic(text) {
   if (!text) return '';
-  return text
+  
+  let normalized = text
     .replace(/[أإآ]/g, 'ا')
     .replace(/ة/g, 'ه')
     .replace(/ى/g, 'ي')
@@ -409,15 +411,84 @@ function normalizeArabic(text) {
     .replace(/پ/g, 'ب') // P -> B
     .replace(/ڤ/g, 'ف') // V -> F
     .trim();
+
+  // Iraqi Dialect Expansions (Common Synonyms)
+  // When user searches for X, we also want to search for Y (Arabic + English)
+  const synonyms = {
+    // Furniture
+    'ميز': 'طاوله مكتب desk table',
+    'جربايه': 'سرير bed',
+    'قنفه': 'اريكه كنبه sofa couch',
+    'برده': 'ستاره curtain',
+    'بنكه': 'مروحه fan',
+    'ثلاجه': 'براد refrigerator fridge',
+    'مجمد': 'فريزر freezer',
+    'طباخ': 'فرن غاز stove oven',
+    'كاونتر': 'خزانه مطبخ kitchen cabinet',
+    'دوشك': 'مرتبه mattress',
+    'شرشف': 'مفرش غطاء sheet cover',
+    'كرسي': 'chair',
+    'مكتب': 'desk office',
+    
+    // Clothing / Accessories
+    'خاولي': 'منشفه towel',
+    'تراكي': 'اقراط حلق earrings',
+    'سوار': 'اسواره bracelet',
+    'جنطه': 'حقيبه bag backpack',
+    'قاط': 'بدله suit',
+    'دشداشه': 'جلابيه ثوب dress robe',
+    'حذاء': 'بوط جزم shoes boots',
+    'نعال': 'شبشب slippers',
+    'شحاطه': 'صندل sandals',
+    'كلاو': 'قبعه hat cap',
+    'تيشيرت': 't-shirt shirt',
+    'قميص': 'shirt',
+    'بنطلون': 'pants trousers jeans',
+    'فستان': 'dress',
+    'تنوره': 'skirt',
+    
+    // Electronics
+    'بايدر': 'دراجه bike bicycle',
+    'سياره': 'عربه car',
+    'تلفزيون': 'شاشه tv television monitor',
+    'موبايل': 'هاتف جوال mobile phone',
+    'لابتوب': 'حاسوب كمبيوتر laptop computer',
+    'شاحنه': 'charger',
+    'سماعه': 'headphone speaker headset',
+    'كاميرا': 'camera',
+
+    // General
+    'نساء': 'women woman female ladies',
+    'نسائي': 'women woman female ladies',
+    'رجال': 'men man male',
+    'رجالي': 'men man male',
+    'اطفال': 'kids children',
+    'ولادي': 'boys',
+    'بناتي': 'girls',
+  };
+
+  // Check if any word in the query matches a dialect word
+  const words = normalized.split(/\s+/);
+  const expandedGroups = words.map(word => {
+    if (synonyms[word]) {
+      return [word, ...synonyms[word].split(' ')];
+    }
+    return [word];
+  });
+  
+  return {
+    fullString: expandedGroups.map(g => g.join(' ')).join(' '),
+    groups: expandedGroups
+  };
 }
 
 /**
  * Hybrid Search Engine (Free Tier)
  * Combines Keyword Matching and Semantic Vector Search.
  */
-export async function hybridSearch(query, limit = 50, skip = 0, maxPrice = null) {
+export async function hybridSearch(query, limit = 50, skip = 0, maxPrice = null, userId = null, sessionId = null) {
   try {
-    const normalizedQuery = normalizeArabic(query);
+    const { fullString: normalizedQuery, groups: queryGroups } = normalizeArabic(query);
     
     // 1. Generate query embedding (384 dimensions)
     const embedding = await generateEmbedding(query);
@@ -427,24 +498,53 @@ export async function hybridSearch(query, limit = 50, skip = 0, maxPrice = null)
     // Weighted Ranking:
     // 30% Keyword Relevance (with Arabic support)
     // 40% Semantic Similarity
-    // 30% Popularity/Personalization
+    // 20% Popularity
+    // 10% Personalization (if userId/sessionId provided)
     
     // Build price filter
     const priceFilter = maxPrice !== null ? `AND p.price <= ${maxPrice}` : '';
     const semanticPriceFilter = maxPrice !== null ? `AND price <= ${maxPrice}` : '';
     const keywordPriceFilter = maxPrice !== null ? `AND price <= ${maxPrice}` : '';
 
-    // Split query into words for better keyword matching
-    const queryWords = query.split(/\s+/).filter(w => w.length > 2);
-    const wordFilters = queryWords.map(w => `(name ILIKE '%${w}%' OR "aiMetadata"::text ILIKE '%${w}%')`).join(' OR ');
-    const keywordCondition = wordFilters ? `OR (${wordFilters})` : '';
-    
-    // Case statement for word matches
-    const wordScores = queryWords.map(w => `
+    // 1. Build Match Count SQL (How many Groups matched?)
+    // A group matches if ANY word in the group is present
+    const matchCountSql = queryGroups.length > 0 ? queryGroups.map(group => {
+      const groupConditions = group.map(w => `name ILIKE '%${w}%' OR "aiMetadata"::text ILIKE '%${w}%'`).join(' OR ');
+      return `(CASE WHEN ${groupConditions} THEN 1 ELSE 0 END)`;
+    }).join(' + ') : '0';
+
+    // 2. Build Word Score SQL (Weighted score per word in original query)
+    // We prioritize the user's original words, but also give some points for synonyms
+    const wordScores = queryGroups.flat().map(w => `
       (CASE WHEN name ILIKE '%${w}%' THEN 0.5 ELSE 0.0 END) +
       (CASE WHEN "aiMetadata"::text ILIKE '%${w}%' THEN 0.3 ELSE 0.0 END)
     `).join(' + ');
+    
     const wordScoreSql = wordScores ? `+ (${wordScores})` : '';
+
+    // 3. Build Filter Conditions (OR logic for recall)
+    const allWords = queryGroups.flat();
+    const wordFilters = allWords.map(w => `(name ILIKE '%${w}%' OR "aiMetadata"::text ILIKE '%${w}%')`).join(' OR ');
+    const keywordCondition = wordFilters ? `OR (${wordFilters})` : '';
+
+    // 4. Build Personalization Score SQL
+    let personalizationSql = '0';
+    let personalizationJoin = '';
+    
+    if (userId || sessionId) {
+      const userCondition = userId ? `userId = ${userId}` : `sessionId = '${sessionId}'`;
+      // Boost products that the user has interacted with (viewed, cart, purchased)
+      // or similar products (same category/tags) - simplified here to direct interaction
+      personalizationJoin = `
+        LEFT JOIN (
+          SELECT "productId", SUM(weight) as interaction_score 
+          FROM "UserInteraction" 
+          WHERE ${userCondition} 
+          GROUP BY "productId"
+        ) ui ON p.id = ui."productId"
+      `;
+      personalizationSql = 'COALESCE(ui.interaction_score, 0)';
+    }
 
     const results = await prisma.$queryRawUnsafe(`
       WITH semantic_search AS (
@@ -460,10 +560,12 @@ export async function hybridSearch(query, limit = 50, skip = 0, maxPrice = null)
         SELECT 
           id,
           (
-            (CASE WHEN name ILIKE $2 OR name ILIKE $3 THEN 1.0 ELSE 0.0 END) +
-            (CASE WHEN "aiMetadata"::text ILIKE $2 OR "aiMetadata"::text ILIKE $3 THEN 0.8 ELSE 0.0 END)
+            -- Exact phrase match gets huge boost
+            (CASE WHEN name ILIKE $2 OR name ILIKE $3 THEN 3.0 ELSE 0.0 END) +
+            (CASE WHEN "aiMetadata"::text ILIKE $2 OR "aiMetadata"::text ILIKE $3 THEN 2.0 ELSE 0.0 END)
             ${wordScoreSql}
-          ) as keyword_score
+          ) as keyword_score,
+          (${matchCountSql}) as match_count
         FROM "Product"
         WHERE 
           ("isActive" = true AND status = 'PUBLISHED') ${keywordPriceFilter} AND
@@ -479,14 +581,29 @@ export async function hybridSearch(query, limit = 50, skip = 0, maxPrice = null)
         p."clickCount", p."conversionRate", p."deliveryTime",
         COALESCE(s.semantic_score, 0) as semantic_score,
         COALESCE(k.keyword_score, 0) as keyword_score,
+        COALESCE(k.match_count, 0) as match_count,
+        ${personalizationSql} as personal_score,
         (
-          0.4 * COALESCE(s.semantic_score, 0) + 
-          0.3 * COALESCE(k.keyword_score, 0) + 
-          0.3 * (1 - 1/(1 + (COALESCE(p."clickCount", 0) * 0.1 + COALESCE(p."conversionRate", 0) * 0.9)))
+          -- Semantic Score (35%)
+          0.35 * COALESCE(s.semantic_score, 0) + 
+          -- Keyword Score (35%)
+          0.35 * COALESCE(k.keyword_score, 0) + 
+          -- Popularity (15%)
+          0.15 * (1 - 1/(1 + (COALESCE(p."clickCount", 0) * 0.1 + COALESCE(p."conversionRate", 0) * 0.9))) +
+          -- Personalization (15%) - Boosts items user has interacted with
+          0.15 * (1 - 1/(1 + ${personalizationSql}))
+        ) * (
+          -- Boost if ALL Token Groups matched (e.g. "Women" AND "Shirts")
+          CASE 
+            WHEN COALESCE(k.match_count, 0) >= ${queryGroups.length} THEN 2.0 
+            WHEN COALESCE(k.match_count, 0) > 0 THEN 1.0
+            ELSE 0.5 
+          END
         ) as final_rank
       FROM "Product" p
       LEFT JOIN semantic_search s ON p.id = s.id
       LEFT JOIN keyword_search k ON p.id = k.id
+      ${personalizationJoin}
       WHERE (s.id IS NOT NULL OR k.id IS NOT NULL) AND p."isActive" = true AND p.status = 'PUBLISHED' ${priceFilter}
       ORDER BY final_rank DESC
       LIMIT ${limit}

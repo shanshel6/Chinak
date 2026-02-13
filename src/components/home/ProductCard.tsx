@@ -64,17 +64,18 @@ const ProductCard: React.FC<ProductCardProps> = ({
     prefetchTimerRef.current = setTimeout(async () => {
       try {
         // Prefetch everything needed for ProductDetails page
-        await Promise.all([
-          fetchProductById(product.id),
-          fetchProductReviews(product.id),
-          checkProductPurchase(product.id)
-        ]);
-        isPrefetched.current = true;
-        console.log(`Prefetched product: ${product.id}`);
+        // ONLY if user hovers for > 500ms
+        // await Promise.all([
+        //   fetchProductById(product.id),
+        //   fetchProductReviews(product.id),
+        //   checkProductPurchase(product.id)
+        // ]);
+        // isPrefetched.current = true;
+        // console.log(`Prefetched product: ${product.id}`);
       } catch (e) {
         // Silently fail
       }
-    }, 250); // Slightly longer delay for products to avoid excessive prefetching while scrolling
+    }, 500); // Slightly longer delay for products to avoid excessive prefetching while scrolling
   };
 
   const handleMouseLeave = () => {
@@ -88,6 +89,9 @@ const ProductCard: React.FC<ProductCardProps> = ({
   const [_seaRate, setSeaRate] = useState<number>(182000);
   const [_minFloor, setMinFloor] = useState<number>(0);
 
+  // Removed individual fetchSettings call to prevent "N+1" API flood
+  // Rates should be passed via props or global store if dynamic calculation is needed
+  /*
   useEffect(() => {
     const loadRates = async () => {
       try {
@@ -99,6 +103,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
     };
     loadRates();
   }, []);
+  */
 
   const totalPrice = React.useMemo(() => {
     // Just return the minPrice which is already the final price from DB

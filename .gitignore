@@ -21,8 +21,8 @@ dist
 dist-ssr
 
 # Android & iOS
-android/
-ios/
+# android/
+# ios/
 assets/
 
 # Binary data
@@ -53,3 +53,10 @@ key-credentials.txt
 *.njsproj
 *.sln
 *.sw?
+
+# Scraper Data
+server/chrome_data*
+server/test_chrome_data*
+server/pinduoduo-products.json
+server/xianyu-*.json
+server/*.html

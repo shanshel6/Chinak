@@ -23,54 +23,81 @@ const ProductOptions: React.FC<ProductOptionsProps> = ({
   onVariantSelect,
   selectedVariantId,
 }) => {
+  // Find selected variant image
+  const selectedVariant = variants?.find(v => v.id === selectedVariantId);
+  const selectedImage = selectedVariant?.image;
+
   // If variants are provided, render them as tags (New "Concept")
   if (variants && variants.length > 0 && onVariantSelect) {
     return (
       <div className="mb-6 space-y-3">
-        <h3 className="text-slate-900 dark:text-white text-sm font-black flex items-center gap-2">
-          الخيارات المتاحة
-          <span className="text-[10px] text-slate-400 font-normal">(اختر واحد)</span>
-        </h3>
-        <div className="flex flex-wrap gap-2">
-          {variants.map((variant, idx) => {
-            // Parse combination if it's a string
-            let combination = variant.combination;
-            if (typeof combination === 'string') {
-              try { combination = JSON.parse(combination); } catch { combination = {}; }
-            }
-
-            // Generate label from combination values
-            const values: string[] = [];
-            Object.values(combination).forEach((val: any) => {
-              if (Array.isArray(val)) {
-                values.push(...val.map((v: any) => 
-                  typeof v === 'object' ? (v.value || v.name || JSON.stringify(v)) : String(v)
-                ));
-              } else if (typeof val === 'object' && val !== null) {
-                values.push(val.value || val.name || JSON.stringify(val));
-              } else {
-                values.push(String(val));
-              }
-            });
+        <div className="flex items-center justify-between">
+            <h3 className="text-slate-900 dark:text-white text-sm font-black flex items-center gap-2">
+              الخيارات المتاحة
+              <span className="text-[10px] text-slate-400 font-normal">(اختر واحد)</span>
+            </h3>
             
-            const label = values.join('، '); // Use Arabic comma
+            {/* Selected Variant Thumbnail Display */}
+            {selectedImage && (
+                <div className="w-12 h-12 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700 shadow-sm animate-in fade-in zoom-in duration-300">
+                    <img 
+                        src={selectedImage} 
+                        alt="Selected Option" 
+                        className="w-full h-full object-cover"
+                    />
+                </div>
+            )}
+        </div>
 
-            const isSelected = selectedVariantId ? variant.id === selectedVariantId : false;
+        <div className="flex flex-wrap gap-2">
+          {(() => {
+            // Deduplicate logic: Track seen labels
+            const seenLabels = new Set<string>();
+            
+            return variants.map((variant, idx) => {
+              // Parse combination if it's a string
+              let combination = variant.combination;
+              if (typeof combination === 'string') {
+                try { combination = JSON.parse(combination); } catch { combination = {}; }
+              }
 
-            return (
-              <div
-                key={variant.id || idx}
-                onClick={() => onVariantSelect(combination)}
-                className={`px-4 py-2 rounded-xl text-xs font-bold transition-all border-2 cursor-pointer ${
-                  isSelected
-                    ? 'bg-primary border-primary text-white shadow-lg shadow-primary/20 scale-105'
-                    : 'bg-white dark:bg-slate-800 border-slate-100 dark:border-white/10 text-slate-600 dark:text-slate-300 hover:border-primary/50'
-                }`}
-              >
-                {label}
-              </div>
-            );
-          })}
+              // Generate label from combination values
+              const values: string[] = [];
+              Object.values(combination).forEach((val: any) => {
+                if (Array.isArray(val)) {
+                  values.push(...val.map((v: any) => 
+                    typeof v === 'object' ? (v.value || v.name || JSON.stringify(v)) : String(v)
+                  ));
+                } else if (typeof val === 'object' && val !== null) {
+                  values.push(val.value || val.name || JSON.stringify(val));
+                } else {
+                  values.push(String(val));
+                }
+              });
+              
+              const label = values.join('، '); // Use Arabic comma
+
+              // SKIP duplicates
+              if (seenLabels.has(label)) return null;
+              seenLabels.add(label);
+
+              const isSelected = selectedVariantId ? variant.id === selectedVariantId : false;
+
+              return (
+                <div
+                  key={variant.id || idx}
+                  onClick={() => onVariantSelect(combination)}
+                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all border-2 cursor-pointer ${
+                    isSelected
+                      ? 'bg-primary border-primary text-white shadow-lg shadow-primary/20 scale-105'
+                      : 'bg-white dark:bg-slate-800 border-slate-100 dark:border-white/10 text-slate-600 dark:text-slate-300 hover:border-primary/50'
+                  }`}
+                >
+                  {label}
+                </div>
+              );
+            });
+          })()}
         </div>
       </div>
     );

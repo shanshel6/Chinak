@@ -2557,6 +2557,43 @@ app.post('/api/admin/reports/send-test', authenticateToken, isAdmin, hasPermissi
   }
 });
 
+// --- User Interaction Tracking ---
+app.post('/api/track', async (req, res) => {
+  try {
+    const { productId, type, weight, sessionId } = req.body;
+    
+    // Get user ID if authenticated
+    const authHeader = req.headers['authorization'];
+    let userId = null;
+    if (authHeader) {
+      const token = authHeader.split(' ')[1];
+      try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        userId = decoded.id;
+      } catch (e) {}
+    }
+
+    if (!productId || !type) {
+      return res.status(400).json({ error: 'Product ID and Type are required' });
+    }
+
+    await prisma.userInteraction.create({
+      data: {
+        userId: userId ? safeParseId(userId) : null,
+        sessionId: sessionId || 'guest',
+        productId: safeParseId(productId),
+        type,
+        weight: weight || 1.0
+      }
+    });
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Tracking error:', error);
+    res.status(500).json({ error: 'Failed to track interaction' });
+  }
+});
+
 // Automated Reports Logic
 const generateWeeklyReport = async () => {
   const lastWeek = new Date(new Date().setDate(new Date().getDate() - 7));
@@ -2809,7 +2846,12 @@ app.post('/api/shipping/calculate', authenticateToken, async (req, res) => {
 });
 
 // Products routes
+let cachedStoreSettings = null;
+let cachedStoreSettingsTime = 0;
+
 app.get('/api/products', async (req, res) => {
+  const requestStart = Date.now();
+  console.log(`[Products] GET /api/products request received. Query:`, req.query);
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 20;
@@ -2817,7 +2859,13 @@ app.get('/api/products', async (req, res) => {
     const search = req.query.search || '';
     const maxPrice = req.query.maxPrice ? parseFloat(req.query.maxPrice) : null;
 
-    const storeSettings = await prisma.storeSettings.findUnique({ where: { id: 1 } });
+    // Cache Store Settings for 60 seconds to reduce DB round-trips
+    if (!cachedStoreSettings || (Date.now() - cachedStoreSettingsTime > 60000)) {
+       cachedStoreSettings = await prisma.storeSettings.findUnique({ where: { id: 1 } });
+       cachedStoreSettingsTime = Date.now();
+    }
+    const storeSettings = cachedStoreSettings;
+
     const shippingRates = {
       airShippingRate: storeSettings?.airShippingRate,
       seaShippingRate: storeSettings?.seaShippingRate,
@@ -2832,12 +2880,15 @@ app.get('/api/products', async (req, res) => {
         
         // Since hybrid search is dynamic, we estimate total for pagination or just return results
         // For better UX, we can return a large total if there are results
-        return res.json({
-          products: Array.isArray(products) ? products.map(p => applyDynamicPricingToProduct(p, shippingRates)) : products,
-          total: products.length === limit ? page * limit + limit : (page - 1) * limit + products.length,
-          page,
-          totalPages: products.length === limit ? page + 1 : page
-        });
+        if (products && products.length > 0) {
+          return res.json({
+            products: Array.isArray(products) ? products.map(p => applyDynamicPricingToProduct(p, shippingRates)) : products,
+            total: products.length === limit ? page * limit + limit : (page - 1) * limit + products.length,
+            page,
+            totalPages: products.length === limit ? page + 1 : page
+          });
+        }
+        console.log('[AI Search] No results found, falling back to database search');
       } catch (aiError) {
         console.error('AI Search failed in products route, falling back:', aiError);
       }

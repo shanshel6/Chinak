@@ -15,6 +15,7 @@ interface ProductInfoProps {
   calculatedSeaPrice?: number;
   shippingMethod?: 'air' | 'sea';
   onShippingMethodChange?: (method: 'air' | 'sea') => void;
+  isAirRestricted?: boolean;
 }
 
 const ProductInfo: React.FC<ProductInfoProps> = ({
@@ -28,6 +29,7 @@ const ProductInfo: React.FC<ProductInfoProps> = ({
   calculatedSeaPrice,
   shippingMethod,
   onShippingMethodChange,
+  isAirRestricted,
 }) => {
   const totalPrice = React.useMemo(() => {
     // If explicit calculated prices are passed, use them based on method
@@ -64,14 +66,20 @@ const ProductInfo: React.FC<ProductInfoProps> = ({
           <div className="flex bg-slate-100 dark:bg-slate-800 p-1.5 rounded-2xl border border-slate-200 dark:border-slate-700/50 w-full sm:w-fit">
             <button
               onClick={() => onShippingMethodChange('air')}
+              disabled={isAirRestricted}
               className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-sm font-black transition-all duration-300 ${
                 shippingMethod === 'air'
                   ? 'bg-white dark:bg-slate-700 text-primary shadow-sm ring-1 ring-black/5 dark:ring-white/10 scale-[1.02]'
-                  : 'text-slate-500 dark:text-slate-400 hover:bg-white/50 dark:hover:bg-slate-700/50'
+                  : isAirRestricted 
+                    ? 'text-slate-300 dark:text-slate-600 cursor-not-allowed opacity-50 bg-slate-50 dark:bg-slate-800/50' 
+                    : 'text-slate-500 dark:text-slate-400 hover:bg-white/50 dark:hover:bg-slate-700/50'
               }`}
             >
-              <Plane size={18} className={shippingMethod === 'air' ? 'text-primary' : 'text-slate-400'} />
-              شحن جوي
+              <Plane size={18} className={shippingMethod === 'air' ? 'text-primary' : (isAirRestricted ? 'text-slate-300' : 'text-slate-400')} />
+              <div className="flex flex-col items-center leading-none gap-0.5">
+                <span>شحن جوي</span>
+                {isAirRestricted && <span className="text-[10px] font-medium">غير متوفر</span>}
+              </div>
             </button>
             <button
               onClick={() => onShippingMethodChange('sea')}

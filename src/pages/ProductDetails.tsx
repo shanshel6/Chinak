@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
-import { fetchProductById, fetchProductReviews, checkProductPurchase, findProductInGlobalCache } from '../services/api';
+import { fetchProductById, fetchProductReviews, checkProductPurchase, findProductInGlobalCache, trackInteraction } from '../services/api';
 import { useWishlistStore } from '../store/useWishlistStore';
 import { useCartStore } from '../store/useCartStore';
 import { useAuthStore } from '../store/useAuthStore';
@@ -214,6 +214,13 @@ const ProductDetails: React.FC = () => {
 
   }, [product]);
 
+  useEffect(() => {
+    // Force "sea" shipping if product is restricted and user hasn't explicitly chosen yet
+    if (product?.isAirRestricted && !userChangedShipping.current && shippingMethod !== 'sea') {
+      setShippingMethod('sea');
+    }
+  }, [product, shippingMethod]);
+
   const pricingParams = useMemo(() => {
     if (!product) return null;
     
@@ -290,7 +297,7 @@ const ProductDetails: React.FC = () => {
   const detailImages = useMemo(() => {
     if (!product || !Array.isArray(product.images)) return [];
     return product.images
-      .filter((img: any) => img.type === 'DETAIL')
+      .filter((img: any) => img.type === 'DETAIL' || img.type === 'DESCRIPTION') // Include DESCRIPTION type
       .map((img: any) => ({
         url: typeof img === 'string' ? img : (img.url || img.image),
         order: img.order || 0
@@ -308,6 +315,10 @@ const ProductDetails: React.FC = () => {
       if (initialData) {
         setProduct(initialData);
         setLoading(false);
+        // Force rendering of details immediately if we have them
+        if (initialData.images?.some((img: any) => img.type === 'DETAIL' || img.type === 'DESCRIPTION')) {
+             setShouldRenderDetails(true);
+        }
         
         // Initialize options for the new product immediately
         if (initialData.options?.length) {
@@ -381,6 +392,10 @@ const ProductDetails: React.FC = () => {
           // Merge with initial data if present to avoid losing already-rendered info
           setProduct(prev => {
             if (!prev) return productData;
+            // Check if we have description images
+            if (productData.images?.some((img: any) => img.type === 'DETAIL' || img.type === 'DESCRIPTION')) {
+                 setShouldRenderDetails(true);
+            }
             return { ...prev, ...productData };
           });
           
@@ -494,7 +509,19 @@ const ProductDetails: React.FC = () => {
 
 
 
+  useEffect(() => {
+    if (productId && product) {
+      // Track VIEW event
+      // We use a small timeout to ensure it's a real view, not just a quick bounce
+      const timer = setTimeout(() => {
+        trackInteraction(productId, 'VIEW', 1);
+      }, 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [productId, product?.id]);
+
   const handleShippingMethodChange = (method: 'air' | 'sea') => {
+    if (product?.isAirRestricted && method === 'air') return;
     setShippingMethod(method);
     userChangedShipping.current = true;
     if (productId) {
@@ -526,6 +553,8 @@ const ProductDetails: React.FC = () => {
         basePriceIQD: product.basePriceIQD,
         deliveryTime: product.deliveryTime
       }, selectedOptions, shippingMethod);
+
+      trackInteraction(product.id, 'CART', 5); // Cart adds are high value
     } catch (err) {
       // Rollback UI state if API fails
       setIsAdded(false);
@@ -613,6 +642,7 @@ const ProductDetails: React.FC = () => {
             calculatedSeaPrice={seaPrice}
             shippingMethod={shippingMethod}
             onShippingMethodChange={handleShippingMethodChange}
+            isAirRestricted={product.isAirRestricted}
           />
 
           {product.options && product.options.length > 0 && (
@@ -639,6 +669,8 @@ const ProductDetails: React.FC = () => {
                 loading={reviewsLoading}
               />
 
+          <ProductSpecs specs={displaySpecs} />
+
           {detailImages.length > 0 && shouldRenderDetails && (
             <div className="mt-12 space-y-4 px-0">
               <div className="flex items-center gap-3 mb-6 px-5">
@@ -659,8 +691,6 @@ const ProductDetails: React.FC = () => {
               </div>
             </div>
           )}
-
-          <ProductSpecs specs={displaySpecs} />
 
           <SimilarProducts 
             products={similarProducts}
