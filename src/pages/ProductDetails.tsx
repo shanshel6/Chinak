@@ -28,7 +28,7 @@ interface Review {
   images?: string[];
 }
 
-import { AlertCircle, Package, MessageSquareText, Store, Star } from 'lucide-react';
+import { AlertCircle, Package } from 'lucide-react';
 
 const ProductDetails: React.FC = () => {
   const navigate = useNavigate();
@@ -123,12 +123,40 @@ const ProductDetails: React.FC = () => {
   }, [allReviews]);
 
   const reviewSummary = useMemo(() => {
-    const summary = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 };
+    if (!allReviews.length) return undefined;
+
+    const summary: Record<number, number> = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 };
+    let positiveCount = 0;
+    const images: string[] = [];
+
     allReviews.forEach(r => {
-      const rating = Math.round(r.rating) as 1 | 2 | 3 | 4 | 5;
+      const rating = Math.round(r.rating);
       if (summary[rating] !== undefined) summary[rating]++;
+      if (rating >= 4) positiveCount++;
+      if (r.images && r.images.length > 0) {
+        images.push(...r.images);
+      }
     });
-    return summary;
+
+    const positiveRate = Math.round((positiveCount / allReviews.length) * 100) + '%';
+    
+    const tags = Object.entries(summary)
+      .filter(([_, count]) => count > 0)
+      .sort((a, b) => Number(b[0]) - Number(a[0]))
+      .map(([rating, count]) => ({
+        label: `${rating} نجوم`,
+        count
+      }));
+
+    return {
+      countText: allReviews.length.toString(),
+      positiveRate,
+      tags,
+      images: images.slice(0, 10),
+      comments: [], 
+      reviews: [],
+      detailedReviews: []
+    };
   }, [allReviews]);
 
   const displaySpecs = useMemo(() => {

@@ -24,6 +24,8 @@ interface CartItem {
     length?: number;
     width?: number;
     height?: number;
+    basePriceRMB?: number;
+    isPriceCombined?: boolean;
   };
   lastUpdated?: number;
 }
@@ -57,6 +59,8 @@ interface CartState {
       basePriceIQD?: number;
       minOrder?: number;
       deliveryTime?: string;
+      basePriceRMB?: number;
+      isPriceCombined?: boolean;
     }, 
     selectedOptions?: any,
     shippingMethod?: 'air' | 'sea'
@@ -338,15 +342,9 @@ export const useCartStore = create<CartState>()(
           const basePrice = item.variant?.price || item.product.price || 0;
           const currentPrice = calculateInclusivePrice(
             basePrice,
-            item.variant?.weight ?? item.product.weight,
-            item.variant?.length ?? item.product.length,
-            item.variant?.width ?? item.product.width,
-            item.variant?.height ?? item.product.height,
-            rates,
-            item.shippingMethod,
             item.product.domesticShippingFee || 0,
-            item.variant?.basePriceRMB ?? item.product.basePriceRMB,
-            item.variant?.isPriceCombined ?? item.product.isPriceCombined
+            item.variant?.basePriceIQD ?? item.product.basePriceIQD,
+            rates
           );
           return acc + (currentPrice * item.quantity);
         }, 0);

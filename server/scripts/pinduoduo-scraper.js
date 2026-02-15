@@ -39,7 +39,18 @@ if (process.env.DEEPINFRA_API_KEY) {
 
 
 // --- Configuration ---
-let CATEGORY_URL = 'https://mobile.pinduoduo.com/search_result.html?search_key=%E5%8D%95%E8%82%A9%E5%8C%85%E5%A5%B3&search_type=goods&source=index&options=3&paste=1&search_met_track=manual&refer_page_el_sn=99885&refer_page_name=search_result&refer_page_id=10015_1771136715200_6j6plj2ual&refer_page_sn=10015&page_id=10015_1771136725342_6mr9yzf00z&bsch_is_search_mall=&bsch_show_active_page=&flip=0%3B0%3B0%3B0%3B630af7c3-043b-2964-39b0-12664add80c2%3B%2F20%3B0%3B0%3B47270af4a8bda0d0d524441a2e99ac18&sort_type=default&price_index=0&price=0%2C25&filter=price%2C0%2C25&opt_tag_name=&brand_tab_filter=&item_index=1'; 
+// Allow URL to be passed via command line argument
+const cliUrl = process.argv[2];
+let CATEGORY_URL = cliUrl && cliUrl.startsWith('http') 
+    ? cliUrl 
+    : 'https://mobile.pinduoduo.com/search_result.html?search_key=%E5%8D%95%E8%82%A9%E5%8C%85%E5%A5%B3&search_type=goods&source=index&options=3&paste=1&search_met_track=manual&refer_page_el_sn=99885&refer_page_name=search_result&refer_page_id=10015_1771136715200_6j6plj2ual&refer_page_sn=10015&page_id=10015_1771136725342_6mr9yzf00z&bsch_is_search_mall=&bsch_show_active_page=&flip=0%3B0%3B0%3B0%3B630af7c3-043b-2964-39b0-12664add80c2%3B%2F20%3B0%3B0%3B47270af4a8bda0d0d524441a2e99ac18&sort_type=default&price_index=0&price=0%2C25&filter=price%2C0%2C25&opt_tag_name=&brand_tab_filter=&item_index=1'; 
+
+if (cliUrl) {
+    console.log('Using URL from command line:', cliUrl);
+} else {
+    console.log('Using default/hardcoded URL.');
+}
+
 const TARGET_PRODUCT_COUNT = 999999; // Effectively infinite
 const OUTPUT_FILE = path.join(__dirname, '..', 'pinduoduo-products.json'); 
 const PAGE_LOAD_TIMEOUT = 60000;

@@ -47,15 +47,17 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
       {/* Mobile Overlay */}
       {isSidebarOpen && (
         <div 
-          className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[90] lg:hidden"
+          className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[140] lg:hidden cursor-pointer"
           onClick={() => setIsSidebarOpen(false)}
+          aria-hidden="true"
         />
       )}
 
       {/* Sidebar */}
       <aside className={`
-        fixed lg:sticky top-0 right-0 h-screen w-72 max-w-[85vw] bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 
-        flex flex-col z-[100] transition-transform duration-300 lg:translate-x-0 shadow-2xl lg:shadow-none
+        fixed lg:sticky top-0 right-0 h-screen w-64 lg:w-72 max-w-[85vw] bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 
+        flex flex-col z-[150] transition-transform duration-300 shadow-2xl lg:shadow-none
+        lg:translate-x-0
         ${isSidebarOpen ? 'translate-x-0' : 'translate-x-full'}
       `}>
         <div className="p-5 flex items-center justify-between gap-3">
@@ -64,12 +66,13 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
             <span className="text-xl font-black text-slate-900 dark:text-white">شيناك أدمن</span>
           </div>
           <button 
-            className="lg:hidden p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl cursor-pointer active:scale-95 transition-transform"
+            className="lg:hidden p-2 text-slate-500 hover:bg-red-50 hover:text-red-500 dark:hover:bg-slate-800 rounded-xl cursor-pointer active:scale-95 transition-all"
             onClick={(e) => {
               e.stopPropagation();
               setIsSidebarOpen(false);
             }}
             aria-label="Close Sidebar"
+            type="button"
           >
             <X size={24} />
           </button>
@@ -122,8 +125,10 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
         <header className="h-20 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 flex items-center justify-between px-4 lg:px-8 sticky top-0 z-30">
           <div className="flex items-center gap-4 flex-1">
             <button 
-              className="lg:hidden p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl"
-              onClick={() => setIsSidebarOpen(true)}
+              className="lg:hidden p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl cursor-pointer active:scale-95 transition-transform"
+              onClick={() => setIsSidebarOpen((prev) => !prev)}
+              aria-label="Toggle Sidebar"
+              type="button"
             >
               <Menu size={24} />
             </button>
@@ -155,7 +160,7 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
             <div className="flex items-center gap-3 pr-3 lg:pr-6 border-r border-slate-200 dark:border-slate-800">
               <div className="text-left hidden xs:block">
                 <p className="text-sm font-bold text-slate-900 dark:text-white truncate max-w-[150px] lg:max-w-none">{user?.name || 'الأدمن'}</p>
-                <p className="text-[10px] text-slate-500 font-medium uppercase tracking-wider">{user?.role || 'ADMIN'}</p>
+                <p className="text-sm text-slate-500 font-medium uppercase tracking-wider">{user?.role || 'ADMIN'}</p>
               </div>
               <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary font-bold shrink-0">
                 {user?.name?.[0] || <User size={20} />}
