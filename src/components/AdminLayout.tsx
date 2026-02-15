@@ -47,19 +47,21 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
       {/* Mobile Overlay */}
       {isSidebarOpen && (
         <div 
-          className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[140] lg:hidden cursor-pointer"
+          className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[40] lg:hidden cursor-pointer transition-opacity duration-300"
           onClick={() => setIsSidebarOpen(false)}
           aria-hidden="true"
         />
       )}
 
       {/* Sidebar */}
-      <aside className={`
-        fixed lg:sticky top-0 right-0 h-screen w-64 lg:w-72 max-w-[85vw] bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 
-        flex flex-col z-[150] transition-transform duration-300 shadow-2xl lg:shadow-none
-        lg:translate-x-0
-        ${isSidebarOpen ? 'translate-x-0' : 'translate-x-full'}
-      `}>
+      <aside 
+        className={`
+          fixed top-0 right-0 h-screen w-64 max-w-[85vw] bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 
+          flex flex-col z-[50] transition-transform duration-300 shadow-2xl lg:shadow-none
+          lg:sticky lg:translate-x-0 lg:z-30
+          ${isSidebarOpen ? 'translate-x-0' : 'translate-x-full'}
+        `}
+      >
         <div className="p-5 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <Logo size="sm" />
@@ -120,14 +122,14 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col min-w-0 transition-all duration-300">
         {/* Header */}
-        <header className="h-20 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 flex items-center justify-between px-4 lg:px-8 sticky top-0 z-30">
+        <header className="h-16 lg:h-20 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 flex items-center justify-between px-4 lg:px-8 sticky top-0 z-30">
           <div className="flex items-center gap-4 flex-1">
             <button 
               className="lg:hidden p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl cursor-pointer active:scale-95 transition-transform"
-              onClick={() => setIsSidebarOpen((prev) => !prev)}
-              aria-label="Toggle Sidebar"
+              onClick={() => setIsSidebarOpen(true)}
+              aria-label="Open Sidebar"
               type="button"
             >
               <Menu size={24} />
@@ -169,11 +171,10 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
           </div>
         </header>
 
-        {/* Page Content */}
-        <div className="p-4 lg:p-8">
+        <main className="flex-1 p-4 lg:p-8">
           {children}
-        </div>
-      </main>
+        </main>
+      </div>
     </div>
   );
 };
