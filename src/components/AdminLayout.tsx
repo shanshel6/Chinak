@@ -47,27 +47,31 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
       {/* Mobile Overlay */}
       {isSidebarOpen && (
         <div 
-          className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-40 lg:hidden"
+          className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[90] lg:hidden"
           onClick={() => setIsSidebarOpen(false)}
         />
       )}
 
       {/* Sidebar */}
       <aside className={`
-        fixed lg:sticky top-0 right-0 h-screen w-64 bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 
-        flex flex-col z-50 transition-transform duration-300 lg:translate-x-0
+        fixed lg:sticky top-0 right-0 h-screen w-72 max-w-[85vw] bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 
+        flex flex-col z-[100] transition-transform duration-300 lg:translate-x-0 shadow-2xl lg:shadow-none
         ${isSidebarOpen ? 'translate-x-0' : 'translate-x-full'}
       `}>
-        <div className="p-6 flex items-center justify-between lg:justify-start gap-3">
+        <div className="p-5 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <Logo size="sm" />
             <span className="text-xl font-black text-slate-900 dark:text-white">شيناك أدمن</span>
           </div>
           <button 
-            className="lg:hidden p-2 text-slate-500"
-            onClick={() => setIsSidebarOpen(false)}
+            className="lg:hidden p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl cursor-pointer active:scale-95 transition-transform"
+            onClick={(e) => {
+              e.stopPropagation();
+              setIsSidebarOpen(false);
+            }}
+            aria-label="Close Sidebar"
           >
-            <X size={20} />
+            <X size={24} />
           </button>
         </div>
 

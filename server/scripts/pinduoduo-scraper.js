@@ -18,7 +18,7 @@ const prisma = new PrismaClient();
 // Initialize AI (DeepInfra)
 let aiClient = null;
 
-const AI_MODEL = "meta-llama/Llama-4-Scout-17B-16E-Instruct";
+let AI_MODEL = "meta-llama/Llama-4-Scout-17B-16E-Instruct"; // Reverted to Llama-4-Scout
 
 if (process.env.DEEPINFRA_API_KEY) {
     aiClient = new OpenAI({
@@ -39,8 +39,8 @@ if (process.env.DEEPINFRA_API_KEY) {
 
 
 // --- Configuration ---
-let CATEGORY_URL = ''; 
-const TARGET_PRODUCT_COUNT = 100;
+let CATEGORY_URL = 'https://mobile.pinduoduo.com/search_result.html?search_key=%E5%8D%95%E8%82%A9%E5%8C%85%E5%A5%B3&search_type=goods&source=index&options=3&paste=1&search_met_track=manual&refer_page_el_sn=99885&refer_page_name=search_result&refer_page_id=10015_1771136715200_6j6plj2ual&refer_page_sn=10015&page_id=10015_1771136725342_6mr9yzf00z&bsch_is_search_mall=&bsch_show_active_page=&flip=0%3B0%3B0%3B0%3B630af7c3-043b-2964-39b0-12664add80c2%3B%2F20%3B0%3B0%3B47270af4a8bda0d0d524441a2e99ac18&sort_type=default&price_index=0&price=0%2C25&filter=price%2C0%2C25&opt_tag_name=&brand_tab_filter=&item_index=1'; 
+const TARGET_PRODUCT_COUNT = 999999; // Effectively infinite
 const OUTPUT_FILE = path.join(__dirname, '..', 'pinduoduo-products.json'); 
 const PAGE_LOAD_TIMEOUT = 60000;
 
@@ -186,6 +186,28 @@ async function enrichWithAI(title, description, price) {
                     throw new Error("JSON parsing failed after multiple attempts.");
                 }
 
+                // CHECK FOR INVALID/PLACEHOLDER NAMES
+                if (parsed.product_name_ar) {
+                     const badNames = [
+                         'اسم غير متوفر',
+                         'name not available',
+                         'اسم المنتج بالعربيه',
+                         'اسم المنتج بالعربية',
+                         'put translated name here',
+                         'arabic name',
+                         'ترجمة اسم المنتج'
+                     ];
+                     const lowerName = parsed.product_name_ar.toLowerCase();
+                     
+                     // Check if name matches any bad pattern or contains Chinese
+                     if (badNames.some(bad => lowerName.includes(bad)) || /[\u4e00-\u9fa5]/.test(parsed.product_name_ar)) {
+                         console.log(`AI returned invalid name: "${parsed.product_name_ar}". Retrying...`);
+                         throw new Error('AI returned invalid name (placeholder or Chinese)');
+                     }
+                } else {
+                    throw new Error('AI returned empty product_name_ar');
+                }
+
                 try {
                     const stripChinese = (str) => {
                         if (typeof str !== 'string') return str;
@@ -195,21 +217,7 @@ async function enrichWithAI(title, description, price) {
                         return str.trim(); 
                     };
 
-                    if (parsed.product_name_ar) {
-                         // Check if it's "اسم غير متوفر" or similar placeholders
-                         if (parsed.product_name_ar.includes('اسم غير متوفر') || 
-                             parsed.product_name_ar.includes('Name Not Available') ||
-                             parsed.product_name_ar.includes('اسم المنتج بالعربيه') || 
-                             parsed.product_name_ar.includes('اسم المنتج بالعربية') ||
-                             parsed.product_name_ar.includes('Put Translated Name Here') ||
-                             /[\u4e00-\u9fa5]/.test(parsed.product_name_ar)) { // Check for Chinese characters
-                             // Fallback: If AI fails to translate, force a retry by throwing error (which triggers the loop)
-                             console.log('AI returned placeholder name or contains Chinese. Retrying...');
-                             throw new Error('AI returned invalid name: ' + parsed.product_name_ar);
-                         }
-                    } else {
-                        throw new Error('AI returned empty product_name_ar');
-                    }
+                    // if (parsed.product_name_ar) { ... } // Removed redundant check block since we did it above
 
                     if (parsed.product_details_ar) {
                         for (const key in parsed.product_details_ar) {
@@ -261,10 +269,11 @@ async function enrichWithAI(title, description, price) {
         throw new Error("Max AI attempts reached");
     } catch (e) {
         console.error("AI Generation Error:", e.message);
+        // CRITICAL CHANGE: If all attempts failed or returned bad names, SKIP this product.
+        // Return a special flag to the caller.
         return {
-            translatedTitle: title,
-            translatedDesc: description,
-            aiMetadata: { synonyms: [], market_tags: [], category_suggestion: "Error" }
+            shouldSkip: true,
+            reason: "AI Translation Failed (Max Attempts)"
         };
     }
 }
@@ -345,8 +354,11 @@ async function run() {
     console.log('----------------------------------------------------');
     let urlInput = '';
     
-    // Check command line args first
-    if (process.argv[2]) {
+    // Check if CATEGORY_URL is already set in the code (length > 10)
+    if (CATEGORY_URL && CATEGORY_URL.length > 10) {
+        urlInput = CATEGORY_URL;
+        console.log('Using predefined CATEGORY_URL from script.');
+    } else if (process.argv[2]) {
         urlInput = process.argv[2];
     } else {
         urlInput = await askQuestion('Enter the Pinduoduo Category URL to scrape: ');
@@ -441,7 +453,33 @@ async function run() {
     } catch(e) {}
     
     // Main Loop
-    while (products.length < TARGET_PRODUCT_COUNT && isRunning) {
+    // User requested infinite loop until manually stopped
+    while (isRunning) {
+
+        // --- VALIDATE CURRENT URL ---
+        // Ensure we are still on the category page or search result page we started with.
+        // If we drifted to home or another category, go back.
+        const currentUrlBeforeScroll = page.url();
+        const isHomePage = currentUrlBeforeScroll === 'https://mobile.pinduoduo.com/' || currentUrlBeforeScroll.includes('page_id=10002');
+        // Simple check: if we are not on the category URL and not on a product page (which we shouldn't be here), go back.
+        // Better: Check if the URL contains key parts of our CATEGORY_URL
+        // Extract 'search_key' from CATEGORY_URL if it exists
+        let requiredParam = '';
+        try {
+            const catUrlObj = new URL(CATEGORY_URL);
+            if (catUrlObj.searchParams.has('search_key')) {
+                requiredParam = 'search_key=' + encodeURIComponent(catUrlObj.searchParams.get('search_key'));
+            } else if (catUrlObj.searchParams.has('cat_id')) {
+                requiredParam = 'cat_id=' + catUrlObj.searchParams.get('cat_id');
+            }
+        } catch(e) {}
+
+        if (isHomePage || (requiredParam && !currentUrlBeforeScroll.includes(decodeURIComponent(requiredParam)) && !currentUrlBeforeScroll.includes(requiredParam))) {
+             console.log('WARNING: Drifted away from category page. Redirecting back to:', CATEGORY_URL);
+             await page.goto(CATEGORY_URL, { waitUntil: 'domcontentloaded', timeout: PAGE_LOAD_TIMEOUT });
+             await humanDelay(3000, 5000);
+        }
+
         
         // --- 4-POINT BLIND CLICK STRATEGY ---
         console.log('Scrolling down to find new batch of products...');
@@ -471,7 +509,7 @@ async function run() {
 
         for (const point of clickPoints) {
             if (!isRunning) break;
-            if (products.length >= TARGET_PRODUCT_COUNT) break;
+            // if (products.length >= TARGET_PRODUCT_COUNT) break; // Removed limit as per request
 
             console.log(`Preparing to click: ${point.name}...`);
 
@@ -542,12 +580,22 @@ async function run() {
                 const productUrl = newPage.url();
                 console.log(`Scraping Product URL: ${productUrl}`);
 
-                // --- DB DUPLICATE CHECK ---
+                // --- ROBUST DEDUPLICATION ---
                 try {
                     const urlObj = new URL(productUrl);
                     const goodsId = urlObj.searchParams.get('goods_id');
                     
                     if (goodsId) {
+                        // 1. Check if already in current session (in-memory)
+                        const alreadyScrapedInSession = products.some(p => p.url && p.url.includes(goodsId));
+                        if (alreadyScrapedInSession) {
+                            console.log(`Product already scraped in THIS SESSION. Skipping: ${goodsId}`);
+                            if (!navigationHappened) await newPage.close();
+                            else await newPage.goBack();
+                            continue; 
+                        }
+
+                        // 2. Check Database
                         const existingProduct = await prisma.product.findFirst({
                             where: {
                                 purchaseUrl: {
@@ -567,10 +615,9 @@ async function run() {
                     console.error('Error checking DB for duplicate:', dbCheckError.message);
                 }
 
-                // Deduplicate by URL
+                // Deduplicate by URL (Fallback)
                 if (products.some(p => p.url === productUrl)) {
-                    console.log('Duplicate product. Skipping.');
-                    // For "Click-and-Scrape" loop, we need to go back or close tab
+                    console.log('Duplicate product URL. Skipping.');
                     if (!navigationHappened) await newPage.close();
                     else await newPage.goBack(); 
                     continue;
@@ -585,6 +632,7 @@ async function run() {
                     console.log('Page load timeout, attempting scrape anyway...');
                 }
 
+                /*
                 // --- RANDOM MOVES ON PRODUCT PAGE (Anti-Detection) ---
                 console.log('Performing random moves on product page...');
                 try {
@@ -614,10 +662,30 @@ async function run() {
                 } catch(e) {
                     console.log('Random moves failed:', e.message);
                 }
+                */
 
                 const data = await newPage.evaluate(async () => {
                     const wait = (ms) => new Promise(r => setTimeout(r, ms));
                     
+                    // HELPER: Strict Price Extraction from User Target
+                    const getTargetPrice = () => {
+                         const targetDiv = document.querySelector('.ujEqGzEB');
+                         if (targetDiv) {
+                             // Try aria-label first (e.g. "首件¥29.88")
+                             const imgSpan = targetDiv.querySelector('span[role="img"]');
+                             if (imgSpan && imgSpan.getAttribute('aria-label')) {
+                                 const label = imgSpan.getAttribute('aria-label');
+                                 const match = label.match(/¥\s*(\d+(\.\d+)?)/);
+                                 if (match) return '¥' + match[1];
+                             }
+                             // Fallback to text content
+                             const text = targetDiv.innerText;
+                             const match = text.match(/¥\s*(\d+(\.\d+)?)/);
+                             if (match) return match[0];
+                         }
+                         return null;
+                    };
+
                     // 1. Title Extraction (User specific selector)
                     let title = '';
                     const titleEl = document.querySelector('.tLYIg_Ju span') || 
@@ -627,9 +695,9 @@ async function run() {
                     if (!title) title = document.title;
 
                     // 2. Price Extraction (Initial fallback)
-                     let price = '';
+                     let price = getTargetPrice();
                      const priceEl = document.querySelector('.goods-price, [class*="price-info"], [class*="goods-price"]');
-                     if (priceEl) {
+                     if (!price && priceEl) {
                           price = priceEl.innerText.trim();
                      }
                      if (!price) {
@@ -772,8 +840,28 @@ async function run() {
                                                     try { v2.element.click(); await wait(300); } catch(e){}
                                                     
                                                     // Capture Price
-                                                    const currentPriceStr = modal.querySelector('.ujEqGzEB')?.innerText.replace(/\n/g, '').trim();
-                                                    const comboKey = `${v1.text}+${v2.text}`;
+                                                    let currentPriceStr = getTargetPrice(); // PRIORITY: Use strict selector
+                                                    
+                                                    if (!currentPriceStr) {
+                                                        // Fallback: User-Specific Price Selector (Usually Left side)
+                                                        const userPriceSelector = '#main > div > div.GNrMaxlJ > div.m4HArFRm.sku-plus1 > div > div > div.O7pEFvHR > div > div.Ngfn6pTR > div.kYzukoxf';
+                                                        const userPriceEl = document.querySelector(userPriceSelector);
+                                                        
+                                                        if (userPriceEl) {
+                                                            const text = userPriceEl.innerText.trim();
+                                                            const matches = text.match(/¥?\s*(\d+(\.\d+)?)/g);
+                                                            if (matches && matches.length > 0) {
+                                                                currentPriceStr = matches[0];
+                                                            } else {
+                                                                currentPriceStr = text;
+                                                            }
+                                                        } else {
+                                                            // Final Fallback
+                                                            currentPriceStr = modal.querySelector('.ujEqGzEB')?.innerText.replace(/\n/g, '').trim();
+                                                        }
+                                                    }
+
+                                                    const comboKey = `${v1.text}__SEP__${v2.text}`;
                                                     
                                                     if (currentPriceStr) {
                                                         skuMap[comboKey] = currentPriceStr;
@@ -791,7 +879,28 @@ async function run() {
                                                 }
                                             } else {
                                                 // Single level
-                                                const currentPriceStr = modal.querySelector('.ujEqGzEB')?.innerText.replace(/\n/g, '').trim();
+                                                // Capture Price
+                                                let currentPriceStr = getTargetPrice(); // PRIORITY: Use strict selector
+                                                
+                                                if (!currentPriceStr) {
+                                                    // Fallback: User-Specific Price Selector (Usually Left side)
+                                                    const userPriceSelector = '#main > div > div.GNrMaxlJ > div.m4HArFRm.sku-plus1 > div > div > div.O7pEFvHR > div > div.Ngfn6pTR > div.kYzukoxf';
+                                                    const userPriceEl = document.querySelector(userPriceSelector);
+                                                    
+                                                    if (userPriceEl) {
+                                                        const text = userPriceEl.innerText.trim();
+                                                        const matches = text.match(/¥?\s*(\d+(\.\d+)?)/g);
+                                                        if (matches && matches.length > 0) {
+                                                            currentPriceStr = matches[0];
+                                                        } else {
+                                                            currentPriceStr = text;
+                                                        }
+                                                    } else {
+                                                        // Final Fallback
+                                                        currentPriceStr = modal.querySelector('.ujEqGzEB')?.innerText.replace(/\n/g, '').trim();
+                                                    }
+                                                }
+
                                                 if (currentPriceStr) {
                                                     skuMap[v1.text] = currentPriceStr;
                                                     
@@ -840,7 +949,20 @@ async function run() {
                      
                      // Helper to capture current visible images
                      const captureImages = () => {
-                         const imgs = document.querySelectorAll('#main > div img, .goods-slider img, .swiper-slide img');
+                         // STRICT SLIDER SELECTOR: Only target images within the known slider container classes
+                         // .goods-slider, .swiper-slide, or specific top containers
+                         // We avoid #main > div img as it is too broad and catches header icons/text
+                         const sliderSelectors = [
+                             '.goods-slider img',
+                             '.swiper-slide img',
+                             '.swiper-container img',
+                             '.banner-slider img',
+                             '#main > div > div:first-child img', // Often the first div is the slider
+                             '.slick-slide img'
+                         ];
+                         
+                         const imgs = document.querySelectorAll(sliderSelectors.join(', '));
+                         
                          imgs.forEach(img => {
                              if (img.src && img.src.startsWith('http') && img.naturalWidth > 400) {
                                  // Clean the URL
@@ -856,6 +978,24 @@ async function run() {
                                  images.push(cleanSrc);
                              }
                          });
+                         
+                         // FALLBACK: If strict slider extraction failed (empty), try slightly broader but still top-area
+                         if (images.length === 0) {
+                             // Get images from the top 50% of the page only
+                             const allImgs = document.querySelectorAll('img');
+                             allImgs.forEach(img => {
+                                 const rect = img.getBoundingClientRect();
+                                 if (rect.top < window.innerHeight * 0.6 && img.naturalWidth > 400) {
+                                      let cleanSrc = img.src.split('?')[0];
+                                      if (cleanSrc.startsWith('http') && 
+                                          !cleanSrc.includes('avatar') && 
+                                          !cleanSrc.includes('icon') &&
+                                          !cleanSrc.includes('coupon')) {
+                                          images.push(cleanSrc);
+                                      }
+                                 }
+                             });
+                         }
                      };
  
                      // Initial capture
@@ -878,6 +1018,46 @@ async function run() {
                              captureImages();
                          }
                      }
+
+                     // --- MAIN IMAGE FIX: Prioritize Images from Specific Picture Div ---
+                     // User Request: "set the first main img is the imgs shows in that the picture div"
+                     // This usually refers to the main gallery or a specific container that holds the high-res images
+                     
+                     // 1. Try to find the specific "Picture Div" (often .goods-slider or .slick-slider)
+                     // If we found images in the slider, we should prioritize them.
+                     // The `images` array already collects them, but let's make sure they are unique and ordered correctly.
+                     
+                     images = [...new Set(images)]; // Deduplicate first
+                     
+                     // If we have slider images, they are already at the top.
+                     // But if the user meant the "Details" images (which are sometimes high res), we should be careful.
+                     // Usually "Main Image" is the first one in the slider.
+                     
+                     // Let's verify if there's a specific container the user might be referring to.
+                     // Often in Pinduoduo mobile, the main image is in a swiper at the top.
+                     // We already target that. 
+                     
+                     // However, sometimes "other pictures" (like description images) get mixed in if we use broad selectors.
+                     // Our `captureImages` is already quite strict.
+                     
+                     // Let's double check if we can be even stricter for the FIRST image.
+                     // Look for the absolute first image in the slider container
+                     const firstSliderImg = document.querySelector('.goods-slider img') || 
+                                          document.querySelector('.swiper-slide-active img') || 
+                                          document.querySelector('.slick-current img') ||
+                                          document.querySelector('#main > div > div:first-child img');
+                                          
+                     if (firstSliderImg && firstSliderImg.src) {
+                         const mainSrc = firstSliderImg.src.split('?')[0];
+                         // Move this image to the front of the array if it exists
+                         images = images.filter(img => img !== mainSrc);
+                         images.unshift(mainSrc);
+                     } else if (images.length > 0) {
+                         // If we couldn't pinpoint the slider element but captured images,
+                         // ensure the first one in the captured list stays first.
+                         // (Already handled by array order, but good to be explicit)
+                     }
+
  
                      // 6. Description Images Extraction
                      let product_desc_imgs = [];
@@ -1008,6 +1188,14 @@ async function run() {
 
                 const aiData = await enrichWithAI(data.title, data.description, data.price);
 
+                // CHECK: Did AI fail completely?
+                if (aiData.shouldSkip) {
+                    console.error(`Skipping product due to AI translation failure: ${aiData.reason}`);
+                    if (!navigationHappened) await newPage.close();
+                    else await newPage.goBack();
+                    continue;
+                }
+
                 // --- GENERATE OPTIONS FROM SKU MAP (WITH TRANSLATION) ---
                 let generated_options = [];
                 const optionsMap = new Map(); // Key: "Color_Price", Value: Object
@@ -1020,14 +1208,21 @@ async function run() {
                     // For now, let's process the structure first, then maybe translate the labels
                     
                     for (const [key, priceStr] of Object.entries(data.skuMap)) {
-                        // key is usually "Color+Size" or just "Color"
+                        // key is usually "Color__SEP__Size" or just "Color"
                         let color = key;
                         let size = null;
                         
-                        if (key.includes('+')) {
-                            const parts = key.split('+');
+                        if (key.includes('__SEP__')) {
+                            const parts = key.split('__SEP__');
                             color = parts[0];
                             size = parts[1];
+                        } else if (key.includes('+')) {
+                             // Fallback for backward compatibility or if separator missing (shouldn't happen with new logic)
+                             // But wait, if the text itself has +, we shouldn't split on it unless we are sure it's the separator.
+                             // With the new __SEP__, we can ignore '+' splitting unless it was the old format.
+                             // Since we are running a fresh scrape, we don't need backward compat for in-memory data.
+                             // However, if we loaded from file... but the file is overwritten.
+                             // Let's stick to __SEP__.
                         }
 
                         // Parse Price
@@ -1087,6 +1282,39 @@ async function run() {
                     
                     generated_options = Array.from(optionsMap.values());
                     
+                    // --- DEDUPLICATION OF OPTIONS ---
+                    // Fix duplication issue where same option appears multiple times
+                    const uniqueOptionsMap = new Map();
+                    generated_options.forEach(opt => {
+                        // Create a unique key for the option based on Color and Price
+                        // Size is an array, so we don't include it in the key yet, but we merge sizes
+                        const optKey = (opt.color || '').trim().toLowerCase();
+                        
+                        if (!uniqueOptionsMap.has(optKey)) {
+                            uniqueOptionsMap.set(optKey, {
+                                ...opt,
+                                sizes: new Set(opt.sizes || [])
+                            });
+                        } else {
+                            // Merge sizes if option exists
+                            const existing = uniqueOptionsMap.get(optKey);
+                            if (opt.sizes && Array.isArray(opt.sizes)) {
+                                opt.sizes.forEach(s => existing.sizes.add(s));
+                            }
+                            // Keep the lowest price if prices differ? Or highest? Usually consistent.
+                            // If price is 0, update it
+                            if (existing.price === 0 && opt.price > 0) {
+                                existing.price = opt.price;
+                            }
+                        }
+                    });
+                    
+                    // Convert Sets back to Arrays and update generated_options
+                    generated_options = Array.from(uniqueOptionsMap.values()).map(opt => ({
+                        ...opt,
+                        sizes: Array.from(opt.sizes)
+                    }));
+
                     // CLEAN COLORS BEFORE TRANSLATION
                     // Iterate through generated_options to clean color names locally first
                     generated_options.forEach(opt => {
@@ -1101,68 +1329,83 @@ async function run() {
                      // --- TRANSLATE OPTIONS IF AI IS AVAILABLE ---
                      if (aiClient && generated_options.length > 0) {
                          console.log(`Translating ${generated_options.length} options via AI...`);
-                         try {
-                             // Prepare a bulk translation prompt for options
-                             const optionsText = JSON.stringify(generated_options.map(o => ({ c: o.color, s: o.sizes })));
-                             const transPrompt = `
-                             Translate these product options to Arabic.
-                             Input: ${optionsText}
-                             
-                             IMPORTANT:
-                             - Return ONLY a JSON array. Do not include any conversational text like "Here is the JSON" or markdown code blocks.
-                             - If the input contains "kg" (kilograms), KEEP "kg" in the translation (e.g. "80kg" -> "80kg" or "80 كغم").
-                             - Do NOT convert numbers back to original units.
-                             - Remove any Chinese characters or marketing text like "快要断码", "图片色" (Image Color), "高质量", "建议", "斤".
-                             - "图片色" or "默认" should be translated as "كما في الصورة" (As shown in image) or "اللون الافتراضي" (Default Color).
-                             - Remove any newlines or extra whitespace.
-                             - Return pure, clean Arabic names for colors and sizes.
-                             - TRANSLATE COLORS TO ARABIC (e.g. "Black" -> "أسود", "红色" -> "أحمر").
-                             - TRANSLATE "建议" (Recommended) to "مقترح" or remove it if just a label.
-                             - STRICTLY REMOVE any "return policy", "refund", "replacement" (e.g. "包退", "包换") text from option names.
-                             
-                             Return ONLY a JSON array with translated "c" (color) and "s" (sizes).
-                             Example Input: [{"c":"Red","s":["L","80kg"]}]
-                             Example Output: [{"c":"أحمر","s":["لارج","80 كغم"]}]
-                             Keep the order exactly the same.
-                             `;
-                             
-                             const transRes = await aiClient.chat.completions.create({
-                                 model: AI_MODEL,
-                                 messages: [{ role: "user", content: transPrompt }],
-                                 temperature: 0.3,
-                                 max_tokens: 2048
-                             });
-                             
-                             let transJson = transRes.choices[0].message.content.replace(/```json/g, '').replace(/```/g, '').trim();
-                             
-                             // Attempt to find the first '[' and last ']'
-                             const startIdx = transJson.indexOf('[');
-                             const endIdx = transJson.lastIndexOf(']');
-                             if (startIdx !== -1 && endIdx !== -1) {
-                                 transJson = transJson.substring(startIdx, endIdx + 1);
-                             }
+                         
+                         let translationSuccess = false;
+                         let transAttempts = 0;
+                         const maxTransAttempts = 3;
 
-                             console.log('AI Translation Response (First 100 chars):', transJson.substring(0, 100));
-                             
-                             const transArr = JSON.parse(transJson);
-                             
-                             if (Array.isArray(transArr) && transArr.length === generated_options.length) {
-                                generated_options.forEach((opt, idx) => {
-                                    // Apply Strict Trimming to translated values
-                                    if (transArr[idx].c) {
-                                        opt.color = transArr[idx].c.trim().replace(/\s+/g, ' '); // normalize spaces
-                                    }
-                                    if (transArr[idx].s && Array.isArray(transArr[idx].s)) {
-                                        opt.sizes = transArr[idx].s.map(s => s.trim().replace(/\s+/g, ' '));
-                                    }
-                                });
-                                console.log('Options translation applied successfully.');
-                            } else {
-                                 console.error('Translation array length mismatch or invalid format.');
+                         while (!translationSuccess && transAttempts < maxTransAttempts) {
+                             transAttempts++;
+                             try {
+                                 // Prepare a bulk translation prompt for options
+                                 const optionsText = JSON.stringify(generated_options.map(o => ({ c: o.color, s: o.sizes })));
+                                 const transPrompt = `
+                                 Translate these product options to Arabic.
+                                 Input: ${optionsText}
+                                 
+                                 IMPORTANT:
+                                 - Return ONLY a JSON array. Do not include any conversational text like "Here is the JSON" or markdown code blocks.
+                                 - If the input contains "kg" (kilograms), KEEP "kg" in the translation (e.g. "80kg" -> "80kg" or "80 كغم").
+                                 - Do NOT convert numbers back to original units.
+                                 - Remove any Chinese characters or marketing text like "快要断码", "图片色" (Image Color), "高质量", "建议", "斤".
+                                 - "图片色" or "默认" should be translated as "كما في الصورة" (As shown in image) or "اللون الافتراضي" (Default Color).
+                                 - Remove any newlines or extra whitespace.
+                                 - Return pure, clean Arabic names for colors and sizes.
+                                 - TRANSLATE COLORS TO ARABIC (e.g. "Black" -> "أسود", "红色" -> "أحمر").
+                                 - TRANSLATE "建议" (Recommended) to "مقترح" or remove it if just a label.
+                                 - STRICTLY REMOVE any "return policy", "refund", "replacement" (e.g. "包退", "包换") text from option names.
+                                 
+                                 Return ONLY a JSON array with translated "c" (color) and "s" (sizes).
+                                 Example Input: [{"c":"Red","s":["L","80kg"]}]
+                                 Example Output: [{"c":"أحمر","s":["لارج","80 كغم"]}]
+                                 Keep the order exactly the same.
+                                 `;
+                                 
+                                 const transRes = await aiClient.chat.completions.create({
+                                     model: AI_MODEL,
+                                     messages: [{ role: "user", content: transPrompt }],
+                                     temperature: 0.3,
+                                     max_tokens: 2048
+                                 });
+                                 
+                                 let transJson = transRes.choices[0].message.content.replace(/```json/g, '').replace(/```/g, '').trim();
+                                 
+                                 // Attempt to find the first '[' and last ']'
+                                 const startIdx = transJson.indexOf('[');
+                                 const endIdx = transJson.lastIndexOf(']');
+                                 if (startIdx !== -1 && endIdx !== -1) {
+                                     transJson = transJson.substring(startIdx, endIdx + 1);
+                                 }
+
+                                 // console.log('AI Translation Response (First 100 chars):', transJson.substring(0, 100));
+                                 
+                                 const transArr = JSON.parse(transJson);
+                                 
+                                 if (Array.isArray(transArr) && transArr.length === generated_options.length) {
+                                    generated_options.forEach((opt, idx) => {
+                                        // Apply Strict Trimming to translated values
+                                        if (transArr[idx].c) {
+                                            opt.color = transArr[idx].c.trim().replace(/\s+/g, ' '); // normalize spaces
+                                        }
+                                        if (transArr[idx].s && Array.isArray(transArr[idx].s)) {
+                                            opt.sizes = transArr[idx].s.map(s => s.trim().replace(/\s+/g, ' '));
+                                        }
+                                    });
+                                    console.log('Options translation applied successfully.');
+                                    translationSuccess = true;
+                                } else {
+                                     console.error('Translation array length mismatch or invalid format. Retrying...');
+                                 }
+                             } catch(e) {
+                                 console.error(`Options translation failed (Attempt ${transAttempts}/${maxTransAttempts}):`, e.message);
+                                 if (e.response) console.error('AI Response Error:', e.response.data);
+                                 await delay(1000);
                              }
-                         } catch(e) {
-                             console.error('Options translation failed, keeping original:', e.message);
-                             if (e.response) console.error('AI Response Error:', e.response.data);
+                         }
+
+                         if (!translationSuccess) {
+                             console.log('Warning: Failed to translate options after 3 attempts. Using original (Chinese/Mixed) values.');
+                             // We DO NOT skip. We proceed with whatever we have.
                          }
                      } else {
                          console.log('Skipping options translation (AI not ready or no options).');
@@ -1181,6 +1424,7 @@ async function run() {
                     general_price: general_price,
                     generated_options: generated_options, // New Field
                     aiMetadata: aiData.aiMetadata || {},
+                    isAirRestricted: aiData.isAirRestricted || false, // New Field
                     // variants: data.variants, // REMOVED as per request
                     // skuMap: data.skuMap // REMOVED as per request
                 };
@@ -1207,6 +1451,15 @@ async function run() {
 
                 const finalPrice = calculateFinalPrice(general_price);
 
+                // CHECK: Skip product if price is too low (<= 250 IQD)
+                // This usually indicates a failed price extraction or a dummy product
+                if (finalPrice <= 250) {
+                    console.log(`Skipping product: Price too low (Final: ${finalPrice}, Base: ${general_price}). URL: ${productUrl}`);
+                    if (!navigationHappened) await newPage.close();
+                    else await newPage.goBack();
+                    continue;
+                }
+
                 products.push(enrichedProduct);
                 console.log(`Scraped successfully. Total: ${products.length}`);
                 
@@ -1225,6 +1478,7 @@ async function run() {
                             purchaseUrl: enrichedProduct.url,
                             specs: JSON.stringify(enrichedProduct.product_details || {}),
                             aiMetadata: enrichedProduct.aiMetadata || {},
+                            isAirRestricted: enrichedProduct.isAirRestricted, // Save to DB
                             status: "PUBLISHED",
                             isActive: true,
                         }
@@ -1233,30 +1487,26 @@ async function run() {
 
                     // 2. Create Product Images (Gallery)
                     if (enrichedProduct.main_images && enrichedProduct.main_images.length > 0) {
-                        for (let i = 0; i < enrichedProduct.main_images.length; i++) {
-                            await prisma.productImage.create({
-                                data: {
-                                    productId: newProduct.id,
-                                    url: enrichedProduct.main_images[i],
-                                    order: i,
-                                    type: "GALLERY"
-                                }
-                            });
-                        }
+                        await prisma.productImage.createMany({
+                            data: enrichedProduct.main_images.map((url, i) => ({
+                                productId: newProduct.id,
+                                url: url,
+                                order: i,
+                                type: "GALLERY"
+                            }))
+                        });
                     }
 
                     // 3. Create Description Images
                     if (enrichedProduct.product_desc_imgs && enrichedProduct.product_desc_imgs.length > 0) {
-                         for (let i = 0; i < enrichedProduct.product_desc_imgs.length; i++) {
-                            await prisma.productImage.create({
-                                data: {
-                                    productId: newProduct.id,
-                                    url: enrichedProduct.product_desc_imgs[i],
-                                    order: i + 100, // Offset to keep them after gallery
-                                    type: "DESCRIPTION"
-                                }
-                            });
-                        }
+                        await prisma.productImage.createMany({
+                            data: enrichedProduct.product_desc_imgs.map((url, i) => ({
+                                productId: newProduct.id,
+                                url: url,
+                                order: i + 100, // Offset to keep them after gallery
+                                type: "DESCRIPTION"
+                            }))
+                        });
                     }
 
                     // 4. Create Product Options (Color & Size) - VALIDATED
@@ -1266,22 +1516,50 @@ async function run() {
                     // Filter out Chinese characters from options
                     const containsChinese = (str) => /[\u4e00-\u9fa5]/.test(str);
                     
+                    // Filter out invalid/suspicious options (Custom orders, deposits, etc.)
+                    const invalidKeywords = [
+                        '定制', '专拍', '补差', '邮费', '不发货', '联系客服', // Chinese
+                        'تخصيص', 'اتصال', 'رابط', 'فرق', 'إيداع', 'لا يرسل', 'خدمة العملاء', 'مخصص' // Arabic
+                    ];
+
+                    enrichedProduct.generated_options = enrichedProduct.generated_options.filter(opt => {
+                        const text = (opt.color || '') + ' ' + (opt.sizes ? opt.sizes.join(' ') : '');
+                        const hasInvalidKeyword = invalidKeywords.some(kw => text.includes(kw));
+                        
+                        // Also check for suspiciously high price (e.g. > 20x base price)
+                        let isPriceSuspicious = false;
+                        if (opt.price && enrichedProduct.general_price > 0) {
+                             const ratio = opt.price / enrichedProduct.general_price;
+                             if (ratio > 20) isPriceSuspicious = true;
+                        }
+
+                        if (hasInvalidKeyword || isPriceSuspicious) {
+                            console.log(`Skipping invalid/suspicious option: ${text} (Price: ${opt.price})`);
+                            return false;
+                        }
+                        return true;
+                    });
+
                     enrichedProduct.generated_options.forEach(opt => {
                         // Skip entire option if color is Chinese
                         if (opt.color && !containsChinese(opt.color)) {
                             colors.add(opt.color);
                         } else if (opt.color) {
-                            // Try to map or just use English/Arabic if available?
-                            // For now, let's just not add it to the valid set to avoid Chinese in UI
-                            // OR better: Don't skip, just mark it for translation?
-                            // User asked to check before publishing.
-                            console.log(`Skipping Chinese color option: ${opt.color}`);
+                            // RETRY TRANSLATION FOR SINGLE OPTION
+                            // We do a synchronous-like blocking call here or just use it as is if critical?
+                            // User said: "try to translate it again if you can't then use it, don't skip generated options"
+                            console.log(`Chinese color detected: ${opt.color}. Attempting fallback translation/usage...`);
+                            colors.add(opt.color); // Add it anyway, don't skip
                         }
 
                         if (opt.sizes && Array.isArray(opt.sizes)) {
                             opt.sizes.forEach(s => {
-                                if (!containsChinese(s)) sizes.add(s);
-                                else console.log(`Skipping Chinese size option: ${s}`);
+                                if (!containsChinese(s)) {
+                                    sizes.add(s);
+                                } else {
+                                    console.log(`Chinese size detected: ${s}. Using it anyway.`);
+                                    sizes.add(s); // Add it anyway, don't skip
+                                }
                             });
                         }
                     });
@@ -1308,19 +1586,49 @@ async function run() {
                     }
 
                     // 5. Create Variants - VALIDATED
+                    const variantsData = [];
                     for (const opt of enrichedProduct.generated_options) {
-                        // SKIP if color is Chinese
-                        if (containsChinese(opt.color)) continue;
+                        // SKIP if color is Chinese (DISABLED: User wants to keep them)
+                        // if (containsChinese(opt.color)) continue;
 
                         const color = opt.color;
-                        const variantBasePrice = opt.price || enrichedProduct.general_price || 0;
+                        let variantBasePrice = opt.price || enrichedProduct.general_price || 0;
+
+                        // Safety check: If price is suspiciously low (likely RMB), multiply by 200
+                        // 1000 IQD is about 5 RMB. Most items are > 5 RMB.
+                        // If it's < 1000, it's likely raw RMB that missed conversion.
+                        // BUT: If the main product price is also low (< 2000), maybe it's just a cheap item?
+                        // Let's be stricter: Only multiply if it's REALLY low (< 100) OR if it differs significantly from main price order of magnitude
+                        
+                        if (variantBasePrice > 0 && variantBasePrice < 100) {
+                             console.log(`Warning: Suspiciously low price (${variantBasePrice}). Assuming RMB and multiplying by 200.`);
+                             variantBasePrice = variantBasePrice * 200;
+                        } else if (variantBasePrice > 0 && variantBasePrice < 1000 && enrichedProduct.general_price > 5000) {
+                             // Variant is < 1000 but main product is > 5000? Likely RMB.
+                             console.log(`Warning: Variant price ${variantBasePrice} vs Main ${enrichedProduct.general_price}. Assuming RMB.`);
+                             variantBasePrice = variantBasePrice * 200;
+                        }
+
+                        // CRITICAL FIX: If variant price becomes way higher than main price (e.g. > 10x), clamp it or revert
+                        // This handles the case where we accidentally multiplied an already-correct IQD price
+                        // Or if the scraper picked up a "bundle" price as a variant price
+                        if (enrichedProduct.general_price > 0 && variantBasePrice > enrichedProduct.general_price * 5) {
+                            console.log(`Warning: Variant price ${variantBasePrice} is > 5x main price ${enrichedProduct.general_price}. Clamping/Reverting.`);
+                            // Revert to main price if it seems totally off, or just divide back if it looks like a double conversion
+                            if (variantBasePrice / 200 < enrichedProduct.general_price * 2) {
+                                variantBasePrice = variantBasePrice / 200; // It was likely correct before
+                            } else {
+                                variantBasePrice = enrichedProduct.general_price; // Fallback to main price
+                            }
+                        }
+
                         const variantFinalPrice = calculateFinalPrice(variantBasePrice);
                         const variantImg = opt.thumbnail || enrichedProduct.main_images[0] || '';
                         
                         if (opt.sizes && opt.sizes.length > 0) {
                             for (const size of opt.sizes) {
-                                // SKIP if size is Chinese
-                                if (containsChinese(size)) continue;
+                                // SKIP if size is Chinese (DISABLED: User wants to keep them)
+                                // if (containsChinese(size)) continue;
 
                                 // Create structured combination object matching Option Names
                                 const combinationObj = {
@@ -1328,14 +1636,12 @@ async function run() {
                                     "المقاس": size
                                 };
                                 
-                                await prisma.productVariant.create({
-                                    data: {
-                                        productId: newProduct.id,
-                                        combination: JSON.stringify(combinationObj), // Save as JSON String
-                                        price: variantFinalPrice, // Store FINAL price
-                                        basePriceIQD: variantBasePrice, // Store BASE price
-                                        image: variantImg
-                                    }
+                                variantsData.push({
+                                    productId: newProduct.id,
+                                    combination: JSON.stringify(combinationObj), // Save as JSON String
+                                    price: variantFinalPrice, // Store FINAL price
+                                    basePriceIQD: variantBasePrice, // Store BASE price
+                                    image: variantImg
                                 });
                             }
                         } else {
@@ -1344,16 +1650,20 @@ async function run() {
                                 "اللون": color
                             };
 
-                            await prisma.productVariant.create({
-                                data: {
-                                    productId: newProduct.id,
-                                    combination: JSON.stringify(combinationObj), // Save as JSON String
-                                    price: variantFinalPrice, // Store FINAL price
-                                    basePriceIQD: variantBasePrice, // Store BASE price
-                                    image: variantImg
-                                }
+                            variantsData.push({
+                                productId: newProduct.id,
+                                combination: JSON.stringify(combinationObj), // Save as JSON String
+                                price: variantFinalPrice, // Store FINAL price
+                                basePriceIQD: variantBasePrice, // Store BASE price
+                                image: variantImg
                             });
                         }
+                    }
+
+                    if (variantsData.length > 0) {
+                        await prisma.productVariant.createMany({
+                            data: variantsData
+                        });
                     }
                     console.log('Database insertion complete.');
 
@@ -1379,8 +1689,8 @@ async function run() {
 
             await humanDelay(2000, 5000);
             
-            // Random Delay between 15-30 seconds before next item
-            const nextItemDelay = 15000 + Math.random() * 15000;
+            // Random Delay between 10-15 seconds before next item
+            const nextItemDelay = 10000 + Math.random() * 5000;
             console.log(`Waiting ${(nextItemDelay/1000).toFixed(1)}s before next item...`);
             await delay(nextItemDelay);
         } // End of 4-click loop

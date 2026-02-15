@@ -1,62 +1,9 @@
-# Environment
-.env
-.env.local
-.env.*.local
-server/.env
 
-# Logs
-logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-pnpm-debug.log*
-lerna-debug.log*
-
-# Dependencies
-node_modules
-server/node_modules
-
-# Build
-dist
-dist-ssr
-
-# Android & iOS
-# android/
-# ios/
-assets/
-
-# Binary data
-*.traineddata
-*.png
-*.jpg
-*.jpeg
-*.gif
-*.ico
-
-# Database
-*.db
-*.db-journal
-
-# Secrets
-android/release-key.jks
-*.jks
-*.keystore
-key-credentials.txt
-
-# Editor directories and files
-.vscode/*
-!.vscode/extensions.json
-.idea
-.DS_Store
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
-
-# Scraper Data
-server/chrome_data*
-server/test_chrome_data*
-server/pinduoduo-products.json
-server/xianyu-*.json
-server/*.html
+# Scraper data
+chrome_data_pdd_fresh_v34/
+chrome_data_*/
+run_pinduoduo.zip
+server/scripts/*.cjs
+server/scripts/*.js
+!server/scripts/pinduoduo-scraper.js
+server/chrome_data/
