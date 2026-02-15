@@ -39,17 +39,13 @@ const ProductOptions: React.FC<ProductOptionsProps> = ({
             
             {/* Selected Variant Thumbnail Display */}
             {selectedImage && (
-                <div className="w-12 h-12 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700 shadow-sm animate-in fade-in zoom-in duration-300">
-                    <img 
-                        src={selectedImage} 
-                        alt="Selected Option" 
-                        className="w-full h-full object-cover"
-                    />
+                <div className="hidden">
+                    {/* Thumbnail removed from here as requested, handled by main gallery */}
                 </div>
             )}
         </div>
 
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2 max-h-[160px] overflow-y-auto pr-1 pb-2 scrollbar-thin scrollbar-thumb-slate-300 dark:scrollbar-thumb-slate-600 scrollbar-track-transparent">
           {(() => {
             // Deduplicate logic: Track seen labels
             const seenLabels = new Set<string>();

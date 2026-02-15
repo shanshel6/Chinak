@@ -5,6 +5,7 @@ import { sendWhatsAppOTP, checkUser, checkEmail, loginWithEmail, signupWithEmail
 import { useAuthStore } from '../store/useAuthStore';
 import { useToastStore } from '../store/useToastStore';
 import { KeyRound } from 'lucide-react';
+import packageJson from '../../package.json';
 
 import Logo from '../components/Logo';
 
@@ -800,6 +801,13 @@ const Login: React.FC = () => {
                 </>
               )}
             </button>
+
+            {/* Version Indicator for Debugging */}
+            <div className="text-center mt-4">
+              <span className="text-[10px] text-slate-400 dark:text-slate-600 font-mono opacity-60">
+                v{packageJson.version}
+              </span>
+            </div>
           </div>
 
         </form>

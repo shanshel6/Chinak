@@ -398,7 +398,7 @@ const CheckoutShipping: React.FC = () => {
             className="w-full h-14 bg-primary hover:bg-primary-dark text-white font-bold rounded-2xl shadow-lg shadow-primary/30 transition-all active:scale-[0.98] disabled:opacity-50 flex items-center justify-center gap-2 group"
           >
             <span>{calculatingShipping ? 'جاري الحساب...' : shippingInfo && !shippingInfo.isThresholdMet ? 'الطلب أقل من الحد الأدنى' : 'متابعة'}</span>
-            <ArrowLeft size={20} className="group-hover:-translate-x-1 transition-transform" />
+            <ArrowLeft size={20} className="transform rotate-180 group-hover:-translate-x-1 transition-transform" />
           </button>
         </div>
       </div>

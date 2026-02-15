@@ -45,21 +45,22 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
   return (
     <div className="flex min-h-screen bg-slate-50 dark:bg-slate-950 font-display rtl" dir="rtl">
       {/* Mobile Overlay */}
-      {isSidebarOpen && (
-        <div 
-          className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[40] lg:hidden cursor-pointer transition-opacity duration-300"
-          onClick={() => setIsSidebarOpen(false)}
-          aria-hidden="true"
-        />
-      )}
+      <div 
+        className={`
+          fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[40] lg:hidden cursor-pointer transition-opacity duration-300
+          ${isSidebarOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}
+        `}
+        onClick={() => setIsSidebarOpen(false)}
+        aria-hidden="true"
+      />
 
       {/* Sidebar */}
       <aside 
         className={`
           fixed top-0 right-0 h-screen w-64 max-w-[85vw] bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 
-          flex flex-col z-[50] transition-transform duration-300 shadow-2xl lg:shadow-none
-          lg:sticky lg:translate-x-0 lg:z-30
-          ${isSidebarOpen ? 'translate-x-0' : 'translate-x-full'}
+          flex flex-col z-[50] transition-all duration-300 shadow-2xl lg:shadow-none
+          lg:sticky lg:translate-x-0 lg:z-30 lg:visible lg:opacity-100
+          ${isSidebarOpen ? 'translate-x-0 visible opacity-100' : 'translate-x-full invisible opacity-0 lg:translate-x-0'}
         `}
       >
         <div className="p-5 flex items-center justify-between gap-3">
@@ -69,10 +70,7 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
           </div>
           <button 
             className="lg:hidden p-2 text-slate-500 hover:bg-red-50 hover:text-red-500 dark:hover:bg-slate-800 rounded-xl cursor-pointer active:scale-95 transition-all"
-            onClick={(e) => {
-              e.stopPropagation();
-              setIsSidebarOpen(false);
-            }}
+            onClick={() => setIsSidebarOpen(false)}
             aria-label="Close Sidebar"
             type="button"
           >

@@ -1,8 +1,6 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useState } from 'react';
 import LazyImage from '../LazyImage';
-import { fetchProductById, fetchProductReviews, checkProductPurchase, fetchSettings } from '../../services/api';
 import { Heart } from 'lucide-react';
-import { calculateInclusivePrice } from '../../utils/shipping';
 import type { Product } from '../../types/product';
 
 interface ProductCardProps {
@@ -20,8 +18,11 @@ const ProductCard: React.FC<ProductCardProps> = ({
 }) => {
   const [_currentImageIndex, _setCurrentImageIndex] = React.useState(0);
   const displayImages = React.useMemo(() => {
+    // START WITH MAIN IMAGE (product.image) - This is critical for consistency with search/home
     const images = [];
     if (product.image) images.push(product.image);
+    
+    // Add gallery images (excluding duplicates of main image)
     if (product.images && Array.isArray(product.images)) {
       product.images.forEach(img => {
         const url = typeof img === 'string' ? img : img.url;
@@ -37,17 +38,13 @@ const ProductCard: React.FC<ProductCardProps> = ({
   const minVariant = React.useMemo(() => {
     if (!variants.length) return null;
     return variants.reduce((min: any, curr: any) => {
-      if (!curr.price) return min;
+      if (!curr?.price) return min;
       if (!min) return curr;
-      return curr.price < min.price ? curr : min;
+      return Number(curr.price) < Number(min.price) ? curr : min;
     }, null);
   }, [variants]);
 
   const minPrice = minVariant ? minVariant.price : product.price;
-  const effectiveWeight = (minVariant && minVariant.weight) ? minVariant.weight : product.weight;
-  const effectiveLength = (minVariant && minVariant.length) ? minVariant.length : product.length;
-  const effectiveWidth = (minVariant && minVariant.width) ? minVariant.width : product.width;
-  const effectiveHeight = (minVariant && minVariant.height) ? minVariant.height : product.height;
 
   // Simulated discovery data
   const soldCount = React.useMemo(() => {
@@ -85,9 +82,9 @@ const ProductCard: React.FC<ProductCardProps> = ({
     }
   };
 
-  const [_airRate, setAirRate] = useState<number>(15400);
-  const [_seaRate, setSeaRate] = useState<number>(182000);
-  const [_minFloor, setMinFloor] = useState<number>(0);
+  const [_airRate] = useState<number>(15400);
+  const [_seaRate] = useState<number>(182000);
+  const [_minFloor] = useState<number>(0);
 
   // Removed individual fetchSettings call to prevent "N+1" API flood
   // Rates should be passed via props or global store if dynamic calculation is needed

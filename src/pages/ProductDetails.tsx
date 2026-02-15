@@ -18,6 +18,7 @@ import ProductSpecs from '../components/product/ProductSpecs';
 import ReviewsSection from '../components/product/ReviewsSection';
 import SimilarProducts from '../components/product/SimilarProducts';
 import AddToCartBar from '../components/product/AddToCartBar';
+import ProductActionSheet from '../components/product/ProductActionSheet';
 
 interface Review {
   id: number;
@@ -28,7 +29,7 @@ interface Review {
   images?: string[];
 }
 
-import { AlertCircle, Package } from 'lucide-react';
+import { AlertCircle, Package, Plane, Ship } from 'lucide-react';
 
 const ProductDetails: React.FC = () => {
   const navigate = useNavigate();
@@ -62,9 +63,10 @@ const ProductDetails: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [isAdding, setIsAdding] = useState(false);
   const [isAdded, setIsAdded] = useState(false);
+  const [isActionSheetOpen, setIsActionSheetOpen] = useState(false);
   
   const [shouldRenderDetails, setShouldRenderDetails] = useState(false);
-  const [shippingMethod, setShippingMethod] = useState<'air' | 'sea'>('air');
+  const [shippingMethod, setShippingMethod] = useState<'air' | 'sea' | null>(null); // Default to null (user must select)
   const userChangedShipping = useRef(false);
   const [currentVariant, setCurrentVariant] = useState<any>(null);
 
@@ -247,7 +249,7 @@ const ProductDetails: React.FC = () => {
     if (product?.isAirRestricted && !userChangedShipping.current && shippingMethod !== 'sea') {
       setShippingMethod('sea');
     }
-  }, [product, shippingMethod]);
+  }, [product?.isAirRestricted, shippingMethod]);
 
   const pricingParams = useMemo(() => {
     if (!product) return null;
@@ -559,6 +561,12 @@ const ProductDetails: React.FC = () => {
 
   const handleAddToCart = async () => {
     if (!product) return;
+
+    if (!shippingMethod) {
+      showToast('يرجى اختيار طريقة الشحن أولاً (جوي أو بحري)', 'error');
+      return;
+    }
+
     if (!isAuthenticated) {
       showToast('يرجى تسجيل الدخول أولاً لإضافة منتجات إلى السلة', 'info');
       navigate('/login');
@@ -583,6 +591,7 @@ const ProductDetails: React.FC = () => {
       }, selectedOptions, shippingMethod);
 
       trackInteraction(product.id, 'CART', 5); // Cart adds are high value
+      setIsActionSheetOpen(false); // Close sheet after success
     } catch (err) {
       // Rollback UI state if API fails
       setIsAdded(false);
@@ -590,6 +599,10 @@ const ProductDetails: React.FC = () => {
     } finally {
       setIsAdding(false);
     }
+  };
+
+  const openActionSheet = () => {
+    setIsActionSheetOpen(true);
   };
 
   const handleShare = async () => {
@@ -673,19 +686,6 @@ const ProductDetails: React.FC = () => {
             isAirRestricted={product.isAirRestricted}
           />
 
-          {product.options && product.options.length > 0 && (
-            <div className="mb-6 p-4 bg-white dark:bg-slate-800/40 rounded-2xl border border-slate-100 dark:border-white/5 shadow-sm">
-              <ProductOptions 
-                options={product.options}
-                selectedOptions={selectedOptions}
-                onOptionSelect={(name, val) => setSelectedOptions(prev => ({ ...prev, [name]: val }))}
-                variants={product.variants}
-                onVariantSelect={(combination) => setSelectedOptions(combination)}
-                selectedVariantId={currentVariant?.id}
-              />
-            </div>
-          )}
-
           <ProductDescription 
             productName={product.name}
             description={product.description}
@@ -698,6 +698,22 @@ const ProductDetails: React.FC = () => {
               />
 
           <ProductSpecs specs={displaySpecs} />
+
+          {/* Action Sheet for Options & Shipping */}
+          <ProductActionSheet
+            isOpen={isActionSheetOpen}
+            onClose={() => setIsActionSheetOpen(false)}
+            product={product}
+            selectedOptions={selectedOptions}
+            onOptionSelect={(name, val) => setSelectedOptions(prev => ({ ...prev, [name]: val }))}
+            onVariantSelect={(combination) => setSelectedOptions(combination)}
+            currentVariant={currentVariant}
+            shippingMethod={shippingMethod}
+            onShippingChange={handleShippingMethodChange}
+            onConfirm={handleAddToCart}
+            isAdding={isAdding}
+            price={inclusivePrice}
+          />
 
           {detailImages.length > 0 && shouldRenderDetails && (
             <div className="mt-12 space-y-4 px-0">
@@ -734,7 +750,7 @@ const ProductDetails: React.FC = () => {
 
         <AddToCartBar 
             price={inclusivePrice}
-            onAddToCart={handleAddToCart}
+            onAddToCart={openActionSheet}
             isAdding={isAdding}
             isAdded={isAdded}
             onGoToCart={() => navigate('/cart')}

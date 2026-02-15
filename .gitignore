@@ -1,9 +1,69 @@
 
+# Dependencies
+node_modules/
+server/node_modules/
+
+# Production
+dist/
+build/
+server/dist/
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+key-credentials.txt
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
+server/*.log
+*_log.txt
+*debug.log
+
+# Database
+*.db
+*.sqlite
+server/*.db
+server/prisma/*.db
+server/prisma/dev.db
+server/prisma/dev_copy.db
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
 # Scraper data
 chrome_data_pdd_fresh_v34/
 chrome_data_*/
 run_pinduoduo.zip
 server/scripts/*.cjs
-server/scripts/*.js
+# server/scripts/*.js # This line was ignoring valid scripts, commenting out for safety
 !server/scripts/pinduoduo-scraper.js
 server/chrome_data/
+server/test_chrome_data/
+server/*.traineddata
+server/*.png
+server/*.html
+server/*.json
+!server/package.json
+!server/package-lock.json
+!server/tsconfig.json
+server/scripts/pdd_cookies.json
+
+# Android
+android/.gradle/
+android/app/build/
+android/local.properties
+android/.idea/
+android/app/*.jks

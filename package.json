@@ -1,13 +1,14 @@
 {
   "name": "project",
   "private": true,
-  "version": "1.0.22",
+  "version": "1.0.28",
   "type": "module",
   "scripts": {
     "dev": "concurrently \"npm run dev:frontend\" \"npm run dev:backend\"",
     "dev:frontend": "vite",
     "dev:backend": "cd server && npm run dev",
     "build": "tsc -b && vite build",
+    "build:android": "tsc -b && vite build && npx cap sync android",
     "lint": "eslint .",
     "preview": "vite preview"
   },

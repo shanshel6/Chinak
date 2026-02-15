@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useWishlistStore } from '../store/useWishlistStore';
 import { useCartStore } from '../store/useCartStore';
@@ -6,7 +6,6 @@ import { useAuthStore } from '../store/useAuthStore';
 import { useToastStore } from '../store/useToastStore';
 import LazyImage from '../components/LazyImage';
 import { calculateInclusivePrice } from '../utils/shipping';
-import { fetchSettings } from '../services/api';
 
 import { ArrowLeft, ShoppingBag, LayoutGrid, List, Heart, ShoppingCart, Star } from 'lucide-react';
 
@@ -18,28 +17,6 @@ const Favorites: React.FC = () => {
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
   const showToast = useToastStore((state) => state.showToast);
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
-
-  const [rates, setRates] = useState({
-    airRate: 15400,
-    seaRate: 182000,
-    minFloor: 0
-  });
-
-  useEffect(() => {
-    const loadRates = async () => {
-      try {
-        const settings = await fetchSettings();
-        if (settings) {
-          setRates({
-            airRate: settings.airShippingRate || 15400,
-            seaRate: settings.seaShippingRate || 182000,
-            minFloor: 0
-          });
-        }
-      } catch (e) {}
-    };
-    loadRates();
-  }, []);
 
   const handleMoveAllToCart = async () => {
     if (wishlist.length === 0) return;
@@ -224,10 +201,6 @@ const Favorites: React.FC = () => {
               }, null);
 
               const minPrice = minVariant ? minVariant.price : product.price;
-              const effectiveWeight = (minVariant && minVariant.weight) ? minVariant.weight : product.weight;
-              const effectiveLength = (minVariant && minVariant.length) ? minVariant.length : product.length;
-              const effectiveWidth = (minVariant && minVariant.width) ? minVariant.width : product.width;
-              const effectiveHeight = (minVariant && minVariant.height) ? minVariant.height : product.height;
               
               const effectiveBasePriceIQD = (minVariant && minVariant.basePriceIQD && minVariant.basePriceIQD > 0)
                 ? minVariant.basePriceIQD

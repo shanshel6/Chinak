@@ -22,4 +22,13 @@ export interface Product {
   stock?: number;
   deliveryTime?: string;
   isAirRestricted?: boolean;
+  weight?: number;
+  length?: number;
+  width?: number;
+  height?: number;
+  basePriceRMB?: number;
+  isPriceCombined?: boolean;
+  description?: string;
+  chineseName?: string;
+  detailImages?: string[];
 }

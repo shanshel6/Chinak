@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Heart, Star } from 'lucide-react';
 import LazyImage from '../LazyImage';
-import { calculateInclusivePrice } from '../../utils/shipping';
 import { fetchSettings } from '../../services/api';
 import type { Product } from '../../types/product';
 
@@ -51,13 +50,28 @@ const SearchProductCard: React.FC<SearchProductCardProps> = ({
     }, null);
 
     const minPrice = minVariant ? minVariant.price : product.price;
-    const effectiveWeight = (minVariant && minVariant.weight) ? minVariant.weight : product.weight;
-    const effectiveLength = (minVariant && minVariant.length) ? minVariant.length : product.length;
-    const effectiveWidth = (minVariant && minVariant.width) ? minVariant.width : product.width;
-    const effectiveHeight = (minVariant && minVariant.height) ? minVariant.height : product.height;
+    // const effectiveWeight = (minVariant && minVariant.weight) ? minVariant.weight : product.weight;
+    // const effectiveLength = (minVariant && minVariant.length) ? minVariant.length : product.length;
+    // const effectiveWidth = (minVariant && minVariant.width) ? minVariant.width : product.width;
+    // const effectiveHeight = (minVariant && minVariant.height) ? minVariant.height : product.height;
 
     return minPrice;
   }, [product, rates]);
+
+  const displayImages = React.useMemo(() => {
+    // START WITH MAIN IMAGE (product.image) - This is critical for consistency with search/home
+    const images = [];
+    if (product.image) images.push(product.image);
+    
+    // Add gallery images (excluding duplicates of main image)
+    if ((product as any).images && Array.isArray((product as any).images)) {
+      (product as any).images.forEach((img: any) => {
+        const url = typeof img === 'string' ? img : img.url;
+        if (url && url !== product.image) images.push(url);
+      });
+    }
+    return images;
+  }, [product.image, (product as any).images]);
 
   return (
     <div 
@@ -66,7 +80,7 @@ const SearchProductCard: React.FC<SearchProductCardProps> = ({
     >
       <div className="aspect-square relative overflow-hidden bg-slate-100 dark:bg-slate-700">
         <LazyImage 
-          src={product.image} 
+          src={displayImages[0] || product.image} 
           alt={product.name}
           className="w-full h-full object-cover"
         />

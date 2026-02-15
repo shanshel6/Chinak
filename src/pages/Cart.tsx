@@ -29,7 +29,6 @@ const Cart: React.FC = () => {
   const removeItems = useCartStore((state) => state.removeItems);
   const fetchCart = useCartStore((state) => state.fetchCart);
   const fetchRates = useCartStore((state) => state.fetchRates);
-  const rates = useCartStore((state) => state.rates);
   const subtotal = useCartStore((state) => state.getSubtotal(activeTab)); // Filtered by tab
   const baseSubtotal = useCartStore((state) => state.getBaseSubtotal(activeTab)); // Filtered by tab
   const toggleWishlist = useWishlistStore((state) => state.toggleWishlist);
@@ -217,7 +216,7 @@ const Cart: React.FC = () => {
               onClick={() => navigate(-1)}
               className="size-11 rounded-2xl bg-white dark:bg-slate-800 shadow-sm flex items-center justify-center text-slate-600 dark:text-slate-300 active:scale-95 transition-all border border-slate-100 dark:border-white/5"
             >
-              <ArrowLeft size={24} className="rtl:rotate-180" />
+              <ArrowLeft size={24} className="transform rotate-180" />
             </button>
           </div>
         </header>
@@ -248,7 +247,7 @@ const Cart: React.FC = () => {
               onClick={() => navigate(-1)}
               className="size-11 rounded-2xl bg-white dark:bg-slate-800 shadow-sm flex items-center justify-center text-slate-600 dark:text-slate-300 active:scale-95 transition-all border border-slate-100 dark:border-white/5"
             >
-              <ArrowLeft size={24} className="rtl:rotate-180" />
+              <ArrowLeft size={24} className="transform rotate-180" />
             </button>
             {isSelectMode && (
               <button 
@@ -563,10 +562,9 @@ const Cart: React.FC = () => {
 
               <div className="flex justify-between text-sm items-center">
                 <span className="text-slate-500 dark:text-slate-400">التوصيل الدولي</span>
-                <div className="flex items-center gap-1.5 bg-green-500/10 text-green-600 px-2 py-0.5 rounded-lg text-[10px] font-black uppercase tracking-wider">
-                  <CheckCheck size={14} />
-                  <span>مجاني</span>
-                </div>
+                <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-700/50 px-2 py-1 rounded-lg">
+                  سيتم إرسال التكلفة عبر الواتساب خلال ساعة
+                </span>
               </div>
 
               <div className="flex justify-between text-sm items-center">
@@ -612,7 +610,7 @@ const Cart: React.FC = () => {
         <button 
           onClick={() => !isUnderThreshold && !isSyncing && navigate('/checkout/shipping')}
           disabled={isUnderThreshold || isSyncing}
-          className={`w-full h-16 rounded-2xl transition-all text-white font-bold text-base shadow-lg flex items-center justify-between px-6 ${
+          className={`w-full h-16 rounded-2xl transition-all text-white font-bold text-base shadow-lg flex items-center justify-between px-6 mb-4 ${
             isUnderThreshold || isSyncing
               ? 'bg-slate-300 dark:bg-slate-700 cursor-not-allowed grayscale' 
               : 'bg-primary hover:bg-primary/90 active:scale-[0.98] shadow-primary/25'

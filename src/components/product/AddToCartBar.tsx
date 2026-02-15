@@ -1,5 +1,5 @@
 import React from 'react';
-import { ShoppingCart, RefreshCw, Plus, ShoppingBag, Plane, Ship, Flame, AlertCircle } from 'lucide-react';
+import { ShoppingCart, RefreshCw, ShoppingBag } from 'lucide-react';
 
 interface AddToCartBarProps {
   price: number;
@@ -18,7 +18,7 @@ const AddToCartBar: React.FC<AddToCartBarProps> = ({
 }) => {
   return (
     <div className="fixed bottom-0 left-0 right-0 z-40 w-full bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl border-t border-slate-900/5 dark:border-white/10 px-6 py-4 pb-safe transition-colors shadow-[0_-8px_30px_rgba(0,0,0,0.08)]">
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-4 mb-4">
         {/* Price Display */}
         <div className="flex flex-col">
           <span className="text-xs font-bold text-slate-500 dark:text-slate-400">الإجمالي</span>
@@ -31,7 +31,7 @@ const AddToCartBar: React.FC<AddToCartBarProps> = ({
         {isAdded && onGoToCart ? (
           <button
             onClick={onGoToCart}
-            className="flex-1 flex items-center justify-center gap-2 bg-emerald-500 hover:bg-emerald-600 text-white py-3.5 px-6 rounded-xl font-black shadow-lg shadow-emerald-500/20 transition-all duration-300 active:scale-[0.98]"
+            className="flex-1 flex items-center justify-center gap-2 bg-[#10b981] hover:bg-[#059669] text-white py-3.5 px-6 rounded-xl font-black shadow-lg shadow-emerald-500/20 transition-all duration-300 active:scale-[0.98]"
           >
             <ShoppingBag size={20} strokeWidth={2.5} />
             <span>إتمام الشراء</span>

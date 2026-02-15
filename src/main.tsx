@@ -3,6 +3,36 @@ import { createRoot } from 'react-dom/client'
 import './index.css'
 import './i18n'
 import App from './App.tsx'
+import packageJson from '../package.json';
+
+// Version Check & Cache Busting
+try {
+  const CURRENT_VERSION = packageJson.version;
+  const STORED_VERSION_KEY = 'app_version';
+  const storedVersion = localStorage.getItem(STORED_VERSION_KEY);
+
+  if (storedVersion !== CURRENT_VERSION) {
+    console.log(`New version detected: ${CURRENT_VERSION} (was ${storedVersion}). Clearing cache.`);
+    
+    // Clear all local storage except critical auth tokens if needed (or clear all to be safe)
+    // For now, we clear everything to ensure fresh state
+    localStorage.clear();
+    
+    // Clear session storage
+    sessionStorage.clear();
+    
+    // Update version
+    localStorage.setItem(STORED_VERSION_KEY, CURRENT_VERSION);
+    
+    // Force reload if we are in a browser environment
+    if (window.location.search.indexOf('v=' + CURRENT_VERSION) === -1) {
+       // Optional: Reload with version query param to bypass browser cache
+       // window.location.href = window.location.pathname + '?v=' + CURRENT_VERSION;
+    }
+  }
+} catch (e) {
+  console.error('Version check failed:', e);
+}
 
 // Immediate LocalStorage Cleanup to prevent QuotaExceededError
 try {

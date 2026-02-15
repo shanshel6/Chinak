@@ -106,8 +106,8 @@ const BottomNav: React.FC<BottomNavProps> = ({ className = '' }) => {
                   <Icon size={28} strokeWidth={active ? 2.5 : 2} />
                 </button>
                 {cartItemsCount > 0 && (
-                  <span className="absolute top-0 right-0 flex h-6 w-6 items-center justify-center rounded-full bg-red-600 text-[11px] font-bold text-slate-900 ring-4 ring-white dark:ring-slate-900 shadow-md animate-in zoom-in duration-300 z-50">
-                    {cartItemsCount > 99 ? '+99' : cartItemsCount}
+                  <span className="absolute top-0 right-0 flex h-6 w-6 items-center justify-center rounded-full bg-[#dc2626] text-[11px] font-bold text-white ring-4 ring-white dark:ring-slate-900 shadow-md animate-in zoom-in duration-300 z-50">
+                    {cartItemsCount > 99 ? '99+' : cartItemsCount}
                   </span>
                 )}
               </div>

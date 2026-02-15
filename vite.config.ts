@@ -25,6 +25,13 @@ export default defineConfig({
   build: {
     chunkSizeWarningLimit: 2000,
     target: 'esnext',
+    rollupOptions: {
+      output: {
+        entryFileNames: 'assets/[name]-[hash].js',
+        chunkFileNames: 'assets/[name]-[hash].js',
+        assetFileNames: 'assets/[name]-[hash].[ext]',
+      },
+    },
   },
   optimizeDeps: {
     include: ['react', 'react-dom', 'lucide-react', 'framer-motion', 'socket.io-client', 'zustand', 'react-router-dom', 'react-icons'],

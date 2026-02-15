@@ -10,7 +10,7 @@ import {
   TrendingUp as _TrendingUp,
   CheckCircle2,
   Clock,
-  ArrowLeft,
+  ArrowRight,
   Download,
   Calendar,
   Eye,

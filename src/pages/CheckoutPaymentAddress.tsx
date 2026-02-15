@@ -14,7 +14,7 @@ import {
   Briefcase,
   Tag,
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import { fetchAddresses, placeOrder, fetchCoupons } from '../services/api';
 import { useCartStore } from '../store/useCartStore';
 import { useCheckoutStore } from '../store/useCheckoutStore';
@@ -213,7 +213,7 @@ const CheckoutPaymentAddress: React.FC = () => {
             onClick={() => navigate(-1)}
             className="flex items-center justify-center w-10 h-10 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors text-text-primary-light dark:text-text-primary-dark"
           >
-            <ArrowRight size={24} />
+            <ArrowLeft size={24} className="transform rotate-180" />
           </button>
           <h1 className="text-lg font-bold leading-tight tracking-[-0.015em]">إتمام الشراء</h1>
           <div className="w-10 h-10"></div> {/* Spacer for centering */}
@@ -536,10 +536,10 @@ const CheckoutPaymentAddress: React.FC = () => {
           </div>
           
           <h2 className="text-xl font-bold mb-2">
-            {paymentStep === 'processing' && 'جاري معالجة الدفع...'}
+            {paymentStep === 'processing' && 'جاري إنشاء طلبك...'}
             {paymentStep === 'verifying' && 'يتم التحقق من العملية...'}
-            {paymentStep === 'success' && 'تم الدفع بنجاح!'}
-            {paymentStep === 'none' && 'جاري إتمام الطلب...'}
+            {paymentStep === 'success' && 'تم إرسال طلبك بنجاح!'}
+            {paymentStep === 'none' && 'جاري إنشاء طلبك...'}
           </h2>
           <p className="text-slate-500 dark:text-slate-400">يرجى عدم إغلاق الصفحة</p>
         </div>
@@ -603,7 +603,7 @@ const CheckoutPaymentAddress: React.FC = () => {
                     {createdOrderId !== null ? 'تأكيد الدفع الآن' : 'تأكيد الطلب الآن'}
                   </span>
                   <div className="relative z-10 w-8 h-8 rounded-xl bg-white/20 flex items-center justify-center group-hover:bg-white/30 transition-colors">
-                    <ArrowLeft size={18} className="group-hover:-translate-x-1 transition-transform" />
+                    <ArrowLeft size={18} className="transform rotate-180 group-hover:-translate-x-1 transition-transform" />
                   </div>
                   {/* Subtle Gradient Shine */}
                   {!agreeToTerms || isPlacingOrder || !selectedAddressId || !!(shippingInfo && !shippingInfo.isThresholdMet) ? null : (

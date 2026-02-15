@@ -9,7 +9,6 @@ import {
   Calendar, 
   XCircle, 
   MapPin, 
-  HelpCircle, 
   Copy, 
   Headset,
   ReceiptText,
@@ -286,10 +285,6 @@ const ShippingTracking: React.FC = () => {
     </div>
   );
 
-  const firstItem = order.items?.[0];
-  const firstItemImage = firstItem?.variant?.image || firstItem?.product?.image;
-  const firstItemName = firstItem?.product?.name;
-
   return (
     <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden bg-background-light dark:bg-background-dark shadow-2xl font-display text-slate-900 dark:text-slate-100 antialiased selection:bg-primary/30 rtl pb-safe pt-safe" dir="rtl">
       <style>{`
@@ -330,7 +325,7 @@ const ShippingTracking: React.FC = () => {
             onClick={() => navigate(-1)}
             className="text-slate-900 dark:text-white flex size-10 shrink-0 items-center justify-center rounded-full active:bg-slate-200 dark:active:bg-slate-700 transition-colors cursor-pointer"
           >
-            <ChevronLeft size={24} />
+            <ChevronLeft size={24} className="transform rotate-180" />
           </button>
           <h2 className="text-slate-900 dark:text-white text-lg font-bold leading-tight tracking-[-0.015em] flex-1 text-center pr-2">{t('tracking.title')}</h2>
           <button 

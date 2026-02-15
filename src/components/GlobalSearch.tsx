@@ -2,7 +2,6 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Search, ShoppingCart, SearchCode, Keyboard } from 'lucide-react';
 import LazyImage from './LazyImage';
 import { calculateInclusivePrice } from '../utils/shipping';
-import { fetchSettings } from '../services/api';
 
 interface GlobalSearchProps {
   isOpen: boolean;
@@ -27,27 +26,7 @@ const GlobalSearch: React.FC<GlobalSearchProps> = ({
     orders: any[];
     users: any[];
   }>({ products: [], orders: [], users: [] });
-  const [rates, setRates] = useState({
-    airRate: 15400,
-    seaRate: 182000,
-    minFloor: 0
-  });
 
-  useEffect(() => {
-    const loadRates = async () => {
-      try {
-        const settings = await fetchSettings();
-        if (settings) {
-          setRates({
-            airRate: settings.airShippingRate || 15400,
-            seaRate: settings.seaShippingRate || 182000,
-            minFloor: 0
-          });
-        }
-      } catch (e) {}
-    };
-    loadRates();
-  }, []);
 
   const inputRef = useRef<HTMLInputElement>(null);
 

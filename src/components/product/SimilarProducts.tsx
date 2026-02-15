@@ -24,7 +24,7 @@ const SimilarProducts: React.FC<SimilarProductsProps> = ({ products, onProductCl
             return curr.price < min.price ? curr : min;
           }, null);
 
-          const minPrice = minVariant ? minVariant.price : p.price;
+          const minPrice = minVariant ? Number(minVariant.price) : Number(p.price);
           
           const effectiveBasePriceIQD = (minVariant && minVariant.basePriceIQD && minVariant.basePriceIQD > 0)
             ? minVariant.basePriceIQD

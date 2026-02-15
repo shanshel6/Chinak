@@ -21,7 +21,7 @@ const ProductHeader: React.FC<ProductHeaderProps> = ({
         onClick={onBack}
         className="flex items-center justify-center w-10 h-10 rounded-full bg-white/80 dark:bg-slate-900/50 backdrop-blur-md shadow-sm text-slate-900 dark:text-white hover:bg-white transition-colors"
       >
-        <ArrowLeft size={20} className="rtl:rotate-180" />
+        <ArrowLeft size={20} className="transform rotate-180" />
       </button>
       {/* Action Buttons */}
       <div className="flex items-center gap-3">

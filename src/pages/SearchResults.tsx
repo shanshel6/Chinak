@@ -225,9 +225,9 @@ const SearchResults: React.FC = () => {
   const getProductBasePrice = useCallback((p: Product) => {
     const variants = (p as any).variants || [];
     const variantPrices = variants
-      .map((v: any) => v?.price)
-      .filter((price: any) => typeof price === 'number' && price > 0);
-    return variantPrices.length > 0 ? Math.min(...variantPrices) : p.price;
+      .map((v: any) => Number(v?.price))
+      .filter((price: number) => !isNaN(price) && price > 0);
+    return variantPrices.length > 0 ? Math.min(...variantPrices) : Number(p.price);
   }, []);
 
   useEffect(() => {

@@ -235,7 +235,7 @@ export const performCacheMaintenance = persistentCache.maintenance;
 // Run maintenance immediately on load to prevent QuotaExceededError
 performCacheMaintenance();
 
-export function getAuthHeaders() {
+export function getAuthHeaders(): Record<string, string> {
   const token = localStorage.getItem('auth_token')?.trim();
   if (!token || token === 'null' || token === 'undefined') return {};
   return { 'Authorization': `Bearer ${token}` };

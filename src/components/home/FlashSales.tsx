@@ -75,30 +75,24 @@ const FlashSales: React.FC<FlashSalesProps> = ({
                 });
 
             const minPrice = minVariant ? (minVariant.price || product.price) : product.price;
-            const effectiveWeight = minVariant ? (minVariant.weight || product.weight) : product.weight;
-            const effectiveLength = minVariant ? (minVariant.length || product.length) : product.length;
-            const effectiveWidth = minVariant ? (minVariant.width || product.width) : product.width;
-            const effectiveHeight = minVariant ? (minVariant.height || product.height) : product.height;
+            // const effectiveWeight = minVariant ? (minVariant.weight || product.weight) : product.weight;
+            // const effectiveLength = minVariant ? (minVariant.length || product.length) : product.length;
+            // const effectiveWidth = minVariant ? (minVariant.width || product.width) : product.width;
+            // const effectiveHeight = minVariant ? (minVariant.height || product.height) : product.height;
 
-            const isEffectivePriceCombined = minVariant 
-              ? (minVariant.isPriceCombined ?? product.isPriceCombined ?? false)
-              : (product.isPriceCombined ?? false);
+            // const isEffectivePriceCombined = minVariant 
+            //   ? (minVariant.isPriceCombined ?? product.isPriceCombined ?? false)
+            //   : (product.isPriceCombined ?? false);
 
-            const effectiveBasePriceRMB = (minVariant && minVariant.basePriceRMB && minVariant.basePriceRMB > 0)
-              ? minVariant.basePriceRMB
-              : product.basePriceRMB;
+            // const effectiveBasePriceRMB = (minVariant && minVariant.basePriceRMB && minVariant.basePriceRMB > 0)
+            //   ? minVariant.basePriceRMB
+            //   : product.basePriceRMB;
 
             const totalPrice = calculateInclusivePrice(
               minPrice,
-              effectiveWeight,
-              effectiveLength,
-              effectiveWidth,
-              effectiveHeight,
-              rates,
-              'sea',
               product.domesticShippingFee || 0,
-              effectiveBasePriceRMB,
-              isEffectivePriceCombined
+              minVariant ? minVariant.basePriceIQD : product.basePriceIQD,
+              rates
             );
 
             return (

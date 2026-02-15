@@ -18,22 +18,22 @@ const Toast: React.FC = () => {
 
   const getColor = (type: ToastType) => {
     switch (type) {
-      case 'success': return 'bg-green-500';
-      case 'error': return 'bg-red-500';
-      case 'warning': return 'bg-amber-500';
-      case 'info': return 'bg-blue-500';
-      default: return 'bg-slate-800';
+      case 'success': return 'bg-[#22c55e] text-white'; // green-500
+      case 'error': return 'bg-[#ef4444] text-white'; // red-500
+      case 'warning': return 'bg-[#f59e0b] text-white'; // amber-500
+      case 'info': return 'bg-[#3b82f6] text-white'; // blue-500
+      default: return 'bg-[#1e293b] text-white'; // slate-800
     }
   };
 
   if (toasts.length === 0) return null;
 
   return (
-    <div className="fixed top-12 left-1/2 -translate-x-1/2 z-[100] w-full max-w-xs px-4 pointer-events-none space-y-3">
+    <div className="fixed top-12 left-1/2 -translate-x-1/2 z-[100] w-full max-w-[90%] md:max-w-xs px-0 pointer-events-none space-y-3 flex flex-col items-center">
       {toasts.map((toast) => (
         <div
           key={toast.id}
-          className={`pointer-events-auto flex items-center gap-3 p-4 rounded-2xl text-white shadow-2xl animate-in slide-in-from-top-4 fade-in duration-300 ${getColor(toast.type)}`}
+          className={`pointer-events-auto flex items-center gap-3 p-4 rounded-2xl shadow-2xl animate-in slide-in-from-top-4 fade-in duration-300 w-full ${getColor(toast.type)}`}
           dir="rtl"
         >
           <div className="shrink-0">{renderIcon(toast.type)}</div>

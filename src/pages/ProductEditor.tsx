@@ -11,7 +11,6 @@ import {
   Link as LinkIcon, 
   Video, 
   Settings,
-  Star,
   Layers,
   Layout,
   Info
@@ -157,12 +156,6 @@ const ProductEditor: React.FC<ProductEditorProps> = ({ productId, storeSettings,
   // Immediately update price when weight, size, or RMB price changes
   useEffect(() => {
     if (formData.basePriceIQD && storeSettings) {
-      const rates = {
-        airRate: storeSettings.airShippingRate || 15400,
-        seaRate: storeSettings.seaShippingRate || 182000,
-        minFloor: storeSettings.airShippingMinFloor || 0
-      };
-
       const newPrice = calculateInclusivePrice(
         formData.price,
         formData.domesticShippingFee || 0,

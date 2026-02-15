@@ -1,4 +1,10 @@
-import puppeteer from 'puppeteer-core';
+import vanillaPuppeteer from 'puppeteer-core';
+import puppeteerExtra from 'puppeteer-extra';
+import StealthPlugin from 'puppeteer-extra-plugin-stealth';
+
+const puppeteer = puppeteerExtra.addExtra(vanillaPuppeteer);
+puppeteer.use(StealthPlugin());
+
 import fs from 'fs';
 import path from 'path';
 import dotenv from 'dotenv';
@@ -325,18 +331,18 @@ async function createBrowser() {
     executablePath,
     headless: false,
     defaultViewport: null,
-    userDataDir: 'chrome_data_pdd_fresh_v34',
+    // userDataDir: 'chrome_data_pdd_fresh_v36',
+    userDataDir: 'chrome_data_pdd_persistent', // Use fixed directory to keep session alive
     args: [
-        '--disable-blink-features=AutomationControlled',
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-infobars',
         '--window-position=0,0',
-        '--ignore-certifcate-errors',
-        '--ignore-certifcate-errors-spki-list',
-        '--user-agent=Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1'
-    ],
-    ignoreDefaultArgs: ['--enable-automation']
+        '--ignore-certificate-errors',
+        '--ignore-certificate-errors-spki-list',
+        '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        '--lang=zh-CN,zh'
+    ]
   });
 }
 
@@ -395,55 +401,138 @@ async function run() {
     
     // --- STEALTH MEASURES ---
     
-    // 1. Set Mobile Viewport (iPhone 13 size)
-    // Matches the User Agent we set in launch args
-    await page.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true });
+    // 1. Set Mobile Viewport (Android)
+    // await page.setViewport({ width: 360, height: 800, isMobile: true, hasTouch: true });
     
-    // 2. Override Navigator Properties to mimic iPhone
+    // Switch to Desktop Viewport
+    await page.setViewport({ width: 1366, height: 768 });
+    
+    // 2. Override Navigator Properties to mimic Android
     await page.evaluateOnNewDocument(() => {
-        // Mask WebDriver
-        Object.defineProperty(navigator, 'webdriver', { get: () => false });
+        // Force language to Chinese
+        Object.defineProperty(navigator, 'language', { get: () => 'zh-CN' });
+        Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh'] });
         
-        // Mock Platform
-        Object.defineProperty(navigator, 'platform', { get: () => 'iPhone' });
-        
-        // Mock Max Touch Points
-        Object.defineProperty(navigator, 'maxTouchPoints', { get: () => 5 });
-        
-        // Mock Languages
-        Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
-
-        // Mock Plugins (Empty array for iOS)
-        Object.defineProperty(navigator, 'plugins', { get: () => [] }); 
+        // Add minimal mouse movement to simulate human
+        window.addEventListener('load', () => {
+             document.body.addEventListener('mousemove', () => {});
+             document.body.addEventListener('touchstart', () => {});
+        });
     });
 
-    // 4. Visit Home Page for Login
-    const HOME_URL = 'https://mobile.pinduoduo.com/';
-    console.log('Visiting Home URL for Login:', HOME_URL);
-    await page.goto(HOME_URL, { waitUntil: 'domcontentloaded', timeout: PAGE_LOAD_TIMEOUT });
+    // 4. Load cookies if exist
+    try {
+        const cookiePath = path.join(__dirname, 'pdd_cookies.json');
+        if (fs.existsSync(cookiePath)) {
+            const cookies = JSON.parse(fs.readFileSync(cookiePath, 'utf8'));
+            if (cookies.length > 0) {
+                console.log(`Loading ${cookies.length} saved cookies...`);
+                await page.setCookie(...cookies);
+            }
+        }
+    } catch (err) {
+        console.error('Failed to load cookies:', err.message);
+    }
+
+    // 5. Perform Login DIRECTLY on the target Category Page
+    // Why? Navigating from Home -> Category often triggers "Drifting" or "Bot Detection".
+    // It's better to just go straight to the category, log in there if needed, and then start scraping.
+    
+    // FORCE LOGIN NAVIGATION IF NOT LOGGED IN
+    console.log('Visiting Login URL first to ensure valid session...');
+    try {
+        await page.goto('https://mobile.pinduoduo.com/login.html', { waitUntil: 'domcontentloaded', timeout: PAGE_LOAD_TIMEOUT });
+    } catch(e) { console.log('Login goto error (might be redirect):', e.message); }
+    
+    console.log('Login page loaded (or redirected).');
+
+    console.log('================================================================');
+    console.log('  PAUSING FOR MANUAL LOGIN (60 seconds)');
+    console.log('  1. Please login manually using SMS/Phone.');
+    console.log('  2. Once logged in, you should see the home page.');
+    console.log('  3. The script will then redirect to the category page.');
+    console.log('================================================================');
+    await delay(60000); 
+
+    // CLEAN CATEGORY URL to remove tracking params
+    let cleanUrl = CATEGORY_URL;
+    try {
+        const u = new URL(CATEGORY_URL);
+        const searchKey = u.searchParams.get('search_key');
+        const catId = u.searchParams.get('cat_id');
+        const optId = u.searchParams.get('opt_id');
+        
+        // Construct a clean URL
+        if (searchKey) {
+            cleanUrl = `https://mobile.pinduoduo.com/search_result.html?search_key=${encodeURIComponent(searchKey)}&search_type=goods`;
+        } else if (catId) {
+            cleanUrl = `https://mobile.pinduoduo.com/catgoods.html?cat_id=${catId}&opt_id=${optId || catId}`;
+        } else if (optId) {
+                cleanUrl = `https://mobile.pinduoduo.com/catgoods.html?opt_id=${optId}`;
+        }
+        
+        console.log('Original URL:', CATEGORY_URL);
+        console.log('Cleaned URL:', cleanUrl);
+    } catch(e) {
+        console.log('Error cleaning URL:', e.message);
+        cleanUrl = CATEGORY_URL; // Fallback
+    }
+
+    console.log('Visiting Clean Category URL:', cleanUrl);
+    await page.goto(cleanUrl, { waitUntil: 'domcontentloaded', timeout: PAGE_LOAD_TIMEOUT });
+    console.log('Category page loaded.');
+    
+    // SWITCH TO MOBILE VIEWPORT AFTER LOGIN & NAVIGATION
+    console.log('Switching to Mobile Viewport for scraping...');
+    await page.setViewport({ width: 360, height: 800, isMobile: true, hasTouch: true });
+    await delay(2000);
+    
+    /*
+    console.log('Visiting Category URL (and performing login check there):', CATEGORY_URL);
+    await page.goto(CATEGORY_URL, { waitUntil: 'domcontentloaded', timeout: PAGE_LOAD_TIMEOUT });
     console.log('Goto done');
 
     console.log('================================================================');
-    console.log('  PAUSING FOR MANUAL LOGIN (5 seconds)');
-    console.log('  Please log in manually now if needed.');
+    console.log('  PAUSING FOR MANUAL LOGIN / CHECK (40 seconds)');
+    console.log('  1. If you see a login screen, please log in.');
+    console.log('  2. If you see "Sold Out", try refreshing manually.');
+    console.log('  3. Make sure you see the product list before this timer ends.');
     console.log('================================================================');
     console.log('Starting delay...');
-    await delay(5000); 
+    await delay(40000); 
     console.log('Delay finished. Resuming...');
+    */
+    
+    // SAVE COOKIES AFTER LOGIN
+    try {
+        const cookies = await page.cookies();
+        const cookiePath = path.join(__dirname, 'pdd_cookies.json');
+        fs.writeFileSync(cookiePath, JSON.stringify(cookies, null, 2));
+        console.log('✅ Login cookies saved to pdd_cookies.json');
+    } catch (err) {
+        console.error('Failed to save cookies:', err.message);
+    }
 
-    // 2. Visit Category Page
-    console.log('Visiting Category URL:', CATEGORY_URL);
-    await page.goto(CATEGORY_URL, { waitUntil: 'domcontentloaded', timeout: PAGE_LOAD_TIMEOUT });
+    // Wait extra time for the page to fully stabilize
+    console.log('Waiting 5s for page stabilization...');
+    await delay(5000);
 
     // --- SCROLL PAST HEADER ---
     console.log('Scrolling down to bypass header/category icons...');
     
-    // Scroll down one full screen height + a bit more
-    await page.evaluate(async () => {
-        const viewportHeight = window.innerHeight;
-        window.scrollBy(0, viewportHeight + 200);
-        await new Promise(r => setTimeout(r, 1000));
-    });
+    try {
+        // Scroll down one full screen height + a bit more
+        await page.evaluate(async () => {
+            const viewportHeight = window.innerHeight;
+            window.scrollBy(0, viewportHeight + 200);
+            await new Promise(r => setTimeout(r, 1000));
+        });
+    } catch (e) {
+        console.warn('⚠️ Scroll error (ignoring):', e.message);
+        // If execution context destroyed, it usually means page refreshed or navigated.
+        // We can just wait a bit and proceed.
+        await delay(1000);
+    }
     
     await humanDelay(2000, 3000);
 
@@ -485,32 +574,38 @@ async function run() {
             }
         } catch(e) {}
 
-        if (isHomePage || (requiredParam && !currentUrlBeforeScroll.includes(decodeURIComponent(requiredParam)) && !currentUrlBeforeScroll.includes(requiredParam))) {
-             console.log('WARNING: Drifted away from category page. Redirecting back to:', CATEGORY_URL);
-             await page.goto(CATEGORY_URL, { waitUntil: 'domcontentloaded', timeout: PAGE_LOAD_TIMEOUT });
-             await humanDelay(3000, 5000);
-        }
+        // DISABLE AUTO-REDIRECT for now - it's causing loops if the URL format changes slightly
+        // if (isHomePage || (requiredParam && !currentUrlBeforeScroll.includes(decodeURIComponent(requiredParam)) && !currentUrlBeforeScroll.includes(requiredParam))) {
+        //      console.log('WARNING: Drifted away from category page. Redirecting back to:', CATEGORY_URL);
+        //      await page.goto(CATEGORY_URL, { waitUntil: 'domcontentloaded', timeout: PAGE_LOAD_TIMEOUT });
+        //      await humanDelay(3000, 5000);
+        // }
 
         
-        // --- 4-POINT BLIND CLICK STRATEGY ---
+            // --- 4-POINT BLIND CLICK STRATEGY ---
         console.log('Scrolling down to find new batch of products...');
         
         // 1. Scroll down one screen size + a bit
-        await page.evaluate(async () => {
-            const viewportHeight = window.innerHeight;
-            window.scrollBy(0, viewportHeight + 200);
-            await new Promise(r => setTimeout(r, 1000));
-        });
+        try {
+            await page.evaluate(async () => {
+                // Random scroll
+                const viewportHeight = window.innerHeight;
+                const distance = viewportHeight + 100 + Math.floor(Math.random() * 200);
+                window.scrollBy(0, distance);
+                await new Promise(r => setTimeout(r, 1000));
+            });
+        } catch (e) {
+             console.warn('⚠️ Scroll error in loop (recovering):', e.message);
+             // Wait and reload context if needed
+             await delay(2000);
+             if (page.isClosed()) break;
+             continue; // Skip this iteration
+        }
         
         await humanDelay(2000, 3000);
 
         // Define the 4 click points (percentages of viewport)
-        // Top-Right: 75% width, 30% height
-        // Top-Left:  25% width, 30% height
-        // Bot-Left:  25% width, 70% height
-        // Bot-Right: 75% width, 70% height
-        // We add randomization to each.
-        
+        // Adjust for Mobile Viewport in Desktop Browser
         const clickPoints = [
             { name: "Top-Right", xPct: 0.75, yPct: 0.30 },
             { name: "Top-Left",  xPct: 0.25, yPct: 0.30 },
@@ -545,6 +640,7 @@ async function run() {
             const currentUrl = page.url();
 
             try {
+                // Use evaluating touchstart for mobile simulation if mouse click fails
                 await page.mouse.click(clickCoordinates.x, clickCoordinates.y);
             } catch (e) {
                 console.log('Click failed:', e.message);
@@ -563,6 +659,19 @@ async function run() {
                 if (target && target.type() === 'page') {
                     console.log('New tab detected.');
                     newPage = await target.page();
+                    
+                    // STEALTH: Ensure new page looks like it came from the main page
+                    await newPage.bringToFront();
+                    
+                    // IMPORTANT: Set viewport for the new tab too!
+                    await newPage.setViewport({ width: 360, height: 800, isMobile: true, hasTouch: true });
+                    
+                    try {
+                        await newPage.setExtraHTTPHeaders({ 
+                            'Referer': currentUrl,
+                            // 'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8' // Already handled by args
+                        });
+                    } catch(e) {}
                 } else {
                     console.log('No new tab. Checking if current page navigated...');
                     await delay(2000); 
@@ -587,6 +696,20 @@ async function run() {
             try {
                 await newPage.waitForLoadState ? newPage.waitForLoadState('domcontentloaded') : newPage.waitForSelector('body', { timeout: 15000 });
                 await humanDelay(2000, 4000);
+
+                // CHECK FOR "SOLD OUT" STATE
+                const isSoldOut = await newPage.evaluate(() => {
+                    const text = document.body.innerText;
+                    return text.includes('商品已售罄') || text.includes('已售完') || text.includes('下架');
+                });
+
+                if (isSoldOut) {
+                    console.log('⚠️ Product is SOLD OUT (or Anti-Bot triggered). Skipping...');
+                    console.log('   -> Hint: If this happens for ALL products, try deleting pdd_cookies.json and re-login.');
+                    if (!navigationHappened) await newPage.close();
+                    else await newPage.goBack();
+                    continue;
+                }
 
                 const productUrl = newPage.url();
                 console.log(`Scraping Product URL: ${productUrl}`);

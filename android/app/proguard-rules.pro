@@ -5,6 +5,18 @@
 # For more details, see
 #   http://developer.android.com/guide/developing/tools/proguard.html
 
+# Capacitor Rules
+-keep public class com.getcapacitor.Plugin { public *; }
+-keep public class com.getcapacitor.PluginMethod { public *; }
+-keep public class com.getcapacitor.MessageHandler { public *; }
+-keep public class com.getcapacitor.BridgeActivity { public *; }
+-keep class com.getcapacitor.** { *; }
+-keep class **.WebView { *; }
+-keep class **.WebViewClient { *; }
+-keep class **.WebChromeClient { *; }
+-keep class org.apache.cordova.** { *; }
+-keep class com.chinak.app.** { *; }
+
 # If your project uses WebView with JS, uncomment the following
 # and specify the fully qualified class name to the JavaScript interface
 # class:
