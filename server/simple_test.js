@@ -1,15 +1,9 @@
-import prisma from './prismaClient.js';
 
-async function test() {
-  try {
-    console.log('Testing connection...');
-    const count = await prisma.product.count();
-    console.log('Connection successful, product count:', count);
-  } catch (err) {
-    console.error('Connection failed:', err);
-  } finally {
-    await prisma.$disconnect();
-  }
-}
+import fs from 'fs';
+import path from 'path';
 
-test();
+console.log('Running simple_test.js');
+const file = path.resolve(process.cwd(), 'test_output.txt');
+console.log('Writing to:', file);
+fs.writeFileSync(file, 'Hello World from simple_test.js');
+console.log('Done');

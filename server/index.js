@@ -56,67 +56,79 @@ const safeParseFloat = (val) => {
 };
 
 const applyDynamicPricingToProduct = (product, rates) => {
-  if (!product) return product;
+  try {
+    if (!product) return product;
 
-  // Helper to calculate price for a specific target (product or variant)
-  const calcPrice = (target, method) => {
-    const basePrice = target.price || 0;
-    // Use target's basePriceIQD if available, else product's
-    const basePriceIQD = (target.basePriceIQD && target.basePriceIQD > 0) ? target.basePriceIQD : (product.basePriceIQD || null);
-    const domesticShippingFee = product.domesticShippingFee || 0;
+    // Helper to calculate price for a specific target (product or variant)
+    const calcPrice = (target, method) => {
+      const basePrice = target.price || 0;
+      // Use target's basePriceIQD if available, else product's
+      const basePriceIQD = (target.basePriceIQD && target.basePriceIQD > 0) ? target.basePriceIQD : (product.basePriceIQD || null);
+      const domesticShippingFee = product.domesticShippingFee || 0;
 
-    return getAdjustedPrice(
-      basePrice, 
-      domesticShippingFee, 
-      basePriceIQD
-    );
-  };
+      // Ensure getAdjustedPrice is available
+      if (typeof getAdjustedPrice !== 'function') {
+        console.warn('getAdjustedPrice is not a function, using fallback price');
+        return Math.ceil(basePrice / 250) * 250;
+      }
 
-  // 1. Calculate for all variants if they exist
-  let newVariants = [];
-  if (product.variants && Array.isArray(product.variants)) {
-    newVariants = product.variants.map(v => {
-      const seaPrice = calcPrice(v, 'sea');
-      const airPrice = calcPrice(v, 'air');
-      return {
-        ...v,
-        price: seaPrice, // Default to Sea
-        inclusivePrice: seaPrice,
-        seaPrice,
-        airPrice
-      };
-    });
+      return getAdjustedPrice(
+        basePrice, 
+        domesticShippingFee, 
+        basePriceIQD
+      );
+    };
+
+    // 1. Calculate for all variants if they exist
+    let newVariants = [];
+    if (product.variants && Array.isArray(product.variants)) {
+      newVariants = product.variants.map(v => {
+        const seaPrice = calcPrice(v, 'sea');
+        const airPrice = calcPrice(v, 'air');
+        return {
+          ...v,
+          price: seaPrice, // Default to Sea
+          inclusivePrice: seaPrice,
+          seaPrice,
+          airPrice
+        };
+      });
+    }
+
+    // 2. Find min variant from the *newly calculated* prices
+    let minVariant = null;
+    if (newVariants.length > 0) {
+      minVariant = newVariants.reduce((min, curr) => {
+        if (!curr.price) return min;
+        if (!min) return curr;
+        return curr.price < min.price ? curr : min;
+      }, null);
+    }
+
+    // 3. Calculate main product prices
+    let seaPrice, airPrice;
+    
+    if (minVariant) {
+      seaPrice = minVariant.seaPrice;
+      airPrice = minVariant.airPrice;
+    } else {
+      seaPrice = calcPrice(product, 'sea');
+      airPrice = calcPrice(product, 'air');
+    }
+
+    return {
+      ...product,
+      variants: newVariants,
+      price: seaPrice, // Update price to match default (sea)
+      inclusivePrice: seaPrice, // Default to sea price as per requirement
+      airPrice,
+      seaPrice
+    };
+  } catch (error) {
+    console.error(`Error calculating dynamic price for product ${product?.id}:`, error);
+    // Fallback: return product as is to avoid breaking the entire list
+    return product;
   }
-
-  // 2. Find min variant from the *newly calculated* prices
-  let minVariant = null;
-  if (newVariants.length > 0) {
-    minVariant = newVariants.reduce((min, curr) => {
-      if (!curr.price) return min;
-      if (!min) return curr;
-      return curr.price < min.price ? curr : min;
-    }, null);
-  }
-
-  // 3. Calculate main product prices
-  let seaPrice, airPrice;
-  
-  if (minVariant) {
-    seaPrice = minVariant.seaPrice;
-    airPrice = minVariant.airPrice;
-  } else {
-    seaPrice = calcPrice(product, 'sea');
-    airPrice = calcPrice(product, 'air');
-  }
-
-  return {
-    ...product,
-    variants: newVariants,
-    price: seaPrice, // Update price to match default (sea)
-    inclusivePrice: seaPrice, // Default to sea price as per requirement
-    airPrice,
-    seaPrice
-  };
 };
 
 const embeddingJobQueue = [];
@@ -580,7 +592,7 @@ io.on('connection', (socket) => {
   });
 });
 
-const PORT = process.env.PORT || 5001;
+const PORT = process.env.PORT || 5002;
 const JWT_SECRET = process.env.JWT_SECRET || 'c2hhbnNoYWw2Ni1teS1zaG9wLWJhY2tlbmQtc2VjcmV0LTIwMjY=';
 
 // --- Normalization Helpers ---
@@ -2928,6 +2940,7 @@ app.get('/api/products', async (req, res) => {
               combination: true,
               price: true,
               basePriceIQD: true,
+              image: true,
             }
           }
         },
@@ -2956,7 +2969,11 @@ app.get('/api/products', async (req, res) => {
     });
   } catch (error) {
     console.error('[Products] Failed to fetch products:', error);
-    res.status(500).json({ error: 'Failed to fetch products' });
+    res.status(500).json({ 
+      error: 'Failed to fetch products', 
+      details: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
 });
 

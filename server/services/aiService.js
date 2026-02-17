@@ -574,11 +574,11 @@ export async function hybridSearch(query, limit = 50, skip = 0, maxPrice = null,
         LIMIT 100
       )
       SELECT 
-        p.id, p.name, p."chineseName", p.price, p."basePriceRMB", p."isPriceCombined",
+        p.id, p.name, p.price, p."basePriceIQD",
         p.image, p."purchaseUrl", p.status, p."isFeatured", 
-        p."isActive", p.specs, p."storeEvaluation", p."reviewsCountShown", 
-        p."createdAt", p."updatedAt", p."videoUrl", p."aiMetadata", 
-        p."clickCount", p."conversionRate", p."deliveryTime",
+        p."isActive", p.specs, 
+        p."createdAt", p."updatedAt", p."aiMetadata", 
+        p."deliveryTime", p."domesticShippingFee",
         COALESCE(s.semantic_score, 0) as semantic_score,
         COALESCE(k.keyword_score, 0) as keyword_score,
         COALESCE(k.match_count, 0) as match_count,
@@ -589,7 +589,7 @@ export async function hybridSearch(query, limit = 50, skip = 0, maxPrice = null,
           -- Keyword Score (35%)
           0.35 * COALESCE(k.keyword_score, 0) + 
           -- Popularity (15%)
-          0.15 * (1 - 1/(1 + (COALESCE(p."clickCount", 0) * 0.1 + COALESCE(p."conversionRate", 0) * 0.9))) +
+          0.15 * (1 - 1/(1 + (0.1 + 0.9))) +
           -- Personalization (15%) - Boosts items user has interacted with
           0.15 * (1 - 1/(1 + ${personalizationSql}))
         ) * (
@@ -624,7 +624,8 @@ export async function hybridSearch(query, limit = 50, skip = 0, maxPrice = null,
         length: true,
         width: true,
         height: true,
-        isPriceCombined: true
+        isPriceCombined: true,
+        image: true
       }
     });
 

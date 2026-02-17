@@ -21,27 +21,91 @@ dotenv.config({ path: envPath });
 const prisma = new PrismaClient();
 // const prisma = { $disconnect: async () => {} };
 
+// --- EDIBLE ITEM FILTERING CONFIGURATION ---
+const EDIBLE_KEYWORDS = [
+    "食品", "零食", "坚果", "罐头", "饮料", "糖果", "饼干", "调料", "茶", "酒", 
+    "肉", "蛋", "奶", "油", "米", "面", "果冻", "巧克力", "咖啡", "food", "snack", 
+    "nut", "can", "drink", "candy", "biscuit", "seasoning", "tea", "wine", 
+    "meat", "egg", "milk", "oil", "rice", "noodle", "jelly", "chocolate", "coffee",
+    "吃", "喝", "味", "香", "甜", "辣", "咸", "酸", "苦" // General taste/eating words (use with caution or in combination)
+];
+
+// Stricter list for immediate rejection
+const STRICT_EDIBLE_KEYWORDS = [
+    "食品", "零食", "坚果", "罐头", "饮料", "糖果", "饼干", "调料", "茶叶", "酒水", 
+    "鲜肉", "鸡蛋", "牛奶", "食用油", "大米", "面粉", "果冻", "巧克力", "咖啡豆",
+    "保健品", "维生素", "钙片", "酵素", "益生菌" // Supplements
+];
+
+function isEdiblePreCheck(title, description) {
+    const text = (title + " " + description).toLowerCase();
+    
+    // Check strict keywords first
+    for (const keyword of STRICT_EDIBLE_KEYWORDS) {
+        if (text.includes(keyword)) {
+            return { isEdible: true, keyword: keyword };
+        }
+    }
+    return { isEdible: false };
+}
+
 // Initialize AI (DeepInfra)
 let aiClient = null;
 
-let AI_MODEL = "meta-llama/Llama-4-Scout-17B-16E-Instruct"; // Reverted to Llama-4-Scout
+const AI_TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS) > 0 ? Number(process.env.AI_TIMEOUT_MS) : 90000;
+const AI_MAX_ATTEMPTS = Number(process.env.AI_MAX_ATTEMPTS) > 0 ? Number(process.env.AI_MAX_ATTEMPTS) : 5;
+const AI_BASE_RETRY_DELAY_MS = Number(process.env.AI_BASE_RETRY_DELAY_MS) > 0 ? Number(process.env.AI_BASE_RETRY_DELAY_MS) : 1500;
 
+const PUPPETEER_PROTOCOL_TIMEOUT_MS =
+  Number(process.env.PUPPETEER_PROTOCOL_TIMEOUT_MS) > 0
+    ? Number(process.env.PUPPETEER_PROTOCOL_TIMEOUT_MS)
+    : 180000;
+const PUPPETEER_DEFAULT_TIMEOUT_MS =
+  Number(process.env.PUPPETEER_DEFAULT_TIMEOUT_MS) > 0
+    ? Number(process.env.PUPPETEER_DEFAULT_TIMEOUT_MS)
+    : 120000;
+
+let AI_PRIMARY_MODEL = process.env.AI_MODEL || "qwen/qwen-vl-plus";
+let AI_FALLBACK_MODEL = process.env.AI_FALLBACK_MODEL || AI_PRIMARY_MODEL;
+let AI_MODEL = AI_PRIMARY_MODEL;
 if (process.env.DEEPINFRA_API_KEY) {
+    AI_PRIMARY_MODEL = process.env.DEEPINFRA_MODEL || process.env.AI_MODEL || "Qwen/Qwen3-235B-A22B-Instruct-2507";
+    AI_FALLBACK_MODEL = process.env.DEEPINFRA_FALLBACK_MODEL || "Qwen/Qwen3-32B-Instruct";
+    AI_MODEL = AI_PRIMARY_MODEL;
     aiClient = new OpenAI({
         baseURL: "https://api.deepinfra.com/v1/openai",
         apiKey: process.env.DEEPINFRA_API_KEY,
+        timeout: AI_TIMEOUT_MS,
+        maxRetries: 0,
     });
-    console.log(`AI Initialized (DeepInfra: ${AI_MODEL})`);
+    console.log(`AI Initialized (DeepInfra: primary=${AI_PRIMARY_MODEL}, fallback=${AI_FALLBACK_MODEL})`);
 } else if (process.env.SILICONFLOW_API_KEY) {
     // Fallback to SiliconFlow if DeepInfra not set (backward compatibility)
+    AI_PRIMARY_MODEL = process.env.SILICONFLOW_MODEL || process.env.AI_MODEL || AI_PRIMARY_MODEL;
+    AI_FALLBACK_MODEL = process.env.SILICONFLOW_FALLBACK_MODEL || process.env.AI_FALLBACK_MODEL || AI_PRIMARY_MODEL;
+    AI_MODEL = AI_PRIMARY_MODEL;
     aiClient = new OpenAI({
         baseURL: "https://api.siliconflow.cn/v1",
         apiKey: process.env.SILICONFLOW_API_KEY,
+        timeout: AI_TIMEOUT_MS,
+        maxRetries: 0,
     });
-    console.log('AI Initialized (SiliconFlow)');
+    console.log(`AI Initialized (SiliconFlow: primary=${AI_PRIMARY_MODEL}, fallback=${AI_FALLBACK_MODEL})`);
 } else {
     console.log('Warning: No AI API KEY found. AI features will use mock data.');
 }
+
+const isModelBusyError = (e) => {
+    const message = (e && e.message) ? String(e.message) : String(e);
+    const code = (e && e.code) ? e.code : '';
+    return (
+        message.includes('429') ||
+        String(code) === '429' ||
+        message.toLowerCase().includes('model busy') ||
+        message.toLowerCase().includes('rate limit') ||
+        message.toLowerCase().includes('too many requests')
+    );
+};
 
 
 // --- Configuration ---
@@ -94,12 +158,16 @@ async function enrichWithAI(title, description, price) {
     }
 
     try {
+        const safeTitle = String(title || '').slice(0, 220);
+        const safeDescription = String(description || '').slice(0, 1200);
+        const safePrice = String(price || '').slice(0, 50);
+
         const prompt = `
         You are a product data enrichment assistant for an Iraqi e-commerce site.
         
-        Original Product Title (Chinese): "${title}"
-        Product Description: "${description}"
-        Price: "${price}"
+        Original Product Title (Chinese): "${safeTitle}"
+        Product Description: "${safeDescription}"
+        Price: "${safePrice}"
 
         Task:
         1. Extract the Brand Name in English (e.g., "Nike", "Sony", "Xiaomi"). If no brand is found, ignore it.
@@ -116,9 +184,14 @@ async function enrichWithAI(title, description, price) {
            - IMPORTANT: You MUST translate the actual title. Do NOT use placeholder text like "اسم المنتج بالعربية".
         4. Extract "product_details_ar" as a structured Key-Value JSON object in ARABIC.
         5. Generate "aiMetadata" based strictly on the product Title and Description.
-            - "synonyms": Array of 3-5 alternative Arabic names SPECIFIC to this product (e.g. if it's a hoodie, use "هودي", "سويت شيرت", "بلوفر").
-            - "market_tags": Array of 3-5 relevant tags in Arabic derived from the product features (e.g. "قطن", "شتوي", "رياضي").
-            - "category_suggestion": A specific category path in Arabic that fits this product (e.g. "ملابس رجالية > سترات").
+            - "synonyms": Array of 3-5 alternative Arabic names SPECIFIC to this product.
+            - "market_tags": Array of 3-5 relevant tags in Arabic.
+            - "category_suggestion": A specific category path in Arabic.
+        6. DETECT IF THE PRODUCT IS EDIBLE (Food, Drink, Nuts, Cans, Snacks, Ingredients, Supplements, Vitamins, Medicine).
+            - Set "is_edible": true if it is food/edible/supplement.
+            - Set "is_edible": false if it is NOT edible (e.g. clothes, electronics, tools).
+            - BE VERY CAREFUL. "Food Container" is NOT edible. "Dog Food" IS edible (sort of, but usually restricted). "Almond Oil for Skin" is NOT edible (cosmetic). "Almond Oil for Cooking" IS edible.
+            - If in doubt, set true to be safe.
 
          CRITICAL INSTRUCTIONS:
          - The "product_name_ar" MUST be in ARABIC script (except the brand).
@@ -145,6 +218,7 @@ async function enrichWithAI(title, description, price) {
         Return ONLY a valid JSON object with this structure (no markdown):
         {
             "product_name_ar": "Put Translated Name Here",
+            "is_edible": false,
             "product_details_ar": {
                 "الماركة": "قيمة",
                 "اللون": "قيمة",
@@ -159,21 +233,29 @@ async function enrichWithAI(title, description, price) {
         `;
 
         let attempts = 0;
-        const maxAttempts = 5;
         
-        while (attempts < maxAttempts) {
+        while (attempts < AI_MAX_ATTEMPTS) {
             try {
-                const responsePromise = aiClient.chat.completions.create({
-                    model: AI_MODEL, // Use defined model
-                    messages: [{ role: "user", content: prompt }],
-                    temperature: 0.7,
-                    max_tokens: 1024,
-                });
+                const create = async (model) => {
+                    return await aiClient.chat.completions.create({
+                        model,
+                        messages: [{ role: "user", content: prompt }],
+                        temperature: 0.2,
+                        max_tokens: 900,
+                    });
+                };
 
-                const response = await Promise.race([
-                    responsePromise,
-                    new Promise((_, reject) => setTimeout(() => reject(new Error('AI Request Timeout')), 25000))
-                ]);
+                let response;
+                try {
+                    response = await create(AI_PRIMARY_MODEL);
+                } catch (e) {
+                    if (isModelBusyError(e) && AI_FALLBACK_MODEL && AI_FALLBACK_MODEL !== AI_PRIMARY_MODEL) {
+                        console.log(`AI busy on ${AI_PRIMARY_MODEL}. Falling back to ${AI_FALLBACK_MODEL}...`);
+                        response = await create(AI_FALLBACK_MODEL);
+                    } else {
+                        throw e;
+                    }
+                }
 
                 let text = response.choices[0].message.content;
                 text = text.replace(/```json/g, '').replace(/```/g, '').trim();
@@ -273,14 +355,32 @@ async function enrichWithAI(title, description, price) {
                 }
             } catch (e) {
                 attempts++;
-                console.error(`AI Error (Attempt ${attempts}/${maxAttempts}):`, e.message);
-                if (e.message.includes('429')) {
-                    const waitTime = attempts * 5000;
-                    console.log(`Rate limit hit. Waiting ${waitTime/1000}s...`);
+                const message = (e && e.message) ? e.message : String(e);
+                const name = (e && e.name) ? e.name : '';
+                const code = (e && e.code) ? e.code : '';
+                console.error(`AI Error (Attempt ${attempts}/${AI_MAX_ATTEMPTS}):`, message);
+
+                const isRateLimit = isModelBusyError(e) || message.includes('429') || code === 429;
+                const isTimeout =
+                    name.toLowerCase().includes('timeout') ||
+                    message.toLowerCase().includes('timeout') ||
+                    code === 'ETIMEDOUT' ||
+                    code === 'UND_ERR_CONNECT_TIMEOUT';
+
+                if (isRateLimit) {
+                    const waitTime = Math.min(45000, 5000 * attempts) + Math.floor(Math.random() * 1000);
+                    console.log(`Rate limit hit. Waiting ${(waitTime / 1000).toFixed(1)}s...`);
                     await delay(waitTime);
-                } else {
-                    await delay(2000);
+                    continue;
                 }
+
+                if (isTimeout) {
+                    const waitTime = Math.min(45000, AI_BASE_RETRY_DELAY_MS * (2 ** Math.max(0, attempts - 1))) + Math.floor(Math.random() * 1000);
+                    await delay(waitTime);
+                    continue;
+                }
+
+                await delay(2000 + Math.floor(Math.random() * 500));
             }
         }
         throw new Error("Max AI attempts reached");
@@ -320,6 +420,64 @@ const delay = (ms) => new Promise(resolve => {
 });
 const humanDelay = (min = 1000, max = 3000) => delay(Math.floor(Math.random() * (max - min + 1)) + min);
 
+async function applyPageTimeouts(page) {
+    if (!page) return;
+    try { page.setDefaultTimeout(PUPPETEER_DEFAULT_TIMEOUT_MS); } catch (e) {}
+    try { page.setDefaultNavigationTimeout(PUPPETEER_DEFAULT_TIMEOUT_MS); } catch (e) {}
+}
+
+async function waitForStableUrl(page, stableMs = 1200, timeoutMs = 12000) {
+    const start = Date.now();
+    let lastUrl = '';
+    let lastChangeAt = Date.now();
+    try { lastUrl = page.url(); } catch (e) { lastUrl = ''; }
+    lastChangeAt = Date.now();
+
+    while (Date.now() - start < timeoutMs) {
+        if (!page || (page.isClosed && page.isClosed())) return lastUrl;
+        await delay(200);
+        let cur = '';
+        try { cur = page.url(); } catch (e) { cur = lastUrl; }
+        if (cur && cur !== lastUrl) {
+            lastUrl = cur;
+            lastChangeAt = Date.now();
+        }
+        if (Date.now() - lastChangeAt >= stableMs) return lastUrl;
+    }
+    return lastUrl;
+}
+
+async function safeEvaluate(page, pageFunction, args = [], maxAttempts = 4) {
+    let lastErr = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+            return await page.evaluate(pageFunction, ...args);
+        } catch (e) {
+            lastErr = e;
+            const msg = String(e?.message || e || '');
+            const isContextDestroyed =
+                msg.includes('Execution context was destroyed') ||
+                msg.includes('Cannot find context') ||
+                msg.includes('Target closed') ||
+                msg.includes('Session closed') ||
+                msg.includes('Most likely the page has been closed') ||
+                msg.includes('Navigating frame was detached') ||
+                msg.includes('frame was detached');
+
+            if (!isContextDestroyed) throw e;
+
+            try {
+                await delay(300 * attempt);
+                await Promise.race([
+                    page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 8000 }).catch(() => null),
+                    waitForStableUrl(page, 1400, 12000)
+                ]);
+            } catch (e2) {}
+        }
+    }
+    throw lastErr || new Error('safeEvaluate failed');
+}
+
 async function createBrowser() {
   const executablePath = getExecutablePath();
   if (!executablePath) {
@@ -331,6 +489,7 @@ async function createBrowser() {
     executablePath,
     headless: false,
     defaultViewport: null,
+    protocolTimeout: PUPPETEER_PROTOCOL_TIMEOUT_MS,
     // userDataDir: 'chrome_data_pdd_fresh_v36',
     userDataDir: 'chrome_data_pdd_persistent', // Use fixed directory to keep session alive
     args: [
@@ -398,6 +557,7 @@ async function run() {
     console.log('Browser launched');
     let page = await browser.newPage();
     console.log('Page created');
+    await applyPageTimeouts(page);
     
     // --- STEALTH MEASURES ---
     
@@ -447,12 +607,12 @@ async function run() {
     console.log('Login page loaded (or redirected).');
 
     console.log('================================================================');
-    console.log('  PAUSING FOR MANUAL LOGIN (60 seconds)');
+    console.log('  PAUSING FOR MANUAL LOGIN (30 seconds)');
     console.log('  1. Please login manually using SMS/Phone.');
     console.log('  2. Once logged in, you should see the home page.');
     console.log('  3. The script will then redirect to the category page.');
     console.log('================================================================');
-    await delay(60000); 
+    await delay(30000); 
 
     // CLEAN CATEGORY URL to remove tracking params
     let cleanUrl = CATEGORY_URL;
@@ -659,6 +819,7 @@ async function run() {
                 if (target && target.type() === 'page') {
                     console.log('New tab detected.');
                     newPage = await target.page();
+                    await applyPageTimeouts(newPage);
                     
                     // STEALTH: Ensure new page looks like it came from the main page
                     await newPage.bringToFront();
@@ -679,6 +840,7 @@ async function run() {
                         console.log('Current page navigated. Treating as product page.');
                         newPage = page;
                         navigationHappened = true;
+                        await applyPageTimeouts(newPage);
                     } else {
                          console.log('Click did not trigger navigation. Moving to next point.');
                          // Just continue to next point in loop
@@ -696,9 +858,31 @@ async function run() {
             try {
                 await newPage.waitForLoadState ? newPage.waitForLoadState('domcontentloaded') : newPage.waitForSelector('body', { timeout: 15000 });
                 await humanDelay(2000, 4000);
+                await waitForStableUrl(newPage, 1200, 12000);
 
                 // CHECK FOR "SOLD OUT" STATE
-                const isSoldOut = await newPage.evaluate(() => {
+                const isLogin = await safeEvaluate(newPage, () => {
+                    const t = (document.body && document.body.innerText) ? document.body.innerText : '';
+                    const s = String(t || '');
+                    return s.includes('登录') && (s.includes('扫码登录') || s.includes('同意服务协议') || s.includes('隐私政策'));
+                }, [], 12);
+
+                if (isLogin) {
+                    console.log('⚠️ Hit login page. Skipping product and returning to listing...');
+                    if (!navigationHappened && newPage.close) await newPage.close();
+                    else {
+                        try {
+                            await newPage.goBack({ waitUntil: 'domcontentloaded', timeout: PAGE_LOAD_TIMEOUT });
+                        } catch (e) {
+                            try {
+                                await newPage.goto(currentUrl || CATEGORY_URL, { waitUntil: 'domcontentloaded', timeout: PAGE_LOAD_TIMEOUT });
+                            } catch (e2) {}
+                        }
+                    }
+                    continue;
+                }
+
+                const isSoldOut = await safeEvaluate(newPage, () => {
                     const text = document.body.innerText;
                     return text.includes('商品已售罄') || text.includes('已售完') || text.includes('下架');
                 });
@@ -798,12 +982,710 @@ async function run() {
                 }
                 */
 
-                const data = await newPage.evaluate(async () => {
+                const openOptionsModalIfNeeded = async (page) => {
+                    const modalSelector = '.HidQ9ROd, div[role="dialog"][aria-modal="true"], div[role="dialog"]';
+
+                    const hasVisibleSkuModal = async () => {
+                        return await page.evaluate((sel) => {
+                            const visible = (el) => {
+                                if (!el) return false;
+                                if (el.getAttribute && el.getAttribute('aria-hidden') === 'true') return false;
+                                const style = window.getComputedStyle(el);
+                                if (!style) return false;
+                                if (style.display === 'none' || style.visibility === 'hidden') return false;
+                                const opacity = parseFloat(style.opacity || '1');
+                                if (!Number.isNaN(opacity) && opacity <= 0.02) return false;
+                                const r = el.getBoundingClientRect();
+                                if (!r || r.width < 40 || r.height < 40) return false;
+                                const intersects =
+                                    r.bottom > 0 &&
+                                    r.right > 0 &&
+                                    r.top < window.innerHeight &&
+                                    r.left < window.innerWidth;
+                                if (!intersects) return false;
+                                const x = Math.floor(Math.min(window.innerWidth - 2, Math.max(1, r.left + r.width * 0.5)));
+                                const y = Math.floor(Math.min(window.innerHeight - 2, Math.max(1, r.top + r.height * 0.5)));
+                                const top = document.elementFromPoint(x, y);
+                                if (top && (el === top || el.contains(top))) return true;
+                                return false;
+                            };
+
+                            const isSku = (m) => {
+                                try {
+                                    if (m && m.matches && m.matches('.HidQ9ROd')) return true;
+                                } catch (e) {}
+                                if (m && m.querySelector && m.querySelector('.iW4aEGbb')) return false;
+                                const t = String(m?.innerText || m?.textContent || '');
+                                if (t.includes('已选') || t.includes('请选择') || t.includes('规格')) return true;
+                                if (m.querySelector('.O7pEFvHR') || m.querySelector('.bIhLWVqm') || m.querySelector('li.TpUpcNRp') || m.querySelector('div._8gg8ho2u')) return true;
+                                return false;
+                            };
+
+                            const modals = Array.from(document.querySelectorAll(sel));
+                            return modals.some(m => visible(m) && isSku(m));
+                        }, modalSelector).catch(() => false);
+                    };
+
+                    if (await hasVisibleSkuModal()) {
+                        console.log('[PDD] Options modal already open');
+                        return true;
+                    }
+
+                    const clickElementCenter = async (selector) => {
+                        const el = await page.$(selector).catch(() => null);
+                        if (!el) return false;
+                        try {
+                            await el.evaluate((node) => {
+                                try { node.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' }); } catch (e) {}
+                            });
+                        } catch (e) {}
+                        await humanDelay(350, 800);
+                        let box = null;
+                        try { box = await el.boundingBox(); } catch (e) { box = null; }
+                        if (!box) return false;
+                        const x = Math.floor(box.x + box.width / 2 + (Math.random() * 6 - 3));
+                        const y = Math.floor(box.y + box.height / 2 + (Math.random() * 6 - 3));
+                        try {
+                            try { await page.mouse.move(Math.max(1, x - 16), Math.max(1, y - 16)); } catch (e) {}
+                            await humanDelay(450, 900);
+                            await page.mouse.click(x, y);
+                            return true;
+                        } catch (e) {
+                            return false;
+                        }
+                    };
+
+                    const tryOpenViaButton = async (selector, modalWaitMs = 8000) => {
+                        console.log(`[PDD] Trying to open options via selector: ${selector}`);
+                        let before = '';
+                        try { before = page.url(); } catch (e) { before = ''; }
+
+                        try {
+                            const btn = await page.$(selector);
+                            if (!btn) {
+                                console.log(`[PDD] Not found: ${selector}`);
+                                return false;
+                            }
+                            const okClick = await clickElementCenter(selector);
+                            if (!okClick) return false;
+                        } catch (e) {
+                            console.log(`[PDD] Click failed for ${selector}: ${e?.message || e}`);
+                            return false;
+                        }
+
+                        await humanDelay(900, 1600);
+                        const ok = await page.waitForFunction(
+                            (sel) => {
+                                const visible = (el) => {
+                                    if (!el) return false;
+                                    if (el.getAttribute && el.getAttribute('aria-hidden') === 'true') return false;
+                                    const style = window.getComputedStyle(el);
+                                    if (!style) return false;
+                                    if (style.display === 'none' || style.visibility === 'hidden') return false;
+                                    const opacity = parseFloat(style.opacity || '1');
+                                    if (!Number.isNaN(opacity) && opacity <= 0.02) return false;
+                                    const r = el.getBoundingClientRect();
+                                    if (!r || r.width < 40 || r.height < 40) return false;
+                                    const intersects =
+                                        r.bottom > 0 &&
+                                        r.right > 0 &&
+                                        r.top < window.innerHeight &&
+                                        r.left < window.innerWidth;
+                                    if (!intersects) return false;
+                                    const x = Math.floor(Math.min(window.innerWidth - 2, Math.max(1, r.left + r.width * 0.5)));
+                                    const y = Math.floor(Math.min(window.innerHeight - 2, Math.max(1, r.top + r.height * 0.5)));
+                                    const top = document.elementFromPoint(x, y);
+                                    if (top && (el === top || el.contains(top))) return true;
+                                    return false;
+                                };
+
+                                const isSku = (m) => {
+                                    try {
+                                        if (m && m.matches && m.matches('.HidQ9ROd')) return true;
+                                    } catch (e) {}
+                                    if (m && m.querySelector && m.querySelector('.iW4aEGbb')) return false;
+                                    const t = String(m?.innerText || m?.textContent || '');
+                                    if (t.includes('已选') || t.includes('请选择') || t.includes('规格')) return true;
+                                    if (m.querySelector('.O7pEFvHR') || m.querySelector('.bIhLWVqm') || m.querySelector('li.TpUpcNRp') || m.querySelector('div._8gg8ho2u')) return true;
+                                    return false;
+                                };
+
+                                const modals = Array.from(document.querySelectorAll(sel));
+                                return modals.some(m => visible(m) && isSku(m));
+                            },
+                            { timeout: modalWaitMs },
+                            modalSelector
+                        ).catch(() => null);
+
+                        if (ok) {
+                            console.log('[PDD] Options modal opened');
+                            return true;
+                        }
+
+                        let after = '';
+                        try { after = page.url(); } catch (e) { after = before; }
+                        if (after.includes('/order_checkout.html') || after.includes('order_checkout.html')) {
+                            console.log('[PDD] Hit checkout page; going back');
+                            try {
+                                await page.goBack({ waitUntil: 'domcontentloaded', timeout: PAGE_LOAD_TIMEOUT });
+                                await waitForStableUrl(page, 1400, 15000);
+                            } catch (e) {}
+                        }
+                        return false;
+                    };
+
+                    const tryOpenViaText = async (keywords, modalWaitMs = 9000) => {
+                        const keyList = Array.isArray(keywords) ? keywords : [];
+                        console.log(`[PDD] Trying to open options via text: ${keyList.join(', ')}`);
+                        const pt = await page.evaluate((keys) => {
+                            const visible = (el) => {
+                                if (!el) return false;
+                                const r = el.getBoundingClientRect();
+                                if (!r || r.width < 4 || r.height < 4) return false;
+                                if (r.bottom < 0 || r.right < 0) return false;
+                                if (r.top > window.innerHeight || r.left > window.innerWidth) return false;
+                                const style = window.getComputedStyle(el);
+                                if (!style || style.visibility === 'hidden' || style.display === 'none' || style.opacity === '0') return false;
+                                return true;
+                            };
+                            const candidates = Array.from(document.querySelectorAll('button, div[role="button"], a, span[role="button"]'));
+                            const hits = [];
+                            for (const el of candidates) {
+                                const t = String(el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+                                if (!t) continue;
+                                if (!keys.some(k => k && t.includes(k))) continue;
+                                if (!visible(el)) continue;
+                                const r = el.getBoundingClientRect();
+                                hits.push({ x: Math.floor(r.left + r.width / 2), y: Math.floor(r.top + r.height / 2), text: t });
+                            }
+                            hits.sort((a, b) => b.y - a.y);
+                            return hits[0] || null;
+                        }, keyList).catch(() => null);
+                        if (!pt) return false;
+                        try {
+                            try { await page.mouse.move(Math.max(1, pt.x - 14), Math.max(1, pt.y - 14)); } catch (e) {}
+                            await humanDelay(600, 1200);
+                            await page.mouse.click(pt.x, pt.y);
+                        } catch (e) {
+                            return false;
+                        }
+                        await humanDelay(900, 1600);
+                        const ok = await page.waitForFunction(
+                            (sel) => {
+                                const visible = (el) => {
+                                    if (!el) return false;
+                                    if (el.getAttribute && el.getAttribute('aria-hidden') === 'true') return false;
+                                    const style = window.getComputedStyle(el);
+                                    if (!style) return false;
+                                    if (style.display === 'none' || style.visibility === 'hidden') return false;
+                                    const opacity = parseFloat(style.opacity || '1');
+                                    if (!Number.isNaN(opacity) && opacity <= 0.02) return false;
+                                    const r = el.getBoundingClientRect();
+                                    if (!r || r.width < 40 || r.height < 40) return false;
+                                    const intersects =
+                                        r.bottom > 0 &&
+                                        r.right > 0 &&
+                                        r.top < window.innerHeight &&
+                                        r.left < window.innerWidth;
+                                    if (!intersects) return false;
+                                    const x = Math.floor(Math.min(window.innerWidth - 2, Math.max(1, r.left + r.width * 0.5)));
+                                    const y = Math.floor(Math.min(window.innerHeight - 2, Math.max(1, r.top + r.height * 0.5)));
+                                    const top = document.elementFromPoint(x, y);
+                                    if (top && (el === top || el.contains(top))) return true;
+                                    return false;
+                                };
+
+                                const isSku = (m) => {
+                                    try {
+                                        if (m && m.matches && m.matches('.HidQ9ROd')) return true;
+                                    } catch (e) {}
+                                    if (m && m.querySelector && m.querySelector('.iW4aEGbb')) return false;
+                                    const t = String(m?.innerText || m?.textContent || '');
+                                    if (t.includes('已选') || t.includes('请选择') || t.includes('规格')) return true;
+                                    if (m.querySelector('.O7pEFvHR') || m.querySelector('.bIhLWVqm') || m.querySelector('li.TpUpcNRp') || m.querySelector('div._8gg8ho2u')) return true;
+                                    return false;
+                                };
+
+                                const modals = Array.from(document.querySelectorAll(sel));
+                                return modals.some(m => visible(m) && isSku(m));
+                            },
+                            { timeout: modalWaitMs },
+                            modalSelector
+                        ).catch(() => null);
+
+                        if (ok) {
+                            console.log(`[PDD] Options modal opened via text: ${pt.text}`);
+                            return true;
+                        }
+                        return false;
+                    };
+
+                    const tryClickAndWaitModal = async (x, y, modalWaitMs = 2500) => {
+                        let before = '';
+                        try { before = page.url(); } catch (e) { before = ''; }
+
+                        try {
+                            try { await page.mouse.move(Math.max(1, x - 18), Math.max(1, y - 18)); } catch (e) {}
+                            await humanDelay(700, 1200);
+                            await page.mouse.click(x, y);
+                        } catch (e) {
+                            return false;
+                        }
+
+                        await humanDelay(1200, 2200);
+                        const ok = await page.waitForFunction(
+                            (sel) => {
+                                const visible = (el) => {
+                                    if (!el) return false;
+                                    if (el.getAttribute && el.getAttribute('aria-hidden') === 'true') return false;
+                                    const style = window.getComputedStyle(el);
+                                    if (!style) return false;
+                                    if (style.display === 'none' || style.visibility === 'hidden') return false;
+                                    const opacity = parseFloat(style.opacity || '1');
+                                    if (!Number.isNaN(opacity) && opacity <= 0.02) return false;
+                                    const r = el.getBoundingClientRect();
+                                    if (!r || r.width < 40 || r.height < 40) return false;
+                                    const intersects =
+                                        r.bottom > 0 &&
+                                        r.right > 0 &&
+                                        r.top < window.innerHeight &&
+                                        r.left < window.innerWidth;
+                                    if (!intersects) return false;
+                                    const x = Math.floor(Math.min(window.innerWidth - 2, Math.max(1, r.left + r.width * 0.5)));
+                                    const y = Math.floor(Math.min(window.innerHeight - 2, Math.max(1, r.top + r.height * 0.5)));
+                                    const top = document.elementFromPoint(x, y);
+                                    if (top && (el === top || el.contains(top))) return true;
+                                    return false;
+                                };
+
+                                const isSku = (m) => {
+                                    try {
+                                        if (m && m.matches && m.matches('.HidQ9ROd')) return true;
+                                    } catch (e) {}
+                                    if (m && m.querySelector && m.querySelector('.iW4aEGbb')) return false;
+                                    const t = String(m?.innerText || m?.textContent || '');
+                                    if (t.includes('已选') || t.includes('请选择') || t.includes('规格')) return true;
+                                    if (m.querySelector('.O7pEFvHR') || m.querySelector('.bIhLWVqm') || m.querySelector('li.TpUpcNRp') || m.querySelector('div._8gg8ho2u')) return true;
+                                    return false;
+                                };
+
+                                const modals = Array.from(document.querySelectorAll(sel));
+                                return modals.some(m => visible(m) && isSku(m));
+                            },
+                            { timeout: modalWaitMs },
+                            modalSelector
+                        ).catch(() => null);
+                        if (ok) return true;
+
+                        let after = '';
+                        try { after = page.url(); } catch (e) { after = before; }
+                        if (after.includes('/order_checkout.html') || after.includes('order_checkout.html')) {
+                            try {
+                                await page.goBack({ waitUntil: 'domcontentloaded', timeout: PAGE_LOAD_TIMEOUT });
+                                await waitForStableUrl(page, 1400, 15000);
+                            } catch (e) {}
+                        }
+
+                        return false;
+                    };
+
+                    await waitForStableUrl(page, 1200, 15000);
+
+                    for (let attempt = 0; attempt < 3; attempt++) {
+                        if (attempt > 0) await humanDelay(1400, 2600);
+                        const ok = await tryOpenViaButton('.yK39frdi', 9000);
+                        if (ok) return true;
+                    }
+
+                    for (let attempt = 0; attempt < 2; attempt++) {
+                        if (attempt > 0) await humanDelay(1400, 2600);
+                        const ok = await tryOpenViaButton('.AANc1tSj', 9000);
+                        if (ok) return true;
+                    }
+
+                    const textOk = await tryOpenViaText(['直接成团', '发起拼单', '去拼单', '一键拼单', '立即拼单', '立即参团', '参与拼单', '参团', '拼单', '成团'], 9000);
+                    if (textOk) return true;
+
+                    return false;
+                };
+
+                const clickO7pEFvHRAndWait = async (page, scopeSelectors = null) => {
+                    const closeIfIwwPopupOpened = async () => {
+                        const pt = await page.evaluate(() => {
+                            const popup = document.querySelector('.iW4aEGbb');
+                            if (!popup) return null;
+                            const close =
+                                popup.querySelector('div[role="button"][aria-label*="关闭"]') ||
+                                popup.querySelector('button[aria-label*="关闭"]') ||
+                                popup.querySelector('div[role="button"][aria-label="关闭弹窗"]') ||
+                                popup.querySelector('div[role="button"][aria-label="关闭"]') ||
+                                popup.querySelector('button') ||
+                                null;
+                            const el = close || popup;
+                            const r = el.getBoundingClientRect();
+                            if (!r || r.width < 4 || r.height < 4) return { x: Math.floor(window.innerWidth / 2), y: Math.floor(window.innerHeight * 0.2) };
+                            const x = Math.floor(r.left + r.width * 0.5);
+                            const y = Math.floor(r.top + r.height * 0.5);
+                            return { x, y };
+                        }).catch(() => null);
+
+                        if (!pt?.x || !pt?.y) return false;
+
+                        try {
+                            for (let i = 0; i < 2; i++) {
+                                try { await page.mouse.move(Math.max(1, pt.x - 16), Math.max(1, pt.y - 16)); } catch (e) {}
+                                await humanDelay(450, 900);
+                                await page.mouse.click(pt.x, pt.y);
+                                await humanDelay(650, 1200);
+                                const still = await page.$('.iW4aEGbb').catch(() => null);
+                                if (!still) return true;
+                            }
+                        } catch (e) {}
+                        return false;
+                    };
+
+                    const clickNormalizedPoint = async (nx, ny) => {
+                        const vp = (page.viewport && page.viewport()) ? page.viewport() : null;
+                        const width = (vp && vp.width) ? vp.width : 360;
+                        const height = (vp && vp.height) ? vp.height : 800;
+                        const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+                        const x = clamp(Math.floor((Number(nx) / 1000) * width), 1, Math.floor(width - 2));
+                        const y = clamp(Math.floor((Number(ny) / 1000) * height), 1, Math.floor(height - 2));
+                        try {
+                            try { await page.mouse.move(Math.max(1, x - 18), Math.max(1, y - 18)); } catch (e) {}
+                            await humanDelay(650, 1200);
+                            await page.mouse.click(x, y);
+                            return true;
+                        } catch (e) {
+                            return false;
+                        }
+                    };
+
+                    const clickCenterLeft = async () => {
+                        const pt = await page.evaluate(() => {
+                            const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+                            const modal = document.querySelector('.HidQ9ROd') || document.querySelector('div[role="dialog"][aria-modal="true"]') || document.querySelector('div[role="dialog"]');
+                            if (modal) {
+                                const r = modal.getBoundingClientRect();
+                                if (r && r.width > 40 && r.height > 40) {
+                                    const x = clamp(Math.floor(r.left + r.width * 0.25), 1, Math.floor(window.innerWidth - 2));
+                                    const y = clamp(Math.floor(r.top + r.height * 0.5), 1, Math.floor(window.innerHeight - 2));
+                                    return { x, y };
+                                }
+                            }
+                            const x = clamp(Math.floor(window.innerWidth * 0.25), 1, Math.floor(window.innerWidth - 2));
+                            const y = clamp(Math.floor(window.innerHeight * 0.5), 1, Math.floor(window.innerHeight - 2));
+                            return { x, y };
+                        }).catch(() => null);
+
+                        if (!pt?.x || !pt?.y) return false;
+                        try {
+                            try { await page.mouse.move(Math.max(1, pt.x - 18), Math.max(1, pt.y - 18)); } catch (e) {}
+                            await humanDelay(650, 1200);
+                            await page.mouse.click(pt.x, pt.y);
+                            return true;
+                        } catch (e) {
+                            return false;
+                        }
+                    };
+
+                    const nudgeModalScroll = async () => {
+                        if (!scopeSelectors) return;
+                        const did = await page.evaluate(() => {
+                            const modal = document.querySelector('.HidQ9ROd') || document.querySelector('div[role="dialog"][aria-modal="true"]') || document.querySelector('div[role="dialog"]');
+                            if (!modal) return false;
+                            const all = [modal, ...Array.from(modal.querySelectorAll('*'))];
+                            const scroller = all.find(el => {
+                                try {
+                                    return el.scrollHeight > el.clientHeight + 80;
+                                } catch (e) {
+                                    return false;
+                                }
+                            });
+                            if (!scroller) return false;
+                            const max = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+                            if (max <= 0) return false;
+                            const next = Math.min(max, scroller.scrollTop + Math.floor(scroller.clientHeight * 0.6));
+                            scroller.scrollTop = next;
+                            return true;
+                        }).catch(() => false);
+                        if (did) await humanDelay(650, 1200);
+                    };
+
+                    const waitForOptionsList = async (timeoutMs = 6000) => {
+                        const fast = await page.waitForSelector('li.TpUpcNRp, div._8gg8ho2u', { timeout: Math.min(2500, timeoutMs) }).catch(() => null);
+                        if (fast) return true;
+                        const ok = await page.waitForFunction(() => {
+                            const modal = document.querySelector('.HidQ9ROd') || document.querySelector('div[role="dialog"][aria-modal="true"]') || document.querySelector('div[role="dialog"]');
+                            const root = modal || document;
+                            const groupCount = root.querySelectorAll('.bIhLWVqm').length;
+                            const optionCount = root.querySelectorAll('.bIhLWVqm .F7sZG3xe, .bIhLWVqm .s1O5M5fO .F7sZG3xe, .s1O5M5fO .F7sZG3xe').length;
+                            if (groupCount > 0 && optionCount >= 2) return true;
+                            const nodes = Array.from(root.querySelectorAll('li, div[role="button"], button, a'));
+                            let count = 0;
+                            for (const el of nodes) {
+                                const t = String(el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+                                if (!t) continue;
+                                if (!t.includes('¥') && !t.includes('￥')) continue;
+                                const r = el.getBoundingClientRect();
+                                if (!r || r.width < 40 || r.height < 16 || r.height > 140) continue;
+                                count++;
+                                if (count >= 2) return true;
+                            }
+                            return false;
+                        }, { timeout: timeoutMs }).catch(() => null);
+                        return !!ok;
+                    };
+
+                    if (scopeSelectors) {
+                        console.log('[PDD] Trying normalized click to open thumbnails/options (x=159,y=447)');
+                        const ok = await clickNormalizedPoint(159, 447);
+                        if (ok) {
+                            await closeIfIwwPopupOpened();
+                            await nudgeModalScroll();
+                            const hasAfter = await waitForOptionsList(7000);
+                            if (hasAfter) {
+                                console.log('[PDD] Options detected after normalized click');
+                                return true;
+                            }
+                        }
+                    }
+
+                    const pickClickable = async (selector) => {
+                        const handles = await page.$$(selector).catch(() => []);
+                        for (const h of handles) {
+                            const box = await h.boundingBox().catch(() => null);
+                            if (!box) continue;
+                            if (box.width < 3 || box.height < 3) continue;
+                            return { handle: h, box };
+                        }
+                        return null;
+                    };
+
+                    const clickByBox = async (box) => {
+                        const x = Math.floor(box.x + box.width * 0.5);
+                        const y = Math.floor(box.y + box.height * 0.5);
+                        try { await page.mouse.move(Math.max(1, x - 18), Math.max(1, y - 18)); } catch (e) {}
+                        await humanDelay(550, 1100);
+                        await page.mouse.click(x, y);
+                    };
+
+                    const selectors = [];
+                    if (!scopeSelectors) {
+                        selectors.push('.O7pEFvHR', '.O7pEFvHR img');
+                    } else {
+                        const scopes = Array.isArray(scopeSelectors) ? scopeSelectors : [scopeSelectors];
+                        for (const s of scopes) {
+                            selectors.push(`${s} .O7pEFvHR`, `${s} .O7pEFvHR img`);
+                        }
+                    }
+
+                    console.log(`[PDD] Trying to click O7pEFvHR via ${selectors.length} selectors`);
+                    let target = null;
+                    let usedSelector = '';
+                    for (const sel of selectors) {
+                        const picked = await pickClickable(sel);
+                        if (picked) {
+                            target = picked;
+                            usedSelector = sel;
+                            break;
+                        }
+                    }
+
+                    if (!target) {
+                        if (!scopeSelectors) {
+                            console.log('[PDD] O7pEFvHR not found/clickable (no modal scope); skipping heuristic click');
+                            return false;
+                        }
+
+                        console.log('[PDD] O7pEFvHR not found/clickable; trying heuristic click inside SKU popup');
+
+                        const scopes = scopeSelectors
+                            ? (Array.isArray(scopeSelectors) ? scopeSelectors : [scopeSelectors])
+                            : [];
+                        const pt = await page.evaluate((scopeSelList) => {
+                            const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+                            const toPt = (r) => {
+                                const x = clamp(Math.floor(r.left + r.width * 0.5), 1, Math.floor(window.innerWidth - 2));
+                                const y = clamp(Math.floor(r.top + r.height * 0.5), 1, Math.floor(window.innerHeight - 2));
+                                return { x, y };
+                            };
+
+                            const visibleRect = (r) => {
+                                if (!r || r.width < 12 || r.height < 12) return false;
+                                if (r.bottom < 0 || r.right < 0) return false;
+                                if (r.top > window.innerHeight || r.left > window.innerWidth) return false;
+                                return true;
+                            };
+
+                            const isGoodSrc = (src) => {
+                                const s = String(src || '');
+                                if (!s) return false;
+                                if (!s.startsWith('http')) return false;
+                                if (s.includes('avatar') || s.includes('icon') || s.includes('coupon')) return false;
+                                return true;
+                            };
+
+                            const areas = [];
+                            const roots = [];
+                            if (scopeSelList && scopeSelList.length > 0) {
+                                for (const sel of scopeSelList) {
+                                    const el = document.querySelector(sel);
+                                    if (el) roots.push(el);
+                                }
+                            }
+                            if (roots.length === 0) roots.push(document);
+
+                            for (const root of roots) {
+                                const imgs = Array.from(root.querySelectorAll('img'));
+                                for (const img of imgs) {
+                                    if (img.closest && img.closest('.iW4aEGbb')) continue;
+                                    const r = img.getBoundingClientRect();
+                                    if (!visibleRect(r)) continue;
+                                    if (!isGoodSrc(img.currentSrc || img.src)) continue;
+                                    const score = r.width * r.height;
+                                    areas.push({ score, rect: r });
+                                }
+                                const divs = Array.from(root.querySelectorAll('div[role="button"], button'));
+                                for (const el of divs) {
+                                    if (el.closest && el.closest('.iW4aEGbb')) continue;
+                                    const t = String(el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+                                    if (!t) continue;
+                                    if (!t.includes('图') && !t.includes('图片')) continue;
+                                    const r = el.getBoundingClientRect();
+                                    if (!visibleRect(r)) continue;
+                                    const score = r.width * r.height * 0.6;
+                                    areas.push({ score, rect: r });
+                                }
+                            }
+
+                            areas.sort((a, b) => b.score - a.score);
+                            const best = areas[0];
+                            if (!best) return null;
+                            return toPt(best.rect);
+                        }, scopes).catch(() => null);
+
+                        if (!pt?.x || !pt?.y) return false;
+
+                        try {
+                            try { await page.mouse.move(Math.max(1, pt.x - 18), Math.max(1, pt.y - 18)); } catch (e) {}
+                            await humanDelay(600, 1200);
+                            await page.mouse.click(pt.x, pt.y);
+                            console.log('[PDD] Heuristic click executed');
+                            await closeIfIwwPopupOpened();
+                            await nudgeModalScroll();
+                        } catch (e) {
+                            return false;
+                        }
+                    }
+
+                    if (target) {
+                        console.log(`[PDD] Clicking O7pEFvHR using: ${usedSelector}`);
+                        try {
+                            await page.evaluate((sel) => {
+                                const el = document.querySelector(sel);
+                                if (el && el.scrollIntoView) el.scrollIntoView({ block: 'center', inline: 'center' });
+                            }, usedSelector).catch(() => null);
+                            await humanDelay(500, 900);
+                            const pt = await page.evaluate((sel) => {
+                                const el = document.querySelector(sel);
+                                if (!el) return null;
+                                const r = el.getBoundingClientRect();
+                                if (!r || r.width < 4 || r.height < 4) return null;
+                                const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+                                const xs = [0.5, 0.35, 0.65, 0.2, 0.8].map(p => Math.floor(r.left + r.width * p));
+                                const ys = [0.5, 0.35, 0.65, 0.2, 0.8].map(p => Math.floor(r.top + r.height * p));
+                                for (const y of ys) {
+                                    for (const x of xs) {
+                                        const xx = clamp(x, 1, Math.floor(window.innerWidth - 2));
+                                        const yy = clamp(y, 1, Math.floor(window.innerHeight - 2));
+                                        const top = document.elementFromPoint(xx, yy);
+                                        if (top && (el === top || el.contains(top))) return { x: xx, y: yy };
+                                    }
+                                }
+                                return null;
+                            }, usedSelector).catch(() => null);
+
+                            if (pt?.x && pt?.y) {
+                                try { await page.mouse.move(Math.max(1, pt.x - 18), Math.max(1, pt.y - 18)); } catch (e) {}
+                                await humanDelay(550, 1100);
+                                await page.mouse.click(pt.x, pt.y);
+                            } else {
+                                const refreshed = await pickClickable(usedSelector);
+                                if (refreshed?.box) target = refreshed;
+                                await clickByBox(target.box);
+                            }
+                            console.log('[PDD] Clicked O7pEFvHR');
+                            await closeIfIwwPopupOpened();
+                            await nudgeModalScroll();
+                        } catch (e) {
+                            console.log(`[PDD] O7pEFvHR click failed: ${e?.message || e}`);
+                            return false;
+                        }
+                    }
+
+                    const has = await waitForOptionsList(7000);
+                    if (has) {
+                        console.log('[PDD] Options list detected');
+                        return true;
+                    }
+
+                    console.log('[PDD] Options list not detected; trying center-left click inside modal');
+                    try {
+                        const ok = await clickCenterLeft();
+                        if (ok) {
+                            await closeIfIwwPopupOpened();
+                            await nudgeModalScroll();
+                            const hasAfter = await waitForOptionsList(7000);
+                            if (hasAfter) {
+                                console.log('[PDD] Options list detected after center-left click');
+                                return true;
+                            }
+                        }
+                    } catch (e) {}
+
+                    const fallbackCounts = await page.evaluate(() => {
+                        const modal = document.querySelector('.HidQ9ROd') || document.querySelector('div[role="dialog"][aria-modal="true"]') || document.querySelector('div[role="dialog"]');
+                        const root = modal || document;
+                        const li = root.querySelectorAll('li').length;
+                        const buttons = root.querySelectorAll('button, div[role="button"]').length;
+                        const groups = root.querySelectorAll('.bIhLWVqm').length;
+                        const opts = root.querySelectorAll('.bIhLWVqm .F7sZG3xe, .s1O5M5fO .F7sZG3xe').length;
+                        return { li, buttons, groups, opts };
+                    }).catch(() => ({ li: 0, buttons: 0 }));
+                    console.log(`[PDD] Options list not detected (li=${fallbackCounts.li}, buttons=${fallbackCounts.buttons}, groups=${fallbackCounts.groups || 0}, opts=${fallbackCounts.opts || 0})`);
+                    return false;
+                };
+
+                console.log('[PDD] Opening options popup before clicking O7pEFvHR');
+                const optionsModalOpened = await openOptionsModalIfNeeded(newPage);
+                let hasOptionsList = false;
+                if (optionsModalOpened) {
+                    hasOptionsList = await clickO7pEFvHRAndWait(newPage, [
+                        '.HidQ9ROd',
+                        'div[role="dialog"][aria-modal="true"]',
+                        'div[role="dialog"]'
+                    ]);
+                } else {
+                    console.log('[PDD] Could not open options modal');
+                }
+                if (hasOptionsList) {
+                    const liCount = await newPage.$$eval('li.TpUpcNRp', els => els.length).catch(() => 0);
+                    const cardCount = await newPage.$$eval('div._8gg8ho2u', els => els.length).catch(() => 0);
+                    console.log(`[PDD] Options elements found: li.TpUpcNRp=${liCount}, div._8gg8ho2u=${cardCount}`);
+                } else {
+                    console.log('[PDD] Options list not found; continuing without selecting any options');
+                }
+
+                await waitForStableUrl(newPage, 1400, 15000);
+
+                const data = await safeEvaluate(newPage, async () => {
                     const wait = (ms) => new Promise(r => setTimeout(r, ms));
                     
                     // HELPER: Strict Price Extraction from User Target
-                    const getTargetPrice = () => {
-                         const targetDiv = document.querySelector('.ujEqGzEB');
+                    const getTargetPrice = (root) => {
+                         const r = (root && typeof root.querySelector === 'function') ? root : document;
+                         const targetDiv = r.querySelector('.ujEqGzEB') || document.querySelector('.ujEqGzEB');
                          if (targetDiv) {
                              // Try aria-label first (e.g. "首件¥29.88")
                              const imgSpan = targetDiv.querySelector('span[role="img"]');
@@ -817,7 +1699,40 @@ async function run() {
                              const match = text.match(/¥\s*(\d+(\.\d+)?)/);
                              if (match) return match[0];
                          }
+
+                         const altPriceEl =
+                            r.querySelector('div.kYzukoxf') ||
+                            r.querySelector('.Ngfn6pTR .kYzukoxf') ||
+                            document.querySelector('div.kYzukoxf') ||
+                            document.querySelector('.Ngfn6pTR .kYzukoxf');
+                         if (altPriceEl) {
+                             const text = altPriceEl.innerText.replace(/\n/g, ' ').trim();
+                             const match = text.match(/¥\s*(\d+(\.\d+)?)/);
+                             if (match) return match[0];
+                         }
+
                          return null;
+                    };
+
+                    const waitForPriceAfterClick = async (prevPriceStr, root) => {
+                        const start = Date.now();
+                        let last = null;
+                        let stable = 0;
+                        while (Date.now() - start < 7000) {
+                            const cur = getTargetPrice(root);
+                            if (cur) {
+                                if (cur === last) stable++;
+                                else {
+                                    last = cur;
+                                    stable = 0;
+                                }
+                                const changed = prevPriceStr ? (cur !== prevPriceStr) : true;
+                                if (changed && stable >= 1) return cur;
+                                if (!prevPriceStr && stable >= 1) return cur;
+                            }
+                            await wait(120);
+                        }
+                        return getTargetPrice(root) || last || null;
                     };
 
                     // 1. Title Extraction (User specific selector)
@@ -829,7 +1744,7 @@ async function run() {
                     if (!title) title = document.title;
 
                     // 2. Price Extraction (Initial fallback)
-                     let price = getTargetPrice();
+                     let price = getTargetPrice(document);
                      const priceEl = document.querySelector('.goods-price, [class*="price-info"], [class*="goods-price"]');
                      if (!price && priceEl) {
                           price = priceEl.innerText.trim();
@@ -844,12 +1759,6 @@ async function run() {
                      let description = '';
                      let productDetails = {};
                      
-                     // Helper: Expand details if needed (Click "Show All" / 查看全部)
-                     const expandDetailsBtn = document.querySelector('.QTo2num4');
-                     if (expandDetailsBtn) {
-                         try { expandDetailsBtn.click(); await wait(500); } catch(e){}
-                     }
-
                      // Extract key-value details from .jvsKAdEs > .iUUH2sOQ
                      // Structure: .iUUH2sOQ -> .rMnkPxwx (Key) + .KjtdjVU2 (Value)
                      const detailItems = document.querySelectorAll('.iUUH2sOQ');
@@ -871,39 +1780,129 @@ async function run() {
                     let variants = {};
                     let skuMap = {}; // Store price for each combination
                     let variantImages = {}; // Map color -> imageUrl
+                    let skuThumbMap = {}; // Map optionKey -> imageUrl (per SKU or per single option)
                     let lowestVariantPrice = null; // Track lowest price found in variants
 
                     try {
-                        // STRICT BUTTON SELECTION:
-                        // 1. MUST NOT be "Separate Buy" (单独购买) which is usually pink/white
-                        // 2. MUST BE "Group Buy" (发起拼单) which is usually red
-                        
-                        const allButtons = Array.from(document.querySelectorAll('div[role="button"]'));
-                        
-                        // Find the "Group Buy" button specifically
-                        // It usually contains "发起拼单" (Initiate Group Buy) or just "拼单" (Group Buy)
-                        // It should NOT contain "单独购买" (Separate Buy)
-                        const buyBtn = allButtons.find(el => {
-                            const text = el.innerText.trim();
-                            return (text.includes('拼单') || text.includes('发起')) && !text.includes('单独');
-                        });
-                        
-                        if (buyBtn) {
-                            console.log('Found strict Group Buy button, clicking...');
-                            buyBtn.click();
-                            await wait(2000); // Wait longer for modal to open
-                            
-                            // Check if modal exists
-                            let modal = document.querySelector('.HidQ9ROd') || document.querySelector('div[role="dialog"]');
-                            
-                            // Retry mechanism for modal
-                            if (!modal) {
-                                console.log('Modal not found immediately, waiting...');
-                                await wait(1500);
-                                modal = document.querySelector('.HidQ9ROd') || document.querySelector('div[role="dialog"]');
+                        const extractOptionCardsFromRoot = () => {
+                            const liEls = Array.from(document.querySelectorAll('li.TpUpcNRp'));
+                            const containerEls = liEls.length > 0
+                                ? liEls.map(li => li.querySelector('div._8gg8ho2u') || li).filter(Boolean)
+                                : Array.from(document.querySelectorAll('div._8gg8ho2u'));
+                            const items = [];
+                            const seen = new Set();
+
+                            for (const c of containerEls) {
+                                const nameEl = c?.querySelector?.('.RITrraU3 span.U63Kdv8C') || c?.querySelector?.('.RITrraU3 span') || c?.querySelector?.('span.U63Kdv8C');
+                                const textRaw = nameEl?.innerText || nameEl?.textContent || '';
+                                const text = String(textRaw || '').replace(/\s+/g, ' ').trim();
+
+                                const priceEl = c?.querySelector?.('.nvN5jV0G') || c?.querySelector?.('[class*="nvN5jV0G"]');
+                                const priceRaw = priceEl?.innerText || priceEl?.textContent || '';
+                                const pm = String(priceRaw || '').match(/(\d+(\.\d+)?)/);
+                                const priceStr = pm ? (`¥${pm[1]}`) : null;
+
+                                const imgEl =
+                                    c.querySelector('.PQoZYCec img') ||
+                                    c.querySelector('.PQoZYCec img[data-src]') ||
+                                    c.querySelector('.PQoZYCec img[data-lazy-src]') ||
+                                    c.querySelector('.PQoZYCec img[data-original]') ||
+                                    c.querySelector('img');
+                                const rawSrc =
+                                    imgEl?.getAttribute('src') ||
+                                    imgEl?.getAttribute('data-src') ||
+                                    imgEl?.getAttribute('data-lazy-src') ||
+                                    imgEl?.getAttribute('data-original') ||
+                                    imgEl?.src ||
+                                    '';
+                                let thumb = rawSrc ? rawSrc.split('?')[0] : null;
+                                if (!thumb) {
+                                    const pq = c.querySelector('.PQoZYCec') || c;
+                                    const styleBg = pq?.style?.backgroundImage || '';
+                                    let bg = styleBg;
+                                    if (!bg) {
+                                        try { bg = window.getComputedStyle(pq).backgroundImage || ''; } catch (e) {}
+                                    }
+                                    const m = String(bg || '').match(/url\((['"]?)(.*?)\1\)/i);
+                                    const url = m?.[2] || '';
+                                    thumb = url ? url.split('?')[0] : null;
+                                }
+
+                                if (text && priceStr) {
+                                    const k = `${text}||${priceStr}||${thumb || ''}`;
+                                    if (seen.has(k)) continue;
+                                    seen.add(k);
+                                    items.push({ text, priceStr, thumb });
+                                }
                             }
 
-                            if (modal) {
+                            return items;
+                        };
+
+                        const cardsOnPage = extractOptionCardsFromRoot();
+                        if (cardsOnPage.length > 0) {
+                            for (const card of cardsOnPage) {
+                                skuMap[card.text] = card.priceStr;
+                                if (card.thumb) skuThumbMap[card.text] = card.thumb;
+                            }
+                        }
+
+                        const modal = document.querySelector('.HidQ9ROd') || document.querySelector('div[role="dialog"][aria-modal="true"]') || document.querySelector('div[role="dialog"]');
+                        if (modal) {
+                                const waitForOptionCards = async (timeoutMs = 2500) => {
+                                    const start = Date.now();
+                                    while (Date.now() - start < timeoutMs) {
+                                        const hasLi = document.querySelectorAll('li.TpUpcNRp').length > 0;
+                                        const hasCards = document.querySelectorAll('div._8gg8ho2u').length > 0;
+                                        if (hasLi || hasCards) return true;
+                                        await wait(120);
+                                    }
+                                    return false;
+                                };
+
+                                const host = modal.querySelector('.O7pEFvHR');
+                                if (host) {
+                                    try {
+                                        host.scrollIntoView({ block: 'center', inline: 'center' });
+                                    } catch (e) {}
+                                    try {
+                                        host.click();
+                                    } catch (e) {}
+                                    await waitForOptionCards(3000);
+                                    const cardsAfterHostClick = extractOptionCardsFromRoot();
+                                    if (cardsAfterHostClick.length > 0) {
+                                        for (const card of cardsAfterHostClick) {
+                                            skuMap[card.text] = card.priceStr;
+                                            if (card.thumb) skuThumbMap[card.text] = card.thumb;
+                                        }
+                                    }
+                                }
+
+                                const getModalThumb = () => {
+                                    const img = modal.querySelector('.O7pEFvHR img');
+                                    const raw =
+                                        img?.getAttribute?.('src') ||
+                                        img?.getAttribute?.('data-src') ||
+                                        img?.getAttribute?.('data-lazy-src') ||
+                                        img?.currentSrc ||
+                                        img?.src ||
+                                        '';
+                                    if (raw) return String(raw).split('?')[0];
+
+                                    const host = modal.querySelector('.O7pEFvHR');
+                                    if (host) {
+                                        const styleBg = host.style?.backgroundImage || '';
+                                        let bg = styleBg;
+                                        if (!bg) {
+                                            try { bg = window.getComputedStyle(host).backgroundImage || ''; } catch (e) {}
+                                        }
+                                        const m = String(bg || '').match(/url\((['"]?)(.*?)\1\)/i);
+                                        const url = m?.[2] || '';
+                                        if (url) return url.split('?')[0];
+                                    }
+                                    return null;
+                                };
+
                                 // Extract basic variants list first
                                 const groups = Array.from(modal.querySelectorAll('.bIhLWVqm'));
                                 let specKeys = [];
@@ -931,151 +1930,431 @@ async function run() {
                                     console.error('CRITICAL: Modal opened but no variants found. Structure might have changed.');
                                 }
 
-                                // DEEP SKU SCRAPING: Iterate combinations
-                               // If we have 2 levels (e.g. Color, Size), iterate all
+                                const isDisabledOption = (el) => {
+                                    if (!el) return true;
+                                    const ariaDisabled = el.getAttribute('aria-disabled');
+                                    if (ariaDisabled && ariaDisabled.toLowerCase() === 'true') return true;
+                                    if (el.hasAttribute('disabled')) return true;
+                                    const cls = String(el.className || '').toLowerCase();
+                                    if (cls.includes('disabled')) return true;
+                                    return false;
+                                };
 
-                               if (specValues.length > 0) {
-                                    const [level1, level2] = specValues; // Only handle up to 2 levels for now to avoid complexity
-                                    
-                                    if (level1) {
-                                        for (let i = 0; i < level1.length; i++) {
-                                            const v1 = level1[i];
-                                            // Click Level 1
-                                            try { v1.element.click(); await wait(300); } catch(e){}
+                                const getOptionText = (el) => {
+                                    return el?.querySelector('span.J109_25J')?.innerText.trim() || el?.innerText.trim() || '';
+                                };
 
-                                            // CAPTURE VARIANT IMAGE (Color Thumbnail)
-                                            // Strategies:
-                                            // 1. Modal Header Image (Standard)
-                                            // 2. User Specific Selector (Deeply nested)
-                                            // 3. Any image in .O7pEFvHR
-                                            // 4. Any image with 'sku' in class
-                                            
-                                            let variantImg = modal.querySelector('.O7pEFvHR img') || 
-                                                               modal.querySelector('img[class*="sku"]');
-                                            
-                                            // Try User Selector if not found
-                                            if (!variantImg) {
-                                                variantImg = document.querySelector('#main > div > div.GNrMaxlJ > div.m4HArFRm.sku-plus1 > div > div > div.O7pEFvHR > img');
+                                const safeClick = async (el) => {
+                                    if (!el) return false;
+                                    try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch(e) {}
+                                    try { el.click(); return true; } catch(e) {}
+                                    try {
+                                        el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+                                        return true;
+                                    } catch(e) {}
+                                    return false;
+                                };
+
+                                const getGroupOptions = (groupEl) => {
+                                    const valContainer = groupEl?.querySelector('.s1O5M5fO');
+                                    if (!valContainer) return [];
+                                    return Array.from(valContainer.querySelectorAll('.F7sZG3xe'))
+                                        .map(el => ({ text: getOptionText(el), element: el }))
+                                        .filter(v => v.text && !isDisabledOption(v.element));
+                                };
+
+                                const getGroup1 = () => Array.from(modal.querySelectorAll('.bIhLWVqm'))[0] || null;
+                                const getGroup2 = () => Array.from(modal.querySelectorAll('.bIhLWVqm'))[1] || null;
+
+                                const isSelectedOption = (el) => {
+                                    if (!el) return false;
+                                    const clsRaw = String(el.className || '');
+                                    const cls = clsRaw.toLowerCase();
+                                    if (cls.includes('hr353bdx')) return true;
+                                    if (cls.includes('kv0lnch3')) return true;
+                                    const ariaChecked = el.getAttribute('aria-checked');
+                                    if (ariaChecked && ariaChecked.toLowerCase() === 'true') return true;
+                                    const ariaSelected = el.getAttribute('aria-selected');
+                                    if (ariaSelected && ariaSelected.toLowerCase() === 'true') return true;
+                                    const ariaPressed = el.getAttribute('aria-pressed');
+                                    if (ariaPressed && ariaPressed.toLowerCase() === 'true') return true;
+                                    const dataState = el.getAttribute('data-state');
+                                    if (dataState && (dataState === 'checked' || dataState === 'selected')) return true;
+                                    const dataSelected = el.getAttribute('data-selected');
+                                    if (dataSelected && dataSelected.toLowerCase() === 'true') return true;
+                                    if (el.querySelector && el.querySelector('[aria-checked="true"], [aria-selected="true"]')) return true;
+                                    if (cls.includes('selected') || cls.includes('active') || cls.includes('checked') || cls.includes('current') || cls.includes('cur') || cls.includes('on')) return true;
+                                    return false;
+                                };
+
+                                const getGroupOptionElements = (groupEl) => {
+                                    const valContainer = groupEl?.querySelector('.s1O5M5fO');
+                                    if (!valContainer) return [];
+                                    return Array.from(valContainer.querySelectorAll('.F7sZG3xe'))
+                                        .filter(el => !isDisabledOption(el) && !!getOptionText(el));
+                                };
+
+                                const getOptionStyleKey = (el) => {
+                                    try {
+                                        const s = window.getComputedStyle(el);
+                                        const bg = s.backgroundColor || '';
+                                        const border = s.borderColor || '';
+                                        const color = s.color || '';
+                                        const fw = s.fontWeight || '';
+                                        const outline = s.outlineColor || '';
+                                        return `${bg}|${border}|${color}|${fw}|${outline}`;
+                                    } catch (e) {
+                                        return '';
+                                    }
+                                };
+
+                                const getSelectedOptionEl = (groupEl) => {
+                                    const optionEls = getGroupOptionElements(groupEl);
+                                    if (optionEls.length === 0) return null;
+
+                                    const ariaSelectedEl = optionEls.find(isSelectedOption) || null;
+                                    if (ariaSelectedEl) return ariaSelectedEl;
+
+                                    const keyCounts = new Map();
+                                    for (const el of optionEls) {
+                                        const key = getOptionStyleKey(el);
+                                        keyCounts.set(key, (keyCounts.get(key) || 0) + 1);
+                                    }
+
+                                    let bestEl = null;
+                                    let bestCount = Infinity;
+                                    for (const el of optionEls) {
+                                        const key = getOptionStyleKey(el);
+                                        const c = keyCounts.get(key) || 0;
+                                        if (c > 0 && c < bestCount) {
+                                            bestCount = c;
+                                            bestEl = el;
+                                        }
+                                    }
+
+                                    if (bestEl && bestCount < optionEls.length) return bestEl;
+                                    return null;
+                                };
+
+                                const getSelectedOptionText = (groupEl) => {
+                                    const selectedEl = getSelectedOptionEl(groupEl);
+                                    return selectedEl ? getOptionText(selectedEl) : null;
+                                };
+
+                                const findOptionElByText = (groupEl, text) => {
+                                    if (!groupEl) return null;
+                                    const valContainer = groupEl.querySelector('.s1O5M5fO');
+                                    if (!valContainer) return null;
+                                    const optionEls = Array.from(valContainer.querySelectorAll('.F7sZG3xe'));
+                                    for (const el of optionEls) {
+                                        if (isDisabledOption(el)) continue;
+                                        if (getOptionText(el) === text) return el;
+                                    }
+                                    return null;
+                                };
+
+                                const waitFor = async (predicate, timeoutMs = 2500, intervalMs = 120) => {
+                                    const start = Date.now();
+                                    while (Date.now() - start < timeoutMs) {
+                                        try {
+                                            if (predicate()) return true;
+                                        } catch (e) {}
+                                        await wait(intervalMs);
+                                    }
+                                    return false;
+                                };
+
+                                const waitForStableTargetPrice = async (root, timeoutMs = 5000, intervalMs = 150, stableTicks = 2) => {
+                                    const start = Date.now();
+                                    let last = null;
+                                    let stable = 0;
+                                    while (Date.now() - start < timeoutMs) {
+                                        const cur = getTargetPrice(root);
+                                        if (cur) {
+                                            if (cur === last) stable++;
+                                            else {
+                                                last = cur;
+                                                stable = 0;
                                             }
+                                            if (stable >= stableTicks) return cur;
+                                        }
+                                        await wait(intervalMs);
+                                    }
+                                    return getTargetPrice(root) || last || null;
+                                };
 
-                                            // Try getting image from the clicked element itself (sometimes small thumbnail)
-                                            if (!variantImg) {
-                                                variantImg = v1.element.querySelector('img');
-                                            }
-
-                                            if (variantImg && variantImg.src) {
-                                                variantImages[v1.text] = variantImg.src.split('?')[0];
-                                            }
-
-                                            if (level2) {
-                                                for (let j = 0; j < level2.length; j++) {
-                                                    const v2 = level2[j];
-                                                    // Click Level 2
-                                                    try { v2.element.click(); await wait(300); } catch(e){}
-                                                    
-                                                    // Capture Price
-                                                    let currentPriceStr = getTargetPrice(); // PRIORITY: Use strict selector
-                                                    
-                                                    if (!currentPriceStr) {
-                                                        // Fallback: User-Specific Price Selector (Usually Left side)
-                                                        const userPriceSelector = '#main > div > div.GNrMaxlJ > div.m4HArFRm.sku-plus1 > div > div > div.O7pEFvHR > div > div.Ngfn6pTR > div.kYzukoxf';
-                                                        const userPriceEl = document.querySelector(userPriceSelector);
-                                                        
-                                                        if (userPriceEl) {
-                                                            const text = userPriceEl.innerText.trim();
-                                                            const matches = text.match(/¥?\s*(\d+(\.\d+)?)/g);
-                                                            if (matches && matches.length > 0) {
-                                                                currentPriceStr = matches[0];
-                                                            } else {
-                                                                currentPriceStr = text;
-                                                            }
-                                                        } else {
-                                                            // Final Fallback
-                                                            currentPriceStr = modal.querySelector('.ujEqGzEB')?.innerText.replace(/\n/g, '').trim();
-                                                        }
-                                                    }
-
-                                                    const comboKey = `${v1.text}__SEP__${v2.text}`;
-                                                    
-                                                    if (currentPriceStr) {
-                                                        skuMap[comboKey] = currentPriceStr;
-                                                        
-                                                        // Update lowestVariantPrice
-                                                        const pMatch = currentPriceStr.match(/(\d+(\.\d+)?)/);
-                                                        if (pMatch) {
-                                                            const pVal = parseFloat(pMatch[1]);
-                                                            if (lowestVariantPrice === null || pVal < lowestVariantPrice) {
-                                                                lowestVariantPrice = pVal;
-                                                                price = currentPriceStr; // Update display string to lowest
-                                                            }
-                                                        }
-                                                    }
-                                                }
+                                const waitForStableModalThumb = async (prevThumb, timeoutMs = 5000, intervalMs = 150, stableTicks = 2) => {
+                                    const start = Date.now();
+                                    let last = getModalThumb();
+                                    let stable = 0;
+                                    while (Date.now() - start < timeoutMs) {
+                                        const cur = getModalThumb();
+                                        if (cur) {
+                                            if (cur !== last) {
+                                                last = cur;
+                                                stable = 0;
                                             } else {
-                                                // Single level
-                                                // Capture Price
-                                                let currentPriceStr = getTargetPrice(); // PRIORITY: Use strict selector
-                                                
-                                                if (!currentPriceStr) {
-                                                    // Fallback: User-Specific Price Selector (Usually Left side)
-                                                    const userPriceSelector = '#main > div > div.GNrMaxlJ > div.m4HArFRm.sku-plus1 > div > div > div.O7pEFvHR > div > div.Ngfn6pTR > div.kYzukoxf';
-                                                    const userPriceEl = document.querySelector(userPriceSelector);
-                                                    
-                                                    if (userPriceEl) {
-                                                        const text = userPriceEl.innerText.trim();
-                                                        const matches = text.match(/¥?\s*(\d+(\.\d+)?)/g);
-                                                        if (matches && matches.length > 0) {
-                                                            currentPriceStr = matches[0];
-                                                        } else {
-                                                            currentPriceStr = text;
-                                                        }
-                                                    } else {
-                                                        // Final Fallback
-                                                        currentPriceStr = modal.querySelector('.ujEqGzEB')?.innerText.replace(/\n/g, '').trim();
-                                                    }
-                                                }
+                                                stable++;
+                                            }
+                                            if (prevThumb && cur !== prevThumb && stable >= stableTicks) return cur;
+                                            if (!prevThumb && stable >= stableTicks) return cur;
+                                        }
+                                        await wait(intervalMs);
+                                    }
+                                    return getModalThumb() || last || null;
+                                };
 
-                                                if (currentPriceStr) {
-                                                    skuMap[v1.text] = currentPriceStr;
-                                                    
-                                                    // Update lowestVariantPrice
-                                                    const pMatch = currentPriceStr.match(/(\d+(\.\d+)?)/);
-                                                    if (pMatch) {
-                                                        const pVal = parseFloat(pMatch[1]);
-                                                        if (lowestVariantPrice === null || pVal < lowestVariantPrice) {
-                                                            lowestVariantPrice = pVal;
-                                                            price = currentPriceStr; // Update display string to lowest
-                                                        }
-                                                    }
-                                                }
+                                const recordSku = (key, priceStr, thumb) => {
+                                    if (!key || !priceStr) return;
+                                    skuMap[key] = priceStr;
+                                    if (thumb) {
+                                        skuThumbMap[key] = thumb;
+                                    }
+                                    const pMatch = String(priceStr || '').match(/(\d+(\.\d+)?)/);
+                                    if (pMatch) {
+                                        const pVal = parseFloat(pMatch[1]);
+                                        if (Number.isFinite(pVal)) {
+                                            if (lowestVariantPrice === null || pVal < lowestVariantPrice) {
+                                                lowestVariantPrice = pVal;
+                                                price = `¥${pMatch[1]}`;
+                                            }
+                                        }
+                                    }
+                                };
+
+                                if (Object.keys(skuMap).length === 0 && Array.isArray(specValues) && specValues.length > 0) {
+                                    const startedAt = Date.now();
+                                    const timeBudgetMs = 65000;
+                                    const group1 = specValues[0] || [];
+                                    const group2 = specValues[1] || [];
+                                    const group1Opts = group1.filter(v => v?.text && v?.element && !isDisabledOption(v.element));
+                                    const group2Opts = group2.filter(v => v?.text && v?.element && !isDisabledOption(v.element));
+
+                                    if (group1Opts.length > 0 && group2Opts.length === 0) {
+                                        for (const o1 of group1Opts) {
+                                            if (Date.now() - startedAt > timeBudgetMs) break;
+                                            const prevPrice = getTargetPrice(document);
+                                            const prevThumb = getModalThumb();
+                                            await safeClick(o1.element);
+                                            await wait(180);
+                                            const priceStr = await waitForPriceAfterClick(prevPrice, document);
+                                            const thumb = await waitForStableModalThumb(prevThumb, 4500, 160, 2);
+                                            if (thumb) variantImages[o1.text] = thumb;
+                                            recordSku(o1.text, priceStr || prevPrice || priceStr, thumb);
+                                        }
+                                    } else if (group1Opts.length > 0 && group2Opts.length > 0) {
+                                        for (const o1 of group1Opts) {
+                                            if (Date.now() - startedAt > timeBudgetMs) break;
+                                            const prevThumbColor = getModalThumb();
+                                            await safeClick(o1.element);
+                                            await wait(220);
+                                            const colorThumb = await waitForStableModalThumb(prevThumbColor, 4500, 160, 2);
+                                            if (colorThumb) variantImages[o1.text] = colorThumb;
+
+                                            for (const o2 of group2Opts) {
+                                                if (Date.now() - startedAt > timeBudgetMs) break;
+                                                const prevPrice = getTargetPrice(document);
+                                                const prevThumb = getModalThumb();
+                                                await safeClick(o2.element);
+                                                await wait(200);
+                                                const priceStr = await waitForPriceAfterClick(prevPrice, document);
+                                                const thumb = await waitForStableModalThumb(prevThumb, 4500, 160, 2);
+                                                const key = `${o1.text}__SEP__${o2.text}`;
+                                                recordSku(key, priceStr || prevPrice || priceStr, thumb || colorThumb);
                                             }
                                         }
                                     }
                                 }
-                                
-                                // Close modal to be safe (click X button)
-                                const closeBtn = modal.querySelector('div[role="button"][aria-label="关闭弹窗"]') || modal.querySelector('svg');
-                                if (closeBtn) {
-                                     // closeBtn.click(); // Optional, we are closing page anyway
+
+                                const extractCardTextPrice = (c) => {
+                                    const nameEl = c?.querySelector?.('.RITrraU3 span.U63Kdv8C') || c?.querySelector?.('.RITrraU3 span') || c?.querySelector?.('span.U63Kdv8C');
+                                    let textRaw = nameEl?.innerText || nameEl?.textContent || '';
+                                    let text = String(textRaw || '').replace(/\s+/g, ' ').trim();
+                                    if (!text) {
+                                        const spans = Array.from(c?.querySelectorAll?.('span') || []);
+                                        for (const s of spans) {
+                                            const t = String(s?.innerText || s?.textContent || '').replace(/\s+/g, ' ').trim();
+                                            if (!t) continue;
+                                            if (t.includes('¥') || t.includes('￥')) continue;
+                                            if (t.includes('已选') || t.includes('请选择')) continue;
+                                            if (t.length > 80) continue;
+                                            text = t;
+                                            break;
+                                        }
+                                    }
+
+                                    const priceEl = c?.querySelector?.('.nvN5jV0G') || c?.querySelector?.('[class*="nvN5jV0G"]');
+                                    let priceRaw = priceEl?.innerText || priceEl?.textContent || '';
+                                    if (!priceRaw) {
+                                        const t = String(c?.innerText || c?.textContent || '');
+                                        const m = t.match(/[¥￥]\s*(\d+(\.\d+)?)/);
+                                        if (m) priceRaw = m[0];
+                                    }
+                                    const pm = String(priceRaw || '').match(/(\d+(\.\d+)?)/);
+                                    const priceStr = pm ? (`¥${pm[1]}`) : null;
+
+                                    return { text, priceStr };
+                                };
+
+                                const extractCardThumb = (c) => {
+                                    const imgEl = c.querySelector('.PQoZYCec img') || c.querySelector('.PQoZYCec img[data-src]') || c.querySelector('.PQoZYCec img[data-lazy-src]') || c.querySelector('.PQoZYCec img[data-original]') || c.querySelector('img');
+                                    const rawSrc =
+                                        imgEl?.getAttribute('src') ||
+                                        imgEl?.getAttribute('data-src') ||
+                                        imgEl?.getAttribute('data-lazy-src') ||
+                                        imgEl?.getAttribute('data-original') ||
+                                        imgEl?.src ||
+                                        '';
+                                    if (rawSrc) return rawSrc.split('?')[0];
+
+                                    const pq = c.querySelector('.PQoZYCec') || c;
+                                    const styleBg = pq?.style?.backgroundImage || '';
+                                    let bg = styleBg;
+                                    if (!bg) {
+                                        try { bg = window.getComputedStyle(pq).backgroundImage || ''; } catch (e) {}
+                                    }
+                                    const m = String(bg || '').match(/url\((['"]?)(.*?)\1\)/i);
+                                    const url = m?.[2] || '';
+                                    return url ? url.split('?')[0] : null;
+                                };
+
+                                const scanThumbsViaO7pEFvHR = async (group1Texts, group2Texts, maxSwipes = 28) => {
+                                    const out = {};
+                                    const seenKeys = new Set();
+                                    const host = modal.querySelector('.O7pEFvHR') || modal.querySelector('.O7pEFvHR img');
+                                    if (!host) return out;
+
+                                    const getSelectedSummaryText = () => {
+                                        const el = modal.querySelector('.xJDS9NLo .Mbx2m60G') || modal.querySelector('.Mbx2m60G');
+                                        const t = el?.innerText || el?.textContent || '';
+                                        return String(t || '').replace(/\s+/g, ' ').trim();
+                                    };
+
+                                    const normalizeSelectedSummary = (t) => {
+                                        return String(t || '').replace(/^已选\s*[:：]\s*/g, '').trim();
+                                    };
+
+                                    const pickComboKey = (summary) => {
+                                        const s = String(summary || '');
+                                        const v1 = (group1Texts || []).find(t => t && s.includes(t)) || null;
+                                        const v2 = (group2Texts || []).find(t => t && s.includes(t)) || null;
+                                        if (v1 && v2) return `${v1}__SEP__${v2}`;
+                                        return summary || null;
+                                    };
+
+                                    const swipeLeft = async () => {
+                                        try {
+                                            const r = host.getBoundingClientRect();
+                                            const startX = Math.floor(r.left + r.width * 0.78);
+                                            const endX = Math.floor(r.left + r.width * 0.22);
+                                            const y = Math.floor(r.top + r.height * 0.5);
+                                            const touchStart = new Touch({ identifier: Date.now(), target: host, clientX: startX, clientY: y });
+                                            const touchEnd = new Touch({ identifier: Date.now(), target: host, clientX: endX, clientY: y });
+                                            host.dispatchEvent(new TouchEvent('touchstart', { touches: [touchStart], bubbles: true }));
+                                            host.dispatchEvent(new TouchEvent('touchmove', { touches: [touchEnd], bubbles: true }));
+                                            host.dispatchEvent(new TouchEvent('touchend', { changedTouches: [touchEnd], bubbles: true }));
+                                            await wait(380);
+                                            return true;
+                                        } catch (e) {
+                                            try {
+                                                const r = host.getBoundingClientRect();
+                                                const startX = Math.floor(r.left + r.width * 0.78);
+                                                const endX = Math.floor(r.left + r.width * 0.22);
+                                                const y = Math.floor(r.top + r.height * 0.5);
+                                                host.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: startX, clientY: y }));
+                                                host.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, cancelable: true, clientX: endX, clientY: y }));
+                                                host.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX: endX, clientY: y }));
+                                                await wait(380);
+                                                return true;
+                                            } catch (e2) {}
+                                        }
+                                        return false;
+                                    };
+
+                                    let stagnation = 0;
+                                    let lastKey = null;
+                                    for (let i = 0; i < maxSwipes; i++) {
+                                        const summary = normalizeSelectedSummary(getSelectedSummaryText());
+                                        const key = pickComboKey(summary);
+                                        const thumb = getModalThumb();
+                                        if (key && thumb) out[key] = thumb;
+
+                                        if (key && key === lastKey) stagnation++;
+                                        else stagnation = 0;
+                                        lastKey = key || lastKey;
+
+                                        if (key) seenKeys.add(key);
+                                        if (seenKeys.size >= 6 && stagnation >= 2) break;
+
+                                        const didSwipe = await swipeLeft();
+                                        if (!didSwipe) break;
+                                    }
+
+                                    return out;
+                                };
+
+                                const extractOptionCards = (root) => {
+                                    const scope = (root || document);
+                                    const liEls = Array.from(scope.querySelectorAll('li.TpUpcNRp'));
+                                    const containerEls = liEls.length > 0
+                                        ? liEls.map(li => li.querySelector('div._8gg8ho2u')).filter(Boolean)
+                                        : Array.from(scope.querySelectorAll('div._8gg8ho2u'));
+                                    const items = [];
+                                    const seen = new Set();
+                                    const addFromContainer = (c) => {
+                                        const thumb = extractCardThumb(c);
+                                        const { text, priceStr } = extractCardTextPrice(c);
+
+                                        if (text && priceStr) {
+                                            const k = `${text}||${priceStr}||${thumb || ''}`;
+                                            if (seen.has(k)) return;
+                                            seen.add(k);
+                                            items.push({ text, priceStr, thumb });
+                                        }
+                                    };
+
+                                    for (const c of containerEls) addFromContainer(c);
+
+                                    if (items.length === 0) {
+                                        const priceEls = Array.from(scope.querySelectorAll('.nvN5jV0G, [class*="nvN5jV0G"]'));
+                                        const candidates = [];
+                                        const uniq = new Set();
+                                        for (const p of priceEls) {
+                                            const t = String(p?.innerText || p?.textContent || '').replace(/\s+/g, ' ').trim();
+                                            if (!t || (!t.includes('¥') && !t.includes('￥'))) continue;
+                                            const c = p.closest('li') || p.closest('div') || p.parentElement;
+                                            if (!c) continue;
+                                            const key = c === scope ? null : (c.getAttribute?.('class') || '') + '::' + (c.innerText || '').slice(0, 60);
+                                            if (key && uniq.has(key)) continue;
+                                            if (key) uniq.add(key);
+                                            candidates.push(c);
+                                            if (candidates.length >= 40) break;
+                                        }
+                                        for (const c of candidates) addFromContainer(c);
+                                    }
+
+                                    return items;
+                                };
+
+                                const cards = extractOptionCards(modal);
+                                if (cards.length > 0) {
+                                    for (const card of cards) {
+                                        skuMap[card.text] = card.priceStr;
+                                        if (card.thumb) skuThumbMap[card.text] = card.thumb;
+
+                                        const pMatch = card.priceStr.match(/(\d+(\.\d+)?)/);
+                                        if (pMatch) {
+                                            const pVal = parseFloat(pMatch[1]);
+                                            if (lowestVariantPrice === null || pVal < lowestVariantPrice) {
+                                                lowestVariantPrice = pVal;
+                                                price = card.priceStr;
+                                            }
+                                        }
+                                    }
                                 }
-                            } else {
-                                console.error('CRITICAL: Buy button clicked but modal did not appear.');
-                                // Treat as failure to find valid options
-                                throw new Error('Modal did not appear after clicking Group Buy');
-                            }
-                        } else {
-                            console.error('CRITICAL: Group Buy button (拼单) not found. Skipping product.');
-                            // Throw error to trigger skip logic in catch block if needed, 
-                            // or just let it fall through and result in no variants (which usually means skip or basic data only)
-                            // User requested: "ignore this product, skip it and go back"
-                            throw new Error('SKIP_PRODUCT: Group Buy button not found');
                         }
                     } catch (e) {
                         console.log('Variant extraction failed:', e.message);
-                        if (e.message.includes('SKIP_PRODUCT')) {
-                            // Signal to outer loop to skip
-                            return { shouldSkip: true, reason: 'No Group Buy Button' };
-                        }
                     }
 
                      // 5. Image Extraction with Slider Logic
@@ -1197,6 +2476,24 @@ async function run() {
                      let product_desc_imgs = [];
                      
                      console.log('Starting description image extraction sequence...');
+                     await wait(5000);
+                     try {
+                         for (let i = 0; i < 2; i++) {
+                             const x = Math.floor(window.innerWidth / 2);
+                             const y = 12;
+                             const el = document.elementFromPoint(x, y);
+                             if (el) el.click();
+                             await wait(220);
+                         }
+                         const backBtn = document.querySelector('div[role="button"][aria-label*="返回"]') ||
+                             document.querySelector('div[role="button"][aria-label*="后退"]') ||
+                             document.querySelector('div[role="button"][aria-label*="关闭"]');
+                         if (backBtn) {
+                             backBtn.click();
+                             await wait(600);
+                         }
+                     } catch (e) {}
+                     await wait(10000);
 
                      // Step A: Close the variant modal explicitly
                      try {
@@ -1242,43 +2539,79 @@ async function run() {
                      await wait(2000); // Final wait for images to render
 
                      // Step C: Extract images STRICTLY from specific nested path
-                     // User hint: #main > div > div.GNrMaxlJ > div:nth-child(19) > div
-                     const descContainer = document.querySelector('#main > div > div.GNrMaxlJ > div:nth-child(19) > div');
-                     
-                     if (descContainer) {
-                         // console.log('Found description container, extracting nested images...');
-                         // Re-query children after scroll
-                         const nestedDivs = Array.from(descContainer.querySelectorAll('div'));
-                         
-                         // If we fell back to main container, just get all images directly too
-                         const directImages = Array.from(descContainer.querySelectorAll('img'));
-                         
-                         const processImg = (img) => {
-                             let src = img.src || img.dataset.src;
-                             if (src && !src.startsWith('data:') && img.naturalWidth > 400) {
-                                 // Check for lazy loaded attributes often used in PDD
-                                 if (src.includes('blank.gif') || src.includes('loading')) {
-                                      if (img.dataset.src) src = img.dataset.src;
-                                 }
-                                 
-                                 // STRICT EXCLUSION: Suggested/Recommended Products
-                                 // If the image is inside a link to another product, skip it
-                                 if (img.closest('a[href*="goods_id"]')) return;
-                                 if (img.closest('.recommend-goods')) return;
+                     // Priority 1: User-identified container "Blmqu2TV"
+                     const blmContainer = document.querySelector('.Blmqu2TV') || document.querySelector('div[class*="Blmqu2TV"]');
+                     let foundDescImages = false;
 
-                                 if (src && !src.includes('avatar') && !src.includes('icon') && !src.includes('video-snapshot') && !src.includes('coupon') && !src.includes('.slim.png')) {
-                                      product_desc_imgs.push(src.split('?')[0]);
+                     if (blmContainer) {
+                         console.log('[PDD] Found Blmqu2TV container for description images');
+                         const imgs = Array.from(blmContainer.querySelectorAll('img'));
+                         
+                         imgs.forEach(img => {
+                             // STRICT EXCLUSION
+                             if (img.closest('a[href*="goods_id"]')) return;
+                             if (img.closest('.recommend-goods')) return;
+
+                             // User provided example: data-src is primary
+                             let src = img.getAttribute('data-src') || img.getAttribute('src') || img.src;
+                             
+                             if (src && !src.startsWith('data:')) {
+                                 src = src.split('?')[0];
+                                 if (src.startsWith('//')) src = 'https:' + src;
+                                 
+                                 if (src.startsWith('http') && !src.includes('avatar') && !src.includes('icon') && !src.includes('video-snapshot') && !src.includes('coupon') && !src.includes('.slim.png')) {
+                                      // Optional: Check for size if possible, but data-src usually implies main content
+                                      product_desc_imgs.push(src);
                                  }
                              }
-                         };
-
-                         nestedDivs.forEach(div => {
-                             const imgs = div.querySelectorAll('img');
-                             imgs.forEach(processImg);
                          });
                          
-                         directImages.forEach(processImg);
-                     } else {
+                         if (product_desc_imgs.length > 0) foundDescImages = true;
+                     }
+
+                     // Priority 2: Old strict selector if Blmqu2TV failed
+                     if (!foundDescImages) {
+                         // User hint: #main > div > div.GNrMaxlJ > div:nth-child(19) > div
+                         const descContainer = document.querySelector('#main > div > div.GNrMaxlJ > div:nth-child(19) > div');
+                     
+                         if (descContainer) {
+                             // console.log('Found description container, extracting nested images...');
+                             // Re-query children after scroll
+                             const nestedDivs = Array.from(descContainer.querySelectorAll('div'));
+                             
+                             // If we fell back to main container, just get all images directly too
+                             const directImages = Array.from(descContainer.querySelectorAll('img'));
+                             
+                             const processImg = (img) => {
+                                 let src = img.src || img.dataset.src;
+                                 if (src && !src.startsWith('data:') && img.naturalWidth > 400) {
+                                     // Check for lazy loaded attributes often used in PDD
+                                     if (src.includes('blank.gif') || src.includes('loading')) {
+                                          if (img.dataset.src) src = img.dataset.src;
+                                     }
+                                     
+                                     // STRICT EXCLUSION: Suggested/Recommended Products
+                                     // If the image is inside a link to another product, skip it
+                                     if (img.closest('a[href*="goods_id"]')) return;
+                                     if (img.closest('.recommend-goods')) return;
+    
+                                     if (src && !src.includes('avatar') && !src.includes('icon') && !src.includes('video-snapshot') && !src.includes('coupon') && !src.includes('.slim.png')) {
+                                          product_desc_imgs.push(src.split('?')[0]);
+                                     }
+                                 }
+                             };
+    
+                             nestedDivs.forEach(div => {
+                                 const imgs = div.querySelectorAll('img');
+                                 imgs.forEach(processImg);
+                             });
+                             
+                             directImages.forEach(processImg);
+                             if (product_desc_imgs.length > 0) foundDescImages = true;
+                         } 
+                     }
+                     
+                     if (!foundDescImages) {
                          // STRICT FALLBACK: If specific container not found, try to find the "Details" section specifically
                          // Pinduoduo usually has a "Goods Details" or "Graphic Details" header
                          // We look for a container that has many large images and is NOT the slider
@@ -1308,8 +2641,8 @@ async function run() {
                          }
                      }
 
-                     return { title, price, description, images: [...new Set(images)], variants, skuMap, productDetails, product_desc_imgs: [...new Set(product_desc_imgs)], variantImages };
-                 });
+                    return { title, price, description, images: [...new Set(images)], variants, skuMap, skuThumbMap, productDetails, product_desc_imgs: [...new Set(product_desc_imgs)], variantImages };
+                }, [], 12);
 
                 // Enrich
                 console.log(`Enriching: ${data.title.substring(0, 20)}...`);
@@ -1318,6 +2651,15 @@ async function run() {
                 if (data.price) {
                      const match = data.price.match(/(\d+(\.\d+)?)/);
                      if (match) general_price = parseFloat(match[1]) * 200; 
+                }
+
+                // --- EDIBLE CHECK (KEYWORD PRE-FILTER) ---
+                const preCheck = isEdiblePreCheck(data.title, data.description);
+                if (preCheck.isEdible) {
+                    console.log(`Skipping product (EDIBLE KEYWORD DETECTED: ${preCheck.keyword}): ${data.title.substring(0, 30)}...`);
+                    if (!navigationHappened) await newPage.close();
+                    else await newPage.goBack();
+                    continue;
                 }
 
                 const aiData = await enrichWithAI(data.title, data.description, data.price);
@@ -1330,220 +2672,205 @@ async function run() {
                     continue;
                 }
 
+                // CHECK: Is it edible (AI Detection)?
+                if (aiData.is_edible) {
+                    console.log(`Skipping product (AI DETECTED EDIBLE): ${data.title.substring(0, 30)}...`);
+                    if (!navigationHappened) await newPage.close();
+                    else await newPage.goBack();
+                    continue;
+                }
+
                 // --- GENERATE OPTIONS FROM SKU MAP (WITH TRANSLATION) ---
                 let generated_options = [];
-                const optionsMap = new Map(); // Key: "Color_Price", Value: Object
                 const variantImages = data.variantImages || {};
+                const skuThumbMap = data.skuThumbMap || {};
 
                 if (data.skuMap && Object.keys(data.skuMap).length > 0) {
+                    const rawVariantEntries = Object.entries(data.skuMap || {});
+                    console.log(`Variant prices BEFORE translation (${rawVariantEntries.length})`);
+                    const rawPreviewLimit = 80;
+                    rawVariantEntries.slice(0, rawPreviewLimit).forEach(([k, v]) => {
+                        const m = String(v || '').match(/(\d+(\.\d+)?)/);
+                        const p = m ? Math.round(parseFloat(m[1]) * 200) : 0;
+                        console.log(`  ${k} => ${v} (${p} IQD)`);
+                    });
+                    if (rawVariantEntries.length > rawPreviewLimit) {
+                        console.log(`  ... truncated ${rawVariantEntries.length - rawPreviewLimit} more`);
+                    }
                     
                     // Helper to translate color/size via AI if possible, or simple mapping
                     // Since we want strict Arabic, we might need a quick AI pass or just use the aiData logic
                     // For now, let's process the structure first, then maybe translate the labels
-                    
-                    for (const [key, priceStr] of Object.entries(data.skuMap)) {
-                        // key is usually "Color__SEP__Size" or just "Color"
+
+                    const resolveThumbnail = (optionKey, colorStr) => {
+                        if (optionKey && skuThumbMap[optionKey]) return skuThumbMap[optionKey];
+                        if (!colorStr) return null;
+                        if (variantImages[colorStr]) return variantImages[colorStr];
+                        const keys = Object.keys(variantImages || {});
+                        const matchingKey = keys.find(k => k && (k.includes(colorStr) || colorStr.includes(k)));
+                        return matchingKey ? variantImages[matchingKey] : null;
+                    };
+
+                    for (const [key, priceStr] of rawVariantEntries) {
                         let color = key;
                         let size = null;
-                        
+
                         if (key.includes('__SEP__')) {
                             const parts = key.split('__SEP__');
                             color = parts[0];
                             size = parts[1];
-                        } else if (key.includes('+')) {
-                             // Fallback for backward compatibility or if separator missing (shouldn't happen with new logic)
-                             // But wait, if the text itself has +, we shouldn't split on it unless we are sure it's the separator.
-                             // With the new __SEP__, we can ignore '+' splitting unless it was the old format.
-                             // Since we are running a fresh scrape, we don't need backward compat for in-memory data.
-                             // However, if we loaded from file... but the file is overwritten.
-                             // Let's stick to __SEP__.
                         }
 
-                        // Parse Price
                         let priceVal = 0;
-                        const match = priceStr.match(/(\d+(\.\d+)?)/);
-                        if (match) {
-                             priceVal = parseFloat(match[1]) * 200; 
-                        }
+                        const match = String(priceStr || '').match(/(\d+(\.\d+)?)/);
+                        if (match) priceVal = parseFloat(match[1]) * 200;
 
-                        // Grouping Key: Color + Price
-                        const mapKey = `${color}_${priceVal}`;
-
-                        if (!optionsMap.has(mapKey)) {
-                            // Find thumbnail for this color
-                            let thumbnail = null;
-                            if (variantImages[color]) {
-                                thumbnail = variantImages[color];
-                            } else {
-                                // Fallback: Try to find match if color text is slightly different
-                                const matchingKey = Object.keys(variantImages).find(k => k.includes(color) || color.includes(k));
-                                if (matchingKey) thumbnail = variantImages[matchingKey];
-                            }
-
-                            optionsMap.set(mapKey, {
-                                color: color,
-                                sizes: [],
-                                price: priceVal,
-                                thumbnail: thumbnail // Add thumbnail
-                            });
-                        }
+                        color = String(color || '')
+                            .replace(/\n.*$/, '')
+                            .replace(/【.*?】/g, '')
+                            .replace(/\s+/g, ' ')
+                            .trim();
 
                         if (size) {
-                            // Weight Unit Conversion: "160-175斤" -> "80-87.5kg"
-                            // Regex for ranges: (\d+)-(\d+)斤
-                            // Regex for single: (\d+)斤
-                            
-                            // Handle Range
-                            size = size.replace(/(\d+(\.\d+)?)\s*[-~]\s*(\d+(\.\d+)?)\s*斤/g, (match, p1, p2, p3) => {
+                            size = String(size || '');
+                            size = size.replace(/(\d+(\.\d+)?)\s*[-~]\s*(\d+(\.\d+)?)\s*斤/g, (m, p1, p2, p3) => {
                                 const start = parseFloat(p1) / 2;
                                 const end = parseFloat(p3) / 2;
                                 return `${start}-${end}kg`;
                             });
-                            
-                            // Handle Single
-                            size = size.replace(/(\d+(\.\d+)?)\s*斤/g, (match, p1) => {
-                                return `${parseFloat(p1) / 2}kg`;
-                            });
-
-                            // Clean extra text (e.g. \n快要断码) BEFORE pushing to optionsMap
-                            // This ensures the raw size is cleaner before translation
-                            size = size.replace(/\n.*$/, '').trim(); // Remove newline and everything after
-                            size = size.replace(/【.*?】/g, '').trim(); // Remove brackets like 【高质量】
-
-                            optionsMap.get(mapKey).sizes.push(size);
+                            size = size.replace(/(\d+(\.\d+)?)\s*斤/g, (m, p1) => `${parseFloat(p1) / 2}kg`);
+                            size = size.replace(/\n.*$/, '').replace(/【.*?】/g, '').replace(/\s+/g, ' ').trim();
+                            if (!size) size = null;
                         }
+
+                        generated_options.push({
+                            color,
+                            sizes: size ? [size] : [],
+                            price: priceVal,
+                            thumbnail: resolveThumbnail(key, color)
+                        });
                     }
-                    
-                    generated_options = Array.from(optionsMap.values());
-                    
-                    // --- DEDUPLICATION OF OPTIONS ---
-                    // Fix duplication issue where same option appears multiple times
-                    const uniqueOptionsMap = new Map();
-                    generated_options.forEach(opt => {
-                        // Create a unique key for the option based on Color and Price
-                        // Size is an array, so we don't include it in the key yet, but we merge sizes
-                        const optKey = (opt.color || '').trim().toLowerCase();
-                        
-                        if (!uniqueOptionsMap.has(optKey)) {
-                            uniqueOptionsMap.set(optKey, {
-                                ...opt,
-                                sizes: new Set(opt.sizes || [])
-                            });
-                        } else {
-                            // Merge sizes if option exists
-                            const existing = uniqueOptionsMap.get(optKey);
-                            if (opt.sizes && Array.isArray(opt.sizes)) {
-                                opt.sizes.forEach(s => existing.sizes.add(s));
-                            }
-                            // Keep the lowest price if prices differ? Or highest? Usually consistent.
-                            // If price is 0, update it
-                            if (existing.price === 0 && opt.price > 0) {
-                                existing.price = opt.price;
-                            }
-                        }
-                    });
-                    
-                    // Convert Sets back to Arrays and update generated_options
-                    generated_options = Array.from(uniqueOptionsMap.values()).map(opt => ({
-                        ...opt,
-                        sizes: Array.from(opt.sizes)
-                    }));
 
-                    // CLEAN COLORS BEFORE TRANSLATION
-                    // Iterate through generated_options to clean color names locally first
-                    generated_options.forEach(opt => {
-                        if (opt.color) {
-                             opt.color = opt.color.replace(/\n.*$/, '').replace(/【.*?】/g, '').replace(/\s+/g, ' ').trim();
-                        }
-                        if (opt.sizes && Array.isArray(opt.sizes)) {
-                            opt.sizes = opt.sizes.map(s => s.replace(/\n.*$/, '').replace(/【.*?】/g, '').replace(/\s+/g, ' ').trim());
-                        }
-                    });
+                    console.log(`Generated options from SKU map (${generated_options.length})`);
  
                      // --- TRANSLATE OPTIONS IF AI IS AVAILABLE ---
                      if (aiClient && generated_options.length > 0) {
-                         console.log(`Translating ${generated_options.length} options via AI...`);
-                         
-                         let translationSuccess = false;
-                         let transAttempts = 0;
-                         const maxTransAttempts = 3;
+                         console.log(`Translating ${generated_options.length} options via AI (chunked)...`);
 
-                         while (!translationSuccess && transAttempts < maxTransAttempts) {
-                             transAttempts++;
-                             try {
-                                 // Prepare a bulk translation prompt for options
-                                 const optionsText = JSON.stringify(generated_options.map(o => ({ c: o.color, s: o.sizes })));
-                                 const transPrompt = `
-                                 Translate these product options to Arabic.
-                                 Input: ${optionsText}
-                                 
-                                 IMPORTANT:
-                                 - Return ONLY a JSON array. Do not include any conversational text like "Here is the JSON" or markdown code blocks.
-                                 - If the input contains "kg" (kilograms), KEEP "kg" in the translation (e.g. "80kg" -> "80kg" or "80 كغم").
-                                 - Do NOT convert numbers back to original units.
-                                 - Remove any Chinese characters or marketing text like "快要断码", "图片色" (Image Color), "高质量", "建议", "斤".
-                                 - "图片色" or "默认" should be translated as "كما في الصورة" (As shown in image) or "اللون الافتراضي" (Default Color).
-                                 - Remove any newlines or extra whitespace.
-                                 - Return pure, clean Arabic names for colors and sizes.
-                                 - TRANSLATE COLORS TO ARABIC (e.g. "Black" -> "أسود", "红色" -> "أحمر").
-                                 - TRANSLATE "建议" (Recommended) to "مقترح" or remove it if just a label.
-                                 - STRICTLY REMOVE any "return policy", "refund", "replacement" (e.g. "包退", "包换") text from option names.
-                                 
-                                 Return ONLY a JSON array with translated "c" (color) and "s" (sizes).
-                                 Example Input: [{"c":"Red","s":["L","80kg"]}]
-                                 Example Output: [{"c":"أحمر","s":["لارج","80 كغم"]}]
-                                 Keep the order exactly the same.
-                                 `;
-                                 
-                                 const transRes = await aiClient.chat.completions.create({
-                                     model: AI_MODEL,
+                         const translateChunk = async (chunk) => {
+                             const optionsText = JSON.stringify(chunk.map(o => ({ c: o.color, s: (o.sizes && o.sizes[0]) ? o.sizes[0] : "" })));
+                             const transPrompt = `
+                             Translate these product options to Arabic.
+                             Input: ${optionsText}
+                             
+                             IMPORTANT:
+                             - Return ONLY a JSON array. Do not include any conversational text like "Here is the JSON" or markdown code blocks.
+                             - Keep the number of items EXACTLY the same as input.
+                             - Keep the order EXACTLY the same as input.
+                             - Each output item must be {"c": "...", "s": "..."}.
+                             - If the input contains "kg" (kilograms), KEEP "kg" in the translation (e.g. "80kg" -> "80kg" or "80 كغم").
+                             - Do NOT convert numbers back to original units.
+                             - Remove any Chinese characters or marketing text like "快要断码", "图片色" (Image Color), "高质量", "建议", "斤".
+                             - "图片色" or "默认" should be translated as "كما في الصورة" (As shown in image) or "اللون الافتراضي" (Default Color).
+                             - Remove any newlines or extra whitespace.
+                             - Return pure, clean Arabic names for colors and sizes.
+                             - TRANSLATE COLORS TO ARABIC (e.g. "Black" -> "أسود", "红色" -> "أحمر").
+                             - TRANSLATE "建议" (Recommended) to "مقترح" or remove it if just a label.
+                             - STRICTLY REMOVE any "return policy", "refund", "replacement" (e.g. "包退", "包换") text from option names.
+                             `;
+
+                             const translate = async (model) => {
+                                 return await aiClient.chat.completions.create({
+                                     model,
                                      messages: [{ role: "user", content: transPrompt }],
                                      temperature: 0.3,
                                      max_tokens: 2048
                                  });
-                                 
-                                 let transJson = transRes.choices[0].message.content.replace(/```json/g, '').replace(/```/g, '').trim();
-                                 
-                                 // Attempt to find the first '[' and last ']'
-                                 const startIdx = transJson.indexOf('[');
-                                 const endIdx = transJson.lastIndexOf(']');
-                                 if (startIdx !== -1 && endIdx !== -1) {
-                                     transJson = transJson.substring(startIdx, endIdx + 1);
-                                 }
+                             };
 
-                                 // console.log('AI Translation Response (First 100 chars):', transJson.substring(0, 100));
-                                 
-                                 const transArr = JSON.parse(transJson);
-                                 
-                                 if (Array.isArray(transArr) && transArr.length === generated_options.length) {
-                                    generated_options.forEach((opt, idx) => {
-                                        // Apply Strict Trimming to translated values
-                                        if (transArr[idx].c) {
-                                            opt.color = transArr[idx].c.trim().replace(/\s+/g, ' '); // normalize spaces
-                                        }
-                                        if (transArr[idx].s && Array.isArray(transArr[idx].s)) {
-                                            opt.sizes = transArr[idx].s.map(s => s.trim().replace(/\s+/g, ' '));
-                                        }
-                                    });
-                                    console.log('Options translation applied successfully.');
-                                    translationSuccess = true;
-                                } else {
-                                     console.error('Translation array length mismatch or invalid format. Retrying...');
+                             let transRes;
+                             try {
+                                 transRes = await translate(AI_PRIMARY_MODEL);
+                             } catch (e) {
+                                 if (isModelBusyError(e) && AI_FALLBACK_MODEL && AI_FALLBACK_MODEL !== AI_PRIMARY_MODEL) {
+                                     console.log(`AI busy on ${AI_PRIMARY_MODEL}. Falling back to ${AI_FALLBACK_MODEL} for options translation...`);
+                                     transRes = await translate(AI_FALLBACK_MODEL);
+                                 } else {
+                                     throw e;
                                  }
-                             } catch(e) {
-                                 console.error(`Options translation failed (Attempt ${transAttempts}/${maxTransAttempts}):`, e.message);
-                                 if (e.response) console.error('AI Response Error:', e.response.data);
-                                 await delay(1000);
+                             }
+
+                             let transJson = transRes.choices[0].message.content.replace(/```json/g, '').replace(/```/g, '').trim();
+                             const startIdx = transJson.indexOf('[');
+                             const endIdx = transJson.lastIndexOf(']');
+                             if (startIdx !== -1 && endIdx !== -1) transJson = transJson.substring(startIdx, endIdx + 1);
+
+                             const transArr = JSON.parse(transJson);
+                             if (!Array.isArray(transArr) || transArr.length !== chunk.length) {
+                                 throw new Error(`Translation length mismatch (${Array.isArray(transArr) ? transArr.length : 'invalid'} vs ${chunk.length})`);
+                             }
+                             return transArr;
+                         };
+
+                         const applyTranslation = (chunk, transArr) => {
+                             for (let i = 0; i < chunk.length; i++) {
+                                 const opt = chunk[i];
+                                 const t = transArr[i] || {};
+                                 if (t.c) opt.color = String(t.c).trim().replace(/\s+/g, ' ');
+                                 if (Array.isArray(opt.sizes) && opt.sizes.length > 0) {
+                                     if (t.s !== undefined && t.s !== null) {
+                                         const nextSize = String(t.s).trim().replace(/\s+/g, ' ');
+                                         if (nextSize) opt.sizes[0] = nextSize;
+                                     }
+                                 }
+                             }
+                         };
+
+                         const baseChunkSize = Number(process.env.AI_OPTIONS_TRANSLATE_CHUNK_SIZE) > 0 ? Number(process.env.AI_OPTIONS_TRANSLATE_CHUNK_SIZE) : 25;
+                         const queue = [];
+                         for (let i = 0; i < generated_options.length; i += baseChunkSize) {
+                             queue.push([i, Math.min(i + baseChunkSize, generated_options.length)]);
+                         }
+
+                         while (queue.length > 0) {
+                             const [start, end] = queue.shift();
+                             const chunk = generated_options.slice(start, end);
+                             let ok = false;
+                             let attempts = 0;
+                             const maxAttempts = 3;
+                             while (!ok && attempts < maxAttempts) {
+                                 attempts++;
+                                 try {
+                                     const transArr = await translateChunk(chunk);
+                                     applyTranslation(chunk, transArr);
+                                     ok = true;
+                                 } catch (e) {
+                                     if (attempts >= maxAttempts) break;
+                                     await delay(700);
+                                 }
+                             }
+                             if (!ok) {
+                                 if (chunk.length <= 1) continue;
+                                 const mid = start + Math.floor((end - start) / 2);
+                                 queue.unshift([mid, end]);
+                                 queue.unshift([start, mid]);
                              }
                          }
 
-                         if (!translationSuccess) {
-                             console.log('Warning: Failed to translate options after 3 attempts. Using original (Chinese/Mixed) values.');
-                             // We DO NOT skip. We proceed with whatever we have.
-                         }
+                         console.log('Options translation applied (chunked best-effort).');
                      } else {
                          console.log('Skipping options translation (AI not ready or no options).');
                      }
+
+                    console.log(`Variant prices AFTER translation (${generated_options.length})`);
+                    const postLines = [];
+                    for (const opt of generated_options) {
+                        const s = (opt.sizes && opt.sizes[0]) ? opt.sizes[0] : '';
+                        postLines.push(`${opt.color}${s ? `__SEP__${s}` : ''} => ${opt.price} IQD`);
+                    }
+                    const postPreviewLimit = 120;
+                    postLines.slice(0, postPreviewLimit).forEach(l => console.log(`  ${l}`));
+                    if (postLines.length > postPreviewLimit) console.log(`  ... truncated ${postLines.length - postPreviewLimit} more`);
                  }
 
                 const enrichedProduct = {
@@ -1562,15 +2889,6 @@ async function run() {
                     // variants: data.variants, // REMOVED as per request
                     // skuMap: data.skuMap // REMOVED as per request
                 };
-
-                // VALIDATION: Skip insertion if options are missing
-                if (!enrichedProduct.generated_options || enrichedProduct.generated_options.length === 0) {
-                    console.error(`Skipping product: No options generated. URL: ${productUrl}`);
-                    // Close tab and continue to next product
-                    if (!navigationHappened) await newPage.close();
-                    else await newPage.goBack();
-                    continue; 
-                }
 
                 // Calculate Final Price with 15% Profit
                 const calculateFinalPrice = (base) => {
@@ -1659,15 +2977,8 @@ async function run() {
                     enrichedProduct.generated_options = enrichedProduct.generated_options.filter(opt => {
                         const text = (opt.color || '') + ' ' + (opt.sizes ? opt.sizes.join(' ') : '');
                         const hasInvalidKeyword = invalidKeywords.some(kw => text.includes(kw));
-                        
-                        // Also check for suspiciously high price (e.g. > 20x base price)
-                        let isPriceSuspicious = false;
-                        if (opt.price && enrichedProduct.general_price > 0) {
-                             const ratio = opt.price / enrichedProduct.general_price;
-                             if (ratio > 20) isPriceSuspicious = true;
-                        }
 
-                        if (hasInvalidKeyword || isPriceSuspicious) {
+                        if (hasInvalidKeyword) {
                             console.log(`Skipping invalid/suspicious option: ${text} (Price: ${opt.price})`);
                             return false;
                         }
@@ -1692,7 +3003,7 @@ async function run() {
                                     sizes.add(s);
                                 } else {
                                     console.log(`Chinese size detected: ${s}. Using it anyway.`);
-                                    sizes.add(s); // Add it anyway, don't skip
+                                    sizes.add(s);
                                 }
                             });
                         }
@@ -1721,74 +3032,50 @@ async function run() {
 
                     // 5. Create Variants - VALIDATED
                     const variantsData = [];
+                    const normalizeVariantBasePrice = (basePrice) => {
+                        let p = Number(basePrice) || 0;
+                        if (p > 0 && p < 100) {
+                            console.log(`Warning: Suspiciously low price (${p}). Assuming RMB and multiplying by 200.`);
+                            p = p * 200;
+                        } else if (p > 0 && p < 1000 && enrichedProduct.general_price > 5000) {
+                            console.log(`Warning: Variant price ${p} vs Main ${enrichedProduct.general_price}. Assuming RMB.`);
+                            p = p * 200;
+                        }
+                        return p;
+                    };
                     for (const opt of enrichedProduct.generated_options) {
                         // SKIP if color is Chinese (DISABLED: User wants to keep them)
                         // if (containsChinese(opt.color)) continue;
 
                         const color = opt.color;
-                        let variantBasePrice = opt.price || enrichedProduct.general_price || 0;
-
-                        // Safety check: If price is suspiciously low (likely RMB), multiply by 200
-                        // 1000 IQD is about 5 RMB. Most items are > 5 RMB.
-                        // If it's < 1000, it's likely raw RMB that missed conversion.
-                        // BUT: If the main product price is also low (< 2000), maybe it's just a cheap item?
-                        // Let's be stricter: Only multiply if it's REALLY low (< 100) OR if it differs significantly from main price order of magnitude
-                        
-                        if (variantBasePrice > 0 && variantBasePrice < 100) {
-                             console.log(`Warning: Suspiciously low price (${variantBasePrice}). Assuming RMB and multiplying by 200.`);
-                             variantBasePrice = variantBasePrice * 200;
-                        } else if (variantBasePrice > 0 && variantBasePrice < 1000 && enrichedProduct.general_price > 5000) {
-                             // Variant is < 1000 but main product is > 5000? Likely RMB.
-                             console.log(`Warning: Variant price ${variantBasePrice} vs Main ${enrichedProduct.general_price}. Assuming RMB.`);
-                             variantBasePrice = variantBasePrice * 200;
-                        }
-
-                        // CRITICAL FIX: If variant price becomes way higher than main price (e.g. > 10x), clamp it or revert
-                        // This handles the case where we accidentally multiplied an already-correct IQD price
-                        // Or if the scraper picked up a "bundle" price as a variant price
-                        if (enrichedProduct.general_price > 0 && variantBasePrice > enrichedProduct.general_price * 5) {
-                            console.log(`Warning: Variant price ${variantBasePrice} is > 5x main price ${enrichedProduct.general_price}. Clamping/Reverting.`);
-                            // Revert to main price if it seems totally off, or just divide back if it looks like a double conversion
-                            if (variantBasePrice / 200 < enrichedProduct.general_price * 2) {
-                                variantBasePrice = variantBasePrice / 200; // It was likely correct before
-                            } else {
-                                variantBasePrice = enrichedProduct.general_price; // Fallback to main price
-                            }
-                        }
-
-                        const variantFinalPrice = calculateFinalPrice(variantBasePrice);
+                        const fallbackBasePrice = normalizeVariantBasePrice(opt.price || enrichedProduct.general_price || 0);
                         const variantImg = opt.thumbnail || enrichedProduct.main_images[0] || '';
                         
-                        if (opt.sizes && opt.sizes.length > 0) {
+                        if (opt.sizes && Array.isArray(opt.sizes) && opt.sizes.length > 0) {
                             for (const size of opt.sizes) {
-                                // SKIP if size is Chinese (DISABLED: User wants to keep them)
-                                // if (containsChinese(size)) continue;
-
-                                // Create structured combination object matching Option Names
+                                const variantBasePrice = fallbackBasePrice;
+                                const variantFinalPrice = calculateFinalPrice(variantBasePrice);
                                 const combinationObj = {
                                     "اللون": color,
                                     "المقاس": size
                                 };
-                                
                                 variantsData.push({
                                     productId: newProduct.id,
-                                    combination: JSON.stringify(combinationObj), // Save as JSON String
-                                    price: variantFinalPrice, // Store FINAL price
-                                    basePriceIQD: variantBasePrice, // Store BASE price
+                                    combination: JSON.stringify(combinationObj),
+                                    price: variantFinalPrice,
+                                    basePriceIQD: variantBasePrice,
                                     image: variantImg
                                 });
                             }
                         } else {
-                            // Single variant (Color only, no size)
-                            const combinationObj = {
-                                "اللون": color
-                            };
-
+                            const variantBasePrice = fallbackBasePrice;
+                            const variantFinalPrice = calculateFinalPrice(variantBasePrice);
+                            const combinationObj = { "اللون": color };
                             variantsData.push({
                                 productId: newProduct.id,
-                                combination: JSON.stringify(combinationObj), // Save as JSON String
-                                price: variantFinalPrice, // Store FINAL price
-                                basePriceIQD: variantBasePrice, // Store BASE price
+                                combination: JSON.stringify(combinationObj),
+                                price: variantFinalPrice,
+                                basePriceIQD: variantBasePrice,
                                 image: variantImg
                             });
                         }

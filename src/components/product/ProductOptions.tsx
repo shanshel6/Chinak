@@ -1,4 +1,5 @@
 import React from 'react';
+import LazyImage from '../LazyImage';
 
 interface Option {
   id: number;
@@ -83,13 +84,23 @@ const ProductOptions: React.FC<ProductOptionsProps> = ({
                 <div
                   key={variant.id || idx}
                   onClick={() => onVariantSelect(combination)}
-                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all border-2 cursor-pointer ${
+                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all border-2 cursor-pointer flex items-center gap-2 ${
                     isSelected
                       ? 'bg-primary border-primary text-white shadow-lg shadow-primary/20 scale-105'
                       : 'bg-white dark:bg-slate-800 border-slate-100 dark:border-white/10 text-slate-600 dark:text-slate-300 hover:border-primary/50'
                   }`}
                 >
-                  {label}
+                  {variant.image && (
+                    <LazyImage
+                      src={variant.image}
+                      alt={label}
+                      className="w-7 h-7 rounded-lg shrink-0"
+                      isThumbnail={true}
+                      width={56}
+                      height={56}
+                    />
+                  )}
+                  <span className="truncate">{label}</span>
                 </div>
               );
             });
