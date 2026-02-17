@@ -52,7 +52,7 @@ function isEdiblePreCheck(title, description) {
 // Initialize AI (DeepInfra)
 let aiClient = null;
 
-const AI_TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS) > 0 ? Number(process.env.AI_TIMEOUT_MS) : 90000;
+const AI_TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS) > 0 ? Number(process.env.AI_TIMEOUT_MS) : 180000;
 const AI_MAX_ATTEMPTS = Number(process.env.AI_MAX_ATTEMPTS) > 0 ? Number(process.env.AI_MAX_ATTEMPTS) : 5;
 const AI_BASE_RETRY_DELAY_MS = Number(process.env.AI_BASE_RETRY_DELAY_MS) > 0 ? Number(process.env.AI_BASE_RETRY_DELAY_MS) : 1500;
 
@@ -69,7 +69,7 @@ let AI_PRIMARY_MODEL = process.env.AI_MODEL || "qwen/qwen-vl-plus";
 let AI_FALLBACK_MODEL = process.env.AI_FALLBACK_MODEL || AI_PRIMARY_MODEL;
 let AI_MODEL = AI_PRIMARY_MODEL;
 if (process.env.DEEPINFRA_API_KEY) {
-    AI_PRIMARY_MODEL = process.env.DEEPINFRA_MODEL || process.env.AI_MODEL || "Qwen/Qwen3-235B-A22B-Instruct-2507";
+    AI_PRIMARY_MODEL = process.env.DEEPINFRA_MODEL || process.env.AI_MODEL || "google/gemma-3-27b-it";
     AI_FALLBACK_MODEL = process.env.DEEPINFRA_FALLBACK_MODEL || "Qwen/Qwen3-32B-Instruct";
     AI_MODEL = AI_PRIMARY_MODEL;
     aiClient = new OpenAI({
@@ -104,6 +104,22 @@ const isModelBusyError = (e) => {
         message.toLowerCase().includes('model busy') ||
         message.toLowerCase().includes('rate limit') ||
         message.toLowerCase().includes('too many requests')
+    );
+};
+
+const isTimeoutError = (e) => {
+    const message = (e && e.message) ? String(e.message) : String(e);
+    const name = (e && e.name) ? String(e.name) : '';
+    const code = (e && e.code) ? String(e.code) : '';
+    const status = (e && typeof e.status !== 'undefined') ? String(e.status) : '';
+    return (
+        name.toLowerCase().includes('timeout') ||
+        message.toLowerCase().includes('timeout') ||
+        code === 'ETIMEDOUT' ||
+        code === 'UND_ERR_CONNECT_TIMEOUT' ||
+        code === 'ECONNRESET' ||
+        message.toLowerCase().includes('socket hang up') ||
+        status === '408'
     );
 };
 
@@ -251,6 +267,9 @@ async function enrichWithAI(title, description, price) {
                 try {
                     response = await create(AI_PRIMARY_MODEL);
                 } catch (e) {
+                    if (isTimeoutError(e)) {
+                        throw e;
+                    }
                     if (isModelBusyError(e)) {
                         console.log(`AI busy on ${AI_PRIMARY_MODEL}. Falling back to ${AI_BUSY_FALLBACK_MODEL}...`);
                         response = await create(AI_BUSY_FALLBACK_MODEL);
@@ -361,16 +380,10 @@ async function enrichWithAI(title, description, price) {
             } catch (e) {
                 attempts++;
                 const message = (e && e.message) ? e.message : String(e);
-                const name = (e && e.name) ? e.name : '';
-                const code = (e && e.code) ? e.code : '';
                 console.error(`AI Error (Attempt ${attempts}/${AI_MAX_ATTEMPTS}):`, message);
 
-                const isRateLimit = isModelBusyError(e) || message.includes('429') || code === 429;
-                const isTimeout =
-                    name.toLowerCase().includes('timeout') ||
-                    message.toLowerCase().includes('timeout') ||
-                    code === 'ETIMEDOUT' ||
-                    code === 'UND_ERR_CONNECT_TIMEOUT';
+                const isRateLimit = isModelBusyError(e) || message.includes('429');
+                const isTimeout = isTimeoutError(e);
 
                 if (isRateLimit) {
                     const waitTime = Math.min(45000, 5000 * attempts) + Math.floor(Math.random() * 1000);
@@ -1036,195 +1049,6 @@ async function run() {
                         return true;
                     }
 
-                    const clickElementCenter = async (selector) => {
-                        const el = await page.$(selector).catch(() => null);
-                        if (!el) return false;
-                        try {
-                            await el.evaluate((node) => {
-                                try { node.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' }); } catch (e) {}
-                            });
-                        } catch (e) {}
-                        await humanDelay(350, 800);
-                        let box = null;
-                        try { box = await el.boundingBox(); } catch (e) { box = null; }
-                        if (!box) return false;
-                        const x = Math.floor(box.x + box.width / 2 + (Math.random() * 6 - 3));
-                        const y = Math.floor(box.y + box.height / 2 + (Math.random() * 6 - 3));
-                        try {
-                            try { await page.mouse.move(Math.max(1, x - 16), Math.max(1, y - 16)); } catch (e) {}
-                            await humanDelay(450, 900);
-                            await page.mouse.click(x, y);
-                            return true;
-                        } catch (e) {
-                            return false;
-                        }
-                    };
-
-                    const tryOpenViaButton = async (selector, modalWaitMs = 8000) => {
-                        console.log(`[PDD] Trying to open options via selector: ${selector}`);
-                        let before = '';
-                        try { before = page.url(); } catch (e) { before = ''; }
-
-                        try {
-                            const btn = await page.$(selector);
-                            if (!btn) {
-                                console.log(`[PDD] Not found: ${selector}`);
-                                return false;
-                            }
-                            const okClick = await clickElementCenter(selector);
-                            if (!okClick) return false;
-                        } catch (e) {
-                            console.log(`[PDD] Click failed for ${selector}: ${e?.message || e}`);
-                            return false;
-                        }
-
-                        await humanDelay(900, 1600);
-                        const ok = await page.waitForFunction(
-                            (sel) => {
-                                const visible = (el) => {
-                                    if (!el) return false;
-                                    if (el.getAttribute && el.getAttribute('aria-hidden') === 'true') return false;
-                                    const style = window.getComputedStyle(el);
-                                    if (!style) return false;
-                                    if (style.display === 'none' || style.visibility === 'hidden') return false;
-                                    const opacity = parseFloat(style.opacity || '1');
-                                    if (!Number.isNaN(opacity) && opacity <= 0.02) return false;
-                                    const r = el.getBoundingClientRect();
-                                    if (!r || r.width < 40 || r.height < 40) return false;
-                                    const intersects =
-                                        r.bottom > 0 &&
-                                        r.right > 0 &&
-                                        r.top < window.innerHeight &&
-                                        r.left < window.innerWidth;
-                                    if (!intersects) return false;
-                                    const x = Math.floor(Math.min(window.innerWidth - 2, Math.max(1, r.left + r.width * 0.5)));
-                                    const y = Math.floor(Math.min(window.innerHeight - 2, Math.max(1, r.top + r.height * 0.5)));
-                                    const top = document.elementFromPoint(x, y);
-                                    if (top && (el === top || el.contains(top))) return true;
-                                    return false;
-                                };
-
-                                const isSku = (m) => {
-                                    try {
-                                        if (m && m.matches && m.matches('.HidQ9ROd')) return true;
-                                    } catch (e) {}
-                                    if (m && m.querySelector && m.querySelector('.iW4aEGbb')) return false;
-                                    const t = String(m?.innerText || m?.textContent || '');
-                                    if (t.includes('已选') || t.includes('请选择') || t.includes('规格')) return true;
-                                    if (m.querySelector('.O7pEFvHR') || m.querySelector('.bIhLWVqm') || m.querySelector('li.TpUpcNRp') || m.querySelector('div._8gg8ho2u')) return true;
-                                    return false;
-                                };
-
-                                const modals = Array.from(document.querySelectorAll(sel));
-                                return modals.some(m => visible(m) && isSku(m));
-                            },
-                            { timeout: modalWaitMs },
-                            modalSelector
-                        ).catch(() => null);
-
-                        if (ok) {
-                            console.log('[PDD] Options modal opened');
-                            return true;
-                        }
-
-                        let after = '';
-                        try { after = page.url(); } catch (e) { after = before; }
-                        if (after.includes('/order_checkout.html') || after.includes('order_checkout.html')) {
-                            console.log('[PDD] Hit checkout page; going back');
-                            try {
-                                await page.goBack({ waitUntil: 'domcontentloaded', timeout: PAGE_LOAD_TIMEOUT });
-                                await waitForStableUrl(page, 1400, 15000);
-                            } catch (e) {}
-                        }
-                        return false;
-                    };
-
-                    const tryOpenViaText = async (keywords, modalWaitMs = 9000) => {
-                        const keyList = Array.isArray(keywords) ? keywords : [];
-                        console.log(`[PDD] Trying to open options via text: ${keyList.join(', ')}`);
-                        const pt = await page.evaluate((keys) => {
-                            const visible = (el) => {
-                                if (!el) return false;
-                                const r = el.getBoundingClientRect();
-                                if (!r || r.width < 4 || r.height < 4) return false;
-                                if (r.bottom < 0 || r.right < 0) return false;
-                                if (r.top > window.innerHeight || r.left > window.innerWidth) return false;
-                                const style = window.getComputedStyle(el);
-                                if (!style || style.visibility === 'hidden' || style.display === 'none' || style.opacity === '0') return false;
-                                return true;
-                            };
-                            const candidates = Array.from(document.querySelectorAll('button, div[role="button"], a, span[role="button"]'));
-                            const hits = [];
-                            for (const el of candidates) {
-                                const t = String(el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
-                                if (!t) continue;
-                                if (!keys.some(k => k && t.includes(k))) continue;
-                                if (!visible(el)) continue;
-                                const r = el.getBoundingClientRect();
-                                hits.push({ x: Math.floor(r.left + r.width / 2), y: Math.floor(r.top + r.height / 2), text: t });
-                            }
-                            hits.sort((a, b) => b.y - a.y);
-                            return hits[0] || null;
-                        }, keyList).catch(() => null);
-                        if (!pt) return false;
-                        try {
-                            try { await page.mouse.move(Math.max(1, pt.x - 14), Math.max(1, pt.y - 14)); } catch (e) {}
-                            await humanDelay(600, 1200);
-                            await page.mouse.click(pt.x, pt.y);
-                        } catch (e) {
-                            return false;
-                        }
-                        await humanDelay(900, 1600);
-                        const ok = await page.waitForFunction(
-                            (sel) => {
-                                const visible = (el) => {
-                                    if (!el) return false;
-                                    if (el.getAttribute && el.getAttribute('aria-hidden') === 'true') return false;
-                                    const style = window.getComputedStyle(el);
-                                    if (!style) return false;
-                                    if (style.display === 'none' || style.visibility === 'hidden') return false;
-                                    const opacity = parseFloat(style.opacity || '1');
-                                    if (!Number.isNaN(opacity) && opacity <= 0.02) return false;
-                                    const r = el.getBoundingClientRect();
-                                    if (!r || r.width < 40 || r.height < 40) return false;
-                                    const intersects =
-                                        r.bottom > 0 &&
-                                        r.right > 0 &&
-                                        r.top < window.innerHeight &&
-                                        r.left < window.innerWidth;
-                                    if (!intersects) return false;
-                                    const x = Math.floor(Math.min(window.innerWidth - 2, Math.max(1, r.left + r.width * 0.5)));
-                                    const y = Math.floor(Math.min(window.innerHeight - 2, Math.max(1, r.top + r.height * 0.5)));
-                                    const top = document.elementFromPoint(x, y);
-                                    if (top && (el === top || el.contains(top))) return true;
-                                    return false;
-                                };
-
-                                const isSku = (m) => {
-                                    try {
-                                        if (m && m.matches && m.matches('.HidQ9ROd')) return true;
-                                    } catch (e) {}
-                                    if (m && m.querySelector && m.querySelector('.iW4aEGbb')) return false;
-                                    const t = String(m?.innerText || m?.textContent || '');
-                                    if (t.includes('已选') || t.includes('请选择') || t.includes('规格')) return true;
-                                    if (m.querySelector('.O7pEFvHR') || m.querySelector('.bIhLWVqm') || m.querySelector('li.TpUpcNRp') || m.querySelector('div._8gg8ho2u')) return true;
-                                    return false;
-                                };
-
-                                const modals = Array.from(document.querySelectorAll(sel));
-                                return modals.some(m => visible(m) && isSku(m));
-                            },
-                            { timeout: modalWaitMs },
-                            modalSelector
-                        ).catch(() => null);
-
-                        if (ok) {
-                            console.log(`[PDD] Options modal opened via text: ${pt.text}`);
-                            return true;
-                        }
-                        return false;
-                    };
-
                     const tryClickAndWaitModal = async (x, y, modalWaitMs = 2500) => {
                         let before = '';
                         try { before = page.url(); } catch (e) { before = ''; }
@@ -1296,20 +1120,33 @@ async function run() {
 
                     await waitForStableUrl(page, 1200, 15000);
 
-                    for (let attempt = 0; attempt < 3; attempt++) {
+                    const getViewport = async () => {
+                        const vp = (page.viewport && page.viewport()) ? page.viewport() : null;
+                        if (vp && vp.width && vp.height) return { width: vp.width, height: vp.height };
+                        const ev = await page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight })).catch(() => null);
+                        return { width: ev?.width || 360, height: ev?.height || 800 };
+                    };
+
+                    const tryOpenViaBottomRight = async (modalWaitMs = 9000) => {
+                        const vp = await getViewport();
+                        const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+                        const maxX = Math.floor(vp.width - 2);
+                        const maxY = Math.floor(vp.height - 2);
+                        const marginX = 3 + Math.floor(Math.random() * 9);
+                        const marginY = 1 + Math.floor(Math.random() * 6);
+
+                        const x = clamp(maxX - marginX, 1, maxX);
+                        const y = clamp(maxY - marginY, 1, maxY);
+
+                        console.log(`[PDD] Trying to open options via bottom-right click (x=${x},y=${y})`);
+                        return await tryClickAndWaitModal(x, y, modalWaitMs);
+                    };
+
+                    for (let attempt = 0; attempt < 5; attempt++) {
                         if (attempt > 0) await humanDelay(1400, 2600);
-                        const ok = await tryOpenViaButton('.yK39frdi', 9000);
+                        const ok = await tryOpenViaBottomRight(9000);
                         if (ok) return true;
                     }
-
-                    for (let attempt = 0; attempt < 2; attempt++) {
-                        if (attempt > 0) await humanDelay(1400, 2600);
-                        const ok = await tryOpenViaButton('.AANc1tSj', 9000);
-                        if (ok) return true;
-                    }
-
-                    const textOk = await tryOpenViaText(['直接成团', '发起拼单', '去拼单', '一键拼单', '立即拼单', '立即参团', '参与拼单', '参团', '拼单', '成团'], 9000);
-                    if (textOk) return true;
 
                     return false;
                 };
@@ -2797,6 +2634,9 @@ async function run() {
                              try {
                                 transRes = await translate(AI_PRIMARY_MODEL);
                             } catch (e) {
+                                if (isTimeoutError(e)) {
+                                    throw e;
+                                }
                                 if (isModelBusyError(e)) {
                                     console.log(`AI busy on ${AI_PRIMARY_MODEL}. Falling back to ${AI_BUSY_FALLBACK_MODEL} for options translation...`);
                                     transRes = await translate(AI_BUSY_FALLBACK_MODEL);

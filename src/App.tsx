@@ -156,6 +156,7 @@ function MainLayout() {
 
   return (
     <div className="w-full min-h-screen bg-white dark:bg-slate-900 shadow-xl relative flex flex-col">
+      <AppUpdateChecker />
       <div className="flex-1 flex flex-col relative">
         <ErrorBoundary>
           <AnimatedRoutes />

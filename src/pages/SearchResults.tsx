@@ -49,7 +49,7 @@ const SearchResults: React.FC = () => {
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [showSearchHeader, setShowSearchHeader] = useState(true);
-  const lastScrollY = useRef(window.scrollY);
+  const lastScrollY = useRef(0);
 
   const observer = useRef<IntersectionObserver | null>(null);
 
@@ -105,6 +105,9 @@ const SearchResults: React.FC = () => {
     if (products.length > 0) {
       setTimeout(() => {
         window.scrollTo(0, searchScrollPos);
+        if (document.scrollingElement) {
+          document.scrollingElement.scrollTop = searchScrollPos;
+        }
       }, 50);
     }
     // Only run on initial mount to restore scroll position
@@ -113,13 +116,32 @@ const SearchResults: React.FC = () => {
 
   useEffect(() => {
     let ticking = false;
-    const handleScroll = () => {
+    const getScrollY = (e?: Event) => {
+      const target = e?.target as unknown;
+      if (target && typeof target === 'object') {
+        const el = target as { scrollTop?: unknown; scrollHeight?: unknown; clientHeight?: unknown };
+        const scrollTop = typeof el.scrollTop === 'number' ? el.scrollTop : null;
+        const scrollHeight = typeof el.scrollHeight === 'number' ? el.scrollHeight : null;
+        const clientHeight = typeof el.clientHeight === 'number' ? el.clientHeight : null;
+        if (scrollTop !== null && scrollHeight !== null && clientHeight !== null && scrollHeight > clientHeight) {
+          return scrollTop;
+        }
+      }
+
+      const se = document.scrollingElement as null | { scrollTop?: unknown };
+      if (se && typeof se.scrollTop === 'number') return se.scrollTop;
+      return window.pageYOffset || window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0;
+    };
+
+    lastScrollY.current = getScrollY();
+
+    const handleScroll = (e?: Event) => {
       // Save scroll position
-      setSearchScrollPos(window.scrollY);
+      setSearchScrollPos(getScrollY(e));
 
       if (!ticking) {
         window.requestAnimationFrame(() => {
-          const currentScrollY = window.scrollY;
+          const currentScrollY = getScrollY(e);
           const deltaY = currentScrollY - lastScrollY.current;
           
           // Ignore bounces at the very top or bottom (iOS elastic scroll)
@@ -150,7 +172,13 @@ const SearchResults: React.FC = () => {
       }
     };
     window.addEventListener('scroll', handleScroll, { passive: true });
-    return () => window.removeEventListener('scroll', handleScroll);
+    document.addEventListener('scroll', handleScroll, { passive: true, capture: true });
+    window.addEventListener('touchmove', handleScroll, { passive: true });
+    return () => {
+      window.removeEventListener('scroll', handleScroll);
+      document.removeEventListener('scroll', handleScroll, true);
+      window.removeEventListener('touchmove', handleScroll);
+    };
   }, [setSearchScrollPos]);
 
   useEffect(() => {
