@@ -107,6 +107,8 @@ const isModelBusyError = (e) => {
     );
 };
 
+const AI_BUSY_FALLBACK_MODEL = "Qwen/Qwen3-30B-A3B";
+
 
 // --- Configuration ---
 // Allow URL to be passed via command line argument
@@ -249,8 +251,11 @@ async function enrichWithAI(title, description, price) {
                 try {
                     response = await create(AI_PRIMARY_MODEL);
                 } catch (e) {
-                    if (isModelBusyError(e) && AI_FALLBACK_MODEL && AI_FALLBACK_MODEL !== AI_PRIMARY_MODEL) {
-                        console.log(`AI busy on ${AI_PRIMARY_MODEL}. Falling back to ${AI_FALLBACK_MODEL}...`);
+                    if (isModelBusyError(e)) {
+                        console.log(`AI busy on ${AI_PRIMARY_MODEL}. Falling back to ${AI_BUSY_FALLBACK_MODEL}...`);
+                        response = await create(AI_BUSY_FALLBACK_MODEL);
+                    } else if (AI_FALLBACK_MODEL && AI_FALLBACK_MODEL !== AI_PRIMARY_MODEL) {
+                        console.log(`AI error on ${AI_PRIMARY_MODEL}. Falling back to ${AI_FALLBACK_MODEL}...`);
                         response = await create(AI_FALLBACK_MODEL);
                     } else {
                         throw e;
@@ -2790,15 +2795,18 @@ async function run() {
 
                              let transRes;
                              try {
-                                 transRes = await translate(AI_PRIMARY_MODEL);
-                             } catch (e) {
-                                 if (isModelBusyError(e) && AI_FALLBACK_MODEL && AI_FALLBACK_MODEL !== AI_PRIMARY_MODEL) {
-                                     console.log(`AI busy on ${AI_PRIMARY_MODEL}. Falling back to ${AI_FALLBACK_MODEL} for options translation...`);
-                                     transRes = await translate(AI_FALLBACK_MODEL);
-                                 } else {
-                                     throw e;
-                                 }
-                             }
+                                transRes = await translate(AI_PRIMARY_MODEL);
+                            } catch (e) {
+                                if (isModelBusyError(e)) {
+                                    console.log(`AI busy on ${AI_PRIMARY_MODEL}. Falling back to ${AI_BUSY_FALLBACK_MODEL} for options translation...`);
+                                    transRes = await translate(AI_BUSY_FALLBACK_MODEL);
+                                } else if (AI_FALLBACK_MODEL && AI_FALLBACK_MODEL !== AI_PRIMARY_MODEL) {
+                                    console.log(`AI error on ${AI_PRIMARY_MODEL}. Falling back to ${AI_FALLBACK_MODEL} for options translation...`);
+                                    transRes = await translate(AI_FALLBACK_MODEL);
+                                } else {
+                                    throw e;
+                                }
+                            }
 
                              let transJson = transRes.choices[0].message.content.replace(/```json/g, '').replace(/```/g, '').trim();
                              const startIdx = transJson.indexOf('[');
