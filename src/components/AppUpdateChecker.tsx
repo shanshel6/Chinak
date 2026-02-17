@@ -12,8 +12,13 @@ const AppUpdateChecker = () => {
 
       try {
         const result = await AppUpdate.getAppUpdateInfo();
+        console.log('App Update Info:', JSON.stringify(result));
+        
         if (result.updateAvailability === 2) { // UPDATE_AVAILABLE = 2
           // Perform immediate update
+          await AppUpdate.performImmediateUpdate();
+        } else if (result.updateAvailability === 3) { // DEVELOPER_TRIGGERED_UPDATE_IN_PROGRESS = 3
+          // Resume update if it was in progress
           await AppUpdate.performImmediateUpdate();
         }
       } catch (error) {

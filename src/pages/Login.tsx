@@ -803,8 +803,9 @@ const Login: React.FC = () => {
             </button>
 
             {/* Version Indicator for Debugging */}
-            <div className="text-center mt-4">
-              <span className="text-[10px] text-slate-400 dark:text-slate-600 font-mono opacity-60">
+            <div className="text-center mt-6 p-2 bg-slate-100 dark:bg-slate-800/50 rounded-lg">
+              <p className="text-xs text-slate-500 mb-1">الإصدار الحالي</p>
+              <span className="text-sm font-bold text-primary font-mono tracking-wider">
                 v{packageJson.version}
               </span>
             </div>
