@@ -69,8 +69,8 @@ let AI_PRIMARY_MODEL = process.env.AI_MODEL || "qwen/qwen-vl-plus";
 let AI_FALLBACK_MODEL = process.env.AI_FALLBACK_MODEL || AI_PRIMARY_MODEL;
 let AI_MODEL = AI_PRIMARY_MODEL;
 if (process.env.DEEPINFRA_API_KEY) {
-    AI_PRIMARY_MODEL = process.env.DEEPINFRA_MODEL || process.env.AI_MODEL || "google/gemma-3-27b-it";
-    AI_FALLBACK_MODEL = process.env.DEEPINFRA_FALLBACK_MODEL || "Qwen/Qwen3-32B-Instruct";
+    AI_PRIMARY_MODEL = process.env.DEEPINFRA_MODEL || process.env.AI_MODEL || "google/gemma-3-12b-it";
+    AI_FALLBACK_MODEL = process.env.DEEPINFRA_FALLBACK_MODEL || "google/gemma-3-27b-it";
     AI_MODEL = AI_PRIMARY_MODEL;
     aiClient = new OpenAI({
         baseURL: "https://api.deepinfra.com/v1/openai",
@@ -123,7 +123,7 @@ const isTimeoutError = (e) => {
     );
 };
 
-const AI_BUSY_FALLBACK_MODEL = "Qwen/Qwen3-30B-A3B";
+const AI_BUSY_FALLBACK_MODEL = "google/gemma-3-27b-it";
 
 
 // --- Configuration ---
