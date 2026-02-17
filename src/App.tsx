@@ -18,6 +18,7 @@ import ProtectedRoute from './components/ProtectedRoute';
 import BottomNav from './components/BottomNav';
 import ErrorBoundary from './components/ErrorBoundary';
 import MaintenanceScreen from './components/MaintenanceScreen';
+import AppUpdateChecker from './components/AppUpdateChecker';
 
 // Lazy load pages
 const Home = lazy(() => import('./pages/Home'));

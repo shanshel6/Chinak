@@ -2224,33 +2224,51 @@ async function run() {
                                  let cleanSrc = img.src.split('?')[0];
                                  
                                  // Filter out video snapshots, avatars, icons, and coupons
-                                 if (cleanSrc.includes('video-snapshot') || 
-                                     cleanSrc.includes('avatar') || 
-                                     cleanSrc.includes('icon') || 
-                                     cleanSrc.includes('coupon') || 
-                                     cleanSrc.includes('.slim.png')) return;
+                                if (cleanSrc.includes('video-snapshot') || 
+                                    cleanSrc.includes('avatar') || 
+                                    cleanSrc.includes('icon') || 
+                                    cleanSrc.includes('coupon') || 
+                                    cleanSrc.includes('.slim.png')) return;
 
-                                 images.push(cleanSrc);
-                             }
-                         });
-                         
-                         // FALLBACK: If strict slider extraction failed (empty), try slightly broader but still top-area
-                         if (images.length === 0) {
-                             // Get images from the top 50% of the page only
-                             const allImgs = document.querySelectorAll('img');
-                             allImgs.forEach(img => {
-                                 const rect = img.getBoundingClientRect();
-                                 if (rect.top < window.innerHeight * 0.6 && img.naturalWidth > 400) {
-                                      let cleanSrc = img.src.split('?')[0];
-                                      if (cleanSrc.startsWith('http') && 
-                                          !cleanSrc.includes('avatar') && 
-                                          !cleanSrc.includes('icon') &&
-                                          !cleanSrc.includes('coupon')) {
-                                          images.push(cleanSrc);
-                                      }
-                                 }
-                             });
-                         }
+                                // ASPECT RATIO CHECK: Exclude wide banners or tiny strips
+                                // Product images are usually 1:1 or 3:4. 
+                                // Banners are usually > 2:1.
+                                if (img.naturalHeight > 0) {
+                                    const aspect = img.naturalWidth / img.naturalHeight;
+                                    if (aspect > 2.2 || aspect < 0.4) {
+                                        // console.log(`Skipping image due to aspect ratio ${aspect.toFixed(2)}: ${cleanSrc}`);
+                                        return;
+                                    }
+                                }
+
+                                images.push(cleanSrc);
+                            }
+                        });
+                        
+                        // FALLBACK: If strict slider extraction failed (empty), try slightly broader but still top-area
+                        if (images.length === 0) {
+                            // Get images from the top 50% of the page only
+                            const allImgs = document.querySelectorAll('img');
+                            allImgs.forEach(img => {
+                                const rect = img.getBoundingClientRect();
+                                if (rect.top < window.innerHeight * 0.6 && img.naturalWidth > 400) {
+                                     let cleanSrc = img.src.split('?')[0];
+                                     if (cleanSrc.startsWith('http') && 
+                                         !cleanSrc.includes('avatar') && 
+                                         !cleanSrc.includes('icon') &&
+                                         !cleanSrc.includes('coupon')) {
+                                         
+                                         // Aspect Ratio Check for Fallback too
+                                         if (img.naturalHeight > 0) {
+                                             const aspect = img.naturalWidth / img.naturalHeight;
+                                             if (aspect > 2.2 || aspect < 0.4) return;
+                                         }
+
+                                         images.push(cleanSrc);
+                                     }
+                                }
+                            });
+                        }
                      };
  
                      // Initial capture
@@ -2296,18 +2314,53 @@ async function run() {
                      // Our `captureImages` is already quite strict.
                      
                      // Let's double check if we can be even stricter for the FIRST image.
-                     // Look for the absolute first image in the slider container
-                     const firstSliderImg = document.querySelector('.goods-slider img') || 
-                                          document.querySelector('.swiper-slide-active img') || 
-                                          document.querySelector('.slick-current img') ||
-                                          document.querySelector('#main > div > div:first-child img');
-                                          
-                     if (firstSliderImg && firstSliderImg.src) {
-                         const mainSrc = firstSliderImg.src.split('?')[0];
-                         // Move this image to the front of the array if it exists
-                         images = images.filter(img => img !== mainSrc);
-                         images.unshift(mainSrc);
-                     } else if (images.length > 0) {
+                    // Look for the absolute first image in the slider container
+                    let firstSliderImg = document.querySelector('.goods-slider img') || 
+                                         document.querySelector('.swiper-slide-active img') || 
+                                         document.querySelector('.slick-current img') ||
+                                         document.querySelector('#main > div > div:first-child img');
+
+                    // Validation: If first image is a banner (wide), ignore it
+                    if (firstSliderImg) {
+                        if (firstSliderImg.naturalHeight > 0) {
+                            const aspect = firstSliderImg.naturalWidth / firstSliderImg.naturalHeight;
+                            if (aspect > 2.0 || aspect < 0.5) {
+                                // console.log('First slider image rejected due to aspect ratio:', aspect);
+                                firstSliderImg = null;
+                            }
+                        }
+                    }
+
+                    // Fallback: If no slider image found, find the largest image in the top 500px
+                    if (!firstSliderImg) {
+                        const allImgs = Array.from(document.querySelectorAll('img'));
+                        let maxArea = 0;
+                        let bestImg = null;
+                        
+                        allImgs.forEach(img => {
+                             const rect = img.getBoundingClientRect();
+                             if (rect.top < 600 && rect.height > 100 && rect.width > 100) {
+                                 const area = rect.width * rect.height;
+                                 const aspect = rect.width / rect.height;
+                                 
+                                 // Only consider reasonable aspect ratios
+                                 if (aspect > 0.5 && aspect < 2.0) {
+                                     if (area > maxArea) {
+                                         maxArea = area;
+                                         bestImg = img;
+                                     }
+                                 }
+                             }
+                        });
+                        if (bestImg) firstSliderImg = bestImg;
+                    }
+                                         
+                    if (firstSliderImg && firstSliderImg.src) {
+                        const mainSrc = firstSliderImg.src.split('?')[0];
+                        // Move this image to the front of the array if it exists
+                        images = images.filter(img => img !== mainSrc);
+                        images.unshift(mainSrc);
+                    } else if (images.length > 0) {
                          // If we couldn't pinpoint the slider element but captured images,
                          // ensure the first one in the captured list stays first.
                          // (Already handled by array order, but good to be explicit)
