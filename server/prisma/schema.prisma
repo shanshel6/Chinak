@@ -127,11 +127,12 @@ model ProductImage {
 }
 
 model ProductOption {
-  id        Int     @id @default(autoincrement())
-  productId Int
-  name      String
-  values    String
-  product   Product @relation(fields: [productId], references: [id])
+  id             Int     @id @default(autoincrement())
+  productId      Int
+  name           String
+  values         String
+  originalValues String?
+  product        Product @relation(fields: [productId], references: [id])
 }
 
 model ProductVariant {

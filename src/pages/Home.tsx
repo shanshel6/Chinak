@@ -322,24 +322,38 @@ const Home: React.FC = () => {
 
   return (
     <div className="relative flex min-h-screen w-full flex-col pb-28 pb-safe bg-background-light dark:bg-background-dark font-display text-slate-900 dark:text-white antialiased selection:bg-primary/30 rtl" dir="rtl">
-      {/* Sticky Search Bar - Sticks to top and handles slide up/down */}
-      <div className={`sticky top-0 z-50 transition-transform duration-300 ease-in-out ${showSearchBar ? 'translate-y-0' : '-translate-y-full'}`}>
-        <div className="w-full bg-background-light dark:bg-background-dark border-b border-slate-200/50 dark:border-slate-800/50 shadow-sm pt-safe">
-          <div className="pt-1">
-            <SearchBar 
-              onNavigate={navigate} 
-              unreadNotificationsCount={unreadNotificationsCount}
-            />
+      {/* Unified Sticky Header */}
+      <div className="sticky top-0 z-50">
+        {/* Search Bar - Slides up/down */}
+        <div 
+          className={`absolute top-0 left-0 right-0 w-full transition-all duration-300 ease-in-out z-20 ${
+            showSearchBar ? 'translate-y-0 opacity-100' : '-translate-y-full opacity-0 pointer-events-none'
+          }`}
+        >
+          <div className="bg-background-light/95 dark:bg-background-dark/95 backdrop-blur-xl border-b border-slate-100/50 dark:border-slate-800/50 pt-safe shadow-sm">
+            <div className="pt-1 pb-1">
+              <SearchBar 
+                onNavigate={navigate} 
+                unreadNotificationsCount={unreadNotificationsCount}
+              />
+            </div>
           </div>
         </div>
-      </div>
 
-      <CategoryTabs 
-        categories={categories}
-        selectedCategoryId={selectedCategoryId}
-        onSelectCategory={handleSelectCategory}
-        onHoverCategory={handleHoverCategory}
-      />
+        {/* Category Tabs - Always sticky, slides up when search hides */}
+        <div 
+          className={`relative z-10 w-full transition-all duration-300 ease-in-out bg-background-light/95 dark:bg-background-dark/95 backdrop-blur-xl border-b border-slate-100/50 dark:border-slate-800/50 shadow-sm ${
+            showSearchBar ? 'pt-[calc(env(safe-area-inset-top)+76px)]' : 'pt-[calc(env(safe-area-inset-top)+0px)]'
+          }`}
+        >
+          <CategoryTabs 
+            categories={categories}
+            selectedCategoryId={selectedCategoryId}
+            onSelectCategory={handleSelectCategory}
+            onHoverCategory={handleHoverCategory}
+          />
+        </div>
+      </div>
 
         {error && (
           <div className="mx-4 mt-4 p-4 rounded-2xl bg-red-50 dark:bg-red-900/20 border border-red-100 dark:border-red-900/30 text-red-600 dark:text-red-400 text-sm flex items-center gap-3">

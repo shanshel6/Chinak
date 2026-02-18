@@ -15,6 +15,7 @@ import {
   Settings,
   FileText,
   Trash2,
+  Truck,
 } from 'lucide-react';
 import { updateProfile, fetchOrders, fetchAddresses, fetchCoupons, fetchMe } from '../services/api';
 import { useAuthStore } from '../store/useAuthStore';
@@ -181,28 +182,67 @@ const Profile: React.FC = () => {
           {/* Main Grid: ProfileStats & Navigation Groups */}
           <div className="px-4 md:px-6 md:grid md:grid-cols-2 md:gap-8 items-start">
             <div className="space-y-6">
-              {/* ProfileStats */}
-              <div className="mb-2">
-                <div className="grid grid-cols-2 gap-3">
-                  <div 
+              {/* Order Center (Modern) */}
+              <div className="bg-white dark:bg-slate-800 rounded-3xl p-5 shadow-sm border border-slate-100 dark:border-slate-700/50">
+                <div className="flex items-center justify-between mb-4 px-1">
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white">{t('profile.orders')}</h3>
+                  <button 
                     onClick={() => navigate('/orders')}
-                    className="flex flex-col gap-1 rounded-2xl bg-white dark:bg-slate-800 p-3.5 items-center text-center shadow-sm border border-slate-100 dark:border-slate-700/50 cursor-pointer active:scale-95 transition-all"
+                    className="text-xs font-bold text-slate-400 flex items-center gap-1 active:opacity-70"
                   >
-                    <div className="flex size-10 items-center justify-center rounded-xl bg-blue-500/10 text-blue-600 dark:bg-blue-500/20 dark:text-blue-400">
-                      <ShoppingBag size={20} />
+                    عرض الكل <ChevronLeft size={14} />
+                  </button>
+                </div>
+                
+                <div className="grid grid-cols-4 gap-2">
+                  <div 
+                    onClick={() => navigate('/orders?status=PENDING')}
+                    className="flex flex-col items-center gap-2 cursor-pointer group"
+                  >
+                    <div className="relative size-12 rounded-2xl bg-slate-50 dark:bg-slate-700/50 flex items-center justify-center text-slate-600 dark:text-slate-400 group-active:scale-95 transition-all">
+                      <ShoppingBag size={22} strokeWidth={1.5} />
+                      {orderCount > 0 && (
+                        <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full ring-2 ring-white dark:ring-slate-800">
+                          {orderCount}
+                        </span>
+                      )}
                     </div>
-                    <p className="text-slate-900 dark:text-white text-lg font-bold leading-tight">{orderCount}</p>
-                    <p className="text-slate-500 dark:text-slate-400 text-[10px] font-bold">{t('profile.orders')}</p>
+                    <span className="text-[11px] font-medium text-slate-600 dark:text-slate-400">قيد الانتظار</span>
                   </div>
+
+                  <div 
+                    onClick={() => navigate('/orders?status=SHIPPED')}
+                    className="flex flex-col items-center gap-2 cursor-pointer group"
+                  >
+                    <div className="relative size-12 rounded-2xl bg-slate-50 dark:bg-slate-700/50 flex items-center justify-center text-slate-600 dark:text-slate-400 group-active:scale-95 transition-all">
+                      <Truck size={22} strokeWidth={1.5} />
+                    </div>
+                    <span className="text-[11px] font-medium text-slate-600 dark:text-slate-400">جاري الشحن</span>
+                  </div>
+
                   <div 
                     onClick={() => setIsDiscountPopupOpen(true)}
-                    className="flex flex-col gap-1 rounded-2xl bg-white dark:bg-slate-800 p-3.5 items-center text-center shadow-sm border border-slate-100 dark:border-slate-700/50 cursor-pointer active:scale-95 transition-all"
+                    className="flex flex-col items-center gap-2 cursor-pointer group"
                   >
-                    <div className="flex size-10 items-center justify-center rounded-xl bg-purple-500/10 text-purple-600 dark:bg-purple-500/20 dark:text-purple-400">
-                      <Ticket size={20} />
+                    <div className="relative size-12 rounded-2xl bg-slate-50 dark:bg-slate-700/50 flex items-center justify-center text-slate-600 dark:text-slate-400 group-active:scale-95 transition-all">
+                      <Ticket size={22} strokeWidth={1.5} />
+                      {couponCount > 0 && (
+                        <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full ring-2 ring-white dark:ring-slate-800">
+                          {couponCount}
+                        </span>
+                      )}
                     </div>
-                    <p className="text-slate-900 dark:text-white text-lg font-bold leading-tight">{couponCount}</p>
-                    <p className="text-slate-500 dark:text-slate-400 text-[10px] font-bold">{t('profile.coupons')}</p>
+                    <span className="text-[11px] font-medium text-slate-600 dark:text-slate-400">الكوبونات</span>
+                  </div>
+
+                  <div 
+                    onClick={() => navigate('/favorites')}
+                    className="flex flex-col items-center gap-2 cursor-pointer group"
+                  >
+                    <div className="relative size-12 rounded-2xl bg-slate-50 dark:bg-slate-700/50 flex items-center justify-center text-slate-600 dark:text-slate-400 group-active:scale-95 transition-all">
+                      <Heart size={22} strokeWidth={1.5} />
+                    </div>
+                    <span className="text-[11px] font-medium text-slate-600 dark:text-slate-400">المفضلة</span>
                   </div>
                 </div>
               </div>

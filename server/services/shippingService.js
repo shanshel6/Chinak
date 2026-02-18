@@ -11,20 +11,10 @@ const WEIGHT_BUFFER_FACTOR = 1.25; // Increased to 25% for "safe side" guessing
  * and applies the new markup based on the selected method.
  */
 export function getAdjustedPrice(basePrice, domesticShippingFee, basePriceIQD) {
-  // Simplified pricing logic: (Base + Domestic) * 1.15
-  // International shipping components are removed.
+  // Simplified pricing logic: Just return the price from database as requested
+  // The price in database is already final and rounded to nearest 10 IQD
   
-  // 1. If we have basePriceIQD, it's our source of truth
-  if (basePriceIQD && basePriceIQD > 0) {
-    const originalPrice = basePriceIQD;
-    const domesticFee = domesticShippingFee || 0;
-    
-    const finalPrice = (originalPrice + domesticFee) * 1.15;
-    return Math.ceil(finalPrice / 250) * 250;
-  }
-
-  // 2. Fallback: return basePrice as is (assumed to be final)
-  return Math.ceil(basePrice / 250) * 250;
+  return basePrice;
 }
 
 /**

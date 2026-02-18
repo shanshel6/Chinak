@@ -108,7 +108,7 @@ const BottomNav: React.FC<BottomNavProps> = ({ className = '' }) => {
 
   return (
     <nav 
-      className={`fixed bottom-0 left-0 right-0 z-40 w-full border-t border-slate-100 bg-white/95 px-6 pb-[calc(env(safe-area-inset-bottom)+1.5rem)] pt-2 backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/95 transition-transform duration-300 ease-in-out ${
+      className={`fixed bottom-0 left-0 right-0 z-40 w-full border-t border-slate-100/50 bg-white/80 px-6 pb-[calc(env(safe-area-inset-bottom)+1rem)] pt-2 backdrop-blur-xl dark:border-slate-800/50 dark:bg-slate-900/80 transition-transform duration-300 ease-in-out shadow-[0_-5px_20px_rgba(0,0,0,0.03)] ${
         isVisible ? 'translate-y-0' : 'translate-y-full'
       } ${className}`}
     >
@@ -120,18 +120,18 @@ const BottomNav: React.FC<BottomNavProps> = ({ className = '' }) => {
           
           if (item.id === 'cart') {
             return (
-              <div key={item.id} className="relative -mt-10">
+              <div key={item.id} className="relative -mt-8">
                 <button 
                   onClick={() => !isDisabled && navigate(item.path)}
                   disabled={isDisabled}
-                  className={`flex size-16 items-center justify-center rounded-full shadow-xl ring-[6px] ring-white dark:ring-slate-900 transition hover:scale-105 ${
-                    active ? 'bg-primary text-white' : 'bg-primary text-white'
+                  className={`flex size-14 items-center justify-center rounded-full shadow-lg ring-[5px] ring-white/80 dark:ring-slate-900/80 backdrop-blur-md transition-all duration-300 hover:scale-110 active:scale-95 ${
+                    active ? 'bg-primary text-white shadow-primary/30' : 'bg-primary text-white shadow-primary/20'
                   } ${isDisabled ? 'opacity-50 cursor-not-allowed' : ''}`}
                 >
-                  <Icon size={28} strokeWidth={active ? 2.5 : 2} />
+                  <Icon size={24} strokeWidth={active ? 2.5 : 2} />
                 </button>
                 {cartItemsCount > 0 && (
-                  <span className="absolute top-0 right-0 flex h-6 w-6 items-center justify-center rounded-full bg-[#dc2626] text-[11px] font-bold text-white ring-4 ring-white dark:ring-slate-900 shadow-md animate-in zoom-in duration-300 z-50">
+                  <span className="absolute top-0 right-0 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white ring-2 ring-white dark:ring-slate-900 shadow-md animate-in zoom-in duration-300 z-50">
                     {cartItemsCount > 99 ? '99+' : cartItemsCount}
                   </span>
                 )}
@@ -144,12 +144,12 @@ const BottomNav: React.FC<BottomNavProps> = ({ className = '' }) => {
               key={item.id}
               onClick={() => !isDisabled && navigate(item.path)}
               disabled={isDisabled}
-              className={`flex flex-col items-center gap-1 transition-colors ${
-                active ? 'text-primary' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'
+              className={`flex flex-col items-center gap-1 transition-all duration-300 active:scale-90 ${
+                active ? 'text-primary scale-110' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'
               } ${isDisabled ? 'opacity-30 cursor-not-allowed grayscale' : ''}`}
             >
-              <Icon size={24} strokeWidth={active ? 2.5 : 2} />
-              <span className={`text-[10px] font-medium ${active ? 'font-bold' : ''}`}>{item.label}</span>
+              <Icon size={24} strokeWidth={active ? 2.5 : 2} className="transition-all" />
+              <span className={`text-[10px] font-medium transition-all ${active ? 'font-bold' : ''}`}>{item.label}</span>
             </button>
           );
         })}

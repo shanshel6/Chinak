@@ -76,7 +76,7 @@ const applyDynamicPricingToProduct = (product, rates) => {
         // Ensure getAdjustedPrice is available
         if (typeof getAdjustedPrice !== 'function') {
           console.warn('getAdjustedPrice is not a function, using fallback price');
-          return Math.ceil(basePrice / 250) * 250;
+          return basePrice;
         }
 
         return getAdjustedPrice(
@@ -86,7 +86,7 @@ const applyDynamicPricingToProduct = (product, rates) => {
         );
       } catch (err) {
         console.error('Error in calcPrice:', err);
-        return Math.ceil((target.price || 0) / 250) * 250;
+        return target.price || 0;
       }
     };
 
@@ -1782,7 +1782,11 @@ app.get('/api/admin/orders/:id', authenticateToken, isAdmin, hasPermission('mana
         address: true,
         items: {
           include: { 
-            product: true,
+            product: {
+              include: {
+                options: true
+              }
+            },
             variant: { select: productVariantSelect }
           }
         }

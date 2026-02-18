@@ -506,7 +506,7 @@ const ShippingTracking: React.FC = () => {
                       </div>
                     )}
                     <p className="text-xs text-slate-500 dark:text-slate-400">{t('tracking.qty')}: {item.quantity}</p>
-                    <p className="text-sm font-bold text-primary">{(Math.ceil(item.price / 250) * 250).toLocaleString()} {t('common.iqd')}</p>
+                    <p className="text-sm font-bold text-primary">{item.price.toLocaleString()} {t('common.iqd')}</p>
                   </div>
                 </div>
               ))}
@@ -518,7 +518,7 @@ const ShippingTracking: React.FC = () => {
             <div className="flex justify-between items-center text-sm">
               <span className="text-slate-500 dark:text-slate-400">{t('tracking.subtotal')}</span>
               <span className="text-slate-900 dark:text-white font-medium">
-                {order.items.reduce((acc: number, item: any) => acc + (Math.ceil(item.price / 250) * 250 * item.quantity), 0).toLocaleString()} {t('common.iqd')}
+                {order.items.reduce((acc: number, item: any) => acc + (item.price * item.quantity), 0).toLocaleString()} {t('common.iqd')}
               </span>
             </div>
             {order.discountAmount > 0 && (
@@ -538,7 +538,7 @@ const ShippingTracking: React.FC = () => {
             )}
             <div className="flex justify-between items-center">
               <span className="text-base font-bold text-slate-900 dark:text-white">{t('tracking.total')}</span>
-              <span className="text-lg font-bold text-primary">{(Math.ceil(order.total / 250) * 250).toLocaleString()} {t('common.iqd')}</span>
+              <span className="text-lg font-bold text-primary">{order.total.toLocaleString()} {t('common.iqd')}</span>
             </div>
           </div>
 
@@ -686,7 +686,7 @@ const ShippingTracking: React.FC = () => {
                   <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-5 border border-slate-100 dark:border-slate-800 text-center">
                     <p className="text-sm text-slate-500 mb-1">المبلغ المطلوب دفعه</p>
                     <div className="text-3xl font-black text-primary font-sans tracking-tight">
-                      {(Math.ceil(order.total / 250) * 250).toLocaleString()} <span className="text-sm">د.ع</span>
+                      {order.total.toLocaleString()} <span className="text-sm">د.ع</span>
                     </div>
                   </div>
 

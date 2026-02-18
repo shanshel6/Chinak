@@ -154,7 +154,7 @@ const Cart: React.FC = () => {
   
   // Total in cart page only includes products - discount
   // International shipping fees are shown in checkout page as requested
-  const total = Math.ceil(Math.max(0, subtotal - discountAmount) / 250) * 250;
+  const total = Math.max(0, subtotal - discountAmount);
   
   // Dynamic threshold based on active tab
   const MIN_ORDER_THRESHOLD = activeTab === 'sea' ? 80000 : 30000;
@@ -308,40 +308,54 @@ const Cart: React.FC = () => {
         </div>
       </header>
 
-      {/* Shipping Method Tabs */}
-      <div className="flex gap-2 p-4 bg-background-light dark:bg-background-dark sticky top-[calc(env(safe-area-inset-top)+4.5rem)] z-40 border-b border-slate-100 dark:border-white/5">
-        <button 
-          onClick={() => setActiveTab('air')}
-          className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-2xl font-bold transition-all ${
-            activeTab === 'air' 
-              ? 'bg-primary text-white shadow-lg shadow-primary/20 scale-[1.02]' 
-              : 'bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-100 dark:border-white/5'
-          }`}
-        >
-          <span className="text-lg">✈️</span>
-          <span>شحن جوي</span>
-          {airCount > 0 && (
-            <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${activeTab === 'air' ? 'bg-white text-primary' : 'bg-primary/10 text-primary'}`}>
-              {airCount}
-            </span>
-          )}
-        </button>
-        <button 
-          onClick={() => setActiveTab('sea')}
-          className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-2xl font-bold transition-all ${
-            activeTab === 'sea' 
-              ? 'bg-primary text-white shadow-lg shadow-primary/20 scale-[1.02]' 
-              : 'bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-100 dark:border-white/5'
-          }`}
-        >
-          <span className="text-lg">🚢</span>
-          <span>شحن بحري</span>
-          {seaCount > 0 && (
-            <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${activeTab === 'sea' ? 'bg-white text-primary' : 'bg-primary/10 text-primary'}`}>
-              {seaCount}
-            </span>
-          )}
-        </button>
+      {/* Shipping Method Tabs - Segmented Control */}
+      <div className="sticky top-[calc(env(safe-area-inset-top)+3.5rem)] z-40 bg-background-light/95 dark:bg-background-dark/95 backdrop-blur-xl pt-2 pb-2 px-4 shadow-sm border-b border-slate-100/50 dark:border-slate-800/50">
+        <div className="flex p-1.5 bg-slate-100 dark:bg-slate-800 rounded-[1.2rem] relative isolate">
+          {/* Animated Background Indicator */}
+          <div 
+            className={`absolute top-1.5 bottom-1.5 w-[calc(50%-6px)] bg-white dark:bg-slate-700 rounded-2xl shadow-sm transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] ${
+              activeTab === 'air' ? 'left-1.5' : 'left-[calc(50%+3px)]'
+            }`}
+          />
+          
+          <button 
+            onClick={() => setActiveTab('air')}
+            className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-2xl font-bold text-sm relative z-10 transition-colors duration-200 ${
+              activeTab === 'air' 
+                ? 'text-slate-900 dark:text-white' 
+                : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300'
+            }`}
+          >
+            <span className="text-lg leading-none">✈️</span>
+            <span>شحن جوي</span>
+            {airCount > 0 && (
+              <span className={`text-[10px] px-1.5 py-0.5 rounded-full transition-colors ${
+                activeTab === 'air' ? 'bg-primary/10 text-primary' : 'bg-slate-200 dark:bg-slate-700 text-slate-500'
+              }`}>
+                {airCount}
+              </span>
+            )}
+          </button>
+          
+          <button 
+            onClick={() => setActiveTab('sea')}
+            className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-2xl font-bold text-sm relative z-10 transition-colors duration-200 ${
+              activeTab === 'sea' 
+                ? 'text-slate-900 dark:text-white' 
+                : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300'
+            }`}
+          >
+            <span className="text-lg leading-none">🚢</span>
+            <span>شحن بحري</span>
+            {seaCount > 0 && (
+              <span className={`text-[10px] px-1.5 py-0.5 rounded-full transition-colors ${
+                activeTab === 'sea' ? 'bg-primary/10 text-primary' : 'bg-slate-200 dark:bg-slate-700 text-slate-500'
+              }`}>
+                {seaCount}
+              </span>
+            )}
+          </button>
+        </div>
       </div>
 
       <main className="p-4 md:p-6 flex flex-col md:grid md:grid-cols-3 md:gap-8 items-start">

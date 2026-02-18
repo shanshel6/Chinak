@@ -668,7 +668,7 @@ const ProductDetails: React.FC = () => {
           />
         </div>
 
-        <main className="relative -mt-6 md:mt-0 bg-background-light dark:bg-background-dark rounded-t-3xl md:rounded-none px-5 md:px-0 pt-8 md:pt-0 shadow-[0_-4px_20px_rgba(0,0,0,0.05)] md:shadow-none">
+        <main className="relative -mt-10 md:mt-0 bg-background-light dark:bg-background-dark rounded-t-[2.5rem] md:rounded-none px-5 md:px-0 pt-8 md:pt-0 shadow-[0_-10px_40px_rgba(0,0,0,0.05)] md:shadow-none z-10 min-h-[50vh]">
           <ProductInfo 
             price={pricingParams?.basePrice || 0}
             originalPrice={product.originalPrice}

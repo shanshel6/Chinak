@@ -53,7 +53,7 @@ const LatestOrders: React.FC<LatestOrdersProps> = ({ orders, onViewAll }) => {
                    order.paymentMethod === 'zain_cash' ? 'زين كاش' : 'سوبر كي'}
                 </td>
                 <td className="py-4 font-black text-primary text-sm">
-                  {(Math.ceil(order.total / 250) * 250).toLocaleString()} {t('common.iqd')}
+                  {order.total.toLocaleString()} {t('common.iqd')}
                 </td>
                 <td className="py-4">
                   <div className="flex justify-center">

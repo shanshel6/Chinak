@@ -31,7 +31,7 @@ const SearchBar: React.FC<SearchBarProps> = ({
   }, [placeholders.length]);
 
   return (
-    <div className="px-5 py-3 bg-background-light dark:bg-background-dark transition-all duration-300">
+    <div className="px-5 py-3 bg-transparent transition-all duration-300">
       <div className="flex items-center gap-4">
         <div 
           onClick={() => onNavigate('/search')}

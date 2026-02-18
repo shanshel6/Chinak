@@ -23,7 +23,8 @@ import {
   Save,
   Truck,
   Share2,
-  Sparkles
+  Sparkles,
+  Globe
 } from 'lucide-react';
 import { useLocation, Routes, Route, useNavigate as _useNavigate } from 'react-router-dom';
 import { 
@@ -102,6 +103,7 @@ const AdminDashboard: React.FC = () => {
   const setShowProductEditor = useState(false)[1];
   const editingProductId = useState<number | string | null>(null)[0];
   const setEditingProductId = useState<number | string | null>(null)[1];
+  const [showOriginalOptions, setShowOriginalOptions] = useState(false);
   
   const [storeSettings, setStoreSettings] = useState({
     airShippingRate: 15400,
@@ -1610,10 +1612,23 @@ const AdminDashboard: React.FC = () => {
 
             {/* Order Items */}
             <div>
-              <h4 className="font-black text-xs sm:text-sm mb-4 flex items-center gap-2">
-                <ShoppingCart size={16} className="text-primary" />
-                المنتجات المطلوبة ({selectedOrder.items?.length || 0})
-              </h4>
+              <div className="flex items-center justify-between mb-4">
+                <h4 className="font-black text-xs sm:text-sm flex items-center gap-2">
+                  <ShoppingCart size={16} className="text-primary" />
+                  المنتجات المطلوبة ({selectedOrder.items?.length || 0})
+                </h4>
+                <button
+                  onClick={() => setShowOriginalOptions(!showOriginalOptions)}
+                  className={`text-[10px] px-2 py-1 rounded-lg border transition-all flex items-center gap-1 ${
+                    showOriginalOptions 
+                      ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 border-blue-200 dark:border-blue-800' 
+                      : 'bg-white dark:bg-slate-800 text-slate-500 border-slate-200 dark:border-slate-700 hover:border-blue-200 dark:hover:border-blue-800'
+                  }`}
+                >
+                  <Globe size={12} />
+                  {showOriginalOptions ? 'إخفاء الأصل' : 'عرض الأصل'}
+                </button>
+              </div>
               <div className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl overflow-hidden shadow-sm">
                 <div className="overflow-x-auto scrollbar-thin">
                   <table className="w-full text-right text-xs sm:text-sm min-w-[600px]">
@@ -1671,11 +1686,29 @@ const AdminDashboard: React.FC = () => {
                                       );
                                     }
 
-                                    return Object.entries(combination).map(([key, value]) => (
-                                      <span key={key} className="text-[9px] bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700">
-                                        {key}: {String(value)}
-                                      </span>
-                                    ));
+                                    return Object.entries(combination).map(([key, value]) => {
+                                      let originalValue = null;
+                                      if (showOriginalOptions && item.product?.options) {
+                                        const opt = item.product.options.find((o: any) => o.name === key || (o.name === 'اللون' && key === 'Color') || (o.name === 'المقاس' && key === 'Size'));
+                                        if (opt && opt.values && opt.originalValues) {
+                                          try {
+                                            const vals = JSON.parse(opt.values);
+                                            const origVals = JSON.parse(opt.originalValues);
+                                            const idx = vals.indexOf(String(value));
+                                            if (idx !== -1 && origVals[idx]) {
+                                              originalValue = origVals[idx];
+                                            }
+                                          } catch (e) {}
+                                        }
+                                      }
+
+                                      return (
+                                        <span key={key} className="flex flex-col gap-0.5 text-[9px] bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700">
+                                          <span>{key}: {String(value)}</span>
+                                          {originalValue && <span className="text-emerald-600 font-bold">{originalValue}</span>}
+                                        </span>
+                                      );
+                                    });
                                   } catch (e) {
                                     const rawCombination = item.selectedOptions || item.variant?.combination;
                                     if (!rawCombination) return null;
@@ -1727,11 +1760,11 @@ const AdminDashboard: React.FC = () => {
                                 onClick={(e) => e.stopPropagation()}
                               />
                             ) : (
-                              <span>{(Math.ceil(item.price / 250) * 250).toLocaleString()} د.ع</span>
+                              <span>{item.price.toLocaleString()} د.ع</span>
                             )}
                           </td>
                           <td className="px-4 py-4 font-bold text-primary">
-                            {(Math.ceil(item.price / 250) * 250 * item.quantity).toLocaleString()} د.ع
+                            {(item.price * item.quantity).toLocaleString()} د.ع
                           </td>
                           <td className="px-4 py-4 text-center">
                             <div className="flex items-center justify-center gap-2">
@@ -1776,7 +1809,7 @@ const AdminDashboard: React.FC = () => {
                 <div className="flex justify-between text-xs sm:text-sm">
                   <span className="text-slate-500 font-bold">المجموع الفرعي:</span>
                   <span className="font-black">
-                    {selectedOrder.items.reduce((acc: number, item: any) => acc + (Math.ceil(item.price / 250) * 250 * item.quantity), 0).toLocaleString()} د.ع
+                    {selectedOrder.items.reduce((acc: number, item: any) => acc + (item.price * item.quantity), 0).toLocaleString()} د.ع
                   </span>
                 </div>
                 {selectedOrder.discountAmount > 0 && (
@@ -1805,7 +1838,7 @@ const AdminDashboard: React.FC = () => {
                 </div>
                 <div className="pt-3 border-t border-slate-200 dark:border-slate-700 flex justify-between items-center">
                   <span className="font-black text-sm sm:text-base">الإجمالي الكلي:</span>
-                  <span className="font-black text-lg sm:text-xl text-primary">{(Math.ceil(selectedOrder.total / 250) * 250).toLocaleString()} د.ع</span>
+                  <span className="font-black text-lg sm:text-xl text-primary">{selectedOrder.total.toLocaleString()} د.ع</span>
                 </div>
               </div>
             </div>
@@ -1932,7 +1965,7 @@ const AdminDashboard: React.FC = () => {
                    order.paymentMethod === 'super_key' ? 'سوبر كي' : (order.paymentMethod || '---')}
                 </td>
                 <td className="px-6 py-4 font-black text-primary">
-                  {(Math.ceil((order.total || 0) / 250) * 250).toLocaleString()} د.ع
+                  {(order.total || 0).toLocaleString()} د.ع
                 </td>
                 <td className="px-6 py-4">
                   <div className="flex items-center gap-2">

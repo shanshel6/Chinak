@@ -185,7 +185,7 @@ const CheckoutPaymentAddress: React.FC = () => {
   ) : 0;
   
   // subtotal already includes shippingTotal from getSubtotal()
-  const total = Math.ceil(Math.max(0, subtotal - discountAmount) / 250) * 250;
+  const total = Math.max(0, subtotal - discountAmount);
 
   const selectedAddress = addresses.find(a => a.id === selectedAddressId);
 
@@ -476,7 +476,7 @@ const CheckoutPaymentAddress: React.FC = () => {
                     )}
                   </div>
                   <div className="text-xs font-black text-slate-900 dark:text-white shrink-0">
-                    {(Math.ceil((item.variant?.price || item.product.price) / 250) * 250 * item.quantity).toLocaleString()} د.ع
+                    {((item.variant?.price || item.product.price) * item.quantity).toLocaleString()} د.ع
                   </div>
                 </div>
               ))}

@@ -829,11 +829,8 @@ async function run() {
     // Track scroll position to restore it if we drift and reload
     let accumulatedScrollY = 0;
 
-    // Main Loop
-    // User requested infinite loop until manually stopped
-    while (isRunning) {
-
-        // --- STRICT DRIFT CHECK & RESTORE ---
+    // Helper: Ensure we are on the category page before scraping
+    const ensureCategoryContext = async () => {
         const currentUrl = page.url();
         let isOnTargetCategory = true;
         
@@ -898,6 +895,14 @@ async function run() {
                  console.log('Error returning to category:', e.message);
              }
         }
+    };
+
+    // Main Loop
+    // User requested infinite loop until manually stopped
+    while (isRunning) {
+
+        // --- STRICT DRIFT CHECK & RESTORE ---
+        await ensureCategoryContext();
 
         
             // --- 3-POINT CLICK STRATEGY ---
@@ -3256,18 +3261,25 @@ async function run() {
                          };
 
                          const applyTranslation = (chunk, transArr) => {
-                             for (let i = 0; i < chunk.length; i++) {
-                                 const opt = chunk[i];
-                                 const t = transArr[i] || {};
-                                 if (t.c) opt.color = String(t.c).trim().replace(/\s+/g, ' ');
-                                 if (Array.isArray(opt.sizes) && opt.sizes.length > 0) {
-                                     if (t.s !== undefined && t.s !== null) {
-                                         const nextSize = String(t.s).trim().replace(/\s+/g, ' ');
-                                         if (nextSize) opt.sizes[0] = nextSize;
-                                     }
-                                 }
-                             }
-                         };
+                            for (let i = 0; i < chunk.length; i++) {
+                                const opt = chunk[i];
+                                const t = transArr[i] || {};
+                                
+                                // Save original values before translation
+                                if (!opt.originalColor) opt.originalColor = opt.color;
+                                if (Array.isArray(opt.sizes) && opt.sizes.length > 0 && !opt.originalSize) {
+                                     opt.originalSize = opt.sizes[0];
+                                }
+
+                                if (t.c) opt.color = String(t.c).trim().replace(/\s+/g, ' ');
+                                if (Array.isArray(opt.sizes) && opt.sizes.length > 0) {
+                                    if (t.s !== undefined && t.s !== null) {
+                                        const nextSize = String(t.s).trim().replace(/\s+/g, ' ');
+                                        if (nextSize) opt.sizes[0] = nextSize;
+                                    }
+                                }
+                            }
+                        };
 
                          const baseChunkSize = Number(process.env.AI_OPTIONS_TRANSLATE_CHUNK_SIZE) > 0 ? Number(process.env.AI_OPTIONS_TRANSLATE_CHUNK_SIZE) : 25;
                          const queue = [];
@@ -3424,8 +3436,8 @@ async function run() {
                     }
 
                     // 4. Create Product Options (Color & Size) - VALIDATED
-                    const colors = new Set();
-                    const sizes = new Set();
+                    const colors = new Map();
+                    const sizes = new Map();
                     
                     // Filter out Chinese characters from options
                     const containsChinese = (str) => /[\u4e00-\u9fa5]/.test(str);
@@ -3449,23 +3461,26 @@ async function run() {
 
                     enrichedProduct.generated_options.forEach(opt => {
                         // Skip entire option if color is Chinese
-                        if (opt.color && !containsChinese(opt.color)) {
-                            colors.add(opt.color);
-                        } else if (opt.color) {
-                            // RETRY TRANSLATION FOR SINGLE OPTION
-                            // We do a synchronous-like blocking call here or just use it as is if critical?
-                            // User said: "try to translate it again if you can't then use it, don't skip generated options"
-                            console.log(`Chinese color detected: ${opt.color}. Attempting fallback translation/usage...`);
-                            colors.add(opt.color); // Add it anyway, don't skip
+                        if (opt.color) {
+                            if (!containsChinese(opt.color)) {
+                                if (!colors.has(opt.color)) colors.set(opt.color, opt.originalColor || opt.color);
+                            } else {
+                                // RETRY TRANSLATION FOR SINGLE OPTION
+                                // We do a synchronous-like blocking call here or just use it as is if critical?
+                                // User said: "try to translate it again if you can't then use it, don't skip generated options"
+                                console.log(`Chinese color detected: ${opt.color}. Attempting fallback translation/usage...`);
+                                if (!colors.has(opt.color)) colors.set(opt.color, opt.originalColor || opt.color); // Add it anyway, don't skip
+                            }
                         }
 
                         if (opt.sizes && Array.isArray(opt.sizes)) {
                             opt.sizes.forEach(s => {
+                                const original = (s === opt.sizes[0] && opt.originalSize) ? opt.originalSize : s;
                                 if (!containsChinese(s)) {
-                                    sizes.add(s);
+                                    if (!sizes.has(s)) sizes.set(s, original);
                                 } else {
                                     console.log(`Chinese size detected: ${s}. Using it anyway.`);
-                                    sizes.add(s);
+                                    if (!sizes.has(s)) sizes.set(s, original);
                                 }
                             });
                         }
@@ -3473,21 +3488,27 @@ async function run() {
 
                     // Only create options if we have valid values
                     if (colors.size > 0) {
+                        const colorValues = Array.from(colors.keys());
+                        const originalColorValues = Array.from(colors.values());
                         await prisma.productOption.create({
                             data: {
                                 productId: newProduct.id,
                                 name: "اللون",
-                                values: JSON.stringify(Array.from(colors))
+                                values: JSON.stringify(colorValues),
+                                originalValues: JSON.stringify(originalColorValues)
                             }
                         });
                     }
 
                     if (sizes.size > 0) {
+                        const sizeValues = Array.from(sizes.keys());
+                        const originalSizeValues = Array.from(sizes.values());
                         await prisma.productOption.create({
                             data: {
                                 productId: newProduct.id,
                                 name: "المقاس",
-                                values: JSON.stringify(Array.from(sizes))
+                                values: JSON.stringify(sizeValues),
+                                originalValues: JSON.stringify(originalSizeValues)
                             }
                         });
                     }
