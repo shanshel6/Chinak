@@ -52,8 +52,8 @@ const ReviewsSection: React.FC<ReviewsSectionProps> = ({
     (reviewSummary.images && reviewSummary.images.length > 0)
   ));
   
-  const displayReviews = reviews.slice(0, 10);
-  const hasMoreReviews = reviews.length > 10;
+  const displayReviews = reviews.slice(0, 2);
+  const hasMoreReviews = reviews.length > 2;
 
   if (!hasRealReviews && loading) {
     return (
@@ -239,28 +239,32 @@ const ReviewsSection: React.FC<ReviewsSectionProps> = ({
 
       {/* All Reviews Modal */}
       {isAllReviewsModalOpen && (
-        <div className="fixed inset-0 z-[110] bg-slate-950/40 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-6 animate-in fade-in duration-300">
+        <div className="fixed inset-0 z-[110] bg-slate-950/40 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-300" onClick={() => setIsAllReviewsModalOpen(false)}>
           <div 
-            className="bg-background-light dark:bg-background-dark w-full max-w-[95vw] lg:max-w-7xl h-[85vh] sm:h-[80vh] rounded-t-[45px] sm:rounded-[45px] overflow-hidden flex flex-col shadow-2xl animate-in slide-in-from-bottom-full duration-500"
+            className="bg-white dark:bg-slate-900 w-full max-w-5xl h-[85vh] rounded-[32px] overflow-hidden flex flex-col shadow-2xl animate-in slide-in-from-bottom-10 duration-500 border border-slate-100 dark:border-white/5"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Modal Header */}
-            <div className="px-8 pt-8 pb-6 flex items-center justify-between border-b border-slate-100 dark:border-white/5">
+            <div className="px-6 py-5 flex items-center justify-between border-b border-slate-100 dark:border-white/5 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm sticky top-0 z-10">
               <div className="flex flex-col">
                 <h3 className="text-slate-900 dark:text-white text-xl font-black">جميع التقييمات</h3>
-                <p className="text-[10px] text-slate-400 font-bold mt-0.5 tracking-wide">تجارب حقيقية من مشتري المنتج</p>
+                <p className="text-[12px] text-slate-500 font-bold mt-1">
+                  {reviews.length} تقييم من عملاء حقيقيين
+                </p>
               </div>
               <button 
                 onClick={() => setIsAllReviewsModalOpen(false)}
-                className="size-12 rounded-2xl bg-slate-100 dark:bg-white/5 flex items-center justify-center text-slate-500 hover:bg-slate-200 dark:hover:bg-white/10 transition-all"
+                className="size-10 rounded-full bg-slate-100 dark:bg-white/5 flex items-center justify-center text-slate-500 hover:bg-slate-200 dark:hover:bg-white/10 transition-all hover:rotate-90"
               >
-                <X size={24} />
+                <X size={20} />
               </button>
             </div>
 
             {/* Modal Content */}
-            <div className="flex-1 overflow-y-auto p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 no-scrollbar pb-12">
-              {reviews.map((review, idx) => renderReviewCard(review, idx))}
+            <div className="flex-1 overflow-y-auto p-6 scrollbar-thin scrollbar-thumb-slate-200 dark:scrollbar-thumb-slate-700">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {reviews.map((review, idx) => renderReviewCard(review, idx))}
+              </div>
             </div>
           </div>
         </div>

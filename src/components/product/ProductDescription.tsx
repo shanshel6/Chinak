@@ -1,4 +1,5 @@
 import React from 'react';
+import { fixMojibake } from '../../utils/mojibakeFixer';
 
 interface ProductDescriptionProps {
   productName?: string;
@@ -61,11 +62,11 @@ const ProductDescription: React.FC<ProductDescriptionProps> = ({
        parsedSpecs = specsData.map(item => {
          if (typeof item === 'object' && item !== null) {
            return {
-             label: item.label || item.name || item.key || '',
-             value: String(item.value || item.val || '')
+             label: fixMojibake(item.label || item.name || item.key || ''),
+             value: fixMojibake(String(item.value || item.val || ''))
            };
          }
-         return { label: '', value: String(item) };
+         return { label: '', value: fixMojibake(String(item)) };
        }).filter(item => item.value);
     } else if (typeof specsData === 'string') {
       parsedSpecs = specsData.split('\n')
@@ -73,18 +74,18 @@ const ProductDescription: React.FC<ProductDescriptionProps> = ({
           const parts = line.split(':');
           if (parts.length >= 2) {
             return {
-              label: parts[0].trim(),
-              value: parts.slice(1).join(':').trim()
+              label: fixMojibake(parts[0].trim()),
+              value: fixMojibake(parts.slice(1).join(':').trim())
             };
           }
-          return { label: '', value: line.trim() };
+          return { label: '', value: fixMojibake(line.trim()) };
         })
         .filter(item => item.value.length > 0);
     } else if (typeof specsData === 'object' && specsData !== null) {
       parsedSpecs = Object.entries(specsData)
         .map(([label, value]) => ({
-          label,
-          value: typeof value === 'object' ? JSON.stringify(value) : String(value)
+          label: fixMojibake(label),
+          value: fixMojibake(typeof value === 'object' ? JSON.stringify(value) : String(value))
         }));
     }
   }
@@ -113,7 +114,7 @@ const ProductDescription: React.FC<ProductDescriptionProps> = ({
         <div className="bg-slate-50 dark:bg-slate-800/40 rounded-2xl p-5 border border-slate-100 dark:border-white/5">
           {showDescription && (
             <div className="text-slate-600 dark:text-slate-300 text-[15px] leading-loose whitespace-pre-line font-medium mb-6 last:mb-0">
-              {description}
+              {fixMojibake(description)}
             </div>
           )}
           

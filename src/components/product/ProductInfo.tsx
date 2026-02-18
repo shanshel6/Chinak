@@ -1,5 +1,6 @@
 import React from 'react';
 import { calculateInclusivePrice } from '../../utils/shipping';
+import { fixMojibake } from '../../utils/mojibakeFixer';
 
 interface ProductInfoProps {
   price: number;
@@ -51,13 +52,13 @@ const ProductInfo: React.FC<ProductInfoProps> = ({
     <div className="mb-6">
       {/* Price section removed as requested */}
 
-      <h2 className="text-slate-900 dark:text-white text-xl font-bold leading-tight mt-3">{name}</h2>
+      <h2 className="text-slate-900 dark:text-white text-xl font-bold leading-tight mt-3">{fixMojibake(name)}</h2>
 
 
       {deliveryTime && (
         <div className="flex items-center gap-2 mt-2">
           <span className="text-xs font-bold text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-800 px-2 py-1 rounded-lg border border-slate-100 dark:border-slate-700">
-            وقت تجهيز البضاعة: {deliveryTime} يوم
+            وقت تجهيز البضاعة: {fixMojibake(deliveryTime)} يوم
           </span>
         </div>
       )}

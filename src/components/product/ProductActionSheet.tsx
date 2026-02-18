@@ -2,6 +2,7 @@ import React, { useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Plane, Ship, ZoomIn, ShoppingCart, RefreshCw } from 'lucide-react';
 import ProductOptions from './ProductOptions';
+import { fixMojibake } from '../../utils/mojibakeFixer';
 
 interface ProductActionSheetProps {
   isOpen: boolean;
@@ -104,11 +105,11 @@ const ProductActionSheet: React.FC<ProductActionSheetProps> = ({
                   </button>
                 </div>
                 <p className="text-sm text-slate-500 dark:text-slate-400 mt-1 line-clamp-2">
-                  {product?.name}
+                  {fixMojibake(product?.name)}
                 </p>
                 {currentVariant && (
                   <p className="text-xs font-bold text-slate-400 mt-2">
-                    المحدد: {Object.values(selectedOptions).join(' / ')}
+                    المحدد: {Object.values(selectedOptions).map(v => fixMojibake(v)).join(' / ')}
                   </p>
                 )}
               </div>

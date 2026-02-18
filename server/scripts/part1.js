@@ -1,4 +1,4 @@
-﻿﻿import vanillaPuppeteer from 'puppeteer-core';
+import vanillaPuppeteer from 'puppeteer-core';
 import puppeteerExtra from 'puppeteer-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 
@@ -19,65 +19,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const envPath = path.join(__dirname, '..', '.env'); // server/.env
 dotenv.config({ path: envPath });
-
-// --- FIX DATABASE CONNECTION POOL ---
-// Enforce connection limit to prevent "MaxClientsInSessionMode" error
-if (process.env.DATABASE_URL) {
-    try {
-        const url = new URL(process.env.DATABASE_URL);
-        // Use minimal connections (1) for this single-threaded scraper to avoid exhausting the pool
-        url.searchParams.set('connection_limit', '1'); 
-        process.env.DATABASE_URL = url.toString();
-    } catch (e) {
-        console.warn('Warning: Could not parse DATABASE_URL to set connection_limit');
-    }
-}
-
 const prisma = new PrismaClient();
-
-// --- DATABASE SCHEMA HEALING ---
-async function ensureDatabaseSchema() {
-    // Skip schema check to save DB connections if flag is set or environment is production-like
-    if (process.env.SKIP_SCHEMA_CHECK === 'true') {
-        console.log('Skipping schema check (SKIP_SCHEMA_CHECK=true)');
-        return;
-    }
-    
-    try {
-        console.log('Checking database schema...');
-        // Retry logic for initial connection
-        let retries = 3;
-        while (retries > 0) {
-            try {
-                const columns = await prisma.$queryRawUnsafe(`
-                    SELECT column_name 
-                    FROM information_schema.columns 
-                    WHERE table_name = 'Product' AND column_name = 'scrapedReviews';
-                `);
-                
-                if (columns.length === 0) {
-                    console.log('Adding missing "scrapedReviews" column...');
-                    await prisma.$executeRawUnsafe(`ALTER TABLE "Product" ADD COLUMN IF NOT EXISTS "scrapedReviews" JSONB;`);
-                    console.log('Schema update attempted.');
-                } else {
-                    console.log('Schema OK: "scrapedReviews" column exists.');
-                }
-                break; // Success
-            } catch (e) {
-                console.warn(`Schema check failed (attempt ${4-retries}/3): ${e.message}`);
-                retries--;
-                if (retries === 0) {
-                    console.warn('Skipping schema check after multiple failures (non-fatal).');
-                } else {
-                    console.log(`Waiting 5s before retry (Attempt ${4-retries}/3)...`);
-                    await new Promise(r => setTimeout(r, 5000));
-                }
-            }
-        }
-    } catch (e) {
-        console.warn('Schema check/fix failed (non-fatal):', e.message);
-    }
-}
 // const prisma = { $disconnect: async () => {} };
 
 // --- EDIBLE ITEM FILTERING CONFIGURATION ---
@@ -253,7 +195,7 @@ async function enrichWithAI(title, description, price) {
            - INPUT: Chinese -> OUTPUT: Arabic.
            - DO NOT output English (except for the Brand Name).
            - Remove marketing fluff like "hot sale", "new arrival", "2024", "Ready Stock".
-           - Example: "冬季加绒卫衣" -> "كنزة شتوية مبطنة" (NOT "Winter Fleece Sweater").
+           - Example: "ه†¬ه­£هٹ ç»’هچ«è،£" -> "ظƒظ†ط²ط© ط´طھظˆظٹط© ظ…ط¨ط·ظ†ط©" (NOT "Winter Fleece Sweater").
         3. Combine them into "product_name_ar" format: "[Arabic Name]".
            - ONLY include the brand if it is a well-known international brand (e.g. Nike, Adidas, Sony).
            - If the brand is generic, unknown, or "No Brand", DO NOT include it in the title.
@@ -292,7 +234,7 @@ async function enrichWithAI(title, description, price) {
         - English text IS ALLOWED for Brand Names and Model Numbers.
         - Convert all prices and measurements to Arabic format if possible.
 
-        Return ONLY a valid JSON object with this structure (no markdown, no \`\`\`json blocks):
+        Return ONLY a valid JSON object with this structure (no markdown):
         {
             "product_name_ar": "Put Translated Name Here",
             "is_edible": false,
@@ -318,7 +260,7 @@ async function enrichWithAI(title, description, price) {
                         model,
                         messages: [{ role: "user", content: prompt }],
                         temperature: 0.2,
-                        max_tokens: 1500,
+                        max_tokens: 900,
                     });
                 };
 
@@ -371,14 +313,14 @@ async function enrichWithAI(title, description, price) {
                 // CHECK FOR INVALID/PLACEHOLDER NAMES
                 if (parsed.product_name_ar) {
                      const badNames = [
-                         'اسم غير متوفر',
-                         'name not available',
-                         'اسم المنتج بالعربيه',
-                         'اسم المنتج بالعربية',
-                         'put translated name here',
-                         'arabic name',
-                         'ترجمة اسم المنتج'
-                     ];
+                        'اسم غير متوفر',
+                        'name not available',
+                        'اسم المنتج بالعربيه',
+                        'اسم المنتج بالعربية',
+                        'put translated name here',
+                        'arabic name',
+                        'ترجمة اسم المنتج'
+                    ];
                      const lowerName = parsed.product_name_ar.toLowerCase();
                      
                      // Check if name matches any bad pattern or contains Chinese
@@ -555,27 +497,6 @@ async function safeEvaluate(page, pageFunction, args = [], maxAttempts = 4) {
     throw lastErr || new Error('safeEvaluate failed');
 }
 
-async function safeGoto(page, url, options = {}, maxRetries = 3) {
-    for (let i = 0; i < maxRetries; i++) {
-        try {
-            return await page.goto(url, options);
-        } catch (e) {
-            const msg = e.message || '';
-            if (i === maxRetries - 1) throw e;
-            
-            if (msg.includes('ERR_CONNECTION_REFUSED') || 
-                msg.includes('ERR_CONNECTION_RESET') || 
-                msg.includes('Timeout') ||
-                msg.includes('net::ERR_')) {
-                console.log(`[Navigation] Retry ${i+1}/${maxRetries} for ${url} (${msg})`);
-                await delay(2000 * (i + 1));
-            } else {
-                throw e;
-            }
-        }
-    }
-}
-
 async function createBrowser() {
   const executablePath = getExecutablePath();
   if (!executablePath) {
@@ -622,7 +543,6 @@ async function autoScroll(page) {
 }
 
 async function run() {
-    await ensureDatabaseSchema();
     console.log('[Start] Initializing Pinduoduo Scraper (Click-and-Scrape Mode)...');
     
     // Ask for URL or use predefined
@@ -663,7 +583,7 @@ async function run() {
         const text = msg.text();
         // Filter out some noise if needed, but user wants logs so keep most
         if (!text.includes('ERR_BLOCKED_BY_CLIENT')) {
-            // console.log(`[Browser Console] ${type.toUpperCase()}: ${text}`);
+            console.log(`[Browser Console] ${type.toUpperCase()}: ${text}`);
         }
     });
 
@@ -715,7 +635,7 @@ async function run() {
     // FORCE LOGIN NAVIGATION IF NOT LOGGED IN
     console.log('Visiting Login URL first to ensure valid session...');
     try {
-        await safeGoto(page, 'https://mobile.pinduoduo.com/login.html', { waitUntil: 'domcontentloaded', timeout: PAGE_LOAD_TIMEOUT });
+        await page.goto('https://mobile.pinduoduo.com/login.html', { waitUntil: 'domcontentloaded', timeout: PAGE_LOAD_TIMEOUT });
     } catch(e) { console.log('Login goto error (might be redirect):', e.message); }
     
     console.log('Login page loaded (or redirected).');
@@ -753,7 +673,7 @@ async function run() {
     }
 
     console.log('Visiting Clean Category URL:', cleanUrl);
-    await safeGoto(page, cleanUrl, { waitUntil: 'domcontentloaded', timeout: PAGE_LOAD_TIMEOUT });
+    await page.goto(cleanUrl, { waitUntil: 'domcontentloaded', timeout: PAGE_LOAD_TIMEOUT });
     console.log('Category page loaded.');
     
     // SWITCH TO MOBILE VIEWPORT AFTER LOGIN & NAVIGATION
@@ -763,7 +683,7 @@ async function run() {
     
     /*
     console.log('Visiting Category URL (and performing login check there):', CATEGORY_URL);
-    await safeGoto(page, CATEGORY_URL, { waitUntil: 'domcontentloaded', timeout: PAGE_LOAD_TIMEOUT });
+    await page.goto(CATEGORY_URL, { waitUntil: 'domcontentloaded', timeout: PAGE_LOAD_TIMEOUT });
     console.log('Goto done');
 
     console.log('================================================================');
@@ -826,97 +746,72 @@ async function run() {
         }
     } catch(e) {}
     
-    // Track scroll position to restore it if we drift and reload
-    let accumulatedScrollY = 0;
-
     // Main Loop
     // User requested infinite loop until manually stopped
     while (isRunning) {
 
-        // --- STRICT DRIFT CHECK & RESTORE ---
-        const currentUrl = page.url();
-        let isOnTargetCategory = true;
-        
+        // --- VALIDATE CURRENT URL ---
+        // Ensure we are still on the category page or search result page we started with.
+        // If we drifted to home or another category, go back.
+        const currentUrlBeforeScroll = page.url();
+        const isHomePage = currentUrlBeforeScroll === 'https://mobile.pinduoduo.com/' || currentUrlBeforeScroll.includes('page_id=10002');
+        // Simple check: if we are not on the category URL and not on a product page (which we shouldn't be here), go back.
+        // Better: Check if the URL contains key parts of our CATEGORY_URL
+        // Extract 'search_key' from CATEGORY_URL if it exists
+        let requiredParam = '';
         try {
-            const targetUrlObj = new URL(CATEGORY_URL);
-            const currentUrlObj = new URL(currentUrl);
-            
-            // If current URL is a product page, we definitely drifted
-            if (currentUrl.includes('goods_id') || currentUrl.includes('goods.html') || currentUrl.includes('goods_detail')) {
-                isOnTargetCategory = false;
-            } else {
-                // Check key parameters to ensure we are on the same category/search context
-                const paramsToCheck = ['opt_id', 'cat_id', 'search_key', 'subjects_id'];
-                for (const param of paramsToCheck) {
-                    const targetVal = targetUrlObj.searchParams.get(param);
-                    if (targetVal) {
-                        const currentVal = currentUrlObj.searchParams.get(param);
-                        // If target has a param, current MUST have it and match
-                        if (currentVal !== targetVal) {
-                            console.log(`Drift Param Mismatch [${param}]: Expected ${targetVal}, Got ${currentVal}`);
-                            isOnTargetCategory = false;
-                            break;
-                        }
-                    }
-                }
+            const catUrlObj = new URL(CATEGORY_URL);
+            if (catUrlObj.searchParams.has('search_key')) {
+                requiredParam = 'search_key=' + encodeURIComponent(catUrlObj.searchParams.get('search_key'));
+            } else if (catUrlObj.searchParams.has('cat_id')) {
+                requiredParam = 'cat_id=' + catUrlObj.searchParams.get('cat_id');
             }
-        } catch(e) {
-            // Fallback loose check
-            isOnTargetCategory = currentUrl.includes('catgoods') || currentUrl.includes('search_result') || currentUrl.includes('subjects');
-        }
+        } catch(e) {}
 
-        if (!isOnTargetCategory) {
-             console.log('⚠️ Critical Drift Detected: Not on provided Category URL.');
-             console.log(`   Target:  ${CATEGORY_URL}`);
-             console.log(`   Current: ${currentUrl}`);
-             console.log('   -> Reloading Category Page and Restoring Scroll Position...');
-             
-             try {
-                 await safeGoto(page, CATEGORY_URL, { waitUntil: 'domcontentloaded', timeout: PAGE_LOAD_TIMEOUT });
-                 await humanDelay(2000, 3000);
-                 
-                 // Restore Scroll Position
-                 if (accumulatedScrollY > 0) {
-                     console.log(`   -> Restoring scroll to Y=${accumulatedScrollY} (triggering lazy load)...`);
-                     await page.evaluate(async (targetY) => {
-                         const viewportHeight = window.innerHeight;
-                         let currentY = 0;
-                         // Scroll in steps to trigger lazy loading
-                         while (currentY < targetY) {
-                             window.scrollBy(0, viewportHeight);
-                             currentY += viewportHeight;
-                             // Wait a bit for content to load
-                             await new Promise(r => setTimeout(r, 400)); 
-                         }
-                         // Final adjustment
-                         window.scrollTo(0, targetY);
-                     }, accumulatedScrollY);
-                     await humanDelay(1500, 2500);
-                     console.log('   -> Scroll position restored.');
-                 }
-             } catch(e) {
-                 console.log('Error returning to category:', e.message);
-             }
-        }
+        // DISABLE AUTO-REDIRECT for now - it's causing loops if the URL format changes slightly
+        // if (isHomePage || (requiredParam && !currentUrlBeforeScroll.includes(decodeURIComponent(requiredParam)) && !currentUrlBeforeScroll.includes(requiredParam))) {
+        //      console.log('WARNING: Drifted away from category page. Redirecting back to:', CATEGORY_URL);
+        //      await page.goto(CATEGORY_URL, { waitUntil: 'domcontentloaded', timeout: PAGE_LOAD_TIMEOUT });
+        //      await humanDelay(3000, 5000);
+        // }
 
         
-            // --- 3-POINT CLICK STRATEGY ---
-        // console.log('Starting search sequence...'); // Simplified log
+            // --- 4-POINT BLIND CLICK STRATEGY ---
+        console.log('Scrolling down to find new batch of products...');
         
-        // Removed initial scroll to prevent "going down immediately"
+        // 1. Scroll down one screen size + a bit
+        try {
+            await page.evaluate(async () => {
+                // Random scroll
+                const viewportHeight = window.innerHeight;
+                const distance = viewportHeight + 100 + Math.floor(Math.random() * 200);
+                window.scrollBy(0, distance);
+                await new Promise(r => setTimeout(r, 1000));
+            });
+        } catch (e) {
+             console.warn('âڑ ï¸ڈ Scroll error in loop (recovering):', e.message);
+             // Wait and reload context if needed
+             await delay(2000);
+             if (page.isClosed()) break;
+             continue; // Skip this iteration
+        }
         
-        // Define the click points (percentages of viewport)
+        await humanDelay(2000, 3000);
+
+        // Define the 4 click points (percentages of viewport)
+        // Adjust for Mobile Viewport in Desktop Browser
         const clickPoints = [
-            { name: "Top-Left",  xPct: 0.25, yPct: 0.35 },
-            { name: "Top-Right", xPct: 0.75, yPct: 0.35 },
-            { name: "Bot-Right", xPct: 0.75, yPct: 0.70 },
-            { name: "Bot-Left",  xPct: 0.25, yPct: 0.70 }
+            { name: "Top-Right", xPct: 0.75, yPct: 0.30 },
+            { name: "Top-Left",  xPct: 0.25, yPct: 0.30 },
+            { name: "Bot-Left",  xPct: 0.25, yPct: 0.70 },
+            { name: "Bot-Right", xPct: 0.75, yPct: 0.70 }
         ];
 
         for (const point of clickPoints) {
             if (!isRunning) break;
+            // if (products.length >= TARGET_PRODUCT_COUNT) break; // Removed limit as per request
 
-            console.log(`> Checking ${point.name}...`);
+            console.log(`Preparing to click: ${point.name}...`);
 
             const clickCoordinates = await page.evaluate((pt) => {
                  const width = window.innerWidth;
@@ -932,7 +827,7 @@ async function run() {
                  };
             }, point);
             
-            // console.log(`Clicking at (${clickCoordinates.x}, ${clickCoordinates.y})...`);
+            console.log(`Clicking at (${clickCoordinates.x}, ${clickCoordinates.y})...`);
             
             // Listen for new target
             const newTargetPromise = new Promise(resolve => browser.once('targetcreated', resolve));
@@ -942,7 +837,7 @@ async function run() {
                 // Use evaluating touchstart for mobile simulation if mouse click fails
                 await page.mouse.click(clickCoordinates.x, clickCoordinates.y);
             } catch (e) {
-                // console.log('Click failed:', e.message);
+                console.log('Click failed:', e.message);
             }
 
             // Wait for navigation
@@ -956,7 +851,7 @@ async function run() {
                 ]);
 
                 if (target && target.type() === 'page') {
-                    // console.log('New tab detected.');
+                    console.log('New tab detected.');
                     newPage = await target.page();
                     
                     // ENABLE CONSOLE LOGS FOR NEW TAB
@@ -964,7 +859,7 @@ async function run() {
                         const type = msg.type();
                         const text = msg.text();
                         if (!text.includes('ERR_BLOCKED_BY_CLIENT')) {
-                            // console.log(`[Browser NewPage] ${type.toUpperCase()}: ${text}`);
+                            console.log(`[Browser NewPage] ${type.toUpperCase()}: ${text}`);
                         }
                     });
 
@@ -983,15 +878,15 @@ async function run() {
                         });
                     } catch(e) {}
                 } else {
-                    // console.log('No new tab. Checking navigation...');
+                    console.log('No new tab. Checking if current page navigated...');
                     await delay(2000); 
                     if (page.url() !== currentUrl && !page.url().includes('catgoods')) {
-                        console.log('Navigated in same tab.');
+                        console.log('Current page navigated. Treating as product page.');
                         newPage = page;
                         navigationHappened = true;
                         await applyPageTimeouts(newPage);
                     } else {
-                         // console.log('No navigation. Next...');
+                         console.log('Click did not trigger navigation. Moving to next point.');
                          // Just continue to next point in loop
                          continue; 
                     }
@@ -2507,1154 +2402,50 @@ async function run() {
                      }
 
  
-                     // --- REORDERED LOGIC: Close Modal -> Reviews -> (Desc Images moved to Part 3) ---
-
-                     // 1. Close the variant modal explicitly (MOVED UP)
+                     // 6. Description Images Extraction
+                     let product_desc_imgs = [];
+                     
+                     console.log('Starting description image extraction sequence...');
+                     await wait(5000);
                      try {
-                         const closeBtn = document.querySelector('div[role="button"][aria-label="关闭弹窗"]') || 
+                         for (let i = 0; i < 2; i++) {
+                             const x = Math.floor(window.innerWidth / 2);
+                             const y = 12;
+                             const el = document.elementFromPoint(x, y);
+                             if (el) el.click();
+                             await wait(220);
+                         }
+                         const backBtn = document.querySelector('div[role="button"][aria-label*="è؟”ه›‍"]') ||
+                             document.querySelector('div[role="button"][aria-label*="هگژé€€"]') ||
+                             document.querySelector('div[role="button"][aria-label*="ه…³é—­"]');
+                         if (backBtn) {
+                             backBtn.click();
+                             await wait(600);
+                         }
+                     } catch (e) {}
+                     await wait(5000);
+
+                     // Step A: Close the variant modal explicitly
+                     try {
+                         // User mentioned: "hit the exit button" (likely the X button)
+                         // Selector hints: div[role="button"][aria-label="ه…³é—­ه¼¹çھ—"] OR .pD0kR4N1
+                         const closeBtn = document.querySelector('div[role="button"][aria-label="ه…³é—­ه¼¹çھ—"]') || 
                                           document.querySelector('.pD0kR4N1') ||
                                           document.querySelector('div[role="button"] .pD0kR4N1')?.parentElement;
                          
                          if (closeBtn) {
+                             // console.log('Closing variant modal...');
                              closeBtn.click();
                              await wait(1000);
                          } else {
+                             // Try clicking the overlay/mask
                              const mask = document.querySelector('.ReactModal__Overlay, [class*="overlay"], [class*="mask"]');
                              if (mask) { 
                                  mask.click(); 
                                  await wait(1000);
                              }
                          }
-                     } catch(e) {}
-
-                    // 2. Check for Reviews (MOVED UP)
-                    console.log('[Reviews] Checking for reviews...');
-                    await wait(2000);
-
-                    let hasReviews = false;
-                    let reviewCount = 0;
-                    try {
-                        const reviewText = String.fromCharCode(21830, 21697, 35780, 20215); // 商品评价
-                        const reviewTextShort = String.fromCharCode(35780, 20215); // 评价
-                        
-                        let reviewBtn = null;
-                        
-                        // Strategy 1: XPath
-                        try {
-                            const xpath = `//*[contains(text(), '${reviewTextShort}')]`;
-                            const result = document.evaluate(xpath, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
-                            console.log(`[Reviews] XPath found ${result.snapshotLength} candidates.`);
-                            
-                            for (let i = 0; i < result.snapshotLength; i++) {
-                                const el = result.snapshotItem(i);
-                                if (el.tagName === 'SCRIPT' || el.tagName === 'STYLE') continue;
-                                const text = el.innerText || el.textContent;
-                                if (text && text.length < 30) { 
-                                    if (text.includes(reviewText) || text.includes(reviewTextShort)) {
-                                        if (text.includes(reviewText)) {
-                                            reviewBtn = el;
-                                            const m = text.match(/(\d+)/);
-                                            if (m) reviewCount = parseInt(m[1], 10);
-                                            console.log(`[Reviews] Found strict match: ${text} (Count: ${reviewCount})`);
-                                            break;
-                                        }
-                                        if (!reviewBtn) {
-                                            reviewBtn = el;
-                                            const m = text.match(/(\d+)/);
-                                            if (m) reviewCount = parseInt(m[1], 10);
-                                            console.log(`[Reviews] Found candidate: ${text} (Count: ${reviewCount})`);
-                                        }
-                                    }
-                                }
-                            }
-                        } catch(e) { console.log('[Reviews] XPath error:', e.message); }
-
-                        // Strategy 2: DOM Scan
-                        if (!reviewBtn) {
-                            console.log('[Reviews] XPath failed, scanning DOM...');
-                            const allElements = Array.from(document.querySelectorAll('div, span, p, a, button'));
-                            reviewBtn = allElements.find(el => {
-                                const text = el.innerText || el.textContent || '';
-                                return (text.includes(reviewText) || text.includes(reviewTextShort)) && text.length < 20;
-                            });
-                            if (reviewBtn) {
-                                const text = reviewBtn.innerText || '';
-                                const m = text.match(/(\d+)/);
-                                if (m) reviewCount = parseInt(m[1], 10);
-                            }
-                        }
-
-                        // Strategy 3: Regex
-                        if (!reviewBtn) {
-                             console.log('[Reviews] DOM scan failed, looking for regex match (Number + 评价)...');
-                             const allElements = Array.from(document.querySelectorAll('div, span, p'));
-                             for (const el of allElements) {
-                                 const text = el.innerText || '';
-                                 const m = text.match(/(\d+)\+?\s*[\u8bc4\u4ef7]/);
-                                 if (m && text.length < 15) {
-                                     reviewBtn = el;
-                                     reviewCount = parseInt(m[1], 10);
-                                     console.log(`[Reviews] Found regex match: ${text} (Count: ${reviewCount})`);
-                                     break;
-                                 }
-                             }
-                        }
-
-                        if (reviewBtn) {
-                            console.log(`[Reviews] Found review button (Count: ${reviewCount}). Will click in separate step.`);
-                            hasReviews = true;
-                        } else {
-                            console.log('[Reviews] No review button found.');
-                        }
-                    } catch (e) {
-                        console.log(`[Reviews] Error checking reviews: ${e.message}`);
-                    }
-
-                    return { title, price, description, images: [...new Set(images)], variants, skuMap, skuThumbMap, productDetails, variantImages, hasReviews, reviewCount };
-                }, [], 12);
-
-                // --- PART 2A: CLICK REVIEWS (Separate Context) ---
-                if (data.hasReviews) {
-                    console.log('[Reviews] Clicking review button (Separate Context)...');
-                    await safeEvaluate(newPage, async () => {
-                         const wait = (ms) => new Promise(r => setTimeout(r, ms));
-                         console.log('[Reviews] Locating review button for click...');
-                         
-                         try {
-                            const reviewText = String.fromCharCode(21830, 21697, 35780, 20215); // 商品评价
-                            const reviewTextShort = String.fromCharCode(35780, 20215); // 评价
-                            let reviewBtn = null;
-                            
-                            // Strategy 1: XPath
-                            try {
-                                const xpath = `//*[contains(text(), '${reviewTextShort}')]`;
-                                const result = document.evaluate(xpath, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
-                                for (let i = 0; i < result.snapshotLength; i++) {
-                                    const el = result.snapshotItem(i);
-                                    if (el.tagName === 'SCRIPT' || el.tagName === 'STYLE') continue;
-                                    const text = el.innerText || el.textContent;
-                                    if (text && text.length < 30 && (text.includes(reviewText) || text.includes(reviewTextShort))) {
-                                        reviewBtn = el;
-                                        console.log('[Reviews] Found button via XPath strategy.');
-                                        break;
-                                    }
-                                }
-                            } catch(e) {}
-
-                            // Strategy 2: DOM Scan
-                            if (!reviewBtn) {
-                                const allElements = Array.from(document.querySelectorAll('div, span, p, a, button'));
-                                reviewBtn = allElements.find(el => {
-                                    const text = el.innerText || el.textContent || '';
-                                    return (text.includes(reviewText) || text.includes(reviewTextShort)) && text.length < 20;
-                                });
-                                if (reviewBtn) console.log('[Reviews] Found button via DOM Scan strategy.');
-                            }
-
-                            // Strategy 3: Regex
-                            if (!reviewBtn) {
-                                 const allElements = Array.from(document.querySelectorAll('div, span, p'));
-                                 for (const el of allElements) {
-                                     const text = el.innerText || '';
-                                     if (text.match(/(\d+)\+?\s*[\u8bc4\u4ef7]/) && text.length < 15) {
-                                         reviewBtn = el;
-                                         console.log('[Reviews] Found button via Regex strategy.');
-                                         break;
-                                     }
-                                 }
-                            }
-
-                            if (reviewBtn) {
-                                console.log(`[Reviews] Found button, clicking...`);
-                                reviewBtn.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                                await wait(800);
-                                
-                                try {
-                                    const touchStart = new Event('touchstart', { bubbles: true, cancelable: true });
-                                    const touchEnd = new Event('touchend', { bubbles: true, cancelable: true });
-                                    reviewBtn.dispatchEvent(touchStart);
-                                    reviewBtn.dispatchEvent(touchEnd);
-                                    await wait(100);
-                                    reviewBtn.click();
-                                } catch (err) {
-                                    reviewBtn.click();
-                                }
-                            } else {
-                                console.log('[Reviews] Button not found in Click step.');
-                            }
-                         } catch (e) {
-                             console.log(`[Reviews] Error clicking reviews: ${e.message}`);
-                         }
-                    }, [], 12);
-                    
-                    console.log('[Reviews] Click action completed. Waiting 5s for navigation...');
-                    await new Promise(r => setTimeout(r, 5000));
-                }
-
-                // --- PART 2B: EXTRACT REVIEWS (Separate Context) ---
-                let reviews = [];
-                if (data.hasReviews) {
-                     
-                     console.log('[Reviews] Starting review extraction (New Context)...');
-                     // Pass scroll limit flag: if count < 5, don't scroll deeply
-                     const shouldDeepScroll = !data.reviewCount || data.reviewCount > 5;
-                     
-                     reviews = await safeEvaluate(newPage, async (shouldDeepScroll) => {
-                         console.log('[Reviews] Inside safeEvaluate. Deep Scroll:', shouldDeepScroll);
-                         const wait = (ms) => new Promise(r => setTimeout(r, ms));
-                         const extractedReviews = [];
-                         try {
-                             // Scroll Logic
-                             const reviewContent = document.querySelector('.comment-item') || document.querySelector('img[src*="avatar"]'); 
-                             if (!reviewContent) {
-                                 console.log('[Reviews] Review content not immediately visible, waiting...');
-                                 await wait(2000);
-                             }
-
-                             console.log(`[Reviews] Starting scroll sequence (Forced 8 screens)...`);
-                            const scrollLoops = 8; // User requested fixed 8 screens down
-                            
-                            for (let i = 0; i < scrollLoops; i++) {
-                                const startY = window.scrollY;
-                                window.scrollBy(0, window.innerHeight);
-                                await wait(1500 + Math.random() * 500); // Increased wait time for image loading
-                                 const endY = window.scrollY;
-                                 
-                                 // Check if scroll happened
-                                 if (Math.abs(endY - startY) < 10) {
-                                     console.log('[Reviews] Window scroll failed, trying container scroll...');
-                                     
-                                     // OPTIMIZATION: Don't scan all divs. Look for likely containers.
-                                     // 1. Try finding a div with 'scroll' class or style
-                                     // 2. Or just pick the largest div
-                                     const likelyContainers = Array.from(document.querySelectorAll('div[class*="container"], div[class*="list"], div[class*="scroll"], .main, #main'));
-                                     
-                                     let scrollable = likelyContainers.find(d => {
-                                         const style = window.getComputedStyle(d);
-                                         return (style.overflowY === 'auto' || style.overflowY === 'scroll') && d.scrollHeight > d.clientHeight;
-                                     });
-
-                                     // Fallback: If no obvious container, try the body or root element
-                                     if (!scrollable) {
-                                         const body = document.body;
-                                         if (body.scrollHeight > body.clientHeight) scrollable = body;
-                                     }
-
-                                     if (scrollable) {
-                                         console.log('[Reviews] Found scrollable container:', scrollable.className);
-                                         scrollable.scrollBy(0, 500);
-                                         await wait(500);
-                                     } else {
-                                         console.log('[Reviews] No scrollable container found.');
-                                     }
-                                 }
-                             }
-                             
-                             console.log('[Reviews] Extracting reviews...');
-                             
-                             // Strategy 0: User-Provided Specific Selectors (Priority)
-                             // Review Item: div.LFMbudEX
-                             // Name: span.BQX0_Yxu
-                             // Variant: span.X2uOYqB0
-                             // Comment: .dTH6vA6C
-                             // Photos: div.db85mmgV
-                             
-                             const specificReviewItems = document.querySelectorAll('div.LFMbudEX');
-                             if (specificReviewItems && specificReviewItems.length > 0) {
-                                 console.log(`[Reviews] Found ${specificReviewItems.length} reviews using specific selector (div.LFMbudEX).`);
-                                 
-                                 specificReviewItems.forEach(item => {
-                                     try {
-                                         // Name
-                                         const nameEl = item.querySelector('span.BQX0_Yxu');
-                                         const name = nameEl ? nameEl.innerText.trim() : 'Pinduoduo Shopper';
-                                         
-                                         // Variant/Option
-                                         const variantEl = item.querySelector('span.X2uOYqB0');
-                                         const variantText = variantEl ? variantEl.innerText.trim() : '';
-                                         
-                                         // Comment
-                                         const commentEl = item.querySelector('.dTH6vA6C');
-                                         let comment = commentEl ? commentEl.innerText.trim() : '';
-                                         
-                                         // Append variant to comment if exists (so it's visible)
-                                         if (variantText) {
-                                             comment = comment ? `${comment}\n(Option: ${variantText})` : `(Option: ${variantText})`;
-                                         }
-                                         
-                                        // Photos: div.db85mmgV -> div.x0U3sYw6 -> img
-                                        const photoContainer = item.querySelector('div.db85mmgV');
-                                        let photos = [];
-                                        if (photoContainer) {
-                                            // Check specifically for the image wrapper class provided by user
-                                            const photoWrappers = photoContainer.querySelectorAll('div.x0U3sYw6');
-                                            
-                                            if (photoWrappers && photoWrappers.length > 0) {
-                                                 photos = Array.from(photoWrappers)
-                                                    .map(w => {
-                                                        const img = w.querySelector('img');
-                                                        return img ? (img.getAttribute('data-src') || img.src) : null;
-                                                    })
-                                                    .filter(src => src && !src.includes('avatar') && !src.startsWith('data:'))
-                                                    .map(src => src.split('?')[0]);
-                                            } else {
-                                                // Fallback to direct image search if wrapper class changes
-                                                photos = Array.from(photoContainer.querySelectorAll('img'))
-                                                   .filter(img => img.naturalWidth > 50 && !img.src.includes('avatar'))
-                                                   .map(img => img.src.split('?')[0]);
-                                            }
-                                        }
-                                         
-                                         if (comment || photos.length > 0) {
-                                             extractedReviews.push({ name, comment, photos: [...new Set(photos)] });
-                                         }
-                                     } catch (err) {
-                                         console.log('[Reviews] Error extracting specific review item:', err.message);
-                                     }
-                                 });
-                             } else {
-                                 console.log('[Reviews] Specific selector (div.LFMbudEX) not found. Trying fallback strategy...');
-                                 
-                                 // Strategy 1: Group elements by class name (Fallback)
-                                 const candidates = Array.from(document.querySelectorAll('div'));
-                                 const classCounts = {};
-                                 
-                                 // Limit candidates to first 2000 to avoid freezing
-                                 const limit = Math.min(candidates.length, 2000);
-                                 
-                                 for (let i=0; i<limit; i++) {
-                                     const d = candidates[i];
-                                     if (d.className && typeof d.className === 'string' && d.innerText.length > 5) {
-                                         const c = d.className;
-                                         if (!classCounts[c]) classCounts[c] = [];
-                                         classCounts[c].push(d);
-                                     }
-                                 }
-                                 
-                                 let bestClass = null;
-                                 let maxCount = 0;
-                                 for (const [cls, items] of Object.entries(classCounts)) {
-                                     if (items.length > 1) {
-                                         const first = items[0];
-                                         const text = first.innerText.trim();
-                                         // Check for images inside
-                                         const imgs = first.querySelectorAll('img');
-                                         const hasValidImg = Array.from(imgs).some(img => img.naturalWidth > 50 && !img.src.includes('avatar'));
-                                         
-                                         if (text.length > 5 && (hasValidImg || items.length > 3)) {
-                                             if (items.length > maxCount) { maxCount = items.length; bestClass = cls; }
-                                         }
-                                     }
-                                 }
-
-                                 if (bestClass) {
-                                     console.log(`[Reviews] Best review class: ${bestClass} (Count: ${maxCount})`);
-                                     const items = classCounts[bestClass];
-                                     items.forEach(item => {
-                                         const text = item.innerText.trim();
-                                         const imgs = Array.from(item.querySelectorAll('img')).filter(img => img.naturalWidth > 50 && !img.src.includes('avatar')).map(img => img.src.split('?')[0]);
-                                         if (text && (imgs.length > 0 || text.length > 10)) {
-                                             const lines = text.split('\n').map(l => l.trim()).filter(l => l);
-                                             let name = 'Pinduoduo Shopper';
-                                             let comment = text;
-                                             if (lines.length > 1 && lines[0].length < 20) { name = lines[0]; comment = lines.slice(1).join(' '); }
-                                             extractedReviews.push({ name, comment, photos: [...new Set(imgs)] });
-                                         }
-                                     });
-                                 } else {
-                                     console.log('[Reviews] No best class found. Fallback to image scan.');
-                                     const visibleImgs = Array.from(document.querySelectorAll('img')).filter(img => img.naturalWidth > 100 && !img.src.includes('avatar')).map(img => img.src.split('?')[0]);
-                                     const uniqueImgs = [...new Set(visibleImgs)];
-                                     for (let i = 0; i < uniqueImgs.length; i += 3) {
-                                         extractedReviews.push({ 
-                                            name: 'Pinduoduo Shopper', 
-                                            comment: '\u0635\u0648\u0631 \u0645\u0646 \u062a\u0642\u064a\u064a\u0645\u0627\u062a \u0627\u0644\u0639\u0645\u0644\u0627\u0621', // Photos from customer reviews
-                                            photos: uniqueImgs.slice(i, i+3) 
-                                        });
-                                     }
-                                 }
-                             }
-
-                             console.log(`[Reviews] Extracted ${extractedReviews.length} reviews.`);
-
-                             // Go Back
-                            console.log('[Reviews] Going back...');
-                            const backBtnText = String.fromCharCode(36820, 22238); // 返回
-                            const backBtn = document.querySelector(`div[role="button"][aria-label*="${backBtnText}"]`) || 
-                                            document.querySelector('[data-testid="back-button"]') ||
-                                            Array.from(document.querySelectorAll('div, span')).find(el => el.innerText === backBtnText);
-                                            
-                            if (backBtn) backBtn.click();
-                            else window.history.back();
-                             
-                         } catch (e) { console.log('Review error:', e.message); }
-                         return extractedReviews;
-                     }, [shouldDeepScroll], 12);
-                     
-                     console.log(`[Reviews] Extracted ${reviews.length} reviews. Waiting 2s for back navigation...`);
-                     await new Promise(r => setTimeout(r, 2000));
-                }
-                data.reviews = reviews;
-
-                // --- TRANSLATE REVIEWS (BATCHED) ---
-                if (data.reviews && data.reviews.length > 0 && aiClient) {
-                    const reviewsToTranslate = data.reviews.slice(0, 15); // Top 15
-                    console.log(`[Reviews] Translating top ${reviewsToTranslate.length} reviews to Arabic...`);
-                    
-                    const reviewBatches = [];
-                    // Reduced batch size to prevent token limit truncation
-                    for (let i = 0; i < reviewsToTranslate.length; i += 3) {
-                        reviewBatches.push(reviewsToTranslate.slice(i, i + 3));
-                    }
-
-                    const translatedReviews = [];
-
-                    for (const batch of reviewBatches) {
-                        const batchContent = JSON.stringify(batch.map(r => ({ n: r.name, c: r.comment })));
-                        const prompt = `
-                        Translate these product reviews to Arabic (Iraqi dialect preferred for comments).
-                        Input: ${batchContent}
-                        
-                        IMPORTANT:
-                        - Return ONLY a raw JSON array.
-                        - NO markdown blocks (do not use \`\`\`json).
-                        - Keep the order EXACTLY the same.
-                        - Each item: {"n": "Translated Name", "c": "Translated Comment"}
-                        - "Pinduoduo Shopper" -> "متسوق" or similar.
-                        - "Photos from customer reviews" -> "صور من تقييمات العملاء"
-                        `;
-
-                        try {
-                            const res = await aiClient.chat.completions.create({
-                                model: AI_PRIMARY_MODEL,
-                                messages: [{ role: "user", content: prompt }],
-                                temperature: 0.4,
-                                max_tokens: 2500 // Increased to prevent truncation
-                            });
-                            
-                            let jsonStr = res.choices[0].message.content.replace(/```json/g, '').replace(/```/g, '').trim();
-                             const start = jsonStr.indexOf('[');
-                             const end = jsonStr.lastIndexOf(']');
-                             
-                             if (start !== -1) {
-                                 if (end !== -1 && end > start) {
-                                     jsonStr = jsonStr.substring(start, end + 1);
-                                 } else {
-                                     // No closing bracket found, or it's before start. Likely truncated.
-                                     // Keep from start to end of string to attempt repair later.
-                                     jsonStr = jsonStr.substring(start);
-                                 }
-                             } else {
-                                 // If no array found, try to find single object and wrap in array
-                                 const startObj = jsonStr.indexOf('{');
-                                 const endObj = jsonStr.lastIndexOf('}');
-                                 if (startObj !== -1 && endObj !== -1) {
-                                     jsonStr = `[${jsonStr.substring(startObj, endObj + 1)}]`;
-                                 }
-                             }
-                             
-                             // Escape unescaped double quotes within string values
-                             // This is a heuristic and might need refinement
-                             // jsonStr = jsonStr.replace(/(?<!\\)"/g, '\\"'); // Too aggressive, breaks structure
-                             
-                             let transBatch;
-                             try {
-                                transBatch = JSON.parse(jsonStr);
-                             } catch (e) {
-                                 console.log('[Reviews] JSON Parse Error. Attempting to fix common JSON issues...');
-                                 try {
-                                     // Try to fix common JSON issues: trailing commas
-                                     const fixedJsonStr = jsonStr.replace(/,\s*]/g, ']').replace(/,\s*}/g, '}');
-                                     transBatch = JSON.parse(fixedJsonStr);
-                                 } catch (e2) {
-                                     console.log('[Reviews] Simple fix failed. Attempting to recover truncated JSON...');
-                                     try {
-                                         // Check for truncation: Prefer splitting at the last object separator "},"
-                                    const lastCommaIndex = jsonStr.lastIndexOf('},');
-                                    let recovered = false;
-                                    
-                                    if (lastCommaIndex !== -1) {
-                                        try {
-                                            const truncatedJson = jsonStr.substring(0, lastCommaIndex + 1) + ']';
-                                            transBatch = JSON.parse(truncatedJson);
-                                            console.log(`[Reviews] Recovered ${transBatch.length} reviews by splitting at last comma.`);
-                                            recovered = true;
-                                        } catch (eComma) {}
-                                    }
-                                    
-                                    if (!recovered) {
-                                        // Fallback: Find the last closing brace '}'
-                                        const lastBraceIndex = jsonStr.lastIndexOf('}');
-                                        if (lastBraceIndex !== -1) {
-                                            const truncatedJson = jsonStr.substring(0, lastBraceIndex + 1) + ']';
-                                            transBatch = JSON.parse(truncatedJson);
-                                            console.log(`[Reviews] Recovered ${transBatch.length} reviews by finding last brace.`);
-                                        } else {
-                                            throw e2;
-                                        }
-                                    }
-                                     } catch (e3) {
-                                         console.log('[Reviews] Failed to parse translated reviews JSON:', e3.message);
-                                         console.log('Raw response:', res.choices[0].message.content);
-                                         transBatch = null; 
-                                     }
-                                 }
-                             }
-                            
-                            if (Array.isArray(transBatch) && transBatch.length > 0) {
-                                batch.forEach((r, idx) => {
-                                    if (idx < transBatch.length) {
-                                        translatedReviews.push({
-                                            ...r,
-                                            name: transBatch[idx].n || r.name,
-                                            comment: transBatch[idx].c || r.comment
-                                        });
-                                    } else {
-                                        // Fallback for missing translations (truncated items)
-                                        console.log(`[Reviews] Item ${idx} missing translation (likely truncated). Using original.`);
-                                        translatedReviews.push(r);
-                                    }
-                                });
-                            } else {
-                                // Fallback: use original
-                                console.log('[Reviews] Translation failed or invalid format. Using original reviews.');
-                                translatedReviews.push(...batch);
-                            }
-
-                        } catch (e) {
-                            console.log('[Reviews] Translation error:', e.message);
-                            translatedReviews.push(...batch);
-                        }
-
-                        // Rate Limit Buffer to avoid 429
-                        await new Promise(r => setTimeout(r, 1000));
-                    }
-                    
-                    data.reviews = translatedReviews;
-                    console.log(`[Reviews] Translation complete. ${data.reviews.length} reviews ready.`);
-                }
-
-                // --- ENSURE NAVIGATION BACK TO MAIN PAGE ---
-                try {
-                    const isMainPage = await newPage.evaluate(() => {
-                        // Check for common main page elements: Title, Price, or Bottom Bar buttons
-                        return !!document.querySelector('.goods-details-title') || 
-                               !!document.querySelector('.enable-select') || // Price/Title area often has this
-                               !!document.querySelector('div[aria-label="收藏"]') || // Favorite button
-                               !!document.querySelector('div[aria-label="客服"]');   // Customer service
-                    });
-                    
-                    if (!isMainPage && data.hasReviews) {
-                        console.log('[Reviews] Not on main page after review extraction. Forcing browser back navigation...');
-                        await newPage.goBack();
-                        await wait(3000);
-                    }
-                } catch (e) {
-                    console.log('[Reviews] Error checking page state:', e.message);
-                }
-
-                // --- PART 3: DESCRIPTION IMAGES (Separate Context) ---
-                console.log('[Description] Starting description image extraction (New Context)...');
-                const product_desc_imgs = await safeEvaluate(newPage, async () => {
-                     const wait = (ms) => new Promise(r => setTimeout(r, ms));
-                     const imgs = [];
-                     
-                     // Scroll
-                     console.log('[Description] Scrolling...');
-                     const steps = 20;
-                     const stepSize = document.body.scrollHeight / steps;
-                     for (let i = 0; i < steps; i++) {
-                         window.scrollBy(0, stepSize);
-                         await wait(100);
-                     }
-                     await wait(2000);
-
-                     // Extract
-                     const allImgs = Array.from(document.querySelectorAll('img'));
-                     allImgs.forEach(img => {
-                         let src = img.getAttribute('data-src') || img.src;
-                         if (src && !src.startsWith('data:') && img.naturalWidth > 300) {
-                             if (!src.includes('avatar') && !src.includes('icon')) {
-                                 imgs.push(src.split('?')[0]);
-                             }
-                         }
-                     });
-                     return [...new Set(imgs)];
-                });
-                data.product_desc_imgs = product_desc_imgs;
-
-                // Enrich
-                console.log(`Enriching: ${data.title.substring(0, 20)}...`);
-                
-                let general_price = 0;
-                if (data.price) {
-                     const match = data.price.match(/(\d+(\.\d+)?)/);
-                     if (match) general_price = parseFloat(match[1]) * 200; 
-                }
-
-                // --- EDIBLE CHECK (KEYWORD PRE-FILTER) ---
-                const preCheck = isEdiblePreCheck(data.title, data.description);
-                if (preCheck.isEdible) {
-                    console.log(`Skipping product (EDIBLE KEYWORD DETECTED: ${preCheck.keyword}): ${data.title.substring(0, 30)}...`);
-                    if (!navigationHappened) await newPage.close();
-                    else await newPage.goBack();
-                    continue;
-                }
-
-                const aiData = await enrichWithAI(data.title, data.description, data.price);
-
-                // CHECK: Did AI fail completely?
-                if (aiData.shouldSkip) {
-                    console.error(`Skipping product due to AI translation failure: ${aiData.reason}`);
-                    if (!navigationHappened) await newPage.close();
-                    else await newPage.goBack();
-                    continue;
-                }
-
-                // CHECK: Is it edible (AI Detection)?
-                if (aiData.is_edible) {
-                    console.log(`Skipping product (AI DETECTED EDIBLE): ${data.title.substring(0, 30)}...`);
-                    if (!navigationHappened) await newPage.close();
-                    else await newPage.goBack();
-                    continue;
-                }
-
-                // --- GENERATE OPTIONS FROM SKU MAP (WITH TRANSLATION) ---
-                let generated_options = [];
-                const variantImages = data.variantImages || {};
-                const skuThumbMap = data.skuThumbMap || {};
-
-                if (data.skuMap && Object.keys(data.skuMap).length > 0) {
-                    const rawVariantEntries = Object.entries(data.skuMap || {});
-                    // console.log(`Variant prices BEFORE translation (${rawVariantEntries.length})`);
-                    const rawPreviewLimit = 5; // Reduced limit
-                    
-                    // Helper to translate color/size via AI if possible, or simple mapping
-                    // Since we want strict Arabic, we might need a quick AI pass or just use the aiData logic
-                    // For now, let's process the structure first, then maybe translate the labels
-
-                    const resolveThumbnail = (optionKey, colorStr) => {
-                        if (optionKey && skuThumbMap[optionKey]) return skuThumbMap[optionKey];
-                        if (!colorStr) return null;
-                        if (variantImages[colorStr]) return variantImages[colorStr];
-                        const keys = Object.keys(variantImages || {});
-                        const matchingKey = keys.find(k => k && (k.includes(colorStr) || colorStr.includes(k)));
-                        return matchingKey ? variantImages[matchingKey] : null;
-                    };
-
-                    for (const [key, priceStr] of rawVariantEntries) {
-                        let color = key;
-                        let size = null;
-
-                        if (key.includes('__SEP__')) {
-                            const parts = key.split('__SEP__');
-                            color = parts[0];
-                            size = parts[1];
-                        }
-
-                        let priceVal = 0;
-                        const match = String(priceStr || '').match(/(\d+(\.\d+)?)/);
-                        if (match) priceVal = parseFloat(match[1]) * 200;
-
-                        color = String(color || '')
-                            .replace(/\n.*$/, '')
-                            .replace(/م€گ.*?م€‘/g, '')
-                            .replace(/\s+/g, ' ')
-                            .trim();
-
-                        if (size) {
-                            size = String(size || '');
-                            size = size.replace(/(\d+(\.\d+)?)\s*[-~]\s*(\d+(\.\d+)?)\s*و–¤/g, (m, p1, p2, p3) => {
-                                const start = parseFloat(p1) / 2;
-                                const end = parseFloat(p3) / 2;
-                                return `${start}-${end}kg`;
-                            });
-                            size = size.replace(/(\d+(\.\d+)?)\s*و–¤/g, (m, p1) => `${parseFloat(p1) / 2}kg`);
-                            size = size.replace(/\n.*$/, '').replace(/م€گ.*?م€‘/g, '').replace(/\s+/g, ' ').trim();
-                            if (!size) size = null;
-                        }
-
-                        generated_options.push({
-                            color,
-                            sizes: size ? [size] : [],
-                            price: priceVal,
-                            thumbnail: resolveThumbnail(key, color)
-                        });
-                    }
-
-                    console.log(`Generated options from SKU map (${generated_options.length})`);
-
-                    // LIMIT OPTIONS: If more than 50, limit to 50
-                    if (generated_options.length > 50) {
-                        console.log(`[Options] Too many options (${generated_options.length}). Limiting to 50.`);
-                        generated_options = generated_options.slice(0, 50);
-                    }
- 
-                     // --- TRANSLATE OPTIONS IF AI IS AVAILABLE ---
-                     if (aiClient && generated_options.length > 0) {
-                         console.log(`Translating ${generated_options.length} options via AI (chunked)...`);
-
-                         const translateChunk = async (chunk) => {
-                             const optionsText = JSON.stringify(chunk.map(o => ({ c: o.color, s: (o.sizes && o.sizes[0]) ? o.sizes[0] : "" })));
-                             const transPrompt = `
-                             Translate these product options to Arabic.
-                             Input: ${optionsText}
-                             
-                             IMPORTANT:
-                             - Return ONLY a JSON array. Do not include any conversational text like "Here is the JSON" or markdown code blocks.
-                             - Keep the number of items EXACTLY the same as input.
-                             - Keep the order EXACTLY the same as input.
-                             - Each output item must be {"c": "...", "s": "..."}.
-                             - If the input contains "kg" (kilograms), KEEP "kg" in the translation (e.g. "80kg" -> "80kg" or "80 كغم").
-                            - Do NOT convert numbers back to original units.
-                            - Remove any Chinese characters or marketing text like "快要断码", "图片色" (Image Color), "高质量", "建议", "斤".
-                            - "图片色" or "默认" should be translated as "كما في الصورة" (As shown in image) or "اللون الافتراضي" (Default Color).
-                            - Remove any newlines or extra whitespace.
-                            - Return pure, clean Arabic names for colors and sizes.
-                            - TRANSLATE COLORS TO ARABIC (e.g. "Black" -> "أسود", "红色" -> "أحمر").
-                            - TRANSLATE "建议" (Recommended) to "مقترح" or remove it if just a label.
-                            - STRICTLY REMOVE any "return policy", "refund", "replacement" (e.g. "包退", "包换") text from option names.
-                             `;
-
-                             const translate = async (model) => {
-                                 return await aiClient.chat.completions.create({
-                                     model,
-                                     messages: [{ role: "user", content: transPrompt }],
-                                     temperature: 0.3,
-                                     max_tokens: 2048
-                                 });
-                             };
-
-                             let transRes;
-                             try {
-                                transRes = await translate(AI_PRIMARY_MODEL);
-                            } catch (e) {
-                                if (isTimeoutError(e)) {
-                                    throw e;
-                                }
-                                if (isModelBusyError(e)) {
-                                    console.log(`AI busy on ${AI_PRIMARY_MODEL}. Falling back to ${AI_BUSY_FALLBACK_MODEL} for options translation...`);
-                                    transRes = await translate(AI_BUSY_FALLBACK_MODEL);
-                                } else if (AI_FALLBACK_MODEL && AI_FALLBACK_MODEL !== AI_PRIMARY_MODEL) {
-                                    console.log(`AI error on ${AI_PRIMARY_MODEL}. Falling back to ${AI_FALLBACK_MODEL} for options translation...`);
-                                    transRes = await translate(AI_FALLBACK_MODEL);
-                                } else {
-                                    throw e;
-                                }
-                            }
-
-                             let transJson = transRes.choices[0].message.content.replace(/```json/g, '').replace(/```/g, '').trim();
-                             const startIdx = transJson.indexOf('[');
-                             const endIdx = transJson.lastIndexOf(']');
-                             if (startIdx !== -1 && endIdx !== -1) transJson = transJson.substring(startIdx, endIdx + 1);
-
-                             const transArr = JSON.parse(transJson);
-                             if (!Array.isArray(transArr) || transArr.length !== chunk.length) {
-                                 throw new Error(`Translation length mismatch (${Array.isArray(transArr) ? transArr.length : 'invalid'} vs ${chunk.length})`);
-                             }
-                             return transArr;
-                         };
-
-                         const applyTranslation = (chunk, transArr) => {
-                             for (let i = 0; i < chunk.length; i++) {
-                                 const opt = chunk[i];
-                                 const t = transArr[i] || {};
-                                 if (t.c) opt.color = String(t.c).trim().replace(/\s+/g, ' ');
-                                 if (Array.isArray(opt.sizes) && opt.sizes.length > 0) {
-                                     if (t.s !== undefined && t.s !== null) {
-                                         const nextSize = String(t.s).trim().replace(/\s+/g, ' ');
-                                         if (nextSize) opt.sizes[0] = nextSize;
-                                     }
-                                 }
-                             }
-                         };
-
-                         const baseChunkSize = Number(process.env.AI_OPTIONS_TRANSLATE_CHUNK_SIZE) > 0 ? Number(process.env.AI_OPTIONS_TRANSLATE_CHUNK_SIZE) : 25;
-                         const queue = [];
-                         for (let i = 0; i < generated_options.length; i += baseChunkSize) {
-                             queue.push([i, Math.min(i + baseChunkSize, generated_options.length)]);
-                         }
-
-                         while (queue.length > 0) {
-                             const [start, end] = queue.shift();
-                             const chunk = generated_options.slice(start, end);
-                             let ok = false;
-                             let attempts = 0;
-                             const maxAttempts = 3;
-                             while (!ok && attempts < maxAttempts) {
-                                 attempts++;
-                                 try {
-                                     const transArr = await translateChunk(chunk);
-                                     applyTranslation(chunk, transArr);
-                                     ok = true;
-                                 } catch (e) {
-                                     if (attempts >= maxAttempts) break;
-                                     await delay(700);
-                                 }
-                             }
-                             if (!ok) {
-                                 if (chunk.length <= 1) continue;
-                                 const mid = start + Math.floor((end - start) / 2);
-                                 queue.unshift([mid, end]);
-                                 queue.unshift([start, mid]);
-                             }
-                         }
-
-                         console.log('Options translation applied (chunked best-effort).');
-                     } else {
-                         console.log('Skipping options translation (AI not ready or no options).');
+                     } catch(e) {
+                         // console.log('Error closing modal:', e.message);
                      }
 
-                    // console.log(`Variant prices AFTER translation (${generated_options.length})`);
-                    /*
-                    const postLines = [];
-                    for (const opt of generated_options) {
-                        const s = (opt.sizes && opt.sizes[0]) ? opt.sizes[0] : '';
-                        postLines.push(`${opt.color}${s ? `__SEP__${s}` : ''} => ${opt.price} IQD`);
-                    }
-                    const postPreviewLimit = 120;
-                    postLines.slice(0, postPreviewLimit).forEach(l => console.log(`  ${l}`));
-                    if (postLines.length > postPreviewLimit) console.log(`  ... truncated ${postLines.length - postPreviewLimit} more`);
-                    */
-                    console.log(`> Processed ${generated_options.length} variants.`);
-                 }
-
-
-
-                // --- FIX: If general_price is 0 but we have options with prices, use the min option price ---
-                if (general_price <= 0 && generated_options.length > 0) {
-                    const validOptionPrices = generated_options
-                        .map(o => o.price)
-                        .filter(p => p > 0);
-                    
-                    if (validOptionPrices.length > 0) {
-                        general_price = Math.min(...validOptionPrices);
-                        console.log(`[Price Fix] General price was 0, updated to ${general_price} from minimum option price.`);
-                    }
-                }
-
-                const enrichedProduct = {
-                    product_name: aiData.product_name_ar || 'اسم غير متوفر',
-                    // original_name: data.title, // REMOVED as per request
-                    main_images: data.images.slice(0, 5),
-                    url: productUrl,
-                    // product_details: data.productDetails, // REMOVED as per request
-                    product_details: aiData.product_details_ar, // Use Arabic details as main 'product_details'
-                    // product_details_ar: aiData.product_details_ar, // REMOVED redundancy
-                    product_desc_imgs: data.product_desc_imgs || [], // Description Images
-                    general_price: general_price,
-                    generated_options: generated_options, // New Field
-                    scrapedReviews: data.reviews || [], // Store reviews at top level (renamed from reviews)
-                    aiMetadata: { ...(aiData.aiMetadata || {}) }, // Removed reviews from here
-                    isAirRestricted: aiData.isAirRestricted || false, // New Field
-                    // variants: data.variants, // REMOVED as per request
-                    // skuMap: data.skuMap // REMOVED as per request
-                };
-
-                // Calculate Final Price with 15% Profit
-                const calculateFinalPrice = (base) => {
-                    const price = Number(base) || 0;
-                    if (price <= 0) return 0;
-                    // Formula: (BaseIQD + Domestic) * 1.15 / 10 * 10 (ceil)
-                    // Assuming domestic shipping is 0 or handled separately in cart logic, 
-                    // but usually scraper stores the inclusive price.
-                    // Let's stick to the basic profit margin here.
-                    return Math.ceil((price * 1.15) / 10) * 10;
-                };
-
-                const finalPrice = calculateFinalPrice(general_price);
-
-                // CHECK: Skip product if price is too low (<= 250 IQD)
-                // This usually indicates a failed price extraction or a dummy product
-                if (finalPrice <= 250) {
-                    console.log(`Skipping product: Price too low (Final: ${finalPrice}, Base: ${general_price}). URL: ${productUrl}`);
-                    if (!navigationHappened) await newPage.close();
-                    else await newPage.goBack();
-                    continue;
-                }
-
-                products.push(enrichedProduct);
-                console.log(`Scraped successfully. Total: ${products.length}`);
-                
-                fs.writeFileSync(OUTPUT_FILE, JSON.stringify(products, null, 2));
-
-                // --- DATABASE INSERTION ---
-                // console.log('Inserting into Database...');
-                try {
-                    // 1. Create Product
-                    const newProduct = await prisma.product.create({
-                        data: {
-                            name: enrichedProduct.product_name,
-                            price: finalPrice, // Store FINAL price with profit
-                            basePriceIQD: enrichedProduct.general_price || 0, // Store BASE price (Cost)
-                            image: enrichedProduct.main_images[0] || '',
-                            purchaseUrl: enrichedProduct.url,
-                            specs: JSON.stringify(enrichedProduct.product_details || {}),
-                            aiMetadata: enrichedProduct.aiMetadata || {},
-                            scrapedReviews: enrichedProduct.scrapedReviews || [], // Save reviews to DB
-                            isAirRestricted: enrichedProduct.isAirRestricted || false, // Save to DB
-                            status: "PUBLISHED",
-                            isActive: true,
-                        }
-                    });
-                    console.log(`Product created: ID ${newProduct.id}`);
-
-                    // 2. Create Product Images (Gallery)
-                    if (enrichedProduct.main_images && enrichedProduct.main_images.length > 0) {
-                        await prisma.productImage.createMany({
-                            data: enrichedProduct.main_images.map((url, i) => ({
-                                productId: newProduct.id,
-                                url: url,
-                                order: i,
-                                type: "GALLERY"
-                            }))
-                        });
-                    }
-
-                    // 3. Create Description Images
-                    if (enrichedProduct.product_desc_imgs && enrichedProduct.product_desc_imgs.length > 0) {
-                        await prisma.productImage.createMany({
-                            data: enrichedProduct.product_desc_imgs.map((url, i) => ({
-                                productId: newProduct.id,
-                                url: url,
-                                order: i + 100, // Offset to keep them after gallery
-                                type: "DESCRIPTION"
-                            }))
-                        });
-                    }
-
-                    // 4. Create Product Options (Color & Size) - VALIDATED
-                    const colors = new Set();
-                    const sizes = new Set();
-                    
-                    // Filter out Chinese characters from options
-                    const containsChinese = (str) => /[\u4e00-\u9fa5]/.test(str);
-                    
-                    // Filter out invalid/suspicious options (Custom orders, deposits, etc.)
-                    const invalidKeywords = [
-                        '定制', '专拍', '补差', '邮费', '不发货', '联系客服', // Chinese
-                        'تخصيص', 'اتصال', 'رابط', 'فرق', 'إيداع', 'لا يرسل', 'خدمة العملاء', 'مخصص' // Arabic
-                    ];
-
-                    enrichedProduct.generated_options = enrichedProduct.generated_options.filter(opt => {
-                        const text = (opt.color || '') + ' ' + (opt.sizes ? opt.sizes.join(' ') : '');
-                        const hasInvalidKeyword = invalidKeywords.some(kw => text.includes(kw));
-
-                        if (hasInvalidKeyword) {
-                            console.log(`Skipping invalid/suspicious option: ${text} (Price: ${opt.price})`);
-                            return false;
-                        }
-                        return true;
-                    });
-
-                    enrichedProduct.generated_options.forEach(opt => {
-                        // Skip entire option if color is Chinese
-                        if (opt.color && !containsChinese(opt.color)) {
-                            colors.add(opt.color);
-                        } else if (opt.color) {
-                            // RETRY TRANSLATION FOR SINGLE OPTION
-                            // We do a synchronous-like blocking call here or just use it as is if critical?
-                            // User said: "try to translate it again if you can't then use it, don't skip generated options"
-                            console.log(`Chinese color detected: ${opt.color}. Attempting fallback translation/usage...`);
-                            colors.add(opt.color); // Add it anyway, don't skip
-                        }
-
-                        if (opt.sizes && Array.isArray(opt.sizes)) {
-                            opt.sizes.forEach(s => {
-                                if (!containsChinese(s)) {
-                                    sizes.add(s);
-                                } else {
-                                    console.log(`Chinese size detected: ${s}. Using it anyway.`);
-                                    sizes.add(s);
-                                }
-                            });
-                        }
-                    });
-
-                    // Only create options if we have valid values
-                    if (colors.size > 0) {
-                        await prisma.productOption.create({
-                            data: {
-                                productId: newProduct.id,
-                                name: "اللون",
-                                values: JSON.stringify(Array.from(colors))
-                            }
-                        });
-                    }
-
-                    if (sizes.size > 0) {
-                        await prisma.productOption.create({
-                            data: {
-                                productId: newProduct.id,
-                                name: "المقاس",
-                                values: JSON.stringify(Array.from(sizes))
-                            }
-                        });
-                    }
-
-                    // 5. Create Variants - VALIDATED
-                    const variantsData = [];
-                    const normalizeVariantBasePrice = (basePrice) => {
-                        let p = Number(basePrice) || 0;
-                        if (p > 0 && p < 100) {
-                            console.log(`Warning: Suspiciously low price (${p}). Assuming RMB and multiplying by 200.`);
-                            p = p * 200;
-                        } else if (p > 0 && p < 1000 && enrichedProduct.general_price > 5000) {
-                            console.log(`Warning: Variant price ${p} vs Main ${enrichedProduct.general_price}. Assuming RMB.`);
-                            p = p * 200;
-                        }
-                        return p;
-                    };
-                    for (const opt of enrichedProduct.generated_options) {
-                        // SKIP if color is Chinese (DISABLED: User wants to keep them)
-                        // if (containsChinese(opt.color)) continue;
-
-                        const color = opt.color;
-                        const fallbackBasePrice = normalizeVariantBasePrice(opt.price || enrichedProduct.general_price || 0);
-                        const variantImg = opt.thumbnail || enrichedProduct.main_images[0] || '';
-                        
-                        if (opt.sizes && Array.isArray(opt.sizes) && opt.sizes.length > 0) {
-                            for (const size of opt.sizes) {
-                                const variantBasePrice = fallbackBasePrice;
-                                const variantFinalPrice = calculateFinalPrice(variantBasePrice);
-                                const combinationObj = {
-                                    "اللون": color,
-                                    "المقاس": size
-                                };
-                                variantsData.push({
-                                    productId: newProduct.id,
-                                    combination: JSON.stringify(combinationObj),
-                                    price: variantFinalPrice,
-                                    basePriceIQD: variantBasePrice,
-                                    image: variantImg
-                                });
-                            }
-                        } else {
-                            const variantBasePrice = fallbackBasePrice;
-                            const variantFinalPrice = calculateFinalPrice(variantBasePrice);
-                            const combinationObj = { "اللون": color };
-                            variantsData.push({
-                                productId: newProduct.id,
-                                combination: JSON.stringify(combinationObj),
-                                price: variantFinalPrice,
-                                basePriceIQD: variantBasePrice,
-                                image: variantImg
-                            });
-                        }
-                    }
-
-                    if (variantsData.length > 0) {
-                        await prisma.productVariant.createMany({
-                            data: variantsData
-                        });
-                    }
-                    // console.log('Database insertion complete.');
-
-                    // Generate and save embedding for new product
-                    if (newProduct && newProduct.id) {
-                        try {
-                            // console.log('Triggers the embedding...');
-                            await processProductEmbedding(newProduct.id);
-                        } catch (embedErr) {
-                            console.error(`Embedding generation failed for product ${newProduct.id} (non-fatal):`, embedErr.message);
-                        }
-                    }
-
-                } catch (dbErr) {
-                    console.error('Database Insertion Failed:', dbErr.message);
-                }
-
-                // --- SKIP DB INSERTION (Local Mode) ---
-                // console.log('Skipping Database Insertion (Local Mode)');
-
-            } catch (scrapeErr) {
-                console.error('Scrape error:', scrapeErr.message);
-            }
-
-            // Clean up
-            if (!navigationHappened) {
-                try {
-                    if (newPage && !newPage.isClosed()) await newPage.close();
-                } catch(e) { console.log('Error closing tab:', e.message); }
-                try { await page.bringToFront(); } catch(e){}
-            } else {
-                console.log('Going back to category page...');
-                const previousUrl = page.url();
-                try {
-                    await page.goBack({ waitUntil: 'domcontentloaded', timeout: 15000 });
-                } catch (e) {
-                    console.log('goBack failed or timed out:', e.message);
-                }
-                
-                await humanDelay(2000, 3000);
-
-                // ROBUSTNESS CHECK: Did we actually go back?
-                const isCategoryUrl = (url) => {
-                    if (!url) return false;
-                    return url.includes('catgoods') || url.includes('search_result') || url.includes('subjects') || url.includes('search') || url.includes('opt');
-                };
-                const isProductUrl = (url) => {
-                    if (!url) return false;
-                    return url.includes('goods_id') || url.includes('goods.html') || url.includes('goods_detail');
-                };
-
-                let currentUrl = page.url();
-                let isCategoryPage = isCategoryUrl(currentUrl) && !isProductUrl(currentUrl);
-
-                for (let attempt = 1; attempt <= 3 && !isCategoryPage; attempt++) {
-                    console.log(`⚠️ Not back on category page yet. Going back again (${attempt}/3)...`);
-                    try {
-                        await page.goBack({ waitUntil: 'domcontentloaded', timeout: 15000 });
-                    } catch (e) {
-                        console.log('goBack failed or timed out:', e.message);
-                    }
-                    await humanDelay(2000, 3000);
-                    currentUrl = page.url();
-                    isCategoryPage = isCategoryUrl(currentUrl) && !isProductUrl(currentUrl);
-                    if (currentUrl === previousUrl) break;
-                }
-
-                if (!isCategoryPage) {
-                    console.log('⚠️ Could not reach category page after back attempts.');
-                }
-            }
-            
-            // Random Delay between 10-15 seconds before next item
-            const fixedDelayMs = Number(process.env.PDD_NEXT_ITEM_DELAY_MS || 0);
-            const minDelayMs = Number(process.env.PDD_NEXT_ITEM_DELAY_MIN_MS || 10000);
-            const maxDelayMs = Number(process.env.PDD_NEXT_ITEM_DELAY_MAX_MS || 15000);
-            const nextItemDelay = fixedDelayMs > 0 ? fixedDelayMs : (minDelayMs + Math.random() * Math.max(0, (maxDelayMs - minDelayMs)));
-            console.log(`Waiting ${(nextItemDelay/1000).toFixed(1)}s before next item...`);
-            await delay(nextItemDelay);
-        } // End of 4-click loop
-
-        console.log('Scrolling down one screen...');
-        try {
-            await page.evaluate(() => window.scrollBy(0, window.innerHeight));
-            // Update accumulatedScrollY for drift restoration
-            try {
-                accumulatedScrollY = await page.evaluate(() => window.scrollY);
-            } catch (e) {}
-        } catch (e) {
-            console.log('Scroll error:', e.message);
-        }
-        await humanDelay(3000, 5000);
-    }
-
-    console.log('[End] Scraping Complete.');
-    await browser.close();
-    await prisma.$disconnect();
-}
-
-run().catch(err => console.error('Fatal Error:', err));
-
-process.on('unhandledRejection', (reason, p) => {
-  console.error('Unhandled Rejection at:', p, 'reason:', reason);
-});
-
-// Force keep-alive
-setInterval(() => {
-    try {
-        fs.appendFileSync('scraper_debug.log', `Tick: ${new Date().toISOString()}\n`);
-    } catch(e) {}
-}, 5000);

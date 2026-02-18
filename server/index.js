@@ -1,3 +1,9 @@
+import fs from 'fs';
+try { fs.writeFileSync('e:/mynewproject2/server/server_start.log', 'STARTING ' + new Date().toISOString() + '\n'); } catch (e) {}
+process.on('uncaughtException', (err) => {
+  try { fs.appendFileSync('e:/mynewproject2/server/server_crash.log', `ERROR: ${err.message}\n${err.stack}\n`); } catch (e) {}
+});
+
 import dns from 'node:dns';
 dns.setDefaultResultOrder('ipv4first');
 
@@ -13,7 +19,6 @@ import compression from 'compression';
 import https from 'https';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
-import fs from 'fs';
 import path from 'path';
 import axios from 'axios';
 import { fileURLToPath } from 'url';
@@ -27,6 +32,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const { PrismaClient } = pkg;
+// Note: We use the singleton 'prisma' from prismaClient.js instead of creating new instances
 
 // Explicitly load .env and log status
 const envPath = path.join(__dirname, '.env');
@@ -61,22 +67,27 @@ const applyDynamicPricingToProduct = (product, rates) => {
 
     // Helper to calculate price for a specific target (product or variant)
     const calcPrice = (target, method) => {
-      const basePrice = target.price || 0;
-      // Use target's basePriceIQD if available, else product's
-      const basePriceIQD = (target.basePriceIQD && target.basePriceIQD > 0) ? target.basePriceIQD : (product.basePriceIQD || null);
-      const domesticShippingFee = product.domesticShippingFee || 0;
+      try {
+        const basePrice = target.price || 0;
+        // Use target's basePriceIQD if available, else product's
+        const basePriceIQD = (target.basePriceIQD && target.basePriceIQD > 0) ? target.basePriceIQD : (product.basePriceIQD || null);
+        const domesticShippingFee = product.domesticShippingFee || 0;
 
-      // Ensure getAdjustedPrice is available
-      if (typeof getAdjustedPrice !== 'function') {
-        console.warn('getAdjustedPrice is not a function, using fallback price');
-        return Math.ceil(basePrice / 250) * 250;
+        // Ensure getAdjustedPrice is available
+        if (typeof getAdjustedPrice !== 'function') {
+          console.warn('getAdjustedPrice is not a function, using fallback price');
+          return Math.ceil(basePrice / 250) * 250;
+        }
+
+        return getAdjustedPrice(
+          basePrice, 
+          domesticShippingFee, 
+          basePriceIQD
+        );
+      } catch (err) {
+        console.error('Error in calcPrice:', err);
+        return Math.ceil((target.price || 0) / 250) * 250;
       }
-
-      return getAdjustedPrice(
-        basePrice, 
-        domesticShippingFee, 
-        basePriceIQD
-      );
     };
 
     // 1. Calculate for all variants if they exist
@@ -592,7 +603,7 @@ io.on('connection', (socket) => {
   });
 });
 
-const PORT = process.env.PORT || 5002;
+const PORT = process.env.PORT || 5001;
 const JWT_SECRET = process.env.JWT_SECRET || 'c2hhbnNoYWw2Ni1teS1zaG9wLWJhY2tlbmQtc2VjcmV0LTIwMjY=';
 
 // --- Normalization Helpers ---
@@ -2969,6 +2980,21 @@ app.get('/api/products', async (req, res) => {
     });
   } catch (error) {
     console.error('[Products] Failed to fetch products:', error);
+    try {
+      const logPath = path.join(__dirname, 'server_error_full.log');
+      fs.appendFileSync(logPath, `[${new Date().toISOString()}] Error in /api/products: ${error.message}\n${error.stack}\nQuery: ${JSON.stringify(req.query)}\n\n`);
+    } catch (e) {
+      console.error('Failed to write to error log:', e);
+    }
+    
+    try {
+      // Write error to public folder for debugging
+      const publicErrorPath = path.join(__dirname, '..', 'public', 'server_error.txt');
+      fs.writeFileSync(publicErrorPath, `[${new Date().toISOString()}] Error in /api/products: ${error.message}\n${error.stack}\n`);
+    } catch (e) {
+      console.error('Failed to write to public error log:', e);
+    }
+
     res.status(500).json({ 
       error: 'Failed to fetch products', 
       details: error.message,
@@ -7116,14 +7142,44 @@ app.get('/api/products/:id/reviews', async (req, res) => {
       orderBy: { createdAt: 'desc' }
     });
     
-    // Get product to check for reviews in specs field
+    // Get product to check for reviews in specs field and aiMetadata and scrapedReviews
     const product = await prisma.product.findUnique({
       where: { id: productId },
-      select: { specs: true }
+      select: { specs: true, aiMetadata: true, scrapedReviews: true }
     });
     
     let importedReviews = [];
+
+    // Extract reviews from new 'scrapedReviews' field (Primary Source)
+    if (product?.scrapedReviews && Array.isArray(product.scrapedReviews)) {
+      product.scrapedReviews.forEach((r, i) => {
+        importedReviews.push({
+          id: -3000 - i, // Different ID range to avoid conflicts
+          rating: 5,
+          comment: r.comment || 'صور من تقييمات العملاء',
+          createdAt: new Date().toISOString(),
+          user: { name: r.name || 'تقييمات المتجر' },
+          images: r.photos || r.images || []
+        });
+      });
+    }
     
+    // Extract reviews from aiMetadata (Legacy Scraped Reviews) - Only if no new reviews
+    if (importedReviews.length === 0 && product?.aiMetadata?.reviews && Array.isArray(product.aiMetadata.reviews)) {
+      product.aiMetadata.reviews.forEach((r, i) => {
+        if (r.images && r.images.length > 0) {
+          importedReviews.push({
+            id: -2000 - i,
+            rating: 5,
+            comment: 'صور من تقييمات العملاء',
+            createdAt: new Date().toISOString(),
+            user: { name: 'تقييمات المتجر' },
+            images: r.images
+          });
+        }
+      });
+    }
+
     // Extract reviews from specs field if they exist
     if (product && product.specs && typeof product.specs === 'string' && product.specs.includes('---REVIEW_SUMMARY---')) {
       try {
@@ -7142,7 +7198,7 @@ app.get('/api/products/:id/reviews', async (req, res) => {
 
           if (rawReviews.length > 0) {
             // Direct reviews format: "reviews": [ { "user": "...", "comment": "..." } ]
-            importedReviews = rawReviews.map((review, index) => ({
+            const newReviews = rawReviews.map((review, index) => ({
               id: -index - 1, // Negative IDs to distinguish from database reviews
               rating: 5, // Default rating for imported reviews
               comment: review.comment || '',
@@ -7150,9 +7206,10 @@ app.get('/api/products/:id/reviews', async (req, res) => {
               user: { name: review.user || 'عميل' },
               images: []
             }));
+            importedReviews = [...importedReviews, ...newReviews];
           } else if (reviewSummary.detailedReviews && Array.isArray(reviewSummary.detailedReviews)) {
             // detailedReviews format (legacy)
-            importedReviews = reviewSummary.detailedReviews.map((review, index) => ({
+            const newReviews = reviewSummary.detailedReviews.map((review, index) => ({
               id: -index - 1, // Negative IDs to distinguish from database reviews
               rating: 5, // Default rating for imported reviews
               comment: review.comments ? (Array.isArray(review.comments) ? review.comments.join(' ') : review.comments) : '',
@@ -7160,6 +7217,7 @@ app.get('/api/products/:id/reviews', async (req, res) => {
               user: { name: review.user || 'عميل' },
               images: review.images || []
             }));
+            importedReviews = [...importedReviews, ...newReviews];
           }
         }
       } catch (parseError) {

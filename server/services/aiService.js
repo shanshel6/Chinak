@@ -40,7 +40,18 @@ function getClients() {
         baseURL: "https://api.siliconflow.cn/v1",
         apiKey: process.env.SILICONFLOW_API_KEY,
       });
+      // Monkey-patch baseURL for detection later
+      siliconflow.baseURL = "https://api.siliconflow.cn/v1";
       console.log(`[AI Debug] SiliconFlow initialized (OpenAI-compatible)`);
+    } else if (process.env.DEEPINFRA_API_KEY) {
+      // Fallback to DeepInfra if SiliconFlow is not set
+      siliconflow = new OpenAI({
+        baseURL: "https://api.deepinfra.com/v1/openai",
+        apiKey: process.env.DEEPINFRA_API_KEY,
+      });
+      // Monkey-patch baseURL for detection later (OpenAI client might hide it)
+      siliconflow.baseURL = "https://api.deepinfra.com/v1/openai";
+      console.log(`[AI Debug] DeepInfra initialized (OpenAI-compatible)`);
     } else {
       siliconflow = null;
     }
@@ -99,12 +110,28 @@ async function generateEmbedding(text) {
 
   const generateWithSiliconFlow = async () => {
     if (!siliconflow) return null;
-    const model = process.env.SILICONFLOW_EMBEDDING_MODEL || 'Qwen/Qwen3-Embedding-0.6B';
+    
+    // Check if we are using DeepInfra
+    const isDeepInfra = siliconflow.baseURL === "https://api.deepinfra.com/v1/openai";
+    
+    // Use user-requested model for DeepInfra or fallback to env/default
+    let model = process.env.SILICONFLOW_EMBEDDING_MODEL || 'Qwen/Qwen3-Embedding-0.6B';
+    
+    if (isDeepInfra) {
+        model = process.env.DEEPINFRA_EMBEDDING_MODEL || 'google/embeddinggemma-300m';
+    }
+    
+    console.log(`[AI Debug] Generating embedding with model: ${model} (Provider: ${isDeepInfra ? 'DeepInfra' : 'SiliconFlow'})`);
+
     const rawDimensions = process.env.SILICONFLOW_EMBEDDING_DIMENSIONS;
     const dimensions = rawDimensions !== undefined && rawDimensions !== null && rawDimensions !== '' ? Number(rawDimensions) : undefined;
 
     const payload = { model, input: text };
-    if (Number.isFinite(dimensions) && dimensions > 0) {
+    
+    // DeepInfra might not support 'dimensions' parameter for this model, or it might be fixed.
+    // Only send dimensions if not using DeepInfra or if explicitly tested.
+    // For now, let's omit dimensions for DeepInfra to be safe unless we know it's supported.
+    if (!isDeepInfra && Number.isFinite(dimensions) && dimensions > 0) {
       payload.dimensions = dimensions;
     }
 
@@ -186,7 +213,7 @@ export async function processProductEmbedding(productId) {
     console.log(`[AI Debug] Successfully saved embedding for product ${productId}`);
   } catch (error) {
     console.error(`[AI Debug] Embedding-only processing failed for product ${productId}:`, error.message);
-    if (process.env.NODE_ENV !== 'production') {
+    if (process.env.NODE_ENV !== 'production' && !error.message.includes('API_KEY is not defined')) {
       console.error(error);
     }
     throw error;

@@ -12,7 +12,6 @@ import LazyImage from '../components/LazyImage';
 import ProductHeader from '../components/product/ProductHeader';
 import ImageGallery from '../components/product/ImageGallery';
 import ProductInfo from '../components/product/ProductInfo';
-import ProductOptions from '../components/product/ProductOptions';
 import ProductDescription from '../components/product/ProductDescription';
 import ProductSpecs from '../components/product/ProductSpecs';
 import ReviewsSection from '../components/product/ReviewsSection';
@@ -29,7 +28,7 @@ interface Review {
   images?: string[];
 }
 
-import { AlertCircle, Package, Plane, Ship } from 'lucide-react';
+import { AlertCircle, Package } from 'lucide-react';
 
 const ProductDetails: React.FC = () => {
   const navigate = useNavigate();
