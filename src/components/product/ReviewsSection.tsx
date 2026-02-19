@@ -43,6 +43,7 @@ const ReviewsSection: React.FC<ReviewsSectionProps> = ({
 }) => {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [isAllReviewsModalOpen, setIsAllReviewsModalOpen] = useState(false);
+  const [isAllCommentsModalOpen, setIsAllCommentsModalOpen] = useState(false);
   
   const hasRealReviews = reviews.length > 0 || (reviewSummary && (
     (reviewSummary.tags && reviewSummary.tags.length > 0) ||
@@ -54,6 +55,8 @@ const ReviewsSection: React.FC<ReviewsSectionProps> = ({
   
   const displayReviews = reviews.slice(0, 2);
   const hasMoreReviews = reviews.length > 2;
+  const displaySummaryComments = reviewSummary?.comments?.slice(0, 2) || [];
+  const hasMoreSummaryComments = (reviewSummary?.comments?.length || 0) > 2;
 
   if (!hasRealReviews && loading) {
     return (
@@ -205,7 +208,7 @@ const ReviewsSection: React.FC<ReviewsSectionProps> = ({
         {displayReviews.map((review, idx) => renderReviewCard(review, idx))}
         
         {/* If no real reviews but have summary comments, show them */}
-        {reviews.length === 0 && reviewSummary?.comments && reviewSummary.comments.slice(0, 3).map((comment, idx) => (
+        {reviews.length === 0 && displaySummaryComments.map((comment, idx) => (
           <div key={idx} className="bg-white dark:bg-slate-800/60 p-5 rounded-[25px] border border-slate-100 dark:border-white/5 shadow-sm">
             <div className="flex items-center gap-2 mb-3">
               <div className="size-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary font-black text-xs">
@@ -236,12 +239,23 @@ const ReviewsSection: React.FC<ReviewsSectionProps> = ({
           </button>
         </div>
       )}
+      {!reviews.length && hasMoreSummaryComments && (
+        <div className="flex justify-center mb-8">
+          <button 
+            onClick={() => setIsAllCommentsModalOpen(true)}
+            className="flex items-center gap-2 bg-primary/10 text-primary px-8 py-4 rounded-[25px] text-sm font-black hover:bg-primary/20 active:scale-95 transition-all border border-primary/5"
+          >
+            <MessageCircle size={20} />
+            عرض جميع التعليقات ({reviewSummary?.comments?.length || 0})
+          </button>
+        </div>
+      )}
 
       {/* All Reviews Modal */}
       {isAllReviewsModalOpen && (
-        <div className="fixed inset-0 z-[110] bg-slate-950/40 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-300" onClick={() => setIsAllReviewsModalOpen(false)}>
+        <div className="fixed inset-0 z-[110] bg-slate-950/40 backdrop-blur-[2px] flex items-center justify-center p-4 animate-in fade-in duration-300" onClick={() => setIsAllReviewsModalOpen(false)}>
           <div 
-            className="bg-white dark:bg-slate-900 w-full max-w-5xl h-[85vh] rounded-[32px] overflow-hidden flex flex-col shadow-2xl animate-in slide-in-from-bottom-10 duration-500 border border-slate-100 dark:border-white/5"
+            className="bg-white dark:bg-slate-900 w-full max-w-5xl h-[85vh] rounded-[32px] overflow-hidden flex flex-col shadow-xl animate-in slide-in-from-bottom-10 duration-500 border border-slate-100 dark:border-white/5"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Modal Header */}
@@ -264,6 +278,45 @@ const ReviewsSection: React.FC<ReviewsSectionProps> = ({
             <div className="flex-1 overflow-y-auto p-6 scrollbar-thin scrollbar-thumb-slate-200 dark:scrollbar-thumb-slate-700">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {reviews.map((review, idx) => renderReviewCard(review, idx))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {isAllCommentsModalOpen && (
+        <div className="fixed inset-0 z-[110] bg-slate-950/40 backdrop-blur-[2px] flex items-center justify-center p-4 animate-in fade-in duration-300" onClick={() => setIsAllCommentsModalOpen(false)}>
+          <div 
+            className="bg-white dark:bg-slate-900 w-full max-w-4xl h-[80vh] rounded-[32px] overflow-hidden flex flex-col shadow-xl animate-in slide-in-from-bottom-10 duration-500 border border-slate-100 dark:border-white/5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-6 py-5 flex items-center justify-between border-b border-slate-100 dark:border-white/5 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm sticky top-0 z-10">
+              <div className="flex flex-col">
+                <h3 className="text-slate-900 dark:text-white text-xl font-black">جميع التعليقات</h3>
+                <p className="text-[12px] text-slate-500 font-bold mt-1">
+                  {reviewSummary?.comments?.length || 0} تعليق
+                </p>
+              </div>
+              <button 
+                onClick={() => setIsAllCommentsModalOpen(false)}
+                className="size-10 rounded-full bg-slate-100 dark:bg-white/5 flex items-center justify-center text-slate-500 hover:bg-slate-200 dark:hover:bg-white/10 transition-all hover:rotate-90"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-6 scrollbar-thin scrollbar-thumb-slate-200 dark:scrollbar-thumb-slate-700">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                {(reviewSummary?.comments || []).map((comment, idx) => (
+                  <div key={idx} className="bg-white dark:bg-slate-800/60 p-5 rounded-[25px] border border-slate-100 dark:border-white/5 shadow-sm">
+                    <div className="flex items-center gap-2 mb-3">
+                      <div className="size-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary font-black text-xs">
+                        ع
+                      </div>
+                    </div>
+                    <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed font-medium">
+                      {comment}
+                    </p>
+                  </div>
+                ))}
               </div>
             </div>
           </div>

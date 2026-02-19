@@ -760,7 +760,7 @@ const ProductEditor: React.FC<ProductEditorProps> = ({ productId, storeSettings,
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-50 dark:divide-slate-800">
-                        {variants.map((v, idx) => (
+                        {variants.slice(0, 5).map((v, idx) => (
                           <tr key={idx} className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
                             <td className="px-6 py-4">
                               <div className="flex flex-wrap gap-1">

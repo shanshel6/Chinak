@@ -665,6 +665,7 @@ const ProductDetails: React.FC = () => {
           <ImageGallery 
             images={galleryImages}
             productName={product.name}
+            hideIndicators={isActionSheetOpen}
           />
         </div>
 

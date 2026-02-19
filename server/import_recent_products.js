@@ -113,11 +113,11 @@ async function main() {
         console.log(`Imported: ${p.name}`);
         
         // Trigger AI processing
-        if (process.env.SILICONFLOW_API_KEY || process.env.HUGGINGFACE_API_KEY) {
+        if (process.env.DEEPINFRA_API_KEY || process.env.HUGGINGFACE_API_KEY) {
           try {
             console.log(`  -> AI Processing for ${p.name}...`);
             await processProductAI(product.id);
-            // 2-second delay to be safe with SiliconFlow free tier
+            // 2-second delay to be safe with DeepInfra free tier
             await new Promise(r => setTimeout(r, 2000));
           } catch (aiErr) {
             console.error(`  !! AI Processing failed for ${p.name}:`, aiErr.message);

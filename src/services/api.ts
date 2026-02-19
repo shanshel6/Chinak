@@ -3,6 +3,10 @@ import { useMaintenanceStore } from '../store/useMaintenanceStore';
 import { localProductService } from './localProductService';
 
 export const getBaseDomain = () => {
+  const hostname = window.location.hostname;
+  const isPrivateIp = (value: string) => /^(10|192\.168|172\.(1[6-9]|2\d|3[0-1]))\./.test(value);
+  const isLocalHost = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '0.0.0.0' || hostname === '::1';
+
   // 0. Manual Override (Useful for testing production builds against local backends)
   const manualOverride = localStorage.getItem('api_url_override');
   if (manualOverride) return manualOverride;
@@ -10,6 +14,10 @@ export const getBaseDomain = () => {
   // 1. Priority: Environment variable
   const envApiUrl = import.meta.env.VITE_API_URL;
   if (envApiUrl) return envApiUrl;
+
+  if (!import.meta.env.PROD && isLocalHost) {
+    return '';
+  }
 
   // 2. Production Check (Highest priority for released apps)
   if (import.meta.env.PROD) {
@@ -20,12 +28,12 @@ export const getBaseDomain = () => {
     const isAndroid = /android/i.test(userAgent);
     
     // Check if we are actually on the production domain or if it's a capacitor app that should connect to prod
-    if (window.location.hostname.includes('shanshal66') || window.location.hostname.includes('hf.space') || (isCapacitor && !window.location.hostname.includes('10.0.2.2'))) {
+    if (hostname.includes('shanshal66') || hostname.includes('hf.space') || (isCapacitor && !hostname.includes('10.0.2.2') && !hostname.includes('10.0.3.2'))) {
       return 'https://shanshal66-my-shop-backend.hf.space';
     }
 
     // If we are in PROD build but running on emulator (10.0.2.2), allow local connection
-    if (isAndroid && (window.location.hostname === 'localhost' || window.location.hostname === '10.0.2.2')) {
+    if (isAndroid && (hostname === 'localhost' || hostname === '10.0.2.2' || hostname === '10.0.3.2')) {
       return 'http://10.0.2.2:5001';
     }
     
@@ -40,13 +48,19 @@ export const getBaseDomain = () => {
   if (isCapacitor || isAndroid) {
     // If we're on an Android emulator
     if (isAndroid) {
+      if (hostname && hostname !== 'localhost' && hostname !== '10.0.2.2' && hostname !== '10.0.3.2' && isPrivateIp(hostname)) {
+        return `http://${hostname}:5001`;
+      }
       return 'http://10.0.2.2:5001';
+    }
+    if (hostname && hostname !== 'localhost' && isPrivateIp(hostname)) {
+      return `http://${hostname}:5001`;
     }
     return 'http://192.168.2.228:5001';
   }
 
   // 4. Default local development (Browser)
-  if (window.location.hostname === 'localhost') {
+  if (isLocalHost) {
     return '';
   }
 
@@ -532,13 +546,36 @@ export async function request(endpoint: string, options: any = {}, retries = 2) 
         // Fallback logic for Android emulators
         const userAgent = navigator.userAgent.toLowerCase();
         const isAndroid = /android/i.test(userAgent);
+        const override = localStorage.getItem('api_url_override');
+        const normalizeOverride = (value: string) => value.endsWith('/api') ? value : `${value}/api`;
+        const hostname = window.location.hostname;
+        const isPrivateIp = (value: string) => /^(10|192\.168|172\.(1[6-9]|2\d|3[0-1]))\./.test(value);
         
         if (isAndroid && currentBaseUrl.includes('10.0.2.2')) {
-          console.warn(`[API Fallback] 10.0.2.2 failed, trying host IP 192.168.2.228...`);
-          currentBaseUrl = 'http://192.168.2.228:5001/api';
+          console.warn(`[API Fallback] 10.0.2.2 failed, trying 10.0.3.2...`);
+          currentBaseUrl = 'http://10.0.3.2:5001/api';
+        } else if (isAndroid && currentBaseUrl.includes('10.0.3.2')) {
+          if (override) {
+            console.warn(`[API Fallback] 10.0.3.2 failed, trying override...`);
+            currentBaseUrl = normalizeOverride(override);
+          } else if (hostname && hostname !== 'localhost' && hostname !== '10.0.2.2' && hostname !== '10.0.3.2' && isPrivateIp(hostname)) {
+            console.warn(`[API Fallback] 10.0.3.2 failed, trying host IP ${hostname}...`);
+            currentBaseUrl = `http://${hostname}:5001/api`;
+          } else {
+            console.warn(`[API Fallback] 10.0.3.2 failed, trying localhost...`);
+            currentBaseUrl = 'http://localhost:5001/api';
+          }
         } else if (isAndroid && currentBaseUrl.includes('192.168.2.228')) {
-          console.warn(`[API Fallback] 192.168.2.228 failed, trying localhost...`);
-          currentBaseUrl = 'http://localhost:5001/api';
+          if (override) {
+            console.warn(`[API Fallback] 192.168.2.228 failed, trying override...`);
+            currentBaseUrl = normalizeOverride(override);
+          } else if (hostname && hostname !== 'localhost' && isPrivateIp(hostname)) {
+            console.warn(`[API Fallback] 192.168.2.228 failed, trying host IP ${hostname}...`);
+            currentBaseUrl = `http://${hostname}:5001/api`;
+          } else {
+            console.warn(`[API Fallback] 192.168.2.228 failed, trying localhost...`);
+            currentBaseUrl = 'http://localhost:5001/api';
+          }
         }
 
         const delay = Math.pow(2, attempt) * 1000;
@@ -893,6 +930,9 @@ export async function searchProducts(query: string, page = 1, limit = 20) {
   try {
     const data = await request(`/products?page=${page}&limit=${limit}&search=${encodeURIComponent(query)}`);
     if (data && typeof data === 'object') {
+      if (Array.isArray(data.products) && data.products.length === 0 && page === 1) {
+        return request(`/search?q=${encodeURIComponent(query)}&page=${page}&limit=${limit}`);
+      }
       const totalPages = typeof data.totalPages === 'number' ? data.totalPages : undefined;
       return {
         ...data,

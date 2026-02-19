@@ -93,14 +93,14 @@ const DiscountPopup: React.FC<DiscountPopupProps> = ({
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={onClose}
-            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100]"
+            className="fixed inset-0 bg-black/50 backdrop-blur-[2px] z-[100]"
           />
           <motion.div
             initial={{ y: '100%' }}
             animate={{ y: 0 }}
             exit={{ y: '100%' }}
             transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-            className="fixed bottom-0 left-0 right-0 z-[101] bg-white dark:bg-slate-900 rounded-t-[32px] w-full max-w-7xl mx-auto overflow-hidden shadow-2xl"
+            className="fixed bottom-0 left-0 right-0 z-[101] bg-white dark:bg-slate-900 rounded-t-[32px] w-full max-w-7xl mx-auto overflow-hidden shadow-xl"
             dir="rtl"
           >
             <div className="px-6 pt-4 pb-8 pb-safe">

@@ -22,8 +22,8 @@ async function backfillAI() {
     process.exit(1);
   }
   
-  if (!process.env.SILICONFLOW_API_KEY && !process.env.HUGGINGFACE_API_KEY) {
-    console.error('ERROR: No embedding provider configured (set SILICONFLOW_API_KEY or HUGGINGFACE_API_KEY)');
+  if (!process.env.DEEPINFRA_API_KEY && !process.env.HUGGINGFACE_API_KEY) {
+    console.error('ERROR: No embedding provider configured (set DEEPINFRA_API_KEY or HUGGINGFACE_API_KEY)');
     process.exit(1);
   }
 
@@ -32,7 +32,7 @@ async function backfillAI() {
     const productsToProcess = await prisma.$queryRaw`
     SELECT id, name, "aiMetadata", (embedding IS NULL) as "missingEmbedding"
     FROM "Product" 
-    WHERE embedding IS NULL OR ("aiMetadata" IS NULL AND ${!!process.env.SILICONFLOW_API_KEY} = true)
+    WHERE embedding IS NULL OR ("aiMetadata" IS NULL AND ${!!process.env.DEEPINFRA_API_KEY} = true)
   `;
 
   console.log(`Found ${productsToProcess.length} products to process.`);
@@ -41,7 +41,7 @@ async function backfillAI() {
     console.log(`Processing product ${product.id}: ${product.name}...`);
     try {
       // Prioritize full AI processing if metadata is missing (this also generates embedding)
-      if (!product.aiMetadata && process.env.SILICONFLOW_API_KEY) {
+      if (!product.aiMetadata && process.env.DEEPINFRA_API_KEY) {
         await processProductAI(product.id);
       } else if (product.missingEmbedding) {
         // If only embedding is missing

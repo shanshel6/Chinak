@@ -5,9 +5,10 @@ import { Image as ImageIcon, ChevronLeft, ChevronRight } from 'lucide-react';
 interface ImageGalleryProps {
   images: { url: string }[];
   productName: string;
+  hideIndicators?: boolean;
 }
 
-const ImageGallery: React.FC<ImageGalleryProps> = ({ images, productName }) => {
+const ImageGallery: React.FC<ImageGalleryProps> = ({ images, productName, hideIndicators }) => {
   const [activeImageIndex, setActiveImageIndex] = useState(0);
   const [shouldRender, setShouldRender] = useState(false);
   const touchStart = useRef<number | null>(null);
@@ -141,16 +142,18 @@ const ImageGallery: React.FC<ImageGalleryProps> = ({ images, productName }) => {
       )}
 
       {/* Indicators */}
-      <div className="absolute bottom-10 left-0 right-0 flex justify-center gap-1.5 z-20">
-        {images.map((_, i) => (
-          <button 
-            key={i}
-            onClick={() => setActiveImageIndex(i)}
-            className={`h-1.5 rounded-full transition-all duration-300 ${i === activeImageIndex ? 'w-6 bg-primary shadow-sm' : 'w-1.5 bg-white/40 hover:bg-white/60'}`}
-            aria-label={`Go to image ${i + 1}`}
-          />
-        ))}
-      </div>
+      {!hideIndicators && (
+        <div className="absolute bottom-10 left-0 right-0 flex justify-center gap-1.5 z-20">
+          {images.map((_, i) => (
+            <button 
+              key={i}
+              onClick={() => setActiveImageIndex(i)}
+              className={`h-1.5 rounded-full transition-all duration-300 ${i === activeImageIndex ? 'w-6 bg-primary shadow-sm' : 'w-1.5 bg-white/40 hover:bg-white/60'}`}
+              aria-label={`Go to image ${i + 1}`}
+            />
+          ))}
+        </div>
+      )}
 
       {/* Gradient Overlay */}
       <div className="absolute bottom-0 w-full h-24 bg-gradient-to-t from-black/20 to-transparent pointer-events-none"></div>

@@ -22,7 +22,7 @@ if (process.env.USE_AI_PROXY === 'true') {
 
 // Initialize clients lazily
 let hf = null;
-let siliconflow = null;
+let deepinfra = null;
 let genAI = null;
 
 function getClients() {
@@ -34,26 +34,16 @@ function getClients() {
     }
   }
   
-  if (!siliconflow) {
-    if (process.env.SILICONFLOW_API_KEY) {
-      siliconflow = new OpenAI({
-        baseURL: "https://api.siliconflow.cn/v1",
-        apiKey: process.env.SILICONFLOW_API_KEY,
-      });
-      // Monkey-patch baseURL for detection later
-      siliconflow.baseURL = "https://api.siliconflow.cn/v1";
-      console.log(`[AI Debug] SiliconFlow initialized (OpenAI-compatible)`);
-    } else if (process.env.DEEPINFRA_API_KEY) {
-      // Fallback to DeepInfra if SiliconFlow is not set
-      siliconflow = new OpenAI({
+  if (!deepinfra) {
+    if (process.env.DEEPINFRA_API_KEY) {
+      deepinfra = new OpenAI({
         baseURL: "https://api.deepinfra.com/v1/openai",
         apiKey: process.env.DEEPINFRA_API_KEY,
       });
-      // Monkey-patch baseURL for detection later (OpenAI client might hide it)
-      siliconflow.baseURL = "https://api.deepinfra.com/v1/openai";
+      deepinfra.baseURL = "https://api.deepinfra.com/v1/openai";
       console.log(`[AI Debug] DeepInfra initialized (OpenAI-compatible)`);
     } else {
-      siliconflow = null;
+      deepinfra = null;
     }
   }
 
@@ -66,7 +56,7 @@ function getClients() {
     }
   }
   
-  return { hf, siliconflow, genAI };
+  return { hf, deepinfra, genAI };
 }
 
 /**
@@ -105,37 +95,23 @@ async function generateEmbedding(text) {
     return numeric.concat(new Array(targetDim - numeric.length).fill(0));
   };
 
-  const { hf, siliconflow } = getClients();
+  const { hf, deepinfra } = getClients();
   const maxAttempts = 5;
 
-  const generateWithSiliconFlow = async () => {
-    if (!siliconflow) return null;
-    
-    // Check if we are using DeepInfra
-    const isDeepInfra = siliconflow.baseURL === "https://api.deepinfra.com/v1/openai";
-    
-    // Use user-requested model for DeepInfra or fallback to env/default
-    let model = process.env.SILICONFLOW_EMBEDDING_MODEL || 'Qwen/Qwen3-Embedding-0.6B';
-    
-    if (isDeepInfra) {
-        model = process.env.DEEPINFRA_EMBEDDING_MODEL || 'google/embeddinggemma-300m';
-    }
-    
-    console.log(`[AI Debug] Generating embedding with model: ${model} (Provider: ${isDeepInfra ? 'DeepInfra' : 'SiliconFlow'})`);
+  const generateWithDeepInfra = async () => {
+    if (!deepinfra) return null;
+    const model = process.env.DEEPINFRA_EMBEDDING_MODEL || 'google/embeddinggemma-300m';
+    console.log(`[AI Debug] Generating embedding with model: ${model} (Provider: DeepInfra)`);
 
-    const rawDimensions = process.env.SILICONFLOW_EMBEDDING_DIMENSIONS;
+    const rawDimensions = process.env.DEEPINFRA_EMBEDDING_DIMENSIONS;
     const dimensions = rawDimensions !== undefined && rawDimensions !== null && rawDimensions !== '' ? Number(rawDimensions) : undefined;
 
     const payload = { model, input: text };
-    
-    // DeepInfra might not support 'dimensions' parameter for this model, or it might be fixed.
-    // Only send dimensions if not using DeepInfra or if explicitly tested.
-    // For now, let's omit dimensions for DeepInfra to be safe unless we know it's supported.
-    if (!isDeepInfra && Number.isFinite(dimensions) && dimensions > 0) {
+    if (Number.isFinite(dimensions) && dimensions > 0) {
       payload.dimensions = dimensions;
     }
 
-    const response = await siliconflow.embeddings.create(payload);
+    const response = await deepinfra.embeddings.create(payload);
     const embedding = response?.data?.[0]?.embedding;
     return normalizeVector(embedding);
   };
@@ -174,9 +150,9 @@ async function generateEmbedding(text) {
     throw lastErr;
   };
 
-  if (siliconflow) {
+  if (deepinfra) {
     try {
-      const embedding = await tryGenerate(generateWithSiliconFlow);
+      const embedding = await tryGenerate(generateWithDeepInfra);
       if (embedding) return embedding;
     } catch (err) {
       if (!hf) throw err;
@@ -291,10 +267,10 @@ export async function estimateProductPhysicals(product) {
 
     // 3. Fallback to Text-based estimation (DeepSeek)
     console.log(`[AI Debug] Falling back to text-based estimation for ${product.name}...`);
-    const { siliconflow } = getClients();
+    const { deepinfra } = getClients();
     
-    if (!siliconflow) {
-        console.warn('[AI Debug] SiliconFlow client not initialized. Skipping text-based estimation.');
+    if (!deepinfra) {
+        console.warn('[AI Debug] DeepInfra client not initialized. Skipping text-based estimation.');
         return null;
     }
 
@@ -313,7 +289,7 @@ export async function estimateProductPhysicals(product) {
     If you're not sure, provide a reasonable average for that category of product.
     Return ONLY JSON, no markdown.`;
 
-    const response = await withTimeout(siliconflow.chat.completions.create({
+    const response = await withTimeout(deepinfra.chat.completions.create({
       model: 'deepseek-ai/DeepSeek-V3',
       messages: [{ role: 'user', content: prompt }],
       response_format: { type: 'json_object' }
@@ -336,13 +312,13 @@ export async function estimateProductPhysicals(product) {
 }
 
 /**
- * Auto-Tagging Pipeline using SiliconFlow (Free/Low-cost Tier)
+ * Auto-Tagging Pipeline using DeepInfra (Free/Low-cost Tier)
  * Triggers when a product is added or updated.
  */
 export async function processProductAI(productId) {
   try {
     console.log(`[AI Debug] Starting processing for product ${productId}`);
-    const { siliconflow } = getClients();
+    const { deepinfra } = getClients();
     const product = await prisma.product.findUnique({
       where: { id: productId },
     });
@@ -355,7 +331,7 @@ export async function processProductAI(productId) {
     const content = `Title: ${product.name}\nSpecs: ${product.specs || ''}\nMain Image URL: ${product.image || ''}`;
     
     let aiMetadata = null;
-    if (!product.aiMetadata && siliconflow) {
+    if (!product.aiMetadata && deepinfra) {
       const prompt = `You are an AI specialized in e-commerce product analysis for the Middle Eastern market, specifically Iraq. 
       Analyze the product details and image to extract 'Invisible Tags' and search synonyms.
       
@@ -370,10 +346,10 @@ export async function processProductAI(productId) {
   
       Do not include markdown formatting or extra text.`;
   
-      console.log(`[AI Debug] Calling SiliconFlow for product ${productId}...`);
+      console.log(`[AI Debug] Calling DeepInfra for product ${productId}...`);
       
-      const response = await siliconflow.chat.completions.create({
-        model: 'deepseek-ai/DeepSeek-V3',
+      const response = await deepinfra.chat.completions.create({
+        model: process.env.DEEPINFRA_MODEL || 'google/gemma-3-4b-it',
         messages: [
           { role: 'user', content: prompt }
         ],
@@ -381,7 +357,7 @@ export async function processProductAI(productId) {
       });
   
       const responseText = response.choices[0].message.content.trim();
-      console.log(`[AI Debug] SiliconFlow response for product ${productId}: ${responseText}`);
+      console.log(`[AI Debug] DeepInfra response for product ${productId}: ${responseText}`);
       
       try {
         const cleanJson = responseText.replace(/^```json\s*/, '').replace(/\s*```$/, '').trim();
@@ -424,7 +400,7 @@ export async function processProductAI(productId) {
 /**
  * Arabic and Iraqi Dialect Normalization
  */
-function normalizeArabic(text) {
+export function normalizeArabic(text) {
   if (!text) return '';
   
   let normalized = text
@@ -433,6 +409,8 @@ function normalizeArabic(text) {
     .replace(/ى/g, 'ي')
     .replace(/ؤ/g, 'و')
     .replace(/ئ/g, 'ي')
+    .replace(/ناسائ/g, 'نسائ')
+    .replace(/ناسا/g, 'نسا')
     .replace(/گ/g, 'ق') // Iraqi dialect: G -> Q
     .replace(/چ/g, 'ج') // Iraqi dialect: CH -> J
     .replace(/پ/g, 'ب') // P -> B
@@ -646,7 +624,7 @@ export async function hybridSearch(query, limit = 50, skip = 0, maxPrice = null,
         productId: true,
         combination: true,
         price: true,
-        basePriceRMB: true,
+        basePriceIQD: true,
         weight: true,
         length: true,
         width: true,

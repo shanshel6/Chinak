@@ -1,4 +1,4 @@
-﻿﻿import vanillaPuppeteer from 'puppeteer-core';
+﻿﻿﻿﻿﻿﻿import vanillaPuppeteer from 'puppeteer-core';
 import puppeteerExtra from 'puppeteer-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 
@@ -8,7 +8,7 @@ puppeteer.use(StealthPlugin());
 import fs from 'fs';
 import path from 'path';
 import dotenv from 'dotenv';
-import OpenAI from 'openai'; // Use OpenAI SDK for SiliconFlow
+import OpenAI from 'openai'; // Use OpenAI SDK for DeepInfra
 import readline from 'readline';
 import { fileURLToPath } from 'url';
 import { PrismaClient } from '@prisma/client';
@@ -112,7 +112,7 @@ function isEdiblePreCheck(title, description) {
 let aiClient = null;
 
 const AI_TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS) > 0 ? Number(process.env.AI_TIMEOUT_MS) : 180000;
-const AI_MAX_ATTEMPTS = Number(process.env.AI_MAX_ATTEMPTS) > 0 ? Number(process.env.AI_MAX_ATTEMPTS) : 5;
+const AI_MAX_ATTEMPTS = Number(process.env.AI_MAX_ATTEMPTS) > 0 ? Number(process.env.AI_MAX_ATTEMPTS) : 3;
 const AI_BASE_RETRY_DELAY_MS = Number(process.env.AI_BASE_RETRY_DELAY_MS) > 0 ? Number(process.env.AI_BASE_RETRY_DELAY_MS) : 1500;
 
 const PUPPETEER_PROTOCOL_TIMEOUT_MS =
@@ -138,18 +138,6 @@ if (process.env.DEEPINFRA_API_KEY) {
         maxRetries: 0,
     });
     console.log(`AI Initialized (DeepInfra: primary=${AI_PRIMARY_MODEL}, fallback=${AI_FALLBACK_MODEL})`);
-} else if (process.env.SILICONFLOW_API_KEY) {
-    // Fallback to SiliconFlow if DeepInfra not set (backward compatibility)
-    AI_PRIMARY_MODEL = process.env.SILICONFLOW_MODEL || process.env.AI_MODEL || AI_PRIMARY_MODEL;
-    AI_FALLBACK_MODEL = process.env.SILICONFLOW_FALLBACK_MODEL || process.env.AI_FALLBACK_MODEL || AI_PRIMARY_MODEL;
-    AI_MODEL = AI_PRIMARY_MODEL;
-    aiClient = new OpenAI({
-        baseURL: "https://api.siliconflow.cn/v1",
-        apiKey: process.env.SILICONFLOW_API_KEY,
-        timeout: AI_TIMEOUT_MS,
-        maxRetries: 0,
-    });
-    console.log(`AI Initialized (SiliconFlow: primary=${AI_PRIMARY_MODEL}, fallback=${AI_FALLBACK_MODEL})`);
 } else {
     console.log('Warning: No AI API KEY found. AI features will use mock data.');
 }
@@ -236,7 +224,7 @@ async function enrichWithAI(title, description, price) {
 
     try {
         const safeTitle = String(title || '').slice(0, 220);
-        const safeDescription = String(description || '').slice(0, 1200);
+        const safeDescription = String(description || '').slice(0, 600);
         const safePrice = String(price || '').slice(0, 50);
 
         const prompt = `
@@ -318,7 +306,7 @@ async function enrichWithAI(title, description, price) {
                         model,
                         messages: [{ role: "user", content: prompt }],
                         temperature: 0.2,
-                        max_tokens: 1500,
+                        max_tokens: 1000,
                     });
                 };
 
@@ -2716,8 +2704,8 @@ async function run() {
                                  await wait(2000);
                              }
 
-                             console.log(`[Reviews] Starting scroll sequence (Forced 8 screens)...`);
-                            const scrollLoops = 8; // User requested fixed 8 screens down
+                            console.log(`[Reviews] Starting scroll sequence (Forced 3 screens)...`);
+                            const scrollLoops = 3; // User requested fixed 3 screens down
                             
                             for (let i = 0; i < scrollLoops; i++) {
                                 const startY = window.scrollY;
@@ -2756,6 +2744,7 @@ async function run() {
                              }
                              
                              console.log('[Reviews] Extracting reviews...');
+                            const maxReviews = 20;
                              
                              // Strategy 0: User-Provided Specific Selectors (Priority)
                              // Review Item: div.LFMbudEX
@@ -2770,6 +2759,7 @@ async function run() {
                                  
                                  specificReviewItems.forEach(item => {
                                      try {
+                                        if (extractedReviews.length >= maxReviews) return;
                                          // Name
                                          const nameEl = item.querySelector('span.BQX0_Yxu');
                                          const name = nameEl ? nameEl.innerText.trim() : 'Pinduoduo Shopper';
@@ -2856,6 +2846,7 @@ async function run() {
                                      console.log(`[Reviews] Best review class: ${bestClass} (Count: ${maxCount})`);
                                      const items = classCounts[bestClass];
                                      items.forEach(item => {
+                                        if (extractedReviews.length >= maxReviews) return;
                                          const text = item.innerText.trim();
                                          const imgs = Array.from(item.querySelectorAll('img')).filter(img => img.naturalWidth > 50 && !img.src.includes('avatar')).map(img => img.src.split('?')[0]);
                                          if (text && (imgs.length > 0 || text.length > 10)) {
@@ -2871,6 +2862,7 @@ async function run() {
                                      const visibleImgs = Array.from(document.querySelectorAll('img')).filter(img => img.naturalWidth > 100 && !img.src.includes('avatar')).map(img => img.src.split('?')[0]);
                                      const uniqueImgs = [...new Set(visibleImgs)];
                                      for (let i = 0; i < uniqueImgs.length; i += 3) {
+                                        if (extractedReviews.length >= maxReviews) break;
                                          extractedReviews.push({ 
                                             name: 'Pinduoduo Shopper', 
                                             comment: '\u0635\u0648\u0631 \u0645\u0646 \u062a\u0642\u064a\u064a\u0645\u0627\u062a \u0627\u0644\u0639\u0645\u0644\u0627\u0621', // Photos from customer reviews
@@ -2894,7 +2886,7 @@ async function run() {
                              
                          } catch (e) { console.log('Review error:', e.message); }
                          return extractedReviews;
-                     }, [shouldDeepScroll], 12);
+                    }, [shouldDeepScroll], 12);
                      
                      console.log(`[Reviews] Extracted ${reviews.length} reviews. Waiting 2s for back navigation...`);
                      await new Promise(r => setTimeout(r, 2000));
@@ -2903,7 +2895,7 @@ async function run() {
 
                 // --- TRANSLATE REVIEWS (BATCHED) ---
                 if (data.reviews && data.reviews.length > 0 && aiClient) {
-                    const reviewsToTranslate = data.reviews.slice(0, 15); // Top 15
+                    const reviewsToTranslate = data.reviews.slice(0, 8);
                     console.log(`[Reviews] Translating top ${reviewsToTranslate.length} reviews to Arabic...`);
                     
                     const reviewBatches = [];
@@ -2934,7 +2926,7 @@ async function run() {
                                 model: AI_PRIMARY_MODEL,
                                 messages: [{ role: "user", content: prompt }],
                                 temperature: 0.4,
-                                max_tokens: 2500 // Increased to prevent truncation
+                                max_tokens: 1000
                             });
                             
                             let jsonStr = res.choices[0].message.content.replace(/```json/g, '').replace(/```/g, '').trim();
@@ -3190,9 +3182,9 @@ async function run() {
                     console.log(`Generated options from SKU map (${generated_options.length})`);
 
                     // LIMIT OPTIONS: If more than 50, limit to 50
-                    if (generated_options.length > 50) {
-                        console.log(`[Options] Too many options (${generated_options.length}). Limiting to 50.`);
-                        generated_options = generated_options.slice(0, 50);
+                    if (generated_options.length > 30) {
+                        console.log(`[Options] Too many options (${generated_options.length}). Limiting to 30.`);
+                        generated_options = generated_options.slice(0, 30);
                     }
  
                      // --- TRANSLATE OPTIONS IF AI IS AVAILABLE ---
@@ -3226,7 +3218,7 @@ async function run() {
                                      model,
                                      messages: [{ role: "user", content: transPrompt }],
                                      temperature: 0.3,
-                                     max_tokens: 2048
+                                     max_tokens: 1000
                                  });
                              };
 
@@ -3459,18 +3451,44 @@ async function run() {
                         return true;
                     });
 
-                    enrichedProduct.generated_options.forEach(opt => {
-                        // Skip entire option if color is Chinese
-                        if (opt.color) {
-                            if (!containsChinese(opt.color)) {
-                                if (!colors.has(opt.color)) colors.set(opt.color, opt.originalColor || opt.color);
-                            } else {
-                                // RETRY TRANSLATION FOR SINGLE OPTION
-                                // We do a synchronous-like blocking call here or just use it as is if critical?
-                                // User said: "try to translate it again if you can't then use it, don't skip generated options"
-                                console.log(`Chinese color detected: ${opt.color}. Attempting fallback translation/usage...`);
-                                if (!colors.has(opt.color)) colors.set(opt.color, opt.originalColor || opt.color); // Add it anyway, don't skip
+                    const optionTranslationCache = new Map();
+                    const translateOptionLabel = async (label) => {
+                        const text = String(label || '').trim();
+                        if (!text || !aiClient || !containsChinese(text)) return text;
+                        if (optionTranslationCache.has(text)) return optionTranslationCache.get(text);
+                        const prompt = `Translate this product option label to Arabic. Return only the translated text without quotes or extra words.\nInput: ${text}`;
+                        try {
+                            const res = await aiClient.chat.completions.create({
+                                model: AI_PRIMARY_MODEL,
+                                messages: [{ role: "user", content: prompt }],
+                                temperature: 0.2,
+                                max_tokens: 80
+                            });
+                            let translated = res.choices[0].message.content.replace(/```/g, '').trim();
+                            translated = translated.replace(/^[\"']|[\"']$/g, '').trim();
+                            if (translated && !containsChinese(translated)) {
+                                optionTranslationCache.set(text, translated);
+                                return translated;
                             }
+                        } catch (e) {}
+                        optionTranslationCache.set(text, text);
+                        return text;
+                    };
+
+                    for (const opt of enrichedProduct.generated_options) {
+                        if (opt.color) {
+                            let colorValue = opt.color;
+                            if (containsChinese(colorValue)) {
+                                console.log(`Chinese color detected: ${colorValue}. Attempting fallback translation/usage...`);
+                                const translatedColor = await translateOptionLabel(colorValue);
+                                if (translatedColor && !containsChinese(translatedColor)) {
+                                    opt.color = translatedColor;
+                                    colorValue = translatedColor;
+                                } else {
+                                    console.log(`Chinese color retained: ${colorValue}.`);
+                                }
+                            }
+                            if (!colors.has(colorValue)) colors.set(colorValue, opt.originalColor || colorValue);
                         }
 
                         if (opt.sizes && Array.isArray(opt.sizes)) {
@@ -3484,7 +3502,7 @@ async function run() {
                                 }
                             });
                         }
-                    });
+                    }
 
                     // Only create options if we have valid values
                     if (colors.size > 0) {

@@ -23,7 +23,7 @@ import path from 'path';
 import axios from 'axios';
 import { fileURLToPath } from 'url';
 import prisma from './prismaClient.js';
-import { processProductAI, processProductEmbedding, hybridSearch, estimateProductPhysicals } from './services/aiService.js';
+import { processProductAI, processProductEmbedding, hybridSearch, estimateProductPhysicals, normalizeArabic } from './services/aiService.js';
 import { calculateOrderShipping, calculateProductShipping, getAdjustedPrice } from './services/shippingService.js';
 import { setupLinkCheckerCron, checkAllProductLinks } from './services/linkCheckerService.js';
 import { createClient } from '@supabase/supabase-js';
@@ -167,7 +167,7 @@ const getHttpStatusFromError = (err) => {
 const enqueueEmbeddingJob = (productId) => {
   const id = safeParseId(productId);
   if (!id) return;
-  if (!process.env.SILICONFLOW_API_KEY && !process.env.HUGGINGFACE_API_KEY) return;
+  if (!process.env.DEEPINFRA_API_KEY && !process.env.HUGGINGFACE_API_KEY) return;
   if (embeddingJobSet.has(id)) return;
   embeddingJobQueue.push(id);
   embeddingJobSet.add(id);
@@ -493,6 +493,286 @@ const productVariantSelect = {
   image: true
 };
 
+const MEILI_HOST = process.env.MEILI_HOST || process.env.MEILISEARCH_HOST || process.env.MEILISEARCH_URL || 'http://127.0.0.1:7700';
+const MEILI_API_KEY = process.env.MEILI_API_KEY || process.env.MEILISEARCH_API_KEY || (process.env.NODE_ENV === 'development' ? 'masterKey123' : '');
+console.log('[Meili Debug] Config:', { MEILI_HOST, MEILI_API_KEY_LENGTH: MEILI_API_KEY?.length, MEILI_API_KEY_START: MEILI_API_KEY?.substring(0, 4) });
+const MEILI_INDEX = process.env.MEILI_INDEX || 'products';
+let meiliEnabled = !!MEILI_HOST;
+const meiliHeaders = MEILI_API_KEY ? { Authorization: `Bearer ${MEILI_API_KEY}` } : {};
+console.log('[Meili Debug] Headers:', meiliHeaders);
+let meiliIndexReady = false;
+let meiliIndexing = false;
+let meiliHealthChecked = false;
+let meiliHealthy = false;
+let meiliHealthError = null;
+let meiliIndexNeedsRefresh = false;
+
+const normalizeArabicForMeili = (text) => {
+  if (!text) return '';
+  const cleaned = String(text)
+    .toLowerCase()
+    .replace(/[\u064B-\u0652]/g, '')
+    .replace(/[\\\/.,()!?;:]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const normalized = normalizeArabic(cleaned);
+  return normalized?.fullString || cleaned;
+};
+
+const meiliRequest = async (method, route, data) => {
+  return axios({
+    method,
+    url: `${MEILI_HOST}${route}`,
+    headers: meiliHeaders,
+    data,
+    timeout: 15000
+  });
+};
+
+const checkMeiliHealth = async () => {
+  if (!meiliEnabled) return false;
+  if (meiliHealthChecked) return meiliHealthy;
+  try {
+    const { data } = await meiliRequest('GET', '/health');
+    const status = typeof data?.status === 'string' ? data.status.toLowerCase() : '';
+    meiliHealthy = status === 'available' || status === 'healthy' || status === 'ok' || status === 'ready';
+    meiliHealthError = null;
+  } catch (err) {
+    meiliHealthy = false;
+    const status = err?.response?.status;
+    const message = err?.response?.data || err?.message || String(err);
+    meiliHealthError = status ? `${status}: ${message}` : String(message);
+  }
+  meiliHealthChecked = true;
+  if (!meiliHealthy) {
+    console.warn(`[Meili] Unavailable at ${MEILI_HOST}`);
+  }
+  return meiliHealthy;
+};
+
+const buildMeiliDoc = (product) => {
+  const optionsText = Array.isArray(product.options)
+    ? product.options.map(opt => `${opt?.name || ''} ${opt?.values || ''}`).join(' ')
+    : '';
+  const variantsText = Array.isArray(product.variants)
+    ? product.variants.map(v => v?.combination || '').join(' ')
+    : '';
+  const aiText = typeof product.aiMetadata === 'string'
+    ? product.aiMetadata
+    : JSON.stringify(product.aiMetadata || {});
+  const nameNormalized = normalizeArabicForMeili(product.name || '');
+  const specsNormalized = normalizeArabicForMeili(product.specs || '');
+  const optionsTextNormalized = normalizeArabicForMeili(optionsText);
+  const variantsTextNormalized = normalizeArabicForMeili(variantsText);
+  const aiTextNormalized = normalizeArabicForMeili(aiText);
+
+  return {
+    id: product.id,
+    name: product.name,
+    nameNormalized,
+    specs: product.specs || '',
+    specsNormalized,
+    optionsText,
+    optionsTextNormalized,
+    variantsText,
+    variantsTextNormalized,
+    aiText,
+    aiTextNormalized,
+    price: product.price || 0,
+    image: product.image || '',
+    isFeatured: !!product.isFeatured,
+    isActive: product.isActive !== false,
+    status: product.status || 'PUBLISHED'
+  };
+};
+
+const ensureMeiliIndex = async () => {
+  console.log('[Meili Debug] ensureMeiliIndex called');
+  if (!meiliEnabled) {
+    console.log('[Meili Debug] Meili disabled');
+    return false;
+  }
+  const healthy = await checkMeiliHealth();
+  console.log('[Meili Debug] Health check:', healthy);
+  if (!healthy) return false;
+  if (meiliIndexReady) {
+    console.log('[Meili Debug] Index already ready');
+    return true;
+  }
+  try {
+    console.log('[Meili Debug] Checking index existence...');
+    await meiliRequest('GET', `/indexes/${MEILI_INDEX}`);
+    console.log('[Meili Debug] Index exists');
+  } catch (err) {
+    const status = err?.response?.status;
+    if (status === 404) {
+      try {
+        await meiliRequest('POST', '/indexes', { uid: MEILI_INDEX, primaryKey: 'id' });
+      } catch (createErr) {
+        console.error('Meilisearch index create failed:', createErr?.message || createErr);
+        return false;
+      }
+    } else {
+      console.error('Meilisearch index check failed:', err?.message || err);
+      return false;
+    }
+  }
+
+  try {
+    await meiliRequest('PATCH', `/indexes/${MEILI_INDEX}/settings`, {
+      searchableAttributes: [
+        'name',
+        'nameNormalized',
+        'specs',
+        'specsNormalized',
+        'optionsText',
+        'optionsTextNormalized',
+        'variantsText',
+        'variantsTextNormalized',
+        'aiText',
+        'aiTextNormalized'
+      ],
+      filterableAttributes: ['isActive', 'status', 'price', 'isFeatured'],
+      sortableAttributes: ['price'],
+      displayedAttributes: ['id', 'name', 'price', 'image', 'isFeatured', 'isActive', 'status']
+    });
+    meiliIndexNeedsRefresh = true;
+  } catch (settingsErr) {
+    console.error('Meilisearch settings update failed:', settingsErr?.message || settingsErr);
+  }
+
+  meiliIndexReady = true;
+  return true;
+};
+
+const ensureMeiliIndexed = async () => {
+  console.log('[Meili Debug] ensureMeiliIndexed called');
+  if (!meiliEnabled) {
+    console.log('[Meili Debug] Meili disabled in ensureMeiliIndexed');
+    return false;
+  }
+  const ready = await ensureMeiliIndex();
+  console.log('[Meili Debug] ensureMeiliIndex returned:', ready);
+  if (!ready) return false;
+  if (meiliIndexing) {
+    console.log('[Meili Debug] Already indexing');
+    return false;
+  }
+  try {
+    const stats = await meiliRequest('GET', `/indexes/${MEILI_INDEX}/stats`);
+    console.log('[Meili Debug] Index stats:', stats?.data);
+    const count = stats?.data?.numberOfDocuments ?? 0;
+    if (count > 0 && !meiliIndexNeedsRefresh) return true;
+  } catch (err) {
+    console.error('Meilisearch stats failed:', err?.message || err);
+    // Continue to index if stats fail (likely index doesn't exist yet)
+  }
+
+  meiliIndexing = true;
+  console.log('[Meili Debug] Starting full indexing...');
+  try {
+    let lastId = 0;
+    const batchSize = 500;
+    let totalDocs = 0;
+    while (true) {
+      const products = await prisma.product.findMany({
+        where: {
+          id: { gt: lastId },
+          isActive: true,
+          status: 'PUBLISHED'
+        },
+        orderBy: { id: 'asc' },
+        take: batchSize,
+        include: {
+          options: true,
+          variants: true
+        }
+      });
+
+      if (!products.length) break;
+      lastId = products[products.length - 1].id;
+      const docs = products.map(buildMeiliDoc);
+      console.log(`[Meili Debug] Indexing batch of ${docs.length} products (lastId: ${lastId})`);
+      await meiliRequest('POST', `/indexes/${MEILI_INDEX}/documents`, docs);
+      totalDocs += docs.length;
+    }
+    console.log(`[Meili Debug] Finished indexing ${totalDocs} documents`);
+    meiliIndexNeedsRefresh = false;
+    return true;
+  } catch (err) {
+    console.error('Meilisearch indexing failed:', err?.message || err);
+    return false;
+  } finally {
+    meiliIndexing = false;
+  }
+};
+
+const meiliSearchProducts = async (query, limit, offset, maxPrice) => {
+  console.log('[Meili Debug] meiliSearchProducts called with:', { query, limit, offset, maxPrice, meiliEnabled });
+  if (!meiliEnabled || !query) return null;
+  const indexed = await ensureMeiliIndexed();
+  console.log('[Meili Debug] ensureMeiliIndexed returned:', indexed);
+  if (!indexed) return null;
+  try {
+    const trimmedQuery = String(query).trim();
+    if (!trimmedQuery) return null;
+    const normalizedQuery = normalizeArabicForMeili(trimmedQuery);
+    const combinedQuery = normalizedQuery && normalizedQuery !== trimmedQuery
+      ? `${trimmedQuery} ${normalizedQuery}`
+      : trimmedQuery;
+    const filterParts = ['isActive = true', 'status = "PUBLISHED"'];
+    if (typeof maxPrice === 'number' && Number.isFinite(maxPrice)) {
+      filterParts.push(`price <= ${maxPrice}`);
+    }
+    const payload = {
+      q: combinedQuery,
+      limit,
+      offset
+    };
+    if (filterParts.length) payload.filter = filterParts.join(' AND ');
+    const { data } = await meiliRequest('POST', `/indexes/${MEILI_INDEX}/search`, payload);
+    const ids = Array.isArray(data?.hits)
+      ? data.hits.map(hit => Number(hit.id)).filter(id => Number.isFinite(id))
+      : [];
+    const total = typeof data?.estimatedTotalHits === 'number'
+      ? data.estimatedTotalHits
+      : (typeof data?.nbHits === 'number' ? data.nbHits : ids.length);
+    return { ids, total };
+  } catch (err) {
+    console.error('Meilisearch query failed:', err?.message || err);
+    return null;
+  }
+};
+
+const syncProductToMeili = async (productId) => {
+  if (!meiliEnabled) return;
+  const ready = await ensureMeiliIndex();
+  if (!ready) return;
+  const product = await prisma.product.findUnique({
+    where: { id: productId },
+    include: { options: true, variants: true }
+  });
+
+  if (!product || !product.isActive || product.status !== 'PUBLISHED') {
+    try {
+      await meiliRequest('DELETE', `/indexes/${MEILI_INDEX}/documents/${productId}`);
+    } catch (err) {
+      const status = err?.response?.status;
+      if (status !== 404) {
+        console.error('Meilisearch delete failed:', err?.message || err);
+      }
+    }
+    return;
+  }
+
+  try {
+    const doc = buildMeiliDoc(product);
+    await meiliRequest('POST', `/indexes/${MEILI_INDEX}/documents`, [doc]);
+  } catch (err) {
+    console.error('Meilisearch upsert failed:', err?.message || err);
+  }
+};
+
 // Server start - Build Trigger: 2026-01-26 22:00
 const app = express();
 console.log('-------------------------------------------');
@@ -519,6 +799,55 @@ app.get('/api/health', async (req, res) => {
     port: process.env.PORT || 5001,
     has_db_url: !!process.env.DATABASE_URL,
     has_supabase_url: !!process.env.SUPABASE_URL
+  });
+});
+
+app.get('/api/meili/status', async (req, res) => {
+  const q = typeof req.query.q === 'string' && req.query.q.trim() ? req.query.q.trim() : 'phone';
+  const response = {
+    enabled: meiliEnabled,
+    host: MEILI_HOST,
+    index: MEILI_INDEX,
+    healthy: false,
+    stats: null,
+    sample: null,
+    error: null,
+    healthError: null
+  };
+
+  if (!meiliEnabled) {
+    return res.json(response);
+  }
+
+  try {
+    const healthy = await checkMeiliHealth();
+    response.healthy = healthy;
+    response.enabled = meiliEnabled;
+    response.healthError = meiliHealthError;
+    if (!healthy) return res.json(response);
+
+    const statsResp = await meiliRequest('GET', `/indexes/${MEILI_INDEX}/stats`);
+    response.stats = statsResp?.data ?? null;
+
+    const searchResp = await meiliRequest('POST', `/indexes/${MEILI_INDEX}/search`, { q, limit: 5 });
+    response.sample = searchResp?.data ?? null;
+  } catch (err) {
+    response.error = err?.message || String(err);
+  }
+
+  return res.json(response);
+});
+
+app.get('/api/diagnostics', (req, res) => {
+  res.json({
+    marker: 'engine-v2',
+    cwd: process.cwd(),
+    dirname: __dirname,
+    port: process.env.PORT || 5001,
+    env: process.env.NODE_ENV || 'development',
+    meiliEnabled,
+    meiliHost: MEILI_HOST,
+    meiliIndex: MEILI_INDEX
   });
 });
 
@@ -2277,6 +2606,7 @@ app.get('/api/admin/users', authenticateToken, isAdmin, hasPermission('manage_us
     const limit = parseInt(req.query.limit) || 20;
     const skip = (page - 1) * limit;
     const search = req.query.search || '';
+    const isArabicSearch = typeof search === 'string' && /[\u0600-\u06FF]/.test(search);
 
     const where = {};
     if (search) {
@@ -2884,6 +3214,7 @@ app.get('/api/products', async (req, res) => {
     const limit = parseInt(req.query.limit) || 20;
     const skip = (page - 1) * limit;
     const search = req.query.search || '';
+    const isArabicSearch = typeof search === 'string' && /[\u0600-\u06FF]/.test(search);
     const maxPrice = req.query.maxPrice ? parseFloat(req.query.maxPrice) : null;
 
     // Cache Store Settings for 60 seconds to reduce DB round-trips
@@ -2899,8 +3230,53 @@ app.get('/api/products', async (req, res) => {
       airShippingMinFloor: storeSettings?.airShippingMinFloor
     };
 
+    if (search && meiliEnabled) {
+      const meiliResults = await meiliSearchProducts(search, limit, skip, maxPrice);
+      if (meiliResults && meiliResults.ids.length > 0) {
+        const productsWithDetails = await prisma.product.findMany({
+          where: {
+            id: { in: meiliResults.ids },
+            status: 'PUBLISHED',
+            isActive: true
+          },
+          select: {
+            id: true,
+            name: true,
+            price: true,
+            basePriceIQD: true,
+            image: true,
+            isFeatured: true,
+            domesticShippingFee: true,
+            deliveryTime: true,
+            variants: {
+              select: {
+                id: true,
+                combination: true,
+                price: true,
+                basePriceIQD: true,
+                image: true,
+              }
+            }
+          }
+        });
+
+        const productsById = new Map(productsWithDetails.map(p => [p.id, p]));
+        const orderedProducts = meiliResults.ids
+          .map(id => productsById.get(id))
+          .filter(Boolean);
+
+        return res.json({
+          products: orderedProducts.map(p => applyDynamicPricingToProduct(p, shippingRates)),
+          total: meiliResults.total,
+          page,
+          totalPages: Math.ceil(meiliResults.total / limit),
+          engine: 'meili'
+        });
+      }
+    }
+
     // Use AI Hybrid Search if searching and keys are available
-    if (search && process.env.SILICONFLOW_API_KEY && process.env.HUGGINGFACE_API_KEY) {
+    if (search && (process.env.DEEPINFRA_API_KEY || process.env.HUGGINGFACE_API_KEY)) {
       try {
         console.log(`[AI Search] Hybrid search for: "${search}" (page ${page})`);
         const products = await hybridSearch(search, limit, skip, maxPrice);
@@ -2912,7 +3288,8 @@ app.get('/api/products', async (req, res) => {
             products: Array.isArray(products) ? products.map(p => applyDynamicPricingToProduct(p, shippingRates)) : products,
             total: products.length === limit ? page * limit + limit : (page - 1) * limit + products.length,
             page,
-            totalPages: products.length === limit ? page + 1 : page
+            totalPages: products.length === limit ? page + 1 : page,
+            engine: 'hybrid'
           });
         }
         console.log('[AI Search] No results found, falling back to database search');
@@ -2972,7 +3349,8 @@ app.get('/api/products', async (req, res) => {
         products: [],
         total: 0,
         page,
-        totalPages: 0
+        totalPages: 0,
+        engine: 'db'
       });
     }
 
@@ -2980,7 +3358,8 @@ app.get('/api/products', async (req, res) => {
       products: products.map(p => applyDynamicPricingToProduct(p, shippingRates)),
       total,
       page,
-      totalPages: Math.ceil(total / limit)
+      totalPages: Math.ceil(total / limit),
+      engine: 'db'
     });
   } catch (error) {
     console.error('[Products] Failed to fetch products:', error);
@@ -4161,6 +4540,7 @@ app.post('/api/products', authenticateToken, isAdmin, hasPermission('manage_prod
     });
 
     enqueueEmbeddingJob(product.id);
+    void syncProductToMeili(product.id);
 
     res.status(201).json(product);
   } catch (error) {
@@ -5759,10 +6139,20 @@ app.get('/api/search', async (req, res) => {
     const pageNum = parseInt(page);
     const limitNum = parseInt(limit);
     const skip = (pageNum - 1) * limitNum;
+    const requestId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+    const startTime = Date.now();
+    const log = (stage, data = {}) => {
+      console.log(`[SEARCH ${requestId}] ${stage}`, { ...data, elapsedMs: Date.now() - startTime });
+    };
 
     if (!q || typeof q !== 'string') {
-      return res.json({ products: [], total: 0 });
+      log('invalid_query', { qType: typeof q });
+      return res.json({ products: [], total: 0, engine: 'none' });
     }
+    const isArabicQuery = /[\u0600-\u06FF]/.test(q);
+    const cleanQuery = q.replace(/[\\\/.,()!?;:]/g, ' ').trim();
+    const keywords = cleanQuery.split(/\s+/).filter(k => k.length > 1);
+    log('start', { qLength: q.length, page: pageNum, limit: limitNum, isArabicQuery, keywordsCount: keywords.length });
 
     const storeSettings = await prisma.storeSettings.findUnique({ where: { id: 1 } });
     const shippingRates = {
@@ -5771,13 +6161,94 @@ app.get('/api/search', async (req, res) => {
       airShippingMinFloor: storeSettings?.airShippingMinFloor
     };
 
+    const useFastArabicSearch = isArabicQuery && (keywords.length > 3 || cleanQuery.length > 24);
+    if (useFastArabicSearch) {
+      log('fast_arabic_start', { cleanQueryLength: cleanQuery.length, keywordsCount: keywords.length });
+      const where = {
+        status: 'PUBLISHED',
+        isActive: true,
+        OR: [
+          { name: { contains: cleanQuery } },
+          { specs: { contains: cleanQuery } },
+          ...keywords.flatMap(term => [
+            { name: { contains: term } },
+            { specs: { contains: term } }
+          ])
+        ]
+      };
+      const fastStart = Date.now();
+      const [total, products] = await Promise.all([
+        prisma.product.count({ where }),
+        prisma.product.findMany({
+          where,
+          include: {
+            variants: { select: productVariantSelect },
+            images: {
+              take: 1,
+              orderBy: { order: 'asc' }
+            }
+          },
+          skip,
+          take: limitNum
+        })
+      ]);
+      log('fast_arabic_done', { total, returned: products.length, dbMs: Date.now() - fastStart });
+      return res.json({
+        products: products.map(p => applyDynamicPricingToProduct(p, shippingRates)),
+        total,
+        hasMore: skip + limitNum < total,
+        engine: 'db'
+      });
+    }
+
+    if (meiliEnabled) {
+      log('meili_start', {});
+      const meiliStart = Date.now();
+      const meiliResults = await meiliSearchProducts(q, limitNum, skip);
+      log('meili_done', { total: meiliResults?.total || 0, idsCount: meiliResults?.ids?.length || 0, meiliMs: Date.now() - meiliStart });
+      if (meiliResults && meiliResults.ids.length > 0) {
+        const meiliFetchStart = Date.now();
+        const productsWithDetails = await prisma.product.findMany({
+          where: {
+            id: { in: meiliResults.ids },
+            status: 'PUBLISHED',
+            isActive: true
+          },
+          include: {
+            variants: { select: productVariantSelect },
+            images: {
+              take: 1,
+              orderBy: { order: 'asc' }
+            }
+          }
+        });
+        log('meili_products_done', { returned: productsWithDetails.length, dbMs: Date.now() - meiliFetchStart });
+
+        const productsById = new Map(productsWithDetails.map(p => [p.id, p]));
+        const orderedProducts = meiliResults.ids
+          .map(id => productsById.get(id))
+          .filter(Boolean);
+
+        return res.json({
+          products: orderedProducts.map(p => applyDynamicPricingToProduct(p, shippingRates)),
+          total: meiliResults.total,
+          hasMore: skip + limitNum < meiliResults.total,
+          engine: 'meili'
+        });
+      }
+    }
+
     // Use AI Hybrid Search if API keys are available
-    if (process.env.SILICONFLOW_API_KEY && process.env.HUGGINGFACE_API_KEY) {
+    if (process.env.DEEPINFRA_API_KEY || process.env.HUGGINGFACE_API_KEY) {
       try {
+        log('hybrid_start', {});
+        const hybridStart = Date.now();
         const results = await hybridSearch(q, 500, 0);
+        log('hybrid_done', { total: results.length, hybridMs: Date.now() - hybridStart });
         const paginatedResults = results.slice(skip, skip + limitNum);
 
         const paginatedIds = paginatedResults.map(r => Number(r.id)).filter(id => !Number.isNaN(id));
+        const hybridFetchStart = Date.now();
         const productsWithDetails = await prisma.product.findMany({
           where: {
             id: { in: paginatedIds },
@@ -5792,6 +6263,7 @@ app.get('/api/search', async (req, res) => {
             }
           }
         });
+        log('hybrid_products_done', { returned: productsWithDetails.length, dbMs: Date.now() - hybridFetchStart });
 
         const productsById = new Map(productsWithDetails.map(p => [p.id, p]));
         const scoresById = new Map(paginatedResults.map(r => [Number(r.id), {
@@ -5812,10 +6284,11 @@ app.get('/api/search', async (req, res) => {
         return res.json({ 
           products: mergedResults.map(p => applyDynamicPricingToProduct(p, shippingRates)), 
           total: results.length,
-          hasMore: skip + limitNum < results.length
+          hasMore: skip + limitNum < results.length,
+          engine: 'hybrid'
         });
       } catch (aiError) {
-        console.error('AI Search failed, falling back to keyword search:', aiError);
+        console.error(`[SEARCH ${requestId}] hybrid_error`, aiError);
       }
     }
 
@@ -5828,10 +6301,18 @@ app.get('/api/search', async (req, res) => {
         .replace(/[أإآ]/g, 'ا')
         .replace(/ة/g, 'ه')
         .replace(/ى/g, 'ي')
-        .replace(/[\u064B-\u0652]/g, ''); // Remove Harakat
+      .replace(/[\u064B-\u0652]/g, '')
+      .replace(/ناسائ/g, 'نسائ')
+      .replace(/ناسا/g, 'نسا');
 
       const base = normalize(word);
       variations.add(base);
+      if (base.includes('ناسائ')) {
+        variations.add(base.replace(/ناسائ/g, 'نسائ'));
+      }
+    if (base.includes('ناسا')) {
+      variations.add(base.replace(/ناسا/g, 'نسا'));
+    }
 
       // 1. Iraqi Dialect & Character-level variations
       const generateCharVariations = (w) => {
@@ -6042,47 +6523,33 @@ app.get('/api/search', async (req, res) => {
         }
       });
 
-      return Array.from(finalVariations);
+      const finalArray = Array.from(finalVariations);
+      if (finalArray.length > 80) {
+        return finalArray.slice(0, 80);
+      }
+      return finalArray;
     };
 
     // Better keyword extraction: handle slashes and remove punctuation
-    const cleanQuery = q.replace(/[\\\/.,()!?;:]/g, ' ').trim();
-    const keywords = cleanQuery.split(/\s+/).filter(k => k.length > 1);
+    const useReducedSearch = isArabicQuery || keywords.length > 3 || cleanQuery.length > 24;
     
     // Generate all search terms including variations
     const allSearchTerms = new Set([q, cleanQuery]);
     keywords.forEach(k => {
-      getVariations(k).forEach(v => allSearchTerms.add(v));
+      if (useReducedSearch) {
+        allSearchTerms.add(k);
+      } else {
+        getVariations(k).forEach(v => allSearchTerms.add(v));
+      }
     });
 
-    const searchTermsArray = Array.from(allSearchTerms);
+    let searchTermsArray = Array.from(allSearchTerms);
+    const maxTerms = useReducedSearch ? (isArabicQuery ? 30 : 40) : 120;
+    if (searchTermsArray.length > maxTerms) {
+      searchTermsArray = searchTermsArray.slice(0, maxTerms);
+    }
+    log('keyword_terms_ready', { useReducedSearch, termsCount: searchTermsArray.length });
 
-    const products = await prisma.product.findMany({
-      where: {
-        status: 'PUBLISHED',
-        isActive: true,
-        OR: [
-          { name: { contains: q } },
-          { chineseName: { contains: q } },
-          ...searchTermsArray.flatMap(term => [
-            { name: { contains: term } },
-            { chineseName: { contains: term } },
-            { description: { contains: term } },
-            { specs: { contains: term } }
-          ])
-        ]
-      },
-      include: { 
-        variants: { select: productVariantSelect },
-        images: {
-          take: 1,
-          orderBy: { order: 'asc' }
-        }
-      },
-      take: 500 // Even more results for better sorting
-    });
-
-    // Improved Arabic normalization helper for scoring
     const normalizeForSearch = (text) => 
       (text || '').toLowerCase()
           .replace(/[أإآ]/g, 'ا')
@@ -6090,6 +6557,8 @@ app.get('/api/search', async (req, res) => {
           .replace(/ى/g, 'ي')
           .replace(/[گ]/g, 'ق')
           .replace(/[چ]/g, 'ج')
+          .replace(/ناسائ/g, 'نسائ')
+          .replace(/ناسا/g, 'نسا')
           .replace(/[\u064B-\u0652]/g, '')
           .replace(/[\\\/.,()!?;:]/g, ' ')
           .replace(/\s+/g, ' ')
@@ -6101,106 +6570,211 @@ app.get('/api/search', async (req, res) => {
       .map(k => normalizeForSearch(k))
       .filter(k => k.length > 1 && !stopWords.includes(k));
 
-    // Advanced relevance scoring
-    const scoredProducts = products.map(product => {
-      let score = 0;
-      const name = normalizeForSearch(product.name);
-      const chineseName = normalizeForSearch(product.chineseName);
-      const desc = normalizeForSearch(product.description);
-      const specs = normalizeForSearch(product.specs);
-      
-      // 1. Exact Name Match (Huge Bonus)
-      if (name === normalizedQ) score += 10000;
-      if (chineseName === normalizedQ) score += 8000;
-      
-      // 2. Phrase match
-      if (name.includes(normalizedQ)) score += 5000;
-      if (chineseName && chineseName.includes(normalizedQ)) score += 4000;
-      if (desc.includes(normalizedQ)) score += 2000;
-      if (specs && specs.includes(normalizedQ)) score += 1500;
-      
-      // 3. Keyword matches across all fields
-      let nameMatches = 0;
-      let otherMatches = 0;
-      
-      normalizedKeywords.forEach((k, idx) => {
-        // Name matches (highest priority)
-        if (name.includes(k)) {
-          nameMatches++;
-          score += 600; 
-          if (name.startsWith(k)) score += 200;
-          
-          // Sequence match bonus
-          if (idx < normalizedKeywords.length - 1) {
-            const nextK = normalizedKeywords[idx + 1];
-            if (name.includes(k + ' ' + nextK) || name.includes(k + nextK)) {
-              score += 1200;
+    const scoreAndSortProducts = (products) => {
+      const scoringStart = Date.now();
+      const scoredProducts = products.map(product => {
+        let score = 0;
+        const name = normalizeForSearch(product.name);
+        const chineseName = normalizeForSearch(product.chineseName);
+        const desc = normalizeForSearch(product.description);
+        const specs = normalizeForSearch(product.specs);
+        
+        if (name === normalizedQ) score += 10000;
+        if (chineseName === normalizedQ) score += 8000;
+        
+        if (name.includes(normalizedQ)) score += 5000;
+        if (chineseName && chineseName.includes(normalizedQ)) score += 4000;
+        if (desc.includes(normalizedQ)) score += 2000;
+        if (specs && specs.includes(normalizedQ)) score += 1500;
+        
+        let nameMatches = 0;
+        let otherMatches = 0;
+        
+        normalizedKeywords.forEach((k, idx) => {
+          if (name.includes(k)) {
+            nameMatches++;
+            score += 600; 
+            if (name.startsWith(k)) score += 200;
+            
+            if (idx < normalizedKeywords.length - 1) {
+              const nextK = normalizedKeywords[idx + 1];
+              if (name.includes(k + ' ' + nextK) || name.includes(k + nextK)) {
+                score += 1200;
+              }
             }
           }
+
+          if (chineseName && chineseName.includes(k)) {
+            score += 400;
+            otherMatches++;
+          }
+
+          if (desc.includes(k)) {
+            score += 50;
+            otherMatches++;
+          }
+          if (specs && specs.includes(k)) {
+            score += 40;
+            otherMatches++;
+          }
+        });
+
+        const nameCoverage = normalizedKeywords.length > 0 ? nameMatches / normalizedKeywords.length : 0;
+        score += nameCoverage * 4000;
+
+        const totalUniqueMatches = new Set();
+        normalizedKeywords.forEach(k => {
+          if (name.includes(k) || (chineseName && chineseName.includes(k)) || desc.includes(k) || (specs && specs.includes(k))) {
+            totalUniqueMatches.add(k);
+          }
+        });
+        const totalCoverage = normalizedKeywords.length > 0 ? totalUniqueMatches.size / normalizedKeywords.length : 0;
+        score += totalCoverage * 2000;
+
+        if (normalizedKeywords.length >= 2 && totalCoverage >= 0.8) {
+          score += 1000;
         }
 
-        // Chinese Name matches
-        if (chineseName && chineseName.includes(k)) {
-          score += 400;
-          otherMatches++;
-        }
+        if (product.id.toString() === q.trim()) score += 15000;
 
-        // Description and Specs matches
-        if (desc.includes(k)) {
-          score += 50;
-          otherMatches++;
-        }
-        if (specs && specs.includes(k)) {
-          score += 40;
-          otherMatches++;
-        }
+        return { ...product, searchScore: score };
       });
+      log('keyword_scoring_done', { scored: scoredProducts.length, scoringMs: Date.now() - scoringStart });
+      return scoredProducts
+        .filter(p => p.searchScore > 0)
+        .sort((a, b) => {
+          if (b.searchScore !== a.searchScore) {
+            return b.searchScore - a.searchScore;
+          }
+          return b.id - a.id;
+        });
+    };
 
-      // 4. Coverage bonuses
-      const nameCoverage = normalizedKeywords.length > 0 ? nameMatches / normalizedKeywords.length : 0;
-      score += nameCoverage * 4000;
-
-      const totalUniqueMatches = new Set();
-      normalizedKeywords.forEach(k => {
-        if (name.includes(k) || (chineseName && chineseName.includes(k)) || desc.includes(k) || (specs && specs.includes(k))) {
-          totalUniqueMatches.add(k);
+    if (isArabicQuery && useReducedSearch) {
+      const buildArabicVariants = (term) => {
+        const variations = new Set();
+        const base = normalizeForSearch(term);
+        if (base) variations.add(base);
+        if (base.endsWith('ه')) variations.add(base.slice(0, -1) + 'ة');
+        if (base.endsWith('ة')) variations.add(base.slice(0, -1) + 'ه');
+        if (base.endsWith('ه') || base.endsWith('ة')) {
+          const stem = base.slice(0, -1);
+          if (stem.length > 1) variations.add(stem + 'ات');
         }
-      });
-      const totalCoverage = normalizedKeywords.length > 0 ? totalUniqueMatches.size / normalizedKeywords.length : 0;
-      score += totalCoverage * 2000;
+        if (base.endsWith('ات')) {
+          const stem = base.slice(0, -2);
+          if (stem.length > 1) {
+            variations.add(stem + 'ه');
+            variations.add(stem + 'ة');
+            variations.add(stem);
+          }
+        }
+        return Array.from(variations).filter(v => v.length > 1);
+      };
 
-      // 5. Special Bonus for high coverage
-      if (normalizedKeywords.length >= 2 && totalCoverage >= 0.8) {
-        score += 1000;
+      const seedTerms = Array.from(new Set([cleanQuery, ...keywords])).filter(t => t && t.length > 1).slice(0, 2);
+      const prefixTerms = Array.from(new Set(seedTerms.flatMap(buildArabicVariants))).slice(0, 6);
+      if (prefixTerms.length > 0) {
+        const prefixStart = Date.now();
+        const prefixProducts = await prisma.product.findMany({
+          where: {
+            status: 'PUBLISHED',
+            isActive: true,
+            OR: prefixTerms.map(term => ({ name: { startsWith: term } }))
+          },
+          include: { 
+            variants: { select: productVariantSelect },
+            images: {
+              take: 1,
+              orderBy: { order: 'asc' }
+            }
+          },
+          take: Math.max(limitNum * 3, 60)
+        });
+        log('arabic_prefix_done', { returned: prefixProducts.length, dbMs: Date.now() - prefixStart, termsCount: prefixTerms.length });
+        if (prefixProducts.length > 0) {
+          const sortedProducts = scoreAndSortProducts(prefixProducts);
+          const total = sortedProducts.length;
+          const paginatedProducts = sortedProducts.slice(0, limitNum);
+          log('keyword_done', { total, returned: paginatedProducts.length });
+          return res.json({ 
+            products: paginatedProducts.map(p => applyDynamicPricingToProduct(p, shippingRates)), 
+            total,
+            hasMore: total > limitNum,
+            engine: 'db'
+          });
+        }
+
+        const containsStart = Date.now();
+        const containsProducts = await prisma.product.findMany({
+          where: {
+            status: 'PUBLISHED',
+            isActive: true,
+            OR: prefixTerms.map(term => ({ name: { contains: term } }))
+          },
+          include: { 
+            variants: { select: productVariantSelect },
+            images: {
+              take: 1,
+              orderBy: { order: 'asc' }
+            }
+          },
+          take: Math.max(limitNum * 3, 60)
+        });
+        log('arabic_contains_done', { returned: containsProducts.length, dbMs: Date.now() - containsStart, termsCount: prefixTerms.length });
+        if (containsProducts.length > 0) {
+          const sortedProducts = scoreAndSortProducts(containsProducts);
+          const total = sortedProducts.length;
+          const paginatedProducts = sortedProducts.slice(0, limitNum);
+          log('keyword_done', { total, returned: paginatedProducts.length });
+          return res.json({ 
+            products: paginatedProducts.map(p => applyDynamicPricingToProduct(p, shippingRates)), 
+            total,
+            hasMore: total > limitNum,
+            engine: 'db'
+          });
+        }
       }
+    }
 
-      // 6. ID match bonus
-      if (product.id.toString() === q.trim()) score += 15000;
-
-      return { ...product, searchScore: score };
-    });
-
-    const sortedProducts = scoredProducts
-      .filter(p => p.searchScore > 0)
-      .sort((a, b) => {
-        // Primary sort by score
-        if (b.searchScore !== a.searchScore) {
-          return b.searchScore - a.searchScore;
+    const searchFields = isArabicQuery && useReducedSearch ? ['name'] : ['name', 'specs'];
+    const keywordFetchStart = Date.now();
+    const products = await prisma.product.findMany({
+      where: {
+        status: 'PUBLISHED',
+        isActive: true,
+        OR: [
+          { name: { contains: q } },
+          ...searchTermsArray.flatMap(term =>
+            searchFields.map(field => ({ [field]: { contains: term } }))
+          )
+        ]
+      },
+      include: { 
+        variants: { select: productVariantSelect },
+        images: {
+          take: 1,
+          orderBy: { order: 'asc' }
         }
-        // Secondary stable sort by ID to prevent duplicates across pages
-        return b.id - a.id;
-      });
+      },
+      take: useReducedSearch ? (isArabicQuery ? 120 : 200) : 500
+    });
+    log('keyword_products_done', { returned: products.length, dbMs: Date.now() - keywordFetchStart });
 
+    const sortedProducts = scoreAndSortProducts(products);
     const total = sortedProducts.length;
     const paginatedProducts = sortedProducts.slice(skip, skip + limitNum);
 
+    log('keyword_done', { total, returned: paginatedProducts.length });
     res.json({ 
       products: paginatedProducts.map(p => applyDynamicPricingToProduct(p, shippingRates)), 
       total,
-      hasMore: skip + limitNum < total
+      hasMore: skip + limitNum < total,
+      engine: 'db'
     });
   } catch (error) {
     console.error('Search error:', error);
+    console.log(`[SEARCH ${typeof requestId === 'string' ? requestId : 'unknown'}] error`, { message: error?.message, name: error?.name });
     res.status(500).json({ error: 'Search failed' });
   }
 });
@@ -6323,6 +6897,7 @@ app.put('/api/products/:id', authenticateToken, isAdmin, hasPermission('manage_p
     });
 
     enqueueEmbeddingJob(product.id);
+    void syncProductToMeili(product.id);
 
     res.json(product);
   } catch (error) {
@@ -6349,6 +6924,7 @@ app.delete('/api/products/:id', authenticateToken, isAdmin, hasPermission('manag
     ]);
 
     await prisma.product.delete({ where: { id: productId } });
+    void syncProductToMeili(productId);
 
     await logActivity(
       req.user.id,
@@ -7612,4 +8188,10 @@ setupLinkCheckerCron();
 
 httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`Server is running on port ${PORT} (accessible from network)`);
+  
+  // Trigger MeiliSearch indexing on startup
+  setTimeout(() => {
+    console.log('[Meili Debug] Triggering startup index check...');
+    ensureMeiliIndexed().catch(err => console.error('[Meili Debug] Startup index check failed:', err));
+  }, 5000);
 });

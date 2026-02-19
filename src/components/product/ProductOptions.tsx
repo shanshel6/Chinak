@@ -1,5 +1,4 @@
 import React from 'react';
-import LazyImage from '../LazyImage';
 import { fixMojibake } from '../../utils/mojibakeFixer';
 
 interface Option {
@@ -47,7 +46,7 @@ const ProductOptions: React.FC<ProductOptionsProps> = ({
             )}
         </div>
 
-        <div className="flex flex-wrap gap-2 max-h-[160px] overflow-y-auto pr-1 pb-2 scrollbar-thin scrollbar-thumb-slate-300 dark:scrollbar-thumb-slate-600 scrollbar-track-transparent">
+        <div className="grid grid-cols-2 gap-2">
           {(() => {
             // Deduplicate logic: Track seen labels
             const seenLabels = new Set<string>();
@@ -84,27 +83,17 @@ const ProductOptions: React.FC<ProductOptionsProps> = ({
               const isSelected = selectedVariantId ? variant.id === selectedVariantId : false;
 
               return (
-                <div
+                <button
                   key={variant.id || idx}
                   onClick={() => onVariantSelect(combination)}
-                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all border-2 cursor-pointer flex items-center gap-2 ${
+                  className={`px-3 py-2 rounded-xl text-xs font-bold transition-all border-2 text-right ${
                     isSelected
-                      ? 'bg-primary border-primary text-white shadow-lg shadow-primary/20 scale-105'
-                      : 'bg-white dark:bg-slate-800 border-slate-100 dark:border-white/10 text-slate-600 dark:text-slate-300 hover:border-primary/50'
+                      ? 'bg-white border-primary text-primary shadow-sm'
+                      : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:border-primary/50'
                   }`}
                 >
-                  {variant.image && (
-                    <LazyImage
-                      src={variant.image}
-                      alt={label}
-                      className="w-7 h-7 rounded-lg shrink-0"
-                      isThumbnail={true}
-                      width={56}
-                      height={56}
-                    />
-                  )}
-                  <span className="truncate">{label}</span>
-                </div>
+                  <span className="line-clamp-2 leading-4">{label}</span>
+                </button>
               );
             });
           })()}
@@ -134,7 +123,7 @@ const ProductOptions: React.FC<ProductOptionsProps> = ({
               {fixMojibake(option.name)}
               {!isInformational && values && values.length > 0 && <span className="text-[10px] text-slate-400 font-normal">(اختر واحد)</span>}
             </h3>
-            <div className="flex flex-wrap gap-2">
+            <div className="grid grid-cols-2 gap-2">
               {values && values.map((val: any) => {
                 const rawValString = typeof val === 'object' ? (val.value || val.name || JSON.stringify(val)) : String(val);
                 const valString = fixMojibake(rawValString);
@@ -142,12 +131,12 @@ const ProductOptions: React.FC<ProductOptionsProps> = ({
                   <div
                     key={rawValString}
                     onClick={() => !isInformational && onOptionSelect(option.name, rawValString)}
-                    className={`px-4 py-2 rounded-xl text-xs font-bold transition-all border-2 ${
+                    className={`px-3 py-2 rounded-xl text-xs font-bold transition-all border-2 text-right ${
                       isInformational
-                        ? 'bg-slate-50 dark:bg-slate-800/50 border-slate-100 dark:border-slate-700 text-slate-600 dark:text-slate-400'
+                        ? 'bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400'
                         : selectedOptions[option.name] === rawValString
-                          ? 'bg-primary border-primary text-white shadow-lg shadow-primary/20 scale-105 cursor-pointer'
-                          : 'bg-white dark:bg-slate-800 border-slate-100 dark:border-white/10 text-slate-600 dark:text-slate-300 hover:border-primary/50 cursor-pointer'
+                          ? 'bg-white border-primary text-primary shadow-sm cursor-pointer'
+                          : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:border-primary/50 cursor-pointer'
                     }`}
                   >
                     {valString}

@@ -22,6 +22,7 @@ const BottomNav: React.FC<BottomNavProps> = ({ className = '' }) => {
   }, [location.pathname, prevPathname]);
 
   const lastScrollY = useRef(0);
+  const scrollTargetRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     // Only apply hide/show on scroll for the Home page as requested
@@ -31,18 +32,36 @@ const BottomNav: React.FC<BottomNavProps> = ({ className = '' }) => {
     }
 
     let ticking = false;
-    const getScrollY = (e?: Event) => {
-      const target = e?.target as unknown;
-      if (target && typeof target === 'object') {
-        const el = target as { scrollTop?: unknown; scrollHeight?: unknown; clientHeight?: unknown };
-        const scrollTop = typeof el.scrollTop === 'number' ? el.scrollTop : null;
-        const scrollHeight = typeof el.scrollHeight === 'number' ? el.scrollHeight : null;
-        const clientHeight = typeof el.clientHeight === 'number' ? el.clientHeight : null;
-        if (scrollTop !== null && scrollHeight !== null && clientHeight !== null && scrollHeight > clientHeight) {
-          return scrollTop;
+
+    const resolveScrollTarget = () => {
+      const scrollingEl = document.scrollingElement as HTMLElement | null;
+      if (scrollingEl && scrollingEl.scrollHeight > scrollingEl.clientHeight) return scrollingEl;
+      const body = document.body;
+      if (body && body.scrollHeight > body.clientHeight) return body;
+      const root = document.getElementById('root') as HTMLElement | null;
+      if (root && root.scrollHeight > root.clientHeight) return root;
+      const candidates = Array.from(document.querySelectorAll<HTMLElement>('main, [data-scroll-container], .scroll-container, .overflow-y-auto'));
+      for (const el of candidates) {
+        const style = window.getComputedStyle(el);
+        if ((style.overflowY === 'auto' || style.overflowY === 'scroll') && el.scrollHeight > el.clientHeight) {
+          return el;
         }
       }
+      return scrollingEl || body || root || null;
+    };
 
+    scrollTargetRef.current = resolveScrollTarget();
+
+    const getScrollY = (e?: Event) => {
+      const target = e?.target as HTMLElement | null;
+      if (target && typeof target.scrollTop === 'number') {
+        const scrollTop = target.scrollTop;
+        const scrollHeight = target.scrollHeight;
+        const clientHeight = target.clientHeight;
+        if (scrollHeight > clientHeight) return scrollTop;
+      }
+      const fixedTarget = scrollTargetRef.current;
+      if (fixedTarget && typeof fixedTarget.scrollTop === 'number') return fixedTarget.scrollTop;
       const se = document.scrollingElement as null | { scrollTop?: unknown };
       if (se && typeof se.scrollTop === 'number') return se.scrollTop;
       return window.pageYOffset || window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0;
@@ -83,12 +102,19 @@ const BottomNav: React.FC<BottomNavProps> = ({ className = '' }) => {
       }
     };
 
-    window.addEventListener('scroll', handleScroll, { passive: true });
-    document.addEventListener('scroll', handleScroll, { passive: true, capture: true });
+    const scrollTarget = scrollTargetRef.current;
+    if (scrollTarget) {
+      scrollTarget.addEventListener('scroll', handleScroll, { passive: true });
+    } else {
+      window.addEventListener('scroll', handleScroll, { passive: true });
+    }
     window.addEventListener('touchmove', handleScroll, { passive: true });
     return () => {
-      window.removeEventListener('scroll', handleScroll);
-      document.removeEventListener('scroll', handleScroll, true);
+      if (scrollTarget) {
+        scrollTarget.removeEventListener('scroll', handleScroll);
+      } else {
+        window.removeEventListener('scroll', handleScroll);
+      }
       window.removeEventListener('touchmove', handleScroll);
     };
   }, [location.pathname]);

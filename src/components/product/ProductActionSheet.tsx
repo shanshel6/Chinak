@@ -74,7 +74,7 @@ const ProductActionSheet: React.FC<ProductActionSheetProps> = ({
             animate={{ y: 0 }}
             exit={{ y: '100%' }}
             transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-            className="fixed bottom-0 left-0 right-0 bg-white dark:bg-slate-900 rounded-t-3xl z-[70] max-h-[85vh] flex flex-col shadow-2xl"
+            className="fixed bottom-0 left-0 right-0 bg-white dark:bg-slate-900 rounded-t-[32px] z-[70] max-h-[85vh] flex flex-col shadow-xl"
           >
             {/* Header */}
             <div className="flex items-start gap-4 p-4 border-b border-slate-100 dark:border-slate-800">

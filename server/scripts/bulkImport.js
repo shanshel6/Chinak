@@ -189,12 +189,12 @@ async function bulkImport(filePath) {
         console.log(`[${results.imported + results.skipped + results.failed}/${rawData.length}] Imported: ${name}`);
 
         // Trigger AI processing (Metadata + Embedding)
-        if (process.env.SILICONFLOW_API_KEY || process.env.HUGGINGFACE_API_KEY) {
+        if (process.env.DEEPINFRA_API_KEY || process.env.HUGGINGFACE_API_KEY) {
           try {
             console.log(`  -> AI processing for product ${product.id}...`);
             await processProductAI(product.id);
             results.aiProcessed++;
-            // 2-second delay to be safe with SiliconFlow free tier
+            // 2-second delay to be safe with DeepInfra free tier
             await new Promise(r => setTimeout(r, 2000));
           } catch (aiErr) {
             console.error(`  !! AI Failed for product ${product.id}:`, aiErr.message);

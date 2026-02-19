@@ -9,7 +9,9 @@ const getVariations = (word) => {
     .replace(/[أإآ]/g, 'ا')
     .replace(/ة/g, 'ه')
     .replace(/ى/g, 'ي')
-    .replace(/[\u064B-\u0652]/g, '');
+    .replace(/[\u064B-\u0652]/g, '')
+    .replace(/ناسائ/g, 'نسائ')
+    .replace(/ناسا/g, 'نسا');
 
   const base = normalize(word);
   variations.add(base);
@@ -72,6 +74,7 @@ async function testSearch(q) {
 async function main() {
   await testSearch('احذيه رجالي');
   await testSearch('احذيه رجاليه');
+  await testSearch('احذيه ناسائيه');
   await prisma.$disconnect();
 }
 

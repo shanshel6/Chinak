@@ -196,13 +196,17 @@ const SearchResults: React.FC = () => {
       else setLoadingMore(true);
       
       setError(null);
+      const startTime = Date.now();
+      const querySnapshot = searchQuery;
       try {
+        console.log('[SearchResults] request_start', { query: querySnapshot, page });
         const data = await searchProducts(searchQuery, page);
         if (!isMounted) return;
 
         const newProducts = data.products || [];
         const total = data.total || 0;
         const serverHasMore = data.hasMore !== undefined ? data.hasMore : newProducts.length === 20;
+        console.log('[SearchResults] request_success', { query: querySnapshot, page, returned: newProducts.length, total, elapsedMs: Date.now() - startTime });
 
         if (page === 1) {
           setProducts(newProducts);
@@ -228,6 +232,7 @@ const SearchResults: React.FC = () => {
       } catch (err) {
         if (!isMounted) return;
         console.error('Search failed:', err);
+        console.log('[SearchResults] request_error', { query: querySnapshot, page, elapsedMs: Date.now() - startTime });
         setError('حدث خطأ أثناء البحث. يرجى المحاولة مرة أخرى.');
       } finally {
         if (isMounted) {

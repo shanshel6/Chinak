@@ -8,7 +8,7 @@ puppeteer.use(StealthPlugin());
 import fs from 'fs';
 import path from 'path';
 import dotenv from 'dotenv';
-import OpenAI from 'openai'; // Use OpenAI SDK for SiliconFlow
+import OpenAI from 'openai'; // Use OpenAI SDK for DeepInfra
 import readline from 'readline';
 import { fileURLToPath } from 'url';
 import { PrismaClient } from '@prisma/client';
@@ -80,18 +80,6 @@ if (process.env.DEEPINFRA_API_KEY) {
         maxRetries: 0,
     });
     console.log(`AI Initialized (DeepInfra: primary=${AI_PRIMARY_MODEL}, fallback=${AI_FALLBACK_MODEL})`);
-} else if (process.env.SILICONFLOW_API_KEY) {
-    // Fallback to SiliconFlow if DeepInfra not set (backward compatibility)
-    AI_PRIMARY_MODEL = process.env.SILICONFLOW_MODEL || process.env.AI_MODEL || AI_PRIMARY_MODEL;
-    AI_FALLBACK_MODEL = process.env.SILICONFLOW_FALLBACK_MODEL || process.env.AI_FALLBACK_MODEL || AI_PRIMARY_MODEL;
-    AI_MODEL = AI_PRIMARY_MODEL;
-    aiClient = new OpenAI({
-        baseURL: "https://api.siliconflow.cn/v1",
-        apiKey: process.env.SILICONFLOW_API_KEY,
-        timeout: AI_TIMEOUT_MS,
-        maxRetries: 0,
-    });
-    console.log(`AI Initialized (SiliconFlow: primary=${AI_PRIMARY_MODEL}, fallback=${AI_FALLBACK_MODEL})`);
 } else {
     console.log('Warning: No AI API KEY found. AI features will use mock data.');
 }

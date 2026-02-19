@@ -2,7 +2,7 @@ import puppeteer from 'puppeteer-core';
 import fs from 'fs';
 import path from 'path';
 import dotenv from 'dotenv';
-import OpenAI from 'openai'; // Use OpenAI SDK for SiliconFlow
+import OpenAI from 'openai'; // Use OpenAI SDK for DeepInfra
 import readline from 'readline';
 import { fileURLToPath } from 'url';
 import { PrismaClient } from '@prisma/client';
@@ -15,16 +15,16 @@ dotenv.config({ path: envPath });
 
 const prisma = new PrismaClient();
 
-// Initialize AI (SiliconFlow)
-let siliconflow = null;
-if (process.env.SILICONFLOW_API_KEY) {
-    siliconflow = new OpenAI({
-        baseURL: "https://api.siliconflow.cn/v1",
-        apiKey: process.env.SILICONFLOW_API_KEY,
+// Initialize AI (DeepInfra)
+let deepinfra = null;
+if (process.env.DEEPINFRA_API_KEY) {
+    deepinfra = new OpenAI({
+        baseURL: "https://api.deepinfra.com/v1/openai",
+        apiKey: process.env.DEEPINFRA_API_KEY,
     });
-    console.log('AI Initialized (SiliconFlow)');
+    console.log('AI Initialized (DeepInfra)');
 } else {
-    console.log('Warning: SILICONFLOW_API_KEY not found. AI features will use mock data.');
+    console.log('Warning: DEEPINFRA_API_KEY not found. AI features will use mock data.');
 }
 
 // --- Configuration ---
@@ -55,7 +55,7 @@ function askQuestion(query) {
 
 // Helper: Process with AI
 async function enrichWithAI(title, description, price) {
-    if (!siliconflow) {
+    if (!deepinfra) {
         return {
             translatedTitle: title + " (Translation Pending)",
             translatedDesc: description + " (Translation Pending)",
@@ -116,7 +116,7 @@ async function enrichWithAI(title, description, price) {
         `;
 
         // Rate limiting logic: Wait if needed
-        // SiliconFlow Free tier might have 60 RPM or similar.
+        // DeepInfra Free tier might have 60 RPM or similar.
         // We will implement a retry mechanism.
         
         let attempts = 0;
@@ -125,7 +125,7 @@ async function enrichWithAI(title, description, price) {
         while (attempts < maxAttempts) {
             try {
                 // Add 25s timeout to the API call (Increased from 15s to avoid timeout on long generations)
-                const responsePromise = siliconflow.chat.completions.create({
+                const responsePromise = deepinfra.chat.completions.create({
                     model: "Qwen/Qwen2.5-7B-Instruct",
                     messages: [{ role: "user", content: prompt }],
                     temperature: 0.7,
