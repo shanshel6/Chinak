@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useCartStore } from '../store/useCartStore';
 import { Home, ShoppingBag, ShoppingCart, Heart, User } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 
 interface BottomNavProps {
   className?: string;
@@ -134,11 +135,11 @@ const BottomNav: React.FC<BottomNavProps> = ({ className = '' }) => {
 
   return (
     <nav 
-      className={`fixed bottom-0 left-0 right-0 z-40 w-full border-t border-slate-100/50 bg-white/80 px-6 pb-[calc(env(safe-area-inset-bottom)+1rem)] pt-2 backdrop-blur-xl dark:border-slate-800/50 dark:bg-slate-900/80 transition-transform duration-300 ease-in-out shadow-[0_-5px_20px_rgba(0,0,0,0.03)] ${
-        isVisible ? 'translate-y-0' : 'translate-y-full'
+      className={`fixed bottom-0 left-0 right-0 z-50 w-full border-t border-slate-200/50 bg-white/80 px-4 pb-[calc(env(safe-area-inset-bottom)+0.5rem)] pt-3 backdrop-blur-2xl dark:border-slate-800/50 dark:bg-slate-900/80 transition-transform duration-500 cubic-bezier(0.32, 0.72, 0, 1) shadow-[0_-10px_40px_rgba(0,0,0,0.05)] ${
+        isVisible ? 'translate-y-0' : 'translate-y-[120%]'
       } ${className}`}
     >
-      <div className="mx-auto flex max-w-lg items-center justify-between">
+      <div className="mx-auto flex max-w-md items-end justify-between px-2">
         {navItems.map((item) => {
           const active = isActive(item.path);
           const isDisabled = 'disabled' in item ? (item as any).disabled : false;
@@ -146,21 +147,32 @@ const BottomNav: React.FC<BottomNavProps> = ({ className = '' }) => {
           
           if (item.id === 'cart') {
             return (
-              <div key={item.id} className="relative -mt-8">
-                <button 
+              <div key={item.id} className="relative -mt-8 mx-2">
+                <motion.button 
                   onClick={() => !isDisabled && navigate(item.path)}
                   disabled={isDisabled}
-                  className={`flex size-14 items-center justify-center rounded-full shadow-lg ring-[5px] ring-white/80 dark:ring-slate-900/80 backdrop-blur-md transition-all duration-300 hover:scale-110 active:scale-95 ${
-                    active ? 'bg-primary text-white shadow-primary/30' : 'bg-primary text-white shadow-primary/20'
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.9 }}
+                  className={`flex size-14 items-center justify-center rounded-full shadow-lg ring-[6px] ring-white/90 dark:ring-slate-900/90 backdrop-blur-md ${
+                    active 
+                      ? 'bg-gradient-to-tr from-primary to-blue-600 text-white shadow-primary/40' 
+                      : 'bg-slate-900 text-white shadow-slate-900/20 dark:bg-slate-700'
                   } ${isDisabled ? 'opacity-50 cursor-not-allowed' : ''}`}
                 >
-                  <Icon size={24} strokeWidth={active ? 2.5 : 2} />
-                </button>
-                {cartItemsCount > 0 && (
-                  <span className="absolute top-0 right-0 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white ring-2 ring-white dark:ring-slate-900 shadow-md animate-in zoom-in duration-300 z-50">
-                    {cartItemsCount > 99 ? '99+' : cartItemsCount}
-                  </span>
-                )}
+                  <Icon size={24} strokeWidth={2.5} />
+                </motion.button>
+                <AnimatePresence>
+                  {cartItemsCount > 0 && (
+                    <motion.span 
+                      initial={{ scale: 0 }}
+                      animate={{ scale: 1 }}
+                      exit={{ scale: 0 }}
+                      className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white ring-2 ring-white dark:ring-slate-900 shadow-sm"
+                    >
+                      {cartItemsCount > 99 ? '99+' : cartItemsCount}
+                    </motion.span>
+                  )}
+                </AnimatePresence>
               </div>
             );
           }
@@ -170,12 +182,44 @@ const BottomNav: React.FC<BottomNavProps> = ({ className = '' }) => {
               key={item.id}
               onClick={() => !isDisabled && navigate(item.path)}
               disabled={isDisabled}
-              className={`flex flex-col items-center gap-1 transition-all duration-300 active:scale-90 ${
-                active ? 'text-primary scale-110' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'
-              } ${isDisabled ? 'opacity-30 cursor-not-allowed grayscale' : ''}`}
+              className={`group relative flex flex-1 flex-col items-center justify-end gap-1 pb-1 transition-all duration-300 ${
+                isDisabled ? 'opacity-30 cursor-not-allowed grayscale' : ''
+              }`}
             >
-              <Icon size={24} strokeWidth={active ? 2.5 : 2} className="transition-all" />
-              <span className={`text-[10px] font-medium transition-all ${active ? 'font-bold' : ''}`}>{item.label}</span>
+              <div className="relative p-1.5">
+                <motion.div
+                  animate={{
+                    y: active ? -2 : 0,
+                    scale: active ? 1.1 : 1,
+                  }}
+                  transition={{ type: "spring", stiffness: 300, damping: 20 }}
+                  className={`relative z-10 ${active ? 'text-primary' : 'text-slate-400 group-hover:text-slate-600 dark:text-slate-500 dark:group-hover:text-slate-300'}`}
+                >
+                  <Icon 
+                    size={24} 
+                    strokeWidth={active ? 2.5 : 2} 
+                    fill={active ? "currentColor" : "none"}
+                    className="transition-colors duration-300" 
+                  />
+                </motion.div>
+                
+                {active && (
+                  <motion.div
+                    layoutId="activeTabIndicator"
+                    className="absolute inset-0 -z-0 rounded-xl bg-primary/10 dark:bg-primary/20"
+                    initial={{ opacity: 0, scale: 0.8 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.8 }}
+                    transition={{ type: "spring", stiffness: 300, damping: 25 }}
+                  />
+                )}
+              </div>
+              
+              <span className={`text-[10px] font-medium transition-all duration-300 ${
+                active ? 'text-primary font-bold translate-y-0 opacity-100' : 'text-slate-400 translate-y-1 opacity-0 h-0 overflow-hidden'
+              }`}>
+                {item.label}
+              </span>
             </button>
           );
         })}

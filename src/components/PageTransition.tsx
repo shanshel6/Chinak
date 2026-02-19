@@ -11,10 +11,10 @@ const PageTransition: React.FC<PageTransitionProps> = ({ children }) => {
   return (
     <motion.div
       ref={containerRef}
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -10 }}
-      transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+      initial={{ opacity: 0, scale: 0.98, y: 10 }}
+      animate={{ opacity: 1, scale: 1, y: 0 }}
+      exit={{ opacity: 0, scale: 0.98, y: -10 }}
+      transition={{ type: "spring", stiffness: 260, damping: 20 }}
       onAnimationComplete={() => {
         if (containerRef.current) {
           containerRef.current.style.transform = 'none';

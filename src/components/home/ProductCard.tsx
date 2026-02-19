@@ -1,7 +1,8 @@
 import React, { useRef, useState } from 'react';
 import LazyImage from '../LazyImage';
-import { Heart } from 'lucide-react';
+import { Heart, Plus } from 'lucide-react';
 import type { Product } from '../../types/product';
+import { motion } from 'framer-motion';
 
 interface ProductCardProps {
   product: Product;
@@ -108,57 +109,72 @@ const ProductCard: React.FC<ProductCardProps> = ({
   }, [minPrice]);
 
   return (
-    <div 
+    <motion.div 
       onClick={() => onNavigate(product.id)}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
-      className="group relative flex flex-col overflow-hidden rounded-2xl bg-white dark:bg-slate-800 shadow-sm transition-all duration-300 hover:shadow-xl hover:-translate-y-1 cursor-pointer"
+      initial={{ opacity: 0, y: 20 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true, margin: "-50px" }}
+      whileHover={{ y: -5 }}
+      whileTap={{ scale: 0.98 }}
+      transition={{ type: "spring", stiffness: 300, damping: 20 }}
+      className="group relative flex flex-col overflow-hidden rounded-[24px] bg-white dark:bg-slate-800 shadow-[0_2px_15px_-3px_rgba(0,0,0,0.07),0_10px_20px_-2px_rgba(0,0,0,0.04)] hover:shadow-[0_8px_25px_-5px_rgba(0,0,0,0.1),0_10px_10px_-5px_rgba(0,0,0,0.04)] cursor-pointer ring-1 ring-slate-100 dark:ring-slate-700/50"
     >
       {/* Image Container */}
-      <div className="relative aspect-square w-full overflow-hidden bg-slate-100 dark:bg-slate-700">
+      <div className="relative aspect-[4/5] w-full overflow-hidden bg-slate-50 dark:bg-slate-700/50">
         <LazyImage 
           src={displayImages[_currentImageIndex] || product.image} 
           alt={product.name}
           width={300}
-          quality={80}
+          quality={85}
           isThumbnail={true}
-          className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-105" 
+          className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-110" 
         />
         
         {/* Top Badges */}
-        <div className="absolute top-2 right-2 left-2 flex justify-between items-start z-10 pointer-events-none">
-          {product.isFeatured && (
-            <div className="px-2 py-1 rounded-full bg-orange-500/90 backdrop-blur-sm text-[9px] font-black text-white uppercase tracking-wider shadow-sm pointer-events-auto">
+        <div className="absolute top-3 right-3 left-3 flex justify-between items-start z-10 pointer-events-none">
+          {product.isFeatured ? (
+            <div className="px-2.5 py-1 rounded-full bg-black/80 backdrop-blur-md text-[10px] font-bold text-white shadow-sm pointer-events-auto">
               رائج
             </div>
-          )}
-          <button 
+          ) : <div />}
+          
+          <motion.button 
+            whileHover={{ scale: 1.1 }}
+            whileTap={{ scale: 0.9 }}
             onClick={(e) => onAddToWishlist(e, product)}
-            className={`pointer-events-auto flex size-8 items-center justify-center rounded-full bg-white/60 dark:bg-black/20 backdrop-blur-md shadow-sm transition-all hover:bg-white hover:scale-110 active:scale-95 ${isProductInWishlist(product.id) ? 'text-red-500' : 'text-slate-600 dark:text-white'}`}
+            className={`pointer-events-auto flex size-9 items-center justify-center rounded-full backdrop-blur-md shadow-sm transition-all ${
+              isProductInWishlist(product.id) 
+                ? 'bg-red-50 text-red-500' 
+                : 'bg-white/70 text-slate-700 hover:bg-white dark:bg-black/30 dark:text-white'
+            }`}
           >
-            <Heart size={16} fill={isProductInWishlist(product.id) ? "currentColor" : "none"} strokeWidth={2.5} />
-          </button>
+            <Heart size={18} fill={isProductInWishlist(product.id) ? "currentColor" : "none"} strokeWidth={2.5} />
+          </motion.button>
         </div>
 
         {/* Quick Add Button - Floating on Image */}
-        <div className="absolute bottom-2 left-2 z-10 pointer-events-auto opacity-0 translate-y-2 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-300">
-          <button 
+        <div className="absolute bottom-3 right-3 z-10 pointer-events-auto">
+          <motion.button 
+             whileHover={{ scale: 1.1 }}
+             whileTap={{ scale: 0.9 }}
              onClick={(e) => {
                e.stopPropagation();
                onNavigate(product.id);
              }}
-             className="size-8 rounded-full bg-white/90 dark:bg-slate-800/90 backdrop-blur-md text-slate-900 dark:text-white flex items-center justify-center hover:bg-primary hover:text-white transition-colors shadow-sm"
+             className="size-10 rounded-full bg-white/90 dark:bg-slate-800/90 backdrop-blur-xl text-slate-900 dark:text-white flex items-center justify-center hover:bg-black hover:text-white dark:hover:bg-white dark:hover:text-black transition-colors shadow-lg"
           >
-            <span className="text-xl leading-none mb-0.5">+</span>
-          </button>
+            <Plus size={20} strokeWidth={2.5} />
+          </motion.button>
         </div>
 
         {displayImages.length > 1 && (
-          <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex gap-1 z-10 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+          <div className="absolute bottom-3 left-3 flex gap-1.5 z-10">
             {displayImages.slice(0, 5).map((_, i) => (
               <div 
                 key={i} 
-                className={`h-1 rounded-full transition-all shadow-sm ${i === _currentImageIndex ? 'w-4 bg-white' : 'w-1 bg-white/50'}`}
+                className={`h-1 rounded-full transition-all duration-300 shadow-sm ${i === _currentImageIndex ? 'w-4 bg-black dark:bg-white' : 'w-1 bg-black/20 dark:bg-white/30'}`}
               />
             ))}
           </div>
@@ -166,28 +182,28 @@ const ProductCard: React.FC<ProductCardProps> = ({
       </div>
 
       {/* Info Container */}
-      <div className="flex flex-col gap-1.5 p-3">
-        <h3 className="line-clamp-2 text-[13px] font-medium leading-snug text-slate-800 dark:text-slate-100 h-[38px]">
+      <div className="flex flex-col gap-2 p-4 pt-3">
+        <h3 className="line-clamp-2 text-sm font-semibold leading-snug text-slate-900 dark:text-slate-100 h-[40px]">
           {product.name}
         </h3>
         
-        <div className="flex flex-col gap-1 mt-auto">
-          {/* Price */}
-          <div className="flex items-end justify-between">
-            <div className="flex items-baseline gap-0.5">
-              <span className="text-lg font-black text-primary -mb-1">
+        <div className="flex items-end justify-between mt-1">
+          <div className="flex flex-col">
+            <span className="text-[10px] text-slate-500 font-medium">السعر</span>
+            <div className="flex items-baseline gap-1">
+              <span className="text-xl font-black text-slate-900 dark:text-white tracking-tight">
                 {totalPrice.toLocaleString()}
               </span>
-              <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400">د.ع</span>
+              <span className="text-[10px] font-bold text-slate-500">د.ع</span>
             </div>
-            
-            <div className="flex items-center gap-1 text-[10px] text-slate-400">
-              <span>{soldCount}+ بيع</span>
-            </div>
+          </div>
+          
+          <div className="flex items-center gap-1 text-[10px] font-medium text-slate-500 bg-slate-50 dark:bg-slate-700/50 px-2 py-1 rounded-md">
+            <span>{soldCount}+ بيع</span>
           </div>
         </div>
       </div>
-    </div>
+    </motion.div>
   );
 };
 

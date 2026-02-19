@@ -3,6 +3,7 @@ import { Heart, Star } from 'lucide-react';
 import LazyImage from '../LazyImage';
 import { fetchSettings } from '../../services/api';
 import type { Product } from '../../types/product';
+import { motion } from 'framer-motion';
 
 interface SearchProductCardProps {
   product: Product;
@@ -74,25 +75,35 @@ const SearchProductCard: React.FC<SearchProductCardProps> = ({
   }, [product.image, (product as any).images]);
 
   return (
-    <div 
+    <motion.div 
       onClick={() => onNavigate(product.id)}
-      className="group bg-surface-light dark:bg-surface-dark rounded-xl overflow-hidden border border-slate-100 dark:border-slate-800 shadow-sm hover:shadow-md transition-shadow cursor-pointer"
+      initial={{ opacity: 0, y: 20 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true, margin: "-50px" }}
+      whileHover={{ y: -5 }}
+      whileTap={{ scale: 0.98 }}
+      className="group relative flex flex-col overflow-hidden rounded-[20px] bg-white dark:bg-slate-800 shadow-[0_2px_15px_-3px_rgba(0,0,0,0.07)] hover:shadow-[0_8px_25px_-5px_rgba(0,0,0,0.1)] cursor-pointer ring-1 ring-slate-100 dark:ring-slate-700/50"
     >
-      <div className="aspect-square relative overflow-hidden bg-slate-100 dark:bg-slate-700">
+      <div className="aspect-[4/5] relative overflow-hidden bg-slate-50 dark:bg-slate-700/50">
         <LazyImage 
           src={displayImages[0] || product.image} 
           alt={product.name}
-          className="w-full h-full object-cover"
+          width={300}
+          quality={80}
+          isThumbnail={true}
+          className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
         />
-        <button 
+        <motion.button 
+          whileHover={{ scale: 1.1 }}
+          whileTap={{ scale: 0.9 }}
           onClick={(e) => {
             e.stopPropagation();
             onToggleWishlist(product);
           }}
-          className={`absolute top-2 left-2 w-8 h-8 flex items-center justify-center rounded-full backdrop-blur-sm transition-colors ${
+          className={`absolute top-2 left-2 w-8 h-8 flex items-center justify-center rounded-full backdrop-blur-md transition-colors shadow-sm ${
             isWishlisted 
               ? 'bg-red-50 dark:bg-red-900/30 text-red-500' 
-              : 'bg-white/80 dark:bg-slate-900/80 text-slate-400'
+              : 'bg-white/70 dark:bg-black/30 text-slate-700 hover:bg-white dark:text-white'
           }`}
         >
           <Heart 
