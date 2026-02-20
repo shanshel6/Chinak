@@ -2,7 +2,6 @@ import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { fetchProducts } from '../services/api';
 import { useWishlistStore } from '../store/useWishlistStore';
-import { useNotificationStore } from '../store/useNotificationStore';
 import { usePageCacheStore } from '../store/usePageCacheStore';
 import Skeleton from '../components/Skeleton';
 import { useTranslation } from 'react-i18next';
@@ -32,7 +31,6 @@ const Home: React.FC = () => {
   const navigate = useNavigate();
   const wishlistItems = useWishlistStore((state) => state.items);
   const toggleWishlist = useWishlistStore((state) => state.toggleWishlist);
-  const unreadNotificationsCount = useNotificationStore((state) => state.unreadCount);
 
   // Read initial state from store without subscribing to updates (except categoryId)
   const homeCategoryId = usePageCacheStore((state) => state.homeCategoryId);
@@ -284,22 +282,10 @@ const Home: React.FC = () => {
 
   return (
     <div className="relative flex min-h-screen w-full flex-col pb-28 pb-safe bg-background-light dark:bg-background-dark font-display text-slate-900 dark:text-white antialiased selection:bg-primary/30 rtl" dir="rtl">
-      {/* Unified Sticky Header */}
-      <div className="sticky top-0 z-50">
-        {/* Search Bar - Slides up/down */}
-        <div 
-          className="absolute top-3 left-0 right-0 w-full px-4 transition-all duration-300 ease-in-out z-20 translate-y-0 opacity-100"
-        >
-          <div className="mx-auto w-full max-w-md rounded-[24px] border border-slate-200/60 bg-white/75 px-2 pt-safe backdrop-blur-2xl shadow-[0_12px_30px_rgba(0,0,0,0.10)] dark:border-slate-800/60 dark:bg-slate-900/70">
-            <SearchBar 
-              onNavigate={navigate} 
-              unreadNotificationsCount={unreadNotificationsCount}
-            />
-          </div>
-        </div>
-      </div>
+      {/* Search Bar */}
+      <SearchBar onNavigate={navigate} />
 
-      <div className="transition-all duration-300 pt-[calc(env(safe-area-inset-top)+70px)]"></div>
+      <div className="transition-all duration-300"></div>
 
         {error && (
           <div className="mx-4 mt-4 p-4 rounded-2xl bg-red-50 dark:bg-red-900/20 border border-red-100 dark:border-red-900/30 text-red-600 dark:text-red-400 text-sm flex items-center gap-3">

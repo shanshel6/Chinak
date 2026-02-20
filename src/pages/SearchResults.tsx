@@ -289,28 +289,24 @@ const SearchResults: React.FC = () => {
 
   return (
     <div className="relative flex min-h-screen w-full flex-col bg-background-light dark:bg-background-dark font-display text-slate-900 dark:text-white antialiased selection:bg-primary/30 rtl overflow-visible" dir="rtl">
-         <div className="fixed top-3 left-0 right-0 z-50 w-full px-4 transition-transform duration-300 ease-in-out translate-y-0">
-           <div className="mx-auto w-full max-w-md rounded-[24px] border border-slate-200/60 bg-white/75 px-2 pt-safe backdrop-blur-2xl shadow-[0_12px_30px_rgba(0,0,0,0.10)] dark:border-slate-800/60 dark:bg-slate-900/70">
-             <SearchHeader 
-               query={searchQuery}
-               onQueryChange={(q) => {
-                 setSearchQuery(q);
-                 if (q.trim()) setIsTyping(true);
-               }}
-               onBack={() => navigate('/')}
-               onFocus={() => {
-                 if (searchQuery.trim()) setIsTyping(true);
-               }}
-               onClear={() => {
-                 setSearchQuery('');
-                 setIsTyping(false);
-               }}
-               onSubmit={() => setIsTyping(false)}
-             />
-           </div>
-         </div>
+         <SearchHeader 
+           query={searchQuery}
+           onQueryChange={(q) => {
+             setSearchQuery(q);
+             if (q.trim()) setIsTyping(true);
+           }}
+           onBack={() => navigate('/')}
+           onFocus={() => {
+             if (searchQuery.trim()) setIsTyping(true);
+           }}
+           onClear={() => {
+             setSearchQuery('');
+             setIsTyping(false);
+           }}
+           onSubmit={() => setIsTyping(false)}
+         />
          
-         <div className="transition-all duration-300 pt-[calc(env(safe-area-inset-top)+85px)]"></div>
+         <div className="transition-all duration-300"></div>
 
         <main className="flex-1 p-3 pb-12">
           {isTyping && searchQuery.trim() && (

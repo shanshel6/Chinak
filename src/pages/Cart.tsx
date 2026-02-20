@@ -314,7 +314,7 @@ const Cart: React.FC = () => {
           {/* Animated Background Indicator */}
           <div 
             className={`absolute top-1.5 bottom-1.5 w-[calc(50%-6px)] bg-white dark:bg-slate-700 rounded-2xl shadow-sm transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] ${
-              activeTab === 'air' ? 'left-1.5' : 'left-[calc(50%+3px)]'
+              activeTab === 'air' ? 'left-[calc(50%+3px)]' : 'left-1.5'
             }`}
           />
           
@@ -602,49 +602,71 @@ const Cart: React.FC = () => {
       </main>
 
       {/* Sticky Footer Checkout Button */}
-      <div className="fixed bottom-0 left-0 right-0 z-40 w-full bg-white/95 dark:bg-slate-900/95 border-t border-slate-200 dark:border-slate-800 p-4 pb-safe backdrop-blur-md flex flex-col gap-3">
-        {isUnderThreshold && (
-          <div className="w-full bg-amber-500/10 dark:bg-amber-500/20 border border-amber-500/30 rounded-2xl p-4 flex items-center justify-between animate-pulse">
-            <div className="flex items-center gap-3">
-              <div className="size-10 rounded-full bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-lg shadow-amber-500/20">
-                <AlertCircle size={24} />
+      <div className="fixed bottom-0 left-0 right-0 z-40 w-full bg-white dark:bg-slate-900 shadow-[0_-4px_20px_rgba(0,0,0,0.05)] pb-safe transition-transform duration-300">
+        
+        {/* Progress Bar / Min Order Notification */}
+        <div className={`w-full px-4 py-3 transition-colors duration-300 ${isUnderThreshold ? 'bg-amber-50 dark:bg-amber-900/10' : 'bg-green-50 dark:bg-green-900/10'}`}>
+           <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                {isUnderThreshold ? (
+                    <AlertCircle size={16} className="text-amber-600 dark:text-amber-500" />
+                ) : (
+                    <CheckCheck size={16} className="text-green-600 dark:text-green-500" />
+                )}
+                <span className={`text-xs font-bold ${isUnderThreshold ? 'text-amber-700 dark:text-amber-400' : 'text-green-700 dark:text-green-400'}`}>
+                    {isUnderThreshold 
+                    ? `متبقي ${amountNeeded.toLocaleString()} د.ع للحد الأدنى`
+                    : 'استوفيت الحد الأدنى للطلب'
+                    }
+                </span>
               </div>
-              <div className="flex flex-col">
-                <span className="text-sm font-black text-amber-700 dark:text-amber-400">تحتاج إضافة المزيد لإكمال الطلب</span>
-                <span className="text-[10px] text-amber-600/70 dark:text-amber-400/70 font-bold uppercase tracking-wider">الحد الأدنى للطلب هو {MIN_ORDER_THRESHOLD.toLocaleString()} د.ع</span>
-              </div>
-            </div>
-            <div className="text-right">
-              <span className="block text-lg font-black text-amber-600 dark:text-amber-400">{amountNeeded.toLocaleString()} د.ع</span>
-              <span className="text-[9px] text-amber-500/50 font-black uppercase">متبقي</span>
-            </div>
-          </div>
-        )}
+              <span className={`text-xs font-black ${isUnderThreshold ? 'text-amber-700 dark:text-amber-400' : 'text-green-700 dark:text-green-400'}`}>
+                {Math.min(100, Math.round((total / MIN_ORDER_THRESHOLD) * 100))}%
+              </span>
+           </div>
+           
+           <div className="h-2 w-full bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
+              <div 
+                className={`h-full rounded-full transition-all duration-500 ease-out ${isUnderThreshold ? 'bg-amber-500' : 'bg-green-500'}`}
+                style={{ width: `${Math.min(100, (total / MIN_ORDER_THRESHOLD) * 100)}%` }}
+              ></div>
+           </div>
+        </div>
 
-        <button 
-          onClick={() => !isUnderThreshold && !isSyncing && navigate('/checkout/shipping')}
-          disabled={isUnderThreshold || isSyncing}
-          className={`w-full h-16 rounded-2xl transition-all text-white font-bold text-base shadow-lg flex items-center justify-between px-6 mb-4 ${
-            isUnderThreshold || isSyncing
-              ? 'bg-slate-300 dark:bg-slate-700 cursor-not-allowed grayscale' 
-              : 'bg-primary hover:bg-primary/90 active:scale-[0.98] shadow-primary/25'
-          }`}
-        >
-          <div className="flex flex-col items-start leading-tight">
-            <span className="text-[10px] opacity-80 font-bold uppercase tracking-wider">إجمالي الدفع</span>
-            <span className="text-xl font-black">{total.toLocaleString()} د.ع</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-lg">
-              {isSyncing ? 'جاري التحديث...' : isUnderThreshold ? 'أضف المزيد للطلب' : 'إتمام الشراء'}
-            </span>
-            {isSyncing ? (
-              <RefreshCw size={22} className="animate-spin" />
-            ) : (
-              <ArrowRight size={22} className={isUnderThreshold ? 'opacity-30' : ''} />
-            )}
-          </div>
-        </button>
+        {/* Checkout Action Area */}
+        <div className="p-4 border-t border-slate-100 dark:border-slate-800 flex items-center gap-4">
+            <div className="flex flex-col">
+                <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">الإجمالي</span>
+                <span className="text-xl font-black text-slate-900 dark:text-white leading-tight">
+                    {total.toLocaleString()} 
+                    <span className="text-xs font-bold text-slate-400 mr-1">د.ع</span>
+                </span>
+            </div>
+            
+            <button 
+              onClick={() => !isUnderThreshold && !isSyncing && navigate('/checkout/shipping')}
+              disabled={isUnderThreshold || isSyncing}
+              className={`flex-1 h-12 rounded-xl font-bold text-sm shadow-lg flex items-center justify-center gap-2 transition-all ${
+                isUnderThreshold || isSyncing
+                  ? 'bg-slate-200 dark:bg-slate-800 text-slate-400 cursor-not-allowed' 
+                  : 'bg-primary text-white hover:bg-primary/90 active:scale-[0.98] shadow-primary/25'
+              }`}
+            >
+              {isSyncing ? (
+                 <>
+                   <RefreshCw size={18} className="animate-spin" />
+                   <span>جاري التحديث...</span>
+                 </>
+              ) : isUnderThreshold ? (
+                 <span className="opacity-80">أكمل الحد الأدنى للشراء</span>
+              ) : (
+                 <>
+                   <span>إتمام الشراء</span>
+                   <ArrowRight size={18} />
+                 </>
+              )}
+            </button>
+        </div>
       </div>
 
       <DiscountPopup

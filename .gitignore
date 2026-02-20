@@ -28,6 +28,10 @@ server/*.log
 # Database
 *.db
 *.sqlite
+*.mdb
+data.ms/
+meilisearch.exe
+chrome_data_pdd_persistent/
 server/*.db
 server/prisma/*.db
 server/prisma/dev.db
