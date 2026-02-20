@@ -6,6 +6,7 @@ import { useCartStore } from '../store/useCartStore';
 import { useAuthStore } from '../store/useAuthStore';
 import { useToastStore } from '../store/useToastStore';
 import { calculateInclusivePrice } from '../utils/shipping';
+import { fixMojibake } from '../utils/mojibakeFixer';
 import type { Product } from '../types/product';
 import { Clipboard } from '@capacitor/clipboard';
 import LazyImage from '../components/LazyImage';
@@ -472,66 +473,61 @@ const ProductDetails: React.FC = () => {
     loadData();
   }, [productId, location.state, isAuthenticated, showToast]);
 
+  const normalizeOptionValue = (val: any) => {
+    const str = typeof val === 'object' && val !== null
+      ? (val.value ?? val.name ?? JSON.stringify(val))
+      : String(val);
+    return fixMojibake(str).toLowerCase().trim();
+  };
+
+  const normalizeOptionKey = (key: string) => fixMojibake(String(key)).toLowerCase().trim();
+
+  const normalizeOptionValues = (val: any): string[] => {
+    if (Array.isArray(val)) {
+      return val.flatMap(item => normalizeOptionValues(item));
+    }
+    return [normalizeOptionValue(val)];
+  };
+
+  const resolveVariantFromSelection = (options: Record<string, string>, variants: any[]) => {
+    return variants.find((v: any) => {
+      try {
+        const combination = typeof v.combination === 'string' ? JSON.parse(v.combination) : v.combination;
+        if (!combination) return false;
+
+        return Object.entries(options).every(([selKey, selVal]) => {
+          const selKeyNorm = normalizeOptionKey(selKey);
+          let matchKey = Object.keys(combination).find(k => normalizeOptionKey(k) === selKeyNorm);
+
+          if (!matchKey) {
+            if (['color', 'colour', 'اللون'].includes(selKeyNorm)) {
+              matchKey = Object.keys(combination).find(k => {
+                const kNorm = normalizeOptionKey(k);
+                return ['color', 'colour', 'اللون'].includes(kNorm);
+              });
+            } else if (['size', 'المقاس'].includes(selKeyNorm)) {
+              matchKey = Object.keys(combination).find(k => {
+                const kNorm = normalizeOptionKey(k);
+                return ['size', 'المقاس'].includes(kNorm);
+              });
+            }
+          }
+
+          if (!matchKey) return false;
+
+          const comboVals = normalizeOptionValues(combination[matchKey]);
+          const selectedVals = normalizeOptionValues(selVal);
+          return selectedVals.some(v => comboVals.includes(v));
+        });
+      } catch (_e) {
+        return false;
+      }
+    });
+  };
+
   useEffect(() => {
     if (product && product.variants && product.variants.length > 0) {
-      const normalizeValue = (val: any) => {
-        const str = typeof val === 'object' && val !== null
-          ? (val.value ?? val.name ?? JSON.stringify(val))
-          : String(val);
-        return str.toLowerCase().trim();
-      };
-
-      // Debug: Log selected options and available variants
-      console.log('[ProductDetails] Selected Options:', selectedOptions);
-      
-      const variant = product.variants.find((v: any) => {
-        try {
-          const combination = typeof v.combination === 'string' ? JSON.parse(v.combination) : v.combination;
-          if (!combination) return false;
-          
-          // Case-insensitive and trimmed matching with improved key mapping
-          const isMatch = Object.entries(selectedOptions).every(([selKey, selVal]) => {
-            // 1. Try direct match
-            let matchKey = Object.keys(combination).find(k => 
-              k.toLowerCase().trim() === selKey.toLowerCase().trim()
-            );
-
-            // 2. If no direct match, try mapped keys (English <-> Arabic)
-            if (!matchKey) {
-              const selKeyLower = selKey.toLowerCase().trim();
-              if (selKeyLower === 'color' || selKeyLower === 'colour' || selKeyLower === 'اللون') {
-                 matchKey = Object.keys(combination).find(k => {
-                   const kLower = k.toLowerCase().trim();
-                   return kLower === 'color' || kLower === 'colour' || kLower === 'اللون';
-                 });
-              } else if (selKeyLower === 'size' || selKeyLower === 'المقاس') {
-                 matchKey = Object.keys(combination).find(k => {
-                   const kLower = k.toLowerCase().trim();
-                   return kLower === 'size' || kLower === 'المقاس';
-                 });
-              }
-            }
-
-            if (!matchKey) {
-              console.log(`[ProductDetails] No matching key for ${selKey} in variant ${v.id}`, combination);
-              return false;
-            }
-
-            const valMatch = normalizeValue(combination[matchKey]) === normalizeValue(selVal);
-            if (!valMatch) {
-               // console.log(`[ProductDetails] Value mismatch for ${selKey}: ${normalizeValue(combination[matchKey])} !== ${normalizeValue(selVal)}`);
-            }
-            return valMatch;
-          });
-
-          return isMatch;
-        } catch (e) {
-          console.error('Error matching variant:', e);
-          return false;
-        }
-      });
-
-      console.log('[ProductDetails] Found variant:', variant ? variant.id : 'None', variant);
+      const variant = resolveVariantFromSelection(selectedOptions, product.variants);
       setCurrentVariant(variant || null);
     }
   }, [selectedOptions, product]);
@@ -561,40 +557,88 @@ const ProductDetails: React.FC = () => {
   const handleAddToCart = async () => {
     if (!product) return;
 
-    if (!shippingMethod) {
-      showToast('يرجى اختيار طريقة الشحن أولاً (جوي أو بحري)', 'error');
-      return;
+    // Default to air shipping if not selected and not restricted
+    let finalShippingMethod = shippingMethod;
+    if (!finalShippingMethod) {
+      finalShippingMethod = product.isAirRestricted ? 'sea' : 'air';
+      setShippingMethod(finalShippingMethod);
     }
-
+    
     if (!isAuthenticated) {
       showToast('يرجى تسجيل الدخول أولاً لإضافة منتجات إلى السلة', 'info');
       navigate('/login');
       return;
     }
     
+    let resolvedVariant = currentVariant;
+    
+    // 1. Try strict resolution
+    if (!resolvedVariant && product.variants?.length) {
+       try {
+         resolvedVariant = resolveVariantFromSelection(selectedOptions, product.variants);
+       } catch (e) {
+         console.error('Error resolving variant:', e);
+       }
+    }
+
+    // 2. Fallback: Loose resolution (ignore extra keys in selectedOptions)
+    if (!resolvedVariant && product.variants?.length) {
+      resolvedVariant = product.variants.find((v: any) => {
+        try {
+          const combination = typeof v.combination === 'string' ? JSON.parse(v.combination) : v.combination;
+          if (!combination) return false;
+          
+          // Check if ALL keys in combination match the selected options
+          // (Ignoring keys in selectedOptions that are NOT in combination)
+          return Object.entries(combination).every(([key, val]) => {
+            const normKey = normalizeOptionKey(key);
+            // Find corresponding selected option
+            const selectedKey = Object.keys(selectedOptions).find(k => normalizeOptionKey(k) === normKey);
+            if (!selectedKey) return false; // Variant requires this option, but user didn't select it
+            
+            const selectedVal = selectedOptions[selectedKey];
+            const comboVals = normalizeOptionValues(val);
+            const selectedVals = normalizeOptionValues(selectedVal);
+            return selectedVals.some(v => comboVals.includes(v));
+          });
+        } catch (e) { return false; }
+      });
+    }
+
+    // 3. Last Resort: Default to first variant if options are selected but no match found
+    // This handles cases where data is inconsistent but we want to allow the sale
+    if (!resolvedVariant && product.variants?.length && Object.keys(selectedOptions).length > 0) {
+       resolvedVariant = product.variants[0];
+    }
+
+    if (product.variants?.length && !resolvedVariant) {
+      showToast('يرجى اختيار جميع الخيارات المطلوبة', 'error');
+      return;
+    }
+
     // Optimistic state update in the UI
     setIsAdding(true);
     setIsAdded(true);
     showToast('تمت إضافة المنتج إلى السلة بنجاح', 'success');
 
     try {
-      await addItem(product.id, 1, currentVariant?.id, {
+      await addItem(product.id, 1, resolvedVariant?.id, {
         id: product.id,
         name: product.name,
-        price: currentVariant?.price || product.price || 0,
-        image: currentVariant?.image || product.image,
-        variant: currentVariant,
+        price: resolvedVariant?.price || product.price || 0,
+        image: resolvedVariant?.image || product.image,
+        variant: resolvedVariant,
         domesticShippingFee: product.domesticShippingFee,
         basePriceIQD: product.basePriceIQD,
         deliveryTime: product.deliveryTime
-      }, selectedOptions, shippingMethod);
+      }, selectedOptions, finalShippingMethod);
 
-      trackInteraction(product.id, 'CART', 5); // Cart adds are high value
-      setIsActionSheetOpen(false); // Close sheet after success
+      trackInteraction(product.id, 'CART', 5);
+      setIsActionSheetOpen(false);
     } catch (err) {
-      // Rollback UI state if API fails
+      console.error('Error in addItem:', err);
       setIsAdded(false);
-      showToast('فشل إضافة المنتج إلى السلة', 'error');
+      showToast(`فشل إضافة المنتج: ${err instanceof Error ? err.message : 'خطأ غير معروف'}`, 'error');
     } finally {
       setIsAdding(false);
     }
@@ -699,22 +743,6 @@ const ProductDetails: React.FC = () => {
 
           <ProductSpecs specs={displaySpecs} />
 
-          {/* Action Sheet for Options & Shipping */}
-          <ProductActionSheet
-            isOpen={isActionSheetOpen}
-            onClose={() => setIsActionSheetOpen(false)}
-            product={product}
-            selectedOptions={selectedOptions}
-            onOptionSelect={(name, val) => setSelectedOptions(prev => ({ ...prev, [name]: val }))}
-            onVariantSelect={(combination) => setSelectedOptions(combination)}
-            currentVariant={currentVariant}
-            shippingMethod={shippingMethod}
-            onShippingChange={handleShippingMethodChange}
-            onConfirm={handleAddToCart}
-            isAdding={isAdding}
-            price={inclusivePrice}
-          />
-
           {detailImages.length > 0 && shouldRenderDetails && (
             <div className="mt-12 space-y-4 px-0">
               <div className="flex items-center gap-3 mb-6 px-5">
@@ -754,6 +782,22 @@ const ProductDetails: React.FC = () => {
             isAdding={isAdding}
             isAdded={isAdded}
             onGoToCart={() => navigate('/cart')}
+          />
+          
+          {/* Action Sheet for Options & Shipping - Moved outside main for better stacking context */}
+          <ProductActionSheet
+            isOpen={isActionSheetOpen}
+            onClose={() => setIsActionSheetOpen(false)}
+            product={product}
+            selectedOptions={selectedOptions}
+            onOptionSelect={(name, val) => setSelectedOptions(prev => ({ ...prev, [name]: val }))}
+            onVariantSelect={(combination) => setSelectedOptions(combination)}
+            currentVariant={currentVariant}
+            shippingMethod={shippingMethod}
+            onShippingChange={handleShippingMethodChange}
+            onConfirm={handleAddToCart}
+            isAdding={isAdding}
+            price={inclusivePrice}
           />
       </div>
     </div>

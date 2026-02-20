@@ -8,7 +8,6 @@ import Skeleton from '../components/Skeleton';
 import { useTranslation } from 'react-i18next';
 import SearchBar from '../components/home/SearchBar';
 import ProductCard from '../components/home/ProductCard';
-import CategoryTabs from '../components/home/CategoryTabs';
 import { Grid2X2, Smartphone, Shirt, Sparkles, Banknote, AlertCircle, PackageSearch } from 'lucide-react';
 import type { Product } from '../types/product';
 
@@ -35,28 +34,22 @@ const Home: React.FC = () => {
   const toggleWishlist = useWishlistStore((state) => state.toggleWishlist);
   const unreadNotificationsCount = useNotificationStore((state) => state.unreadCount);
 
-  const { 
-    homeProducts, 
-    homePage, 
-    homeCategoryId, 
-    homeScrollPos,
-    setHomeData, 
-    setHomeScrollPos 
-  } = usePageCacheStore();
+  // Read initial state from store without subscribing to updates (except categoryId)
+  const homeCategoryId = usePageCacheStore((state) => state.homeCategoryId);
+  const setHomeData = usePageCacheStore((state) => state.setHomeData);
+  const setHomeScrollPos = usePageCacheStore((state) => state.setHomeScrollPos);
 
-  const [products, setProducts] = useState<Product[]>(homeProducts);
-  const [loading, setLoading] = useState(homeProducts.length === 0);
+  const [products, setProducts] = useState<Product[]>(() => usePageCacheStore.getState().homeProducts);
+  const [loading, setLoading] = useState(() => usePageCacheStore.getState().homeProducts.length === 0);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
   // Infinite Scroll & Categories State
   const [hasMore, setHasMore] = useState(true);
   const [selectedCategoryId, setSelectedCategoryId] = useState(homeCategoryId);
-  const [showSearchBar, setShowSearchBar] = useState(true);
-  const lastScrollY = useRef(0);
-  const scrollTargetRef = useRef<HTMLElement | null>(null);
+  const scrollTargetRef = useRef<HTMLElement[]>([]);
   const observer = useRef<IntersectionObserver | null>(null);
-  const [_page, setPage] = useState(homePage);
+  const [_page, setPage] = useState(() => usePageCacheStore.getState().homePage);
 
   const activeRequestRef = useRef<string | null>(null);
 
@@ -119,45 +112,51 @@ const Home: React.FC = () => {
 
   useEffect(() => {
     // Only load if we don't have products or if the category has changed
-    if (products.length === 0 || selectedCategoryId !== homeCategoryId) {
+    if (selectedCategoryId !== homeCategoryId) {
       setProducts([]); 
       setHasMore(true);
       loadData(1, selectedCategoryId, true);
       setPage(1);
-    } else {
-      // If we have products and category matches, just restore scroll
+    } else if (products.length === 0 && !error) {
+      loadData(1, selectedCategoryId, true);
+    }
+  }, [selectedCategoryId, homeCategoryId, loadData]);
+
+  // Restore scroll position only on mount if we have data
+  useEffect(() => {
+    const homeScrollPos = usePageCacheStore.getState().homeScrollPos;
+    if (products.length > 0 && homeScrollPos > 0) {
       setTimeout(() => {
         window.scrollTo(0, homeScrollPos);
         if (document.scrollingElement) {
           document.scrollingElement.scrollTop = homeScrollPos;
         }
-      }, 50);
+      }, 100);
     }
-  }, [selectedCategoryId, homeCategoryId, products.length, loadData, homeScrollPos, setPage]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Save scroll position and handle search bar visibility
   useEffect(() => {
     let timeoutId: any = null;
-    let ticking = false;
 
-    const resolveScrollTarget = () => {
+    const resolveScrollTargets = () => {
       const scrollingEl = document.scrollingElement as HTMLElement | null;
-      if (scrollingEl && scrollingEl.scrollHeight > scrollingEl.clientHeight) return scrollingEl;
       const body = document.body;
-      if (body && body.scrollHeight > body.clientHeight) return body;
       const root = document.getElementById('root') as HTMLElement | null;
-      if (root && root.scrollHeight > root.clientHeight) return root;
-      const candidates = Array.from(document.querySelectorAll<HTMLElement>('main, [data-scroll-container], .scroll-container, .overflow-y-auto'));
-      for (const el of candidates) {
+      const candidates = Array.from(document.querySelectorAll<HTMLElement>('main, [data-scroll-container], [data-scroll-root], .scroll-container, .overflow-y-auto, .overflow-auto, .overflow-y-scroll'));
+      const combined = [scrollingEl, body, root, ...candidates].filter(Boolean) as HTMLElement[];
+      const unique = Array.from(new Set(combined));
+      const scrollables = unique.filter((el) => {
         const style = window.getComputedStyle(el);
-        if ((style.overflowY === 'auto' || style.overflowY === 'scroll') && el.scrollHeight > el.clientHeight) {
-          return el;
-        }
-      }
-      return scrollingEl || body || root || null;
+        const overflowY = style.overflowY;
+        return (overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'overlay') && el.scrollHeight > el.clientHeight;
+      });
+      if (scrollables.length > 0) return scrollables;
+      return [scrollingEl, body, root].filter(Boolean) as HTMLElement[];
     };
 
-    scrollTargetRef.current = resolveScrollTarget();
+    scrollTargetRef.current = resolveScrollTargets();
 
     const getScrollY = (e?: Event) => {
       const target = e?.target as HTMLElement | null;
@@ -167,72 +166,38 @@ const Home: React.FC = () => {
         const clientHeight = target.clientHeight;
         if (scrollHeight > clientHeight) return scrollTop;
       }
-      const fixedTarget = scrollTargetRef.current;
-      if (fixedTarget && typeof fixedTarget.scrollTop === 'number') return fixedTarget.scrollTop;
+      const fixedTargets = scrollTargetRef.current;
+      for (const targetEl of fixedTargets) {
+        if (targetEl && typeof targetEl.scrollTop === 'number') return targetEl.scrollTop;
+      }
       const se = document.scrollingElement as null | { scrollTop?: unknown };
       if (se && typeof se.scrollTop === 'number') return se.scrollTop;
       return window.pageYOffset || window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0;
     };
 
-    lastScrollY.current = getScrollY();
-
     const handleScroll = (e?: Event) => {
-      if (!ticking) {
-        window.requestAnimationFrame(() => {
-          const currentScrollY = getScrollY(e);
-          const deltaY = currentScrollY - lastScrollY.current;
-          
-          // Ignore bounces at the very top or bottom (iOS elastic scroll)
-          if (currentScrollY < 0) {
-            ticking = false;
-            return;
-          }
-
-          // Search bar visibility logic
-          if (currentScrollY < 50) {
-            // At the very top, always show
-            setShowSearchBar(true);
-          } else if (Math.abs(deltaY) > 15) { // Increased threshold for stability
-            if (deltaY < 0) {
-              // Scrolling up - show search bar immediately
-              setShowSearchBar(true);
-            } else if (deltaY > 15 && currentScrollY > 200) { // More deliberate down scroll to hide
-              // Scrolling down - hide search bar
-              setShowSearchBar(false);
-            }
-            // Update lastScrollY only when we've moved significantly to lock the state
-            lastScrollY.current = currentScrollY;
-          }
-
-          // Always update lastScrollY for small movements to prevent accumulation 
-          // but only if we haven't already updated it above
-          if (Math.abs(deltaY) <= 15) {
-             // Optional: could update here too, but keeping it stable is better
-          }
-
-          ticking = false;
-        });
-        ticking = true;
-      }
-
       // Separate debounced task for saving scroll position (not for visibility)
       if (timeoutId) clearTimeout(timeoutId);
       timeoutId = setTimeout(() => {
-        setHomeScrollPos(getScrollY());
+        setHomeScrollPos(getScrollY(e));
       }, 150);
     };
 
-    const scrollTarget = scrollTargetRef.current;
-    if (scrollTarget) {
-      scrollTarget.addEventListener('scroll', handleScroll, { passive: true });
+    const scrollTargets = scrollTargetRef.current;
+    if (scrollTargets.length > 0) {
+      scrollTargets.forEach((target) => {
+        target.addEventListener('scroll', handleScroll, { passive: true });
+      });
     } else {
       window.addEventListener('scroll', handleScroll, { passive: true });
     }
     window.addEventListener('touchmove', handleScroll, { passive: true });
     return () => {
       if (timeoutId) clearTimeout(timeoutId);
-      if (scrollTarget) {
-        scrollTarget.removeEventListener('scroll', handleScroll);
+      if (scrollTargets.length > 0) {
+        scrollTargets.forEach((target) => {
+          target.removeEventListener('scroll', handleScroll);
+        });
       } else {
         window.removeEventListener('scroll', handleScroll);
       }
@@ -252,40 +217,12 @@ const Home: React.FC = () => {
           return nextPage;
         });
       }
-    });
+    }, { rootMargin: '50% 0px', threshold: 0.01 });
     
     if (node) observer.current.observe(node);
   }, [loading, loadingMore, hasMore, selectedCategoryId, loadData]);
 
-  const handleSelectCategory = (id: string) => {
-    setSelectedCategoryId(id);
-  };
-
-  const prefetchTimerRef = useRef<Record<string, any>>({});
   const prefetchedCategories = useRef<Set<string>>(new Set());
-
-  const handleHoverCategory = (id: string) => {
-    if (id === selectedCategoryId || products.length === 0 || prefetchedCategories.current.has(id)) return;
-    
-    // Clear existing timer for this category
-    if (prefetchTimerRef.current[id]) {
-      clearTimeout(prefetchTimerRef.current[id]);
-    }
-
-    // Set a small delay (200ms) before prefetching to ensure intent
-    prefetchTimerRef.current[id] = setTimeout(async () => {
-      try {
-        const searchTerm = categoryToSearchTerm[id] || '';
-        const maxPrice = id === 'under5k' ? 5000 : undefined;
-        // Prefetch first page for this category
-        await fetchProducts(1, 10, searchTerm, maxPrice);
-        prefetchedCategories.current.add(id);
-        console.log(`Prefetched category on hover: ${id}`);
-      } catch (err) {
-        // Silently fail for prefetch
-      }
-    }, 200);
-  };
 
   // Idle prefetching
   useEffect(() => {
@@ -351,34 +288,18 @@ const Home: React.FC = () => {
       <div className="sticky top-0 z-50">
         {/* Search Bar - Slides up/down */}
         <div 
-          className={`absolute top-0 left-0 right-0 w-full transition-all duration-300 ease-in-out z-20 ${
-            showSearchBar ? 'translate-y-0 opacity-100' : '-translate-y-full opacity-0 pointer-events-none'
-          }`}
+          className="absolute top-3 left-0 right-0 w-full px-4 transition-all duration-300 ease-in-out z-20 translate-y-0 opacity-100"
         >
-          <div className="bg-background-light/95 dark:bg-background-dark/95 backdrop-blur-xl border-b border-slate-100/50 dark:border-slate-800/50 pt-safe shadow-sm">
-            <div className="pt-1 pb-1">
-              <SearchBar 
-                onNavigate={navigate} 
-                unreadNotificationsCount={unreadNotificationsCount}
-              />
-            </div>
+          <div className="mx-auto w-full max-w-md rounded-[24px] border border-slate-200/60 bg-white/75 px-2 pt-safe backdrop-blur-2xl shadow-[0_12px_30px_rgba(0,0,0,0.10)] dark:border-slate-800/60 dark:bg-slate-900/70">
+            <SearchBar 
+              onNavigate={navigate} 
+              unreadNotificationsCount={unreadNotificationsCount}
+            />
           </div>
         </div>
-
-        {/* Category Tabs - Always sticky, slides up when search hides */}
-        <div 
-          className={`relative z-10 w-full transition-all duration-300 ease-in-out bg-background-light/95 dark:bg-background-dark/95 backdrop-blur-xl border-b border-slate-100/50 dark:border-slate-800/50 shadow-sm ${
-            showSearchBar ? 'pt-[calc(env(safe-area-inset-top)+76px)]' : 'pt-[calc(env(safe-area-inset-top)+0px)]'
-          }`}
-        >
-          <CategoryTabs 
-            categories={categories}
-            selectedCategoryId={selectedCategoryId}
-            onSelectCategory={handleSelectCategory}
-            onHoverCategory={handleHoverCategory}
-          />
-        </div>
       </div>
+
+      <div className="transition-all duration-300 pt-[calc(env(safe-area-inset-top)+70px)]"></div>
 
         {error && (
           <div className="mx-4 mt-4 p-4 rounded-2xl bg-red-50 dark:bg-red-900/20 border border-red-100 dark:border-red-900/30 text-red-600 dark:text-red-400 text-sm flex items-center gap-3">
@@ -395,18 +316,20 @@ const Home: React.FC = () => {
 
         {/* Discovery Feed */}
         <div className="mt-4 flex flex-col px-4">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-xl font-black text-slate-900 dark:text-white">
-              {selectedCategoryId === 'all' ? 'اكتشف المزيد ✨' : categories.find(c => c.id === selectedCategoryId)?.name}
-            </h2>
-          </div>
+          {selectedCategoryId !== 'all' && (
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-black text-slate-900 dark:text-white">
+                {categories.find(c => c.id === selectedCategoryId)?.name}
+              </h2>
+            </div>
+          )}
           
           {!loading && !error && products.length > 0 && (
             <>
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3 md:gap-4 lg:gap-6 pb-6">
                 {products.map((product, index) => (
                   <div 
-                    key={`${product.id}-${index}`}
+                    key={product.id}
                     ref={index === products.length - 1 ? lastProductElementRef : null}
                   >
                     <ProductCard 

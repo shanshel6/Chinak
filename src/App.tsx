@@ -206,7 +206,11 @@ function AnimatedRoutes() {
         <Route path="/login" element={<PageTransition><Login /></PageTransition>} />
         <Route path="/verify-otp" element={<PageTransition><VerifyOTP /></PageTransition>} />
         <Route path="/product" element={<PageTransition><ProductDetails /></PageTransition>} />
-        <Route path="/search" element={<PageTransition><SearchResults /></PageTransition>} />
+        <Route path="/search" element={
+          <ProtectedRoute>
+            <PageTransition><SearchResults /></PageTransition>
+          </ProtectedRoute>
+        } />
         <Route path="/about-us" element={<PageTransition><AboutUs /></PageTransition>} />
         <Route path="/faq" element={<PageTransition><FAQ /></PageTransition>} />
         <Route path="/shipping-tracking" element={

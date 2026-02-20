@@ -1,9 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Heart, Star } from 'lucide-react';
 import LazyImage from '../LazyImage';
-import { fetchSettings } from '../../services/api';
 import type { Product } from '../../types/product';
-import { motion } from 'framer-motion';
 
 interface SearchProductCardProps {
   product: Product;
@@ -12,33 +10,25 @@ interface SearchProductCardProps {
   isWishlisted: boolean;
 }
 
-const SearchProductCard: React.FC<SearchProductCardProps> = ({
+const SearchProductCard: React.FC<SearchProductCardProps> = React.memo(({
   product,
   onNavigate,
   onToggleWishlist,
   isWishlisted,
 }) => {
-  const [rates, setRates] = useState<any>({
+  // Use default rates to avoid per-card API calls.
+  // If dynamic rates are needed, they should be passed as props from the parent.
+  const [rates] = useState<any>({
     airRate: 15400,
     seaRate: 182000,
     minFloor: 0
   });
 
-  useEffect(() => {
-    const loadRates = async () => {
-      try {
-        const settings = await fetchSettings();
-        if (settings) {
-          setRates({
-            airRate: settings.airShippingRate || 15400,
-            seaRate: settings.seaShippingRate || 182000,
-            minFloor: 0
-          });
-        }
-      } catch (error) {}
-    };
-    loadRates();
-  }, []);
+  /* 
+    Removed redundant fetchSettings useEffect that caused N+1 API calls.
+    The rates state is kept minimal as it was used in dependency arrays, 
+    but actual calculation logic was using local variables.
+  */
 
   const totalPrice = React.useMemo(() => {
     const variants = (product as any).variants || [];
@@ -75,14 +65,9 @@ const SearchProductCard: React.FC<SearchProductCardProps> = ({
   }, [product.image, (product as any).images]);
 
   return (
-    <motion.div 
+    <div 
       onClick={() => onNavigate(product.id)}
-      initial={{ opacity: 0, y: 20 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true, margin: "-50px" }}
-      whileHover={{ y: -5 }}
-      whileTap={{ scale: 0.98 }}
-      className="group relative flex flex-col overflow-hidden rounded-[20px] bg-white dark:bg-slate-800 shadow-[0_2px_15px_-3px_rgba(0,0,0,0.07)] hover:shadow-[0_8px_25px_-5px_rgba(0,0,0,0.1)] cursor-pointer ring-1 ring-slate-100 dark:ring-slate-700/50"
+      className="group relative flex flex-col overflow-hidden rounded-[20px] bg-white dark:bg-slate-800 shadow-[0_2px_15px_-3px_rgba(0,0,0,0.07)] hover:shadow-[0_8px_25px_-5px_rgba(0,0,0,0.1)] cursor-pointer ring-1 ring-slate-100 dark:ring-slate-700/50 transition-all duration-300 hover:-translate-y-1"
     >
       <div className="aspect-[4/5] relative overflow-hidden bg-slate-50 dark:bg-slate-700/50">
         <LazyImage 
@@ -93,14 +78,12 @@ const SearchProductCard: React.FC<SearchProductCardProps> = ({
           isThumbnail={true}
           className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
         />
-        <motion.button 
-          whileHover={{ scale: 1.1 }}
-          whileTap={{ scale: 0.9 }}
+        <button 
           onClick={(e) => {
             e.stopPropagation();
             onToggleWishlist(product);
           }}
-          className={`absolute top-2 left-2 w-8 h-8 flex items-center justify-center rounded-full backdrop-blur-md transition-colors shadow-sm ${
+          className={`absolute top-2 left-2 w-8 h-8 flex items-center justify-center rounded-full backdrop-blur-md transition-all duration-300 shadow-sm hover:scale-110 active:scale-90 ${
             isWishlisted 
               ? 'bg-red-50 dark:bg-red-900/30 text-red-500' 
               : 'bg-white/70 dark:bg-black/30 text-slate-700 hover:bg-white dark:text-white'
@@ -135,6 +118,6 @@ const SearchProductCard: React.FC<SearchProductCardProps> = ({
       </div>
     </div>
   );
-};
+});
 
 export default SearchProductCard;

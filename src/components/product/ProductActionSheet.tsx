@@ -58,25 +58,26 @@ const ProductActionSheet: React.FC<ProductActionSheetProps> = ({
   return (
     <AnimatePresence>
       {isOpen && (
-        <>
-          {/* Backdrop */}
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            onClick={onClose}
-            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60]"
-          />
-
-          {/* Sheet */}
-          <motion.div
-            initial={{ y: '100%' }}
-            animate={{ y: 0 }}
-            exit={{ y: '100%' }}
-            transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-            className="fixed bottom-0 left-0 right-0 bg-white dark:bg-slate-900 rounded-t-[32px] z-[70] max-h-[85vh] flex flex-col shadow-xl"
-          >
-            {/* Header */}
+        <motion.div
+          key="backdrop"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          onClick={onClose}
+          className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60]"
+        />
+      )}
+      
+      {isOpen && (
+        <motion.div
+          key="sheet"
+          initial={{ y: '100%' }}
+          animate={{ y: 0 }}
+          exit={{ y: '100%' }}
+          transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+          className="fixed bottom-0 left-0 right-0 bg-white dark:bg-slate-900 rounded-t-[32px] z-[70] max-h-[85vh] flex flex-col shadow-xl"
+        >
+          {/* Header */}
             <div className="flex items-start gap-4 p-4 border-b border-slate-100 dark:border-slate-800">
               <div 
                 className="relative size-24 rounded-xl overflow-hidden bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shrink-0 cursor-zoom-in"
@@ -172,8 +173,8 @@ const ProductActionSheet: React.FC<ProductActionSheetProps> = ({
             <div className="p-4 border-t border-slate-100 dark:border-slate-800 pb-safe bg-white dark:bg-slate-900">
               <button
                 onClick={onConfirm}
-                disabled={isAdding || !shippingMethod || !areOptionsLoaded}
-                className="w-full py-4 bg-primary hover:bg-primary-dark text-white rounded-xl font-black text-lg shadow-lg shadow-primary/25 transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 mb-2"
+                disabled={isAdding}
+                className={`w-full py-4 bg-primary hover:bg-primary-dark text-white rounded-xl font-black text-lg shadow-lg shadow-primary/25 transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 mb-2 ${isAdding ? 'opacity-50 cursor-not-allowed' : ''}`}
               >
                 {isAdding ? (
                   <>
@@ -194,35 +195,33 @@ const ProductActionSheet: React.FC<ProductActionSheetProps> = ({
               </button>
             </div>
           </motion.div>
+      )}
 
-          {/* Zoomed Image Overlay */}
-          <AnimatePresence>
-            {isZoomed && (
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                className="fixed inset-0 z-[80] bg-black flex items-center justify-center p-4"
-                onClick={() => setIsZoomed(false)}
-              >
-                <motion.img
-                  initial={{ scale: 0.8 }}
-                  animate={{ scale: 1 }}
-                  exit={{ scale: 0.8 }}
-                  src={selectedImage}
-                  alt="Zoomed variant"
-                  className="max-w-full max-h-full object-contain rounded-lg"
-                />
-                <button 
-                  className="absolute top-4 right-4 p-3 bg-white/10 rounded-full text-white hover:bg-white/20"
-                  onClick={() => setIsZoomed(false)}
-                >
-                  <X size={24} />
-                </button>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </>
+      {/* Zoomed Image Overlay */}
+      {isZoomed && isOpen && (
+          <motion.div
+            key="zoomed-image"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[80] bg-black flex items-center justify-center p-4"
+            onClick={() => setIsZoomed(false)}
+          >
+            <motion.img
+              initial={{ scale: 0.8 }}
+              animate={{ scale: 1 }}
+              exit={{ scale: 0.8 }}
+              src={selectedImage}
+              alt="Zoomed variant"
+              className="max-w-full max-h-full object-contain rounded-lg"
+            />
+            <button 
+              className="absolute top-4 right-4 p-3 bg-white/10 rounded-full text-white hover:bg-white/20"
+              onClick={() => setIsZoomed(false)}
+            >
+              <X size={24} />
+            </button>
+          </motion.div>
       )}
     </AnimatePresence>
   );

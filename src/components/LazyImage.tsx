@@ -38,9 +38,11 @@ const LazyImage: React.FC<LazyImageProps> = ({
     // If proxy failed before, use original src
     if (failedProxy) return src;
 
-    // Aggressive optimization for thumbnails
-    const finalWidth = isThumbnail ? Math.min(width, 250) : width;
-    const finalQuality = isThumbnail ? Math.min(quality, 65) : quality;
+    const devicePixelRatio = typeof window !== 'undefined' ? Math.min(window.devicePixelRatio || 1, 2) : 1;
+    const baseWidth = isThumbnail ? Math.min(width, 320) : width;
+    const finalWidth = Math.round(baseWidth * devicePixelRatio);
+    const finalHeight = height ? Math.round(height * devicePixelRatio) : undefined;
+    const finalQuality = isThumbnail ? Math.max(Math.min(quality, 85), 75) : quality;
 
     if (!src) return `https://images.weserv.nl/?url=https://images.unsplash.com/photo-1560393464-5c69a73c5770&w=${finalWidth}&q=${finalQuality}&output=webp&fit=${objectFit}`;
     
@@ -63,8 +65,8 @@ const LazyImage: React.FC<LazyImageProps> = ({
       const cleanUrl = src.replace(/^https?:\/\//, '');
       let proxyUrl = `https://images.weserv.nl/?url=${encodeURIComponent(cleanUrl)}&w=${finalWidth}&q=${finalQuality}&output=webp&fit=${objectFit}&il`;
       
-      if (height) {
-        proxyUrl += `&h=${height}`;
+      if (finalHeight) {
+        proxyUrl += `&h=${finalHeight}`;
       }
       
       return proxyUrl;
@@ -136,6 +138,7 @@ const LazyImage: React.FC<LazyImageProps> = ({
           <img
             src={optimizedSrc}
             alt={alt}
+            decoding="async"
             loading={priority ? 'eager' : 'lazy'}
             onLoad={() => setLoaded(true)}
             onError={handleImageError}

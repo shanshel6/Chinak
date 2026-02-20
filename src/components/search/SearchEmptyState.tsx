@@ -1,56 +1,81 @@
 import React from 'react';
-import { Search, SearchX, ChevronLeft } from 'lucide-react';
+import { History, Trash2, Eye, Flame } from 'lucide-react';
 
 interface SearchEmptyStateProps {
   query: string;
   popularSearches: string[];
+  recentSearches?: string[];
   onSelect: (query: string) => void;
+  onClearRecent?: () => void;
 }
 
 const SearchEmptyState: React.FC<SearchEmptyStateProps> = ({
   query,
   popularSearches,
+  recentSearches = [],
   onSelect,
+  onClearRecent,
 }) => {
-  if (!query) {
-    return (
-      <div className="flex flex-col items-center justify-center py-12 px-6 text-center">
-        <div className="w-32 h-32 relative mb-8">
-          <div className="absolute inset-0 bg-primary/5 rounded-full animate-pulse"></div>
-          <div className="absolute inset-4 bg-primary/10 rounded-full animate-pulse delay-75"></div>
-          <div className="absolute inset-0 flex items-center justify-center">
-            <Search size={60} className="text-primary" />
-          </div>
-        </div>
-        <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-2">ابحث عن ما تحتاجه</h3>
-        <p className="text-slate-500 text-sm max-w-[240px]">
-          اكتشف آلاف المنتجات المميزة بأفضل الأسعار. جرب البحث عن ماركة أو نوع منتج.
-        </p>
-      </div>
-    );
-  }
+  if (query) return null;
 
   return (
-    <div className="flex flex-col items-center justify-center py-16 px-6 text-center">
-      <div className="w-24 h-24 bg-slate-50 dark:bg-slate-800/50 rounded-full flex items-center justify-center mb-6">
-        <SearchX size={60} className="text-slate-300" />
-      </div>
-      <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-2">لم نجد نتائج لـ "{query}"</h3>
-      <p className="text-slate-500 text-sm mb-8 leading-relaxed">
-        تأكد من كتابة الكلمة بشكل صحيح أو جرب كلمات بحث أخرى مثل "سماعات" أو "أحذية".
-      </p>
-      <div className="w-full max-w-xs space-y-3">
-        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">اقتراحات لك</p>
-        {popularSearches.slice(0, 3).map((s, i) => (
-          <button
-            key={i}
-            onClick={() => onSelect(s)}
-            className="w-full flex items-center justify-between p-4 bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 hover:border-primary transition-all group"
-          >
-            <span className="text-sm font-bold text-slate-700 dark:text-slate-200">{s}</span>
-            <ChevronLeft size={20} className="text-slate-300 group-hover:text-primary transition-colors" />
+    <div className="w-full flex flex-col gap-6 pt-2">
+      {/* Recent Searches Section */}
+      {recentSearches.length > 0 && (
+        <div className="px-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
+              <History size={16} />
+              <h3 className="text-sm font-medium">الأبحاث الأخيرة</h3>
+            </div>
+            {onClearRecent && (
+              <button 
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onClearRecent();
+                }}
+                className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-full transition-all"
+              >
+                <Trash2 size={16} />
+              </button>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {recentSearches.map((s, i) => (
+              <button
+                key={i}
+                onClick={() => onSelect(s)}
+                className="px-4 py-1.5 bg-slate-100 dark:bg-slate-800 rounded-full text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors max-w-full truncate"
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Discovery/Popular Section */}
+      <div className="px-4">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
+            <Flame size={16} className="text-orange-500" />
+            <h3 className="text-sm font-medium">اكتشف المزيد</h3>
+          </div>
+          <button className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 rounded-full transition-colors">
+            <Eye size={16} />
           </button>
-        ))}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {popularSearches.map((s, i) => (
+            <button
+              key={i}
+              onClick={() => onSelect(s)}
+              className="px-4 py-1.5 bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 rounded-full text-sm text-slate-600 dark:text-slate-300 hover:border-primary/30 hover:text-primary transition-all"
+            >
+              {s}
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );

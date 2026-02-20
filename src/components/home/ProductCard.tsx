@@ -1,6 +1,6 @@
 import React, { useRef, useState } from 'react';
 import LazyImage from '../LazyImage';
-import { Heart, Plus } from 'lucide-react';
+import { Heart } from 'lucide-react';
 import type { Product } from '../../types/product';
 import { motion } from 'framer-motion';
 
@@ -11,7 +11,7 @@ interface ProductCardProps {
   isProductInWishlist: (id: number | string) => boolean;
 }
 
-const ProductCard: React.FC<ProductCardProps> = ({
+const ProductCard: React.FC<ProductCardProps> = React.memo(({
   product,
   onNavigate,
   onAddToWishlist,
@@ -110,6 +110,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
 
   return (
     <motion.div 
+      layoutId={`product-${product.id}`}
       onClick={() => onNavigate(product.id)}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
@@ -135,7 +136,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
         {/* Top Badges */}
         <div className="absolute top-3 right-3 left-3 flex justify-between items-start z-10 pointer-events-none">
           {product.isFeatured ? (
-            <div className="px-2.5 py-1 rounded-full bg-black/80 backdrop-blur-md text-[10px] font-bold text-white shadow-sm pointer-events-auto">
+            <div className="px-2.5 py-1 rounded-full bg-primary/90 backdrop-blur-md text-[10px] font-bold text-white shadow-sm pointer-events-auto">
               رائج
             </div>
           ) : <div />}
@@ -146,35 +147,22 @@ const ProductCard: React.FC<ProductCardProps> = ({
             onClick={(e) => onAddToWishlist(e, product)}
             className={`pointer-events-auto flex size-9 items-center justify-center rounded-full backdrop-blur-md shadow-sm transition-all ${
               isProductInWishlist(product.id) 
-                ? 'bg-red-50 text-red-500' 
-                : 'bg-white/70 text-slate-700 hover:bg-white dark:bg-black/30 dark:text-white'
+                ? 'bg-red-50 text-red-500 hover:bg-red-100' 
+                : 'bg-white/70 text-slate-700 hover:bg-primary hover:text-white dark:bg-slate-800/50 dark:text-white dark:hover:bg-primary'
             }`}
           >
             <Heart size={18} fill={isProductInWishlist(product.id) ? "currentColor" : "none"} strokeWidth={2.5} />
           </motion.button>
         </div>
 
-        {/* Quick Add Button - Floating on Image */}
-        <div className="absolute bottom-3 right-3 z-10 pointer-events-auto">
-          <motion.button 
-             whileHover={{ scale: 1.1 }}
-             whileTap={{ scale: 0.9 }}
-             onClick={(e) => {
-               e.stopPropagation();
-               onNavigate(product.id);
-             }}
-             className="size-10 rounded-full bg-white/90 dark:bg-slate-800/90 backdrop-blur-xl text-slate-900 dark:text-white flex items-center justify-center hover:bg-black hover:text-white dark:hover:bg-white dark:hover:text-black transition-colors shadow-lg"
-          >
-            <Plus size={20} strokeWidth={2.5} />
-          </motion.button>
-        </div>
+
 
         {displayImages.length > 1 && (
           <div className="absolute bottom-3 left-3 flex gap-1.5 z-10">
             {displayImages.slice(0, 5).map((_, i) => (
               <div 
                 key={i} 
-                className={`h-1 rounded-full transition-all duration-300 shadow-sm ${i === _currentImageIndex ? 'w-4 bg-black dark:bg-white' : 'w-1 bg-black/20 dark:bg-white/30'}`}
+                className={`h-1 rounded-full transition-all duration-300 shadow-sm ${i === _currentImageIndex ? 'w-4 bg-primary dark:bg-primary-400' : 'w-1 bg-primary/30 dark:bg-primary-400/30'}`}
               />
             ))}
           </div>
@@ -191,10 +179,10 @@ const ProductCard: React.FC<ProductCardProps> = ({
           <div className="flex flex-col">
             <span className="text-[10px] text-slate-500 font-medium">السعر</span>
             <div className="flex items-baseline gap-1">
-              <span className="text-xl font-black text-slate-900 dark:text-white tracking-tight">
+              <span className="text-xl font-black text-primary dark:text-primary-400 tracking-tight">
                 {totalPrice.toLocaleString()}
               </span>
-              <span className="text-[10px] font-bold text-slate-500">د.ع</span>
+              <span className="text-[10px] font-bold text-primary/80 dark:text-primary-400/80">د.ع</span>
             </div>
           </div>
           
@@ -205,6 +193,6 @@ const ProductCard: React.FC<ProductCardProps> = ({
       </div>
     </motion.div>
   );
-};
+});
 
 export default ProductCard;

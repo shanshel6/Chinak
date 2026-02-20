@@ -1,7 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useNotificationStore } from '../store/useNotificationStore';
-import { fetchProducts } from '../services/api';
 import LazyImage from '../components/LazyImage';
 
 import { X, CheckCircle2, Truck, Headset } from 'lucide-react';
@@ -11,7 +10,6 @@ const OrderConfirmation: React.FC = () => {
   const location = useLocation();
   const order = location.state?.order;
   const addLocalNotification = useNotificationStore(state => state.addLocalNotification);
-  const [recommendations, setRecommendations] = useState<any[]>([]);
 
   useEffect(() => {
     // If no order in state, redirect to home
@@ -19,26 +17,6 @@ const OrderConfirmation: React.FC = () => {
       navigate('/', { replace: true });
     }
   }, [order, navigate]);
-
-  useEffect(() => {
-    const loadRecommendations = async () => {
-      try {
-        const response = await fetchProducts();
-        // The API returns { products: [], total: ... }
-        const productsArray = Array.isArray(response) ? response : (response?.products || []);
-        
-        if (productsArray.length > 0) {
-          // Just take 4 random products for recommendations
-          const shuffled = [...productsArray].sort(() => 0.5 - Math.random());
-          setRecommendations(shuffled.slice(0, 4));
-        }
-      } catch (err) {
-        console.error('Failed to load recommendations:', err);
-        // Don't show toast for recommendations failure to avoid annoying the user on a success page
-      }
-    };
-    loadRecommendations();
-  }, []);
 
   useEffect(() => {
     if (order?.id) {
@@ -198,7 +176,7 @@ const OrderConfirmation: React.FC = () => {
               <div className="flex justify-between gap-x-6 py-3 border-b border-slate-100 dark:border-slate-700">
                 <p className="text-slate-500 dark:text-slate-400 text-sm font-normal">مجموع المنتجات</p>
                 <p className="text-[#0d141b] dark:text-white text-sm font-bold text-left">
-                  {order?.items?.reduce((acc: number, item: any) => acc + ((item.price || item.variant?.price || item.product?.price || 0) * item.quantity), 0).toLocaleString()} د.ع
+                  {(order?.subtotal || (order?.total + (order?.discountAmount || 0)) || 0).toLocaleString()} د.ع
                 </p>
               </div>
               <div className="flex justify-between gap-x-6 py-3 border-b border-slate-100 dark:border-slate-700">
@@ -232,35 +210,7 @@ const OrderConfirmation: React.FC = () => {
               </div> 
             </div> 
 
-            {/* Recommendations Section */}
-            {recommendations.length > 0 && (
-              <div className="w-full mb-8">
-                <h3 className="text-[#0d141b] dark:text-white text-lg font-bold mb-4 pr-1 flex items-center justify-between">
-                  <span>قد يعجبك أيضاً</span>
-                  <button 
-                    onClick={() => navigate('/')}
-                    className="text-primary text-xs font-bold"
-                  >
-                    مشاهدة الكل
-                  </button>
-                </h3>
-                <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-2 gap-3">
-                  {recommendations.map((product) => (
-                    <div 
-                      key={product.id}
-                      onClick={() => navigate(`/product?id=${product.id}`, { state: { initialProduct: product } })}
-                      className="bg-white dark:bg-slate-800 rounded-xl overflow-hidden border border-slate-100 dark:border-slate-700 p-2 cursor-pointer group"
-                    >
-                      <div className="aspect-square rounded-lg overflow-hidden bg-slate-50 dark:bg-slate-700 mb-2">
-                        <LazyImage src={product.image} alt={product.name} className="w-full h-full object-cover group-hover:scale-110 transition-transform" />
-                      </div>
-                      <h4 className="text-[11px] font-bold text-slate-800 dark:text-slate-200 line-clamp-1 mb-1">{product.name}</h4>
-                      <p className="text-primary text-[11px] font-bold">{typeof product.price === 'number' ? product.price.toLocaleString() : '---'} د.ع</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
+
 
             {/* Action Buttons */}
             <div className="w-full mt-auto flex flex-col gap-3">

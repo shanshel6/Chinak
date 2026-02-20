@@ -1,1 +1,0 @@
-Release v1.0.32: Fix scraper navigation, logs, 500 error, and bump version

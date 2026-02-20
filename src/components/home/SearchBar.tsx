@@ -31,19 +31,17 @@ const SearchBar: React.FC<SearchBarProps> = ({
   }, [placeholders.length]);
 
   return (
-    <div className="px-5 py-3 bg-transparent transition-all duration-300">
-      <div className="flex items-center gap-4">
+    <div className="px-4 py-2 bg-transparent transition-all duration-300">
+      <div className="flex items-center justify-center gap-2">
         <div 
           onClick={() => onNavigate('/search')}
-          className="relative flex-1 flex items-center group cursor-pointer"
+          className="relative flex-1 max-w-lg flex items-center group cursor-pointer"
         >
-          <div className="relative flex-1 flex items-center bg-white dark:bg-slate-800 rounded-2xl h-[52px] shadow-sm ring-1 ring-slate-100 dark:ring-white/5 transition-all group-hover:shadow-md group-hover:ring-primary/20 overflow-hidden">
-            {/* Right Icon (Search) */}
-            <div className="flex items-center justify-center w-12 text-primary group-hover:scale-110 transition-transform duration-300">
-              <Search size={22} strokeWidth={2.5} />
+          <div className="relative flex-1 flex items-center bg-white/80 dark:bg-slate-800/80 rounded-full h-11 shadow-sm ring-1 ring-slate-200/70 dark:ring-slate-700/60 transition-all group-hover:shadow-md group-hover:ring-primary/25 backdrop-blur-xl overflow-hidden">
+            <div className="flex items-center justify-center w-10 text-primary group-hover:scale-110 transition-transform duration-300">
+              <Search size={18} strokeWidth={2.5} />
             </div>
 
-            {/* Animated Placeholders */}
             <div className="flex-1 relative h-full flex items-center overflow-hidden">
               <AnimatePresence mode="wait">
                 <motion.span
@@ -52,30 +50,22 @@ const SearchBar: React.FC<SearchBarProps> = ({
                   animate={{ y: 0, opacity: 1 }}
                   exit={{ y: -20, opacity: 0 }}
                   transition={{ duration: 0.5, ease: "easeInOut" }}
-                  className="text-slate-400 text-[13px] font-bold whitespace-nowrap"
+                  className="text-slate-400 text-[13px] font-semibold whitespace-nowrap"
                 >
                   {placeholders[placeholderIndex]}
                 </motion.span>
               </AnimatePresence>
             </div>
-
-            {/* Left Action Button (Visual Only) */}
-            <div className="flex items-center px-3 h-full border-r border-slate-50 dark:border-slate-700/50">
-              <div className="bg-primary text-white text-[11px] font-black px-4 py-2 rounded-xl uppercase tracking-wider shadow-sm group-hover:bg-primary/90 transition-colors">
-                بحث
-              </div>
-            </div>
           </div>
         </div>
 
-        {/* Notification Icon */}
         <button 
           onClick={() => onNavigate('/notifications')}
-          className="relative flex h-[52px] w-[52px] flex-shrink-0 items-center justify-center rounded-2xl bg-white dark:bg-slate-800 shadow-sm ring-1 ring-slate-100 dark:ring-white/5 text-slate-600 dark:text-slate-300 transition-all hover:text-primary active:scale-95"
+          className="relative flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full bg-white/80 dark:bg-slate-800/80 shadow-sm ring-1 ring-slate-200/70 dark:ring-slate-700/60 text-slate-600 dark:text-slate-300 transition-all hover:text-primary active:scale-95 backdrop-blur-xl"
         >
-          <Bell size={24} strokeWidth={2} />
+          <Bell size={20} strokeWidth={2} />
           {unreadNotificationsCount > 0 && (
-            <span className="absolute top-3.5 right-3.5 h-3 w-3 rounded-full bg-red-500 ring-2 ring-white dark:ring-slate-800 animate-pulse"></span>
+            <span className="absolute top-2.5 right-2.5 h-3 w-3 rounded-full bg-red-500 ring-2 ring-white dark:ring-slate-800 animate-pulse"></span>
           )}
         </button>
       </div>

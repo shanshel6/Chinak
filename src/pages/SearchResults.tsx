@@ -2,12 +2,10 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { performCacheMaintenance, searchProducts } from '../services/api';
 import { useWishlistStore } from '../store/useWishlistStore';
-import { useCartStore } from '../store/useCartStore';
 import { usePageCacheStore } from '../store/usePageCacheStore';
 import SearchHeader from '../components/search/SearchHeader';
-import SearchSuggestions from '../components/search/SearchSuggestions';
-import FilterSortStrip from '../components/search/FilterSortStrip';
 import SearchEmptyState from '../components/search/SearchEmptyState';
+import SearchSuggestionsList from '../components/search/SearchSuggestionsList';
 import SearchLoadingState from '../components/search/SearchLoadingState';
 import SearchProductCard from '../components/search/SearchProductCard';
 import type { Product } from '../types/product';
@@ -19,7 +17,6 @@ const SearchResults: React.FC = () => {
   const location = useLocation();
   const wishlistItems = useWishlistStore((state) => state.items);
   const toggleWishlist = useWishlistStore((state) => state.toggleWishlist);
-  const cartCount = useCartStore((state) => state.items.length);
 
   const isProductInWishlist = (productId: number | string) => wishlistItems.some(item => String(item.productId) === String(productId));
   
@@ -27,13 +24,10 @@ const SearchResults: React.FC = () => {
   const queryParams = new URLSearchParams(location.search);
   const initialQuery = queryParams.get('q') || '';
 
-  const { 
-    searchResults, 
-    searchQuery: cachedQuery, 
-    searchScrollPos,
-    setSearchData, 
-    setSearchScrollPos 
-  } = usePageCacheStore();
+  const searchResults = usePageCacheStore((state) => state.searchResults);
+  const cachedQuery = usePageCacheStore((state) => state.searchQuery);
+  const setSearchData = usePageCacheStore((state) => state.setSearchData);
+  const setSearchScrollPos = usePageCacheStore((state) => state.setSearchScrollPos);
 
   const [searchQuery, setSearchQuery] = useState(initialQuery || cachedQuery);
   const [products, setProducts] = useState<Product[]>(searchResults);
@@ -44,12 +38,11 @@ const SearchResults: React.FC = () => {
   const [hasMore, setHasMore] = useState(true);
   const [page, setPage] = useState(1);
   const [totalResults, setTotalResults] = useState(0);
-  const [activeFilter, setActiveFilter] = useState('all');
-  const [sortBy, setSortBy] = useState<'none' | 'price_asc' | 'price_desc' | 'rating'>('none');
+  const [activeFilter] = useState('all');
+  const [sortBy] = useState<'none' | 'price_asc' | 'price_desc' | 'rating'>('none');
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
-  const [showSuggestions, setShowSuggestions] = useState(false);
-  const [showSearchHeader, setShowSearchHeader] = useState(true);
-  const lastScrollY = useRef(0);
+  const [isTyping, setIsTyping] = useState(false);
+  const scrollTargetsRef = useRef<HTMLElement[]>([]);
 
   const observer = useRef<IntersectionObserver | null>(null);
 
@@ -61,7 +54,7 @@ const SearchResults: React.FC = () => {
       if (entries[0].isIntersecting && hasMore && !loadingMore && !loading) {
         setPage(prev => prev + 1);
       }
-    });
+    }, { rootMargin: '50% 0px', threshold: 0.01 });
     
     if (node) observer.current.observe(node);
   }, [loading, loadingMore, hasMore]);
@@ -102,6 +95,7 @@ const SearchResults: React.FC = () => {
   };
 
   useEffect(() => {
+    const searchScrollPos = usePageCacheStore.getState().searchScrollPos;
     if (products.length > 0) {
       setTimeout(() => {
         window.scrollTo(0, searchScrollPos);
@@ -115,7 +109,24 @@ const SearchResults: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    let ticking = false;
+    const resolveScrollTargets = () => {
+      const scrollingEl = document.scrollingElement as HTMLElement | null;
+      const body = document.body;
+      const root = document.getElementById('root') as HTMLElement | null;
+      const candidates = Array.from(document.querySelectorAll<HTMLElement>('main, [data-scroll-container], [data-scroll-root], .scroll-container, .overflow-y-auto, .overflow-auto, .overflow-y-scroll'));
+      const combined = [scrollingEl, body, root, ...candidates].filter(Boolean) as HTMLElement[];
+      const unique = Array.from(new Set(combined));
+      const scrollables = unique.filter((el) => {
+        const style = window.getComputedStyle(el);
+        const overflowY = style.overflowY;
+        return (overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'overlay') && el.scrollHeight > el.clientHeight;
+      });
+      if (scrollables.length > 0) return scrollables;
+      return [scrollingEl, body, root].filter(Boolean) as HTMLElement[];
+    };
+
+    scrollTargetsRef.current = resolveScrollTargets();
+
     const getScrollY = (e?: Event) => {
       const target = e?.target as unknown;
       if (target && typeof target === 'object') {
@@ -128,55 +139,36 @@ const SearchResults: React.FC = () => {
         }
       }
 
+      const fixedTargets = scrollTargetsRef.current;
+      for (const targetEl of fixedTargets) {
+        if (targetEl && typeof targetEl.scrollTop === 'number') return targetEl.scrollTop;
+      }
       const se = document.scrollingElement as null | { scrollTop?: unknown };
       if (se && typeof se.scrollTop === 'number') return se.scrollTop;
       return window.pageYOffset || window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0;
     };
 
-    lastScrollY.current = getScrollY();
-
     const handleScroll = (e?: Event) => {
       // Save scroll position
       setSearchScrollPos(getScrollY(e));
-
-      if (!ticking) {
-        window.requestAnimationFrame(() => {
-          const currentScrollY = getScrollY(e);
-          const deltaY = currentScrollY - lastScrollY.current;
-          
-          // Ignore bounces at the very top or bottom (iOS elastic scroll)
-          if (currentScrollY < 0) {
-            ticking = false;
-            return;
-          }
-
-          // Search header visibility logic
-          if (currentScrollY < 50) {
-            // At the very top, always show
-            setShowSearchHeader(true);
-          } else if (Math.abs(deltaY) > 15) { // Threshold for stability
-            if (deltaY < 0) {
-              // Scrolling up - show header immediately
-              setShowSearchHeader(true);
-            } else if (deltaY > 15 && currentScrollY > 200) { // More deliberate down scroll to hide
-              // Scrolling down - hide header
-              setShowSearchHeader(false);
-            }
-            // Update lastScrollY only when we've moved significantly to lock the state
-            lastScrollY.current = currentScrollY;
-          }
-
-          ticking = false;
-        });
-        ticking = true;
-      }
     };
-    window.addEventListener('scroll', handleScroll, { passive: true });
-    document.addEventListener('scroll', handleScroll, { passive: true, capture: true });
+    const scrollTargets = scrollTargetsRef.current;
+    if (scrollTargets.length > 0) {
+      scrollTargets.forEach((target) => {
+        target.addEventListener('scroll', handleScroll, { passive: true });
+      });
+    } else {
+      window.addEventListener('scroll', handleScroll, { passive: true });
+    }
     window.addEventListener('touchmove', handleScroll, { passive: true });
     return () => {
-      window.removeEventListener('scroll', handleScroll);
-      document.removeEventListener('scroll', handleScroll, true);
+      if (scrollTargets.length > 0) {
+        scrollTargets.forEach((target) => {
+          target.removeEventListener('scroll', handleScroll);
+        });
+      } else {
+        window.removeEventListener('scroll', handleScroll);
+      }
       window.removeEventListener('touchmove', handleScroll);
     };
   }, [setSearchScrollPos]);
@@ -297,54 +289,50 @@ const SearchResults: React.FC = () => {
 
   return (
     <div className="relative flex min-h-screen w-full flex-col bg-background-light dark:bg-background-dark font-display text-slate-900 dark:text-white antialiased selection:bg-primary/30 rtl overflow-visible" dir="rtl">
-         <div className={`sticky top-0 z-50 w-full bg-background-light dark:bg-background-dark border-b border-slate-200/50 dark:border-slate-800/50 shadow-sm transition-transform duration-300 ease-in-out ${showSearchHeader ? 'translate-y-0' : '-translate-y-full'}`}>
-           <div className="pt-1">
+         <div className="fixed top-3 left-0 right-0 z-50 w-full px-4 transition-transform duration-300 ease-in-out translate-y-0">
+           <div className="mx-auto w-full max-w-md rounded-[24px] border border-slate-200/60 bg-white/75 px-2 pt-safe backdrop-blur-2xl shadow-[0_12px_30px_rgba(0,0,0,0.10)] dark:border-slate-800/60 dark:bg-slate-900/70">
              <SearchHeader 
                query={searchQuery}
-             onQueryChange={setSearchQuery}
-             onBack={() => navigate('/')}
-             onCartClick={() => navigate('/cart')}
-             cartCount={cartCount}
-             onFocus={() => setShowSuggestions(true)}
-             onClear={() => setSearchQuery('')}
-               onSubmit={() => setShowSuggestions(false)}
-             />
-           </div>
-
-           <div className="pb-2">
-             <FilterSortStrip 
-               activeFilter={activeFilter}
-               sortBy={sortBy}
-               onFilterChange={setActiveFilter}
-               onSortChange={setSortBy}
+               onQueryChange={(q) => {
+                 setSearchQuery(q);
+                 if (q.trim()) setIsTyping(true);
+               }}
+               onBack={() => navigate('/')}
+               onFocus={() => {
+                 if (searchQuery.trim()) setIsTyping(true);
+               }}
+               onClear={() => {
+                 setSearchQuery('');
+                 setIsTyping(false);
+               }}
+               onSubmit={() => setIsTyping(false)}
              />
            </div>
          </div>
-
-        {showSuggestions && (searchQuery === '' || products.length === 0) && (
-          <SearchSuggestions 
-            recentSearches={recentSearches}
-            popularSearches={popularSearches}
-            onSelect={(q) => {
-              setSearchQuery(q);
-              setShowSuggestions(false);
-            }}
-            onClearRecent={clearRecentSearches}
-            onClose={() => setShowSuggestions(false)}
-          />
-        )}
+         
+         <div className="transition-all duration-300 pt-[calc(env(safe-area-inset-top)+85px)]"></div>
 
         <main className="flex-1 p-3 pb-12">
-          {searchQuery && !loading && filteredProducts.length > 0 && (
+          {isTyping && searchQuery.trim() && (
+            <SearchSuggestionsList 
+              query={searchQuery}
+              onSelect={(q) => {
+                setSearchQuery(q);
+                setIsTyping(false);
+              }}
+            />
+          )}
+
+          {!isTyping && searchQuery && !loading && filteredProducts.length > 0 && (
             <div className="flex items-center justify-between mb-4 px-1">
               <h2 className="text-lg font-bold text-slate-900 dark:text-white">النتائج لـ "{searchQuery}"</h2>
               <span className="text-sm text-slate-500">{totalResults || filteredProducts.length} منتج</span>
             </div>
           )}
 
-          {loading && <SearchLoadingState query={searchQuery} />}
+          {!isTyping && loading && <SearchLoadingState query={searchQuery} />}
 
-          {error && (
+          {!isTyping && error && (
             <div className="p-6 text-center">
               <div className="w-20 h-20 bg-red-50 dark:bg-red-900/20 rounded-full flex items-center justify-center mx-auto mb-4">
                 <AlertCircle size={40} className="text-red-500" />
@@ -360,7 +348,7 @@ const SearchResults: React.FC = () => {
             </div>
           )}
 
-          {!loading && !error && searchQuery && filteredProducts.length === 0 && (
+          {!isTyping && !loading && !error && searchQuery && filteredProducts.length === 0 && (
             <SearchEmptyState 
               query={searchQuery}
               popularSearches={popularSearches}
@@ -368,20 +356,25 @@ const SearchResults: React.FC = () => {
             />
           )}
 
-          {!loading && !error && !searchQuery && (
+          {!isTyping && !loading && !error && !searchQuery && (
             <SearchEmptyState 
               query=""
               popularSearches={popularSearches}
-              onSelect={setSearchQuery}
+              recentSearches={recentSearches}
+              onSelect={(q) => {
+                setSearchQuery(q);
+                setIsTyping(false);
+              }}
+              onClearRecent={clearRecentSearches}
             />
           )}
 
-          {!loading && !error && filteredProducts.length > 0 && (
+          {!isTyping && !loading && !error && filteredProducts.length > 0 && (
             <>
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                 {filteredProducts.map((product, index) => (
                   <div 
-                    key={`${product.id}-${index}`}
+                    key={product.id}
                     ref={index === filteredProducts.length - 1 ? lastProductElementRef : null}
                   >
                     <SearchProductCard 
