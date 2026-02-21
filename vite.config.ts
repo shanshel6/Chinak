@@ -1,11 +1,20 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
-import tailwindcss from '@tailwindcss/vite'
+import tailwindcss from 'tailwindcss'
+import autoprefixer from 'autoprefixer'
 
 // https://vitejs.dev/config/
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
-  base: '/',
+  plugins: [react()],
+  css: {
+    postcss: {
+      plugins: [
+        tailwindcss,
+        autoprefixer,
+      ],
+    },
+  },
+  base: './',
   server: {
     host: true,
     strictPort: false,
@@ -30,11 +39,6 @@ export default defineConfig({
     target: 'esnext',
     rollupOptions: {
       output: {
-        /* manualChunks: (id) => {
-          if (id.includes('node_modules')) {
-            return 'vendor';
-          }
-        }, */
         entryFileNames: 'assets/[name]-[hash].js',
         chunkFileNames: 'assets/[name]-[hash].js',
         assetFileNames: 'assets/[name]-[hash].[ext]',
@@ -44,4 +48,4 @@ export default defineConfig({
   optimizeDeps: {
     include: ['react', 'react-dom', 'lucide-react', 'framer-motion', 'socket.io-client', 'zustand', 'react-router-dom', 'react-icons'],
   }
-  })
+})

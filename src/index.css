@@ -1,4 +1,6 @@
-@import "tailwindcss";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
 @layer base {
   :root {
@@ -95,18 +97,4 @@
   .pb-safe-bottom {
     padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 1.5rem);
   }
-}
-
-@theme {
-  --color-primary: #2b8cee;
-  --color-background-light: #f6f7f8;
-  --color-background-dark: #101922;
-  
-  --font-display: Cairo, Inter, sans-serif;
-  
-  --radius-default: 0.25rem;
-  --radius-lg: 0.5rem;
-  --radius-xl: 0.75rem;
-  --radius-2xl: 1rem;
-  --radius-full: 9999px;
 }

@@ -1,16 +1,9 @@
-import { createRequire } from 'module';
-const require = createRequire(import.meta.url);
-
-const forms = require('@tailwindcss/forms');
-const containerQueries = require('@tailwindcss/container-queries');
-
 /** @type {import('tailwindcss').Config} */
-const config = {
+module.exports = {
   content: [
     "./index.html",
     "./src/**/*.{js,ts,jsx,tsx}",
   ],
-  darkMode: "class",
   theme: {
     extend: {
       colors: {
@@ -46,10 +39,5 @@ const config = {
       },
     },
   },
-  plugins: [
-    forms,
-    containerQueries,
-  ],
-};
-
-export default config;
+  plugins: [],
+}

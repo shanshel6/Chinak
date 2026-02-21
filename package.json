@@ -1,7 +1,7 @@
 {
   "name": "project",
   "private": true,
-  "version": "1.0.38",
+  "version": "1.0.39",
   "type": "module",
   "scripts": {
     "dev": "concurrently \"npm run dev:frontend\" \"npm run dev:backend\"",
@@ -23,7 +23,6 @@
     "@supabase/supabase-js": "^2.90.1",
     "@tailwindcss/container-queries": "^0.1.1",
     "@tailwindcss/forms": "^0.5.11",
-    "@tailwindcss/postcss": "^4.1.18",
     "framer-motion": "^12.23.26",
     "i18next": "^25.7.3",
     "i18next-browser-languagedetector": "^8.2.0",
@@ -42,11 +41,10 @@
   "devDependencies": {
     "@capacitor/assets": "^3.0.5",
     "@eslint/js": "^9.39.1",
-    "@tailwindcss/vite": "^4.2.0",
     "@types/node": "^24.10.1",
     "@types/react": "^19.2.5",
     "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^5.1.1",
+    "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.23",
     "concurrently": "^9.2.1",
     "eslint": "^9.39.1",
@@ -54,9 +52,9 @@
     "eslint-plugin-react-refresh": "^0.4.24",
     "globals": "^16.5.0",
     "postcss": "^8.5.6",
-    "tailwindcss": "^4.1.18",
+    "tailwindcss": "3.4.17",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.46.4",
-    "vite": "^7.2.4"
+    "vite": "^5.4.11"
   }
 }
