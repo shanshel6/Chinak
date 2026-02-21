@@ -1,4 +1,4 @@
-﻿﻿﻿﻿﻿﻿import vanillaPuppeteer from 'puppeteer-core';
+﻿﻿﻿﻿﻿import vanillaPuppeteer from 'puppeteer-core';
 import puppeteerExtra from 'puppeteer-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 
@@ -3368,14 +3368,15 @@ async function run() {
 
                 const finalPrice = calculateFinalPrice(general_price);
 
-                // CHECK: Skip product if price is too low (<= 250 IQD)
-                // This usually indicates a failed price extraction or a dummy product
+                // CHECK: Skip product if price is too low (<= 250 IQD) - REMOVED AS REQUESTED
+                /*
                 if (finalPrice <= 250) {
                     console.log(`Skipping product: Price too low (Final: ${finalPrice}, Base: ${general_price}). URL: ${productUrl}`);
                     if (!navigationHappened) await newPage.close();
                     else await newPage.goBack();
                     continue;
                 }
+                */
 
                 products.push(enrichedProduct);
                 console.log(`Scraped successfully. Total: ${products.length}`);

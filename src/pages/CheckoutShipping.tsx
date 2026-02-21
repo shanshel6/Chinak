@@ -11,7 +11,9 @@ import {
   Home,
   Briefcase,
   Plus,
-  AlertCircle
+  AlertCircle,
+  Plane,
+  Ship
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { fetchAddresses, calculateShipping } from '../services/api';
@@ -246,7 +248,27 @@ const CheckoutShipping: React.FC = () => {
           )}
         </section>
 
-        {/* Section: Shipping Method - REMOVED as per request to use per-product shipping */}
+        {/* Section: Shipping Method Display */}
+        <section className="space-y-4 animate-[fadeIn_0.5s_ease-out]">
+            <h3 className="text-lg font-bold">طريقة الشحن</h3>
+            <div className="flex items-center gap-4 bg-surface-light dark:bg-surface-dark rounded-3xl p-5 shadow-soft border border-border-light dark:border-border-dark">
+                <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 ${
+                    shippingMethod === 'air' 
+                        ? 'bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400' 
+                        : 'bg-teal-100 text-teal-600 dark:bg-teal-900/30 dark:text-teal-400'
+                }`}>
+                    {shippingMethod === 'air' ? <Plane size={24} /> : <Ship size={24} />}
+                </div>
+                <div>
+                    <h4 className="font-bold text-base text-slate-900 dark:text-white">
+                        {shippingMethod === 'air' ? 'شحن جوي' : 'شحن بحري'}
+                    </h4>
+                    <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">
+                        {shippingMethod === 'air' ? '10-20 يوم' : 'شهرين'}
+                    </p>
+                </div>
+            </div>
+        </section>
 
         {/* Min Order Warning */}
         {shippingInfo && !shippingInfo.isThresholdMet && (

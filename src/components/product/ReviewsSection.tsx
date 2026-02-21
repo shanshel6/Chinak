@@ -156,7 +156,7 @@ const ReviewsSection: React.FC<ReviewsSectionProps> = ({
     <div className="mb-12 px-5">
       <div className="flex items-center justify-between mb-6 px-1">
         <div className="flex flex-col">
-          <h3 className="text-slate-900 dark:text-white text-xl font-black">آراء العملاء</h3>
+          <h3 className="text-slate-900 dark:text-white text-xl font-black">اراء العملاء الموجوده في التطبيق الصيني</h3>
           <p className="text-[10px] text-slate-400 font-bold mt-0.5 tracking-wide">تجارب حقيقية من مشتري المنتج</p>
         </div>
         <div className="bg-primary/5 text-primary px-3 py-1 rounded-full text-[10px] font-black border border-primary/10">

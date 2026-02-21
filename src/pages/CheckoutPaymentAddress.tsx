@@ -395,7 +395,7 @@ const CheckoutPaymentAddress: React.FC = () => {
               </div>
               <div className="flex flex-col text-right flex-1">
                 <span className="font-bold text-base">دفع نقدي</span>
-                <span className="text-[10px] text-slate-500 font-medium">الدفع مقدماً، يجب تسليم المبلغ خلال 3 أيام</span>
+                <span className="text-[10px] text-slate-500 font-medium">الدفع مقدماً، يجب تسليم المبلغ خلال 3 أيام (في بغداد فقط)</span>
               </div>
               <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all ${
                 paymentMethod === 'cash' ? 'border-primary bg-primary' : 'border-slate-200 dark:border-slate-700'

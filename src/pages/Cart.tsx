@@ -477,17 +477,29 @@ const Cart: React.FC = () => {
                       <button 
                         onClick={(e) => {
                           e.stopPropagation();
-                          handleUpdateQuantity(item.id, item.quantity, -1);
+                          handleUpdateQuantity(item.id, item.quantity - 1);
                         }}
                         className="text-slate-500 hover:text-primary transition-colors"
                       >
                         <Minus size={18} />
                       </button>
-                      <span className="text-sm font-bold w-4 text-center">{item.quantity}</span>
+                      <input 
+                        type="number"
+                        min="1"
+                        value={item.quantity}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) => {
+                          const val = parseInt(e.target.value);
+                          if (!isNaN(val) && val > 0) {
+                            handleUpdateQuantity(item.id, val);
+                          }
+                        }}
+                        className="text-sm font-bold w-8 text-center bg-transparent border-none outline-none p-0 appearance-none"
+                      />
                       <button 
                         onClick={(e) => {
                           e.stopPropagation();
-                          handleUpdateQuantity(item.id, item.quantity, 1);
+                          handleUpdateQuantity(item.id, item.quantity + 1);
                         }}
                         className="text-slate-500 hover:text-primary transition-colors"
                       >

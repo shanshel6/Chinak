@@ -38,11 +38,10 @@ const ProductActionSheet: React.FC<ProductActionSheetProps> = ({
 
   // Check if options are loaded
   useEffect(() => {
-    if (product?.options && product.options.length > 0) {
+    // Only consider options loaded if the options array exists (even if empty)
+    // If product.options is undefined/null, it means we are still fetching details
+    if (product && Array.isArray(product.options)) {
       setAreOptionsLoaded(true);
-    } else if (product && (!product.options || product.options.length === 0)) {
-       // If product has no options, we consider them "loaded" (nothing to load)
-       setAreOptionsLoaded(true);
     } else {
       setAreOptionsLoaded(false);
     }
@@ -150,7 +149,11 @@ const ProductActionSheet: React.FC<ProductActionSheetProps> = ({
                     }`}
                   >
                     <Plane size={24} />
-                    <span className="font-bold text-sm">شحن جوي</span>
+                    <div className="flex flex-col items-center gap-0.5">
+                      <span className="font-bold text-sm">شحن جوي</span>
+                      <span className="text-[10px] opacity-80">10-20 يوم</span>
+                      <span className="text-[10px] opacity-60">أسرع لكن أغلى</span>
+                    </div>
                     {product?.isAirRestricted && <span className="text-[10px] text-red-500 font-bold">غير متوفر</span>}
                   </button>
 
@@ -163,7 +166,11 @@ const ProductActionSheet: React.FC<ProductActionSheetProps> = ({
                     }`}
                   >
                     <Ship size={24} />
-                    <span className="font-bold text-sm">شحن بحري</span>
+                    <div className="flex flex-col items-center gap-0.5">
+                      <span className="font-bold text-sm">شحن بحري</span>
+                      <span className="text-[10px] opacity-80">شهرين</span>
+                      <span className="text-[10px] opacity-60">أرخص</span>
+                    </div>
                   </button>
                 </div>
               </div>
@@ -173,8 +180,8 @@ const ProductActionSheet: React.FC<ProductActionSheetProps> = ({
             <div className="p-4 border-t border-slate-100 dark:border-slate-800 pb-safe bg-white dark:bg-slate-900">
               <button
                 onClick={onConfirm}
-                disabled={isAdding}
-                className={`w-full py-4 bg-primary hover:bg-primary-dark text-white rounded-xl font-black text-lg shadow-lg shadow-primary/25 transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 mb-2 ${isAdding ? 'opacity-50 cursor-not-allowed' : ''}`}
+                disabled={isAdding || !areOptionsLoaded}
+                className={`w-full py-4 bg-primary hover:bg-primary-dark text-white rounded-xl font-black text-lg shadow-lg shadow-primary/25 transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 mb-2 ${isAdding || !areOptionsLoaded ? 'opacity-50 cursor-not-allowed' : ''}`}
               >
                 {isAdding ? (
                   <>

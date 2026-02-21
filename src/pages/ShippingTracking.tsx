@@ -18,7 +18,8 @@ import {
   PackageSearch,
   Home,
   X,
-  Loader2
+  Loader2,
+  Phone
 } from 'lucide-react';
 import { Clipboard } from '@capacitor/clipboard';
 import { fetchOrderById, cancelOrder, confirmOrderPayment } from '../services/api';
@@ -642,6 +643,14 @@ const ShippingTracking: React.FC = () => {
                 {t('tracking.cancel_order')}
               </button>
             )}
+
+            <a 
+              href="tel:07722177513"
+              className="w-full mt-3 py-3 bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-sm flex items-center justify-center gap-2 rounded-xl transition-all shadow-lg shadow-emerald-500/20 active:scale-95"
+            >
+              <Phone size={20} />
+              اتصل بنا
+            </a>
           </div>
         </div>
       </div>
@@ -682,39 +691,90 @@ const ShippingTracking: React.FC = () => {
             <div className="p-6 overflow-y-auto custom-scrollbar flex-1">
               {!paymentDone ? (
                 <div className="flex flex-col gap-6">
-                  {/* Amount Section */}
-                  <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-5 border border-slate-100 dark:border-slate-800 text-center">
-                    <p className="text-sm text-slate-500 mb-1">المبلغ المطلوب دفعه</p>
-                    <div className="text-3xl font-black text-primary font-sans tracking-tight">
-                      {order.total.toLocaleString()} <span className="text-sm">د.ع</span>
+                  {/* Amount Breakdown Section */}
+                  <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-5 border border-slate-100 dark:border-slate-800 space-y-3">
+                    <div className="flex justify-between items-center text-sm">
+                      <span className="text-slate-500 dark:text-slate-400">قيمة المنتجات</span>
+                      <span className="font-bold text-slate-900 dark:text-white">
+                        {order.items.reduce((acc: number, item: any) => acc + (item.price * item.quantity), 0).toLocaleString()} د.ع
+                      </span>
+                    </div>
+                    
+                    {order.discountAmount > 0 && (
+                      <div className="flex justify-between items-center text-sm text-green-600 dark:text-green-400">
+                        <span className="flex items-center gap-1">
+                          الخصم
+                          {order.couponCode && <span className="text-[10px] bg-green-100 dark:bg-green-900/30 px-1.5 py-0.5 rounded uppercase tracking-wider">({order.couponCode})</span>}
+                        </span>
+                        <span>-{order.discountAmount.toLocaleString()} د.ع</span>
+                      </div>
+                    )}
+
+                    <div className="flex justify-between items-center text-sm">
+                      <span className="text-slate-500 dark:text-slate-400">كلفة الشحن</span>
+                      <span className="font-bold text-slate-900 dark:text-white">
+                        {order.internationalShippingFee > 0 ? `${order.internationalShippingFee.toLocaleString()} د.ع` : 'مجاني'}
+                      </span>
+                    </div>
+
+                    <div className="pt-3 mt-1 border-t border-slate-200 dark:border-slate-700 flex justify-between items-center">
+                      <span className="font-bold text-slate-900 dark:text-white">المجموع الكلي</span>
+                      <div className="text-2xl font-black text-primary font-sans tracking-tight">
+                        {order.total.toLocaleString()} <span className="text-sm">د.ع</span>
+                      </div>
                     </div>
                   </div>
 
-                  {/* Payment Instructions */}
                   <div className="space-y-4">
-                    <p className="text-sm font-bold text-slate-700 dark:text-slate-300 flex items-center gap-2">
-                      <div className="size-1.5 rounded-full bg-primary"></div>
-                      اختر وسيلة الدفع المناسبة لك:
-                    </p>
+                    {order.paymentMethod !== 'cash' && (
+                      <p className="text-sm font-bold text-slate-700 dark:text-slate-300 flex items-center gap-2">
+                        <div className="size-1.5 rounded-full bg-primary"></div>
+                        وسيلة الدفع المختارة:
+                      </p>
+                    )}
 
-                    {/* Tabs */}
-                    <div className="flex p-1 bg-slate-100 dark:bg-slate-800 rounded-xl gap-1">
-                      <button 
-                        onClick={() => setPaymentTab('zain')}
-                        className={`flex-1 py-2.5 rounded-lg text-sm font-bold transition-all ${paymentTab === 'zain' ? 'bg-white dark:bg-slate-700 text-primary shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                      >
-                        زين كاش
-                      </button>
-                      <button 
-                        onClick={() => setPaymentTab('qi')}
-                        className={`flex-1 py-2.5 rounded-lg text-sm font-bold transition-all ${paymentTab === 'qi' ? 'bg-white dark:bg-slate-700 text-primary shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                      >
-                        سوبر كي
-                      </button>
-                    </div>
+                    {/* Tabs - Hidden if specific method is selected */}
+                    {!['zain_cash', 'super_key', 'cash'].includes(order.paymentMethod) && (
+                      <div className="flex p-1 bg-slate-100 dark:bg-slate-800 rounded-xl gap-1">
+                        <button 
+                          onClick={() => setPaymentTab('zain')}
+                          className={`flex-1 py-2.5 rounded-lg text-sm font-bold transition-all ${paymentTab === 'zain' ? 'bg-white dark:bg-slate-700 text-primary shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                        >
+                          زين كاش
+                        </button>
+                        <button 
+                          onClick={() => setPaymentTab('qi')}
+                          className={`flex-1 py-2.5 rounded-lg text-sm font-bold transition-all ${paymentTab === 'qi' ? 'bg-white dark:bg-slate-700 text-primary shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                        >
+                          سوبر كي
+                        </button>
+                      </div>
+                    )}
 
                     <div className="mt-4">
-                      {paymentTab === 'zain' ? (
+                      {order.paymentMethod === 'cash' ? (
+                        /* Cash Payment Warning */
+                        <div className="flex flex-col gap-3 p-4 rounded-2xl bg-amber-50 dark:bg-amber-900/20 border border-amber-100 dark:border-amber-900/30 animate-in fade-in zoom-in duration-300">
+                          <div className="flex items-center gap-3">
+                            <div className="size-10 rounded-full bg-amber-100 dark:bg-amber-900/40 flex items-center justify-center text-amber-600 dark:text-amber-400 shrink-0">
+                              <Wallet size={24} />
+                            </div>
+                            <div className="flex flex-col">
+                              <h4 className="text-base font-bold text-amber-900 dark:text-amber-200">الدفع النقدي</h4>
+                              <p className="text-xs text-amber-700 dark:text-amber-400">
+                                لقد اخترت الدفع نقداً عند التوصيل (في بغداد فقط).
+                              </p>
+                            </div>
+                          </div>
+                          <div className="bg-white dark:bg-slate-900/50 rounded-xl p-3 text-xs text-slate-500 dark:text-slate-400 leading-relaxed border border-amber-100 dark:border-amber-900/30">
+                            يرجى تجهيز المبلغ المذكور أعلاه. سيقوم مندوب التوصيل باستلام المبلغ عند تسليم الطلب.
+                            <br/>
+                            <span className="font-bold text-amber-600 dark:text-amber-400 block mt-1">
+                              * لا يتطلب منك أي إجراء دفع إلكتروني الآن.
+                            </span>
+                          </div>
+                        </div>
+                      ) : (paymentTab === 'zain' || order.paymentMethod === 'zain_cash') && order.paymentMethod !== 'super_key' ? (
                         /* Zain Cash */
                         <div className="flex flex-col gap-3 p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700 animate-in fade-in slide-in-from-left-4 duration-300">
                           <div className="flex items-center justify-between">
@@ -734,7 +794,7 @@ const ShippingTracking: React.FC = () => {
                           </div>
                           <p className="text-[10px] text-center text-slate-500">قم بمسح الكود أعلاه عبر تطبيق زين كاش</p>
                         </div>
-                      ) : (
+                      ) : (paymentTab === 'qi' || order.paymentMethod === 'super_key') && order.paymentMethod !== 'zain_cash' ? (
                         /* Qi Card */
                         <div className="flex flex-col gap-3 p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700 animate-in fade-in slide-in-from-right-4 duration-300">
                           <div className="flex items-center justify-between">
@@ -754,7 +814,7 @@ const ShippingTracking: React.FC = () => {
                           </div>
                           <p className="text-[10px] text-center text-slate-500">قم بمسح الكود أعلاه عبر تطبيق كي كارد</p>
                         </div>
-                      )}
+                      ) : null}
                     </div>
                   </div>
 
@@ -799,26 +859,28 @@ const ShippingTracking: React.FC = () => {
             <div className="p-6 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 shrink-0">
               {!paymentDone ? (
                 <div className="flex flex-col gap-3">
-                  <button 
-                    onClick={handlePaymentDone}
-                    disabled={isConfirmingPayment}
-                    className="w-full py-4 bg-primary hover:bg-blue-600 disabled:bg-slate-300 text-white rounded-2xl font-black text-lg shadow-xl shadow-blue-500/20 transition-all active:scale-[0.98] flex items-center justify-center gap-3"
-                  >
-                    {isConfirmingPayment ? (
-                      <Loader2 size={24} className="animate-spin" />
-                    ) : (
-                      <>
-                        <CheckCircle2 size={24} />
-                        تم التحويل
-                      </>
-                    )}
-                  </button>
+                  {order.paymentMethod !== 'cash' && (
+                    <button 
+                      onClick={handlePaymentDone}
+                      disabled={isConfirmingPayment}
+                      className="w-full py-4 bg-primary hover:bg-blue-600 disabled:bg-slate-300 text-white rounded-2xl font-black text-lg shadow-xl shadow-blue-500/20 transition-all active:scale-[0.98] flex items-center justify-center gap-3"
+                    >
+                      {isConfirmingPayment ? (
+                        <Loader2 size={24} className="animate-spin" />
+                      ) : (
+                        <>
+                          <CheckCircle2 size={24} />
+                          تم التحويل
+                        </>
+                      )}
+                    </button>
+                  )}
                   <button 
                     onClick={() => setShowPaymentModal(false)}
                     disabled={isConfirmingPayment}
-                    className="w-full py-3 bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 rounded-xl font-bold text-sm transition-all active:scale-[0.98]"
+                    className={`w-full py-3 ${order.paymentMethod === 'cash' ? 'bg-primary text-white shadow-lg shadow-primary/20' : 'bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400'} rounded-xl font-bold text-sm transition-all active:scale-[0.98]`}
                   >
-                    إلغاء
+                    {order.paymentMethod === 'cash' ? 'حسناً، فهمت' : 'إلغاء'}
                   </button>
                 </div>
               ) : (
