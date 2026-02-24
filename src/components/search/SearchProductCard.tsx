@@ -76,7 +76,8 @@ const SearchProductCard: React.FC<SearchProductCardProps> = React.memo(({
           width={300}
           quality={80}
           isThumbnail={true}
-          className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
+          objectFit="contain"
+          className="w-full h-full bg-white transition-transform duration-700 group-hover:scale-110"
         />
         <button 
           onClick={(e) => {

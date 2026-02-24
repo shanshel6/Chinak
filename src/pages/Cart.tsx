@@ -395,7 +395,8 @@ const Cart: React.FC = () => {
                 <LazyImage 
                   src={item.variant?.image || item.product.image} 
                   alt={item.product.name} 
-                  className="w-full h-full" 
+                  objectFit="contain"
+                  className="w-full h-full bg-white" 
                 />
               </div>
               <div className="flex flex-col justify-between grow">
@@ -477,7 +478,7 @@ const Cart: React.FC = () => {
                       <button 
                         onClick={(e) => {
                           e.stopPropagation();
-                          handleUpdateQuantity(item.id, item.quantity - 1);
+                          handleUpdateQuantity(item.id, item.quantity, -1);
                         }}
                         className="text-slate-500 hover:text-primary transition-colors"
                       >
@@ -491,7 +492,7 @@ const Cart: React.FC = () => {
                         onChange={(e) => {
                           const val = parseInt(e.target.value);
                           if (!isNaN(val) && val > 0) {
-                            handleUpdateQuantity(item.id, val);
+                            handleUpdateQuantity(item.id, item.quantity, val - item.quantity);
                           }
                         }}
                         className="text-sm font-bold w-8 text-center bg-transparent border-none outline-none p-0 appearance-none"
@@ -499,7 +500,7 @@ const Cart: React.FC = () => {
                       <button 
                         onClick={(e) => {
                           e.stopPropagation();
-                          handleUpdateQuantity(item.id, item.quantity + 1);
+                          handleUpdateQuantity(item.id, item.quantity, 1);
                         }}
                         className="text-slate-500 hover:text-primary transition-colors"
                       >

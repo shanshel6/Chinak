@@ -140,7 +140,8 @@ const Favorites: React.FC = () => {
                     <LazyImage 
                       src={product.image} 
                       alt={product.name}
-                      className="w-full h-full"
+                      objectFit="contain"
+                      className="w-full h-full bg-white"
                     />
                     
                     <button 
@@ -216,7 +217,8 @@ const Favorites: React.FC = () => {
                     <LazyImage 
                       src={product.image} 
                       alt={product.name}
-                      className="w-full h-full"
+                      objectFit="contain"
+                      className="w-full h-full bg-white"
                     />
                   </div>
                   <div className="flex flex-1 flex-col justify-center py-1">

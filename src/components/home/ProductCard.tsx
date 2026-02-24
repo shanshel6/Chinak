@@ -130,7 +130,8 @@ const ProductCard: React.FC<ProductCardProps> = React.memo(({
           width={300}
           quality={85}
           isThumbnail={true}
-          className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-110" 
+          objectFit="contain"
+          className="h-full w-full bg-white transition-transform duration-700 group-hover:scale-110" 
         />
         
         {/* Top Badges */}

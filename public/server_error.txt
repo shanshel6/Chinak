@@ -1,0 +1,15 @@
+[2026-02-24T10:57:10.563Z] Error in /api/products: 
+Invalid `prisma.storeSettings.findUnique()` invocation:
+
+
+Timed out fetching a new connection from the connection pool. More info: http://pris.ly/d/connection-pool (Current connection pool timeout: 10, connection limit: 3)
+PrismaClientKnownRequestError: 
+Invalid `prisma.storeSettings.findUnique()` invocation:
+
+
+Timed out fetching a new connection from the connection pool. More info: http://pris.ly/d/connection-pool (Current connection pool timeout: 10, connection limit: 3)
+    at ei.handleRequestError (E:\mynewproject2\server\node_modules\@prisma\client\runtime\library.js:121:7268)
+    at ei.handleAndLogRequestError (E:\mynewproject2\server\node_modules\@prisma\client\runtime\library.js:121:6593)
+    at ei.request (E:\mynewproject2\server\node_modules\@prisma\client\runtime\library.js:121:6300)
+    at async a (E:\mynewproject2\server\node_modules\@prisma\client\runtime\library.js:130:9551)
+    at async file:///E:/mynewproject2/server/index.js:3019:30

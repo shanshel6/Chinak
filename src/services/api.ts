@@ -923,7 +923,45 @@ export async function fetchProductById(id: number | string) {
     if (draft) return draft;
     throw new Error('Local draft not found');
   }
-  return request(`/products/${id}`, { skipCache: true });
+  const data = await request(`/products/${id}`, { skipCache: true });
+
+  // Fix for Pinduoduo scraper: If generated_options exists, use it to populate/fix variants
+  // This ensures options show up correctly even if relational tables are malformed
+  if (data && data.generated_options && Array.isArray(data.generated_options) && data.generated_options.length > 0) {
+    // Check if variants are missing or malformed (e.g. combination is just a string)
+    const needsFix = !data.variants || data.variants.length === 0 || data.variants.some((v: any) => {
+      try {
+        const c = typeof v.combination === 'string' ? JSON.parse(v.combination) : v.combination;
+        return !c || Object.keys(c).length === 0;
+      } catch { return true; }
+    });
+
+    if (needsFix) {
+      console.log('[API] Rebuilding variants from generated_options');
+      data.variants = data.generated_options.map((opt: any, idx: number) => ({
+        id: opt.id || `gen-${idx}`,
+        productId: data.id,
+        // Standardize combination as a proper object
+        combination: { "الخيار": opt.color }, 
+        price: typeof opt.price === 'number' ? opt.price : parseFloat(opt.price || '0'),
+        stock: typeof opt.quantity === 'number' ? opt.quantity : parseInt(opt.quantity || '0'),
+        image: opt.thumbnail,
+        originalPrice: opt.originalPrice,
+      }));
+
+      // Ensure options metadata exists for the UI to render selectors
+      if (!data.options || data.options.length === 0) {
+        const uniqueColors = Array.from(new Set(data.generated_options.map((o: any) => o.color)));
+        data.options = [{
+          id: 1,
+          name: "الخيار",
+          values: uniqueColors
+        }];
+      }
+    }
+  }
+
+  return data;
 }
 
 export async function searchProducts(query: string, page = 1, limit = 20) {

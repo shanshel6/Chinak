@@ -46,7 +46,8 @@ const SimilarProducts: React.FC<SimilarProductsProps> = ({ products, onProductCl
                 <LazyImage 
                   src={p.image} 
                   alt={p.name}
-                  className="w-full h-full object-cover"
+                  objectFit="contain"
+                  className="w-full h-full bg-white"
                 />
               </div>
               <div className="p-3">

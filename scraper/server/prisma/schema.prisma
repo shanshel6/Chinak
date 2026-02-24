@@ -96,7 +96,6 @@ model Product {
   updatedAt         DateTime               @updatedAt
   aiMetadata        Json?
   scrapedReviews    Json?                  // New field for scraped reviews
-  generated_options Json?                  // New field for generated options
   embedding         Unsupported("vector")?
   domesticShippingFee Float?
   isAirRestricted   Boolean                @default(false)

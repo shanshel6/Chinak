@@ -1,4 +1,4 @@
-﻿﻿﻿﻿﻿import vanillaPuppeteer from 'puppeteer-core';
+import vanillaPuppeteer from 'puppeteer-core';
 import puppeteerExtra from 'puppeteer-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 
@@ -7,6 +7,10 @@ puppeteer.use(StealthPlugin());
 
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
+import { exec as execCallback } from 'child_process';
+import { promisify } from 'util';
+const exec = promisify(execCallback);
 import dotenv from 'dotenv';
 import OpenAI from 'openai'; // Use OpenAI SDK for DeepInfra
 import readline from 'readline';
@@ -33,7 +37,11 @@ if (process.env.DATABASE_URL) {
     }
 }
 
+// const prisma = new PrismaClient();
 const prisma = new PrismaClient();
+
+// Global flag for page errors (e.g. 424/403)
+let hasPageError = false;
 
 // --- DATABASE SCHEMA HEALING ---
 async function ensureDatabaseSchema() {
@@ -69,8 +77,8 @@ async function ensureDatabaseSchema() {
                 if (retries === 0) {
                     console.warn('Skipping schema check after multiple failures (non-fatal).');
                 } else {
-                    console.log(`Waiting 5s before retry (Attempt ${4-retries}/3)...`);
-                    await new Promise(r => setTimeout(r, 5000));
+                    console.log(`Waiting 1s before retry (Attempt ${4-retries}/3)...`);
+                    await new Promise(r => setTimeout(r, 1000));
                 }
             }
         }
@@ -78,107 +86,112 @@ async function ensureDatabaseSchema() {
         console.warn('Schema check/fix failed (non-fatal):', e.message);
     }
 }
-// const prisma = { $disconnect: async () => {} };
 
 // --- EDIBLE ITEM FILTERING CONFIGURATION ---
 const EDIBLE_KEYWORDS = [
-    "é£ںه“پ", "é›¶é£ں", "ه‌ڑو‍œ", "ç½گه¤´", "é¥®و–™", "ç³–و‍œ", "é¥¼ه¹²", "è°ƒو–™", "èŒ¶", "é…’", 
-    "è‚‰", "è›‹", "ه¥¶", "و²¹", "ç±³", "é‌¢", "و‍œه†»", "ه·§ه…‹هٹ›", "ه’–ه•،", "food", "snack", 
+    "食品", "零食", "蔬果", "罐头", "饮料", "糖果", "饼干", "调料", "茶", "酒", 
+    "肉", "蛋", "奶", "油", "米", "面", "果冻", "巧克力", "咖啡", "food", "snack", 
     "nut", "can", "drink", "candy", "biscuit", "seasoning", "tea", "wine", 
     "meat", "egg", "milk", "oil", "rice", "noodle", "jelly", "chocolate", "coffee",
-    "هگƒ", "ه–‌", "ه‘³", "é¦™", "ç”œ", "è¾£", "ه’¸", "é…¸", "è‹¦" // General taste/eating words (use with caution or in combination)
+    "吃", "喝", "味", "香", "甜", "辣", "咸", "酸", "苦" // General taste/eating words
 ];
 
 // Stricter list for immediate rejection
 const STRICT_EDIBLE_KEYWORDS = [
-    "é£ںه“پ", "é›¶é£ں", "ه‌ڑو‍œ", "ç½گه¤´", "é¥®و–™", "ç³–و‍œ", "é¥¼ه¹²", "è°ƒو–™", "èŒ¶هڈ¶", "é…’و°´", 
-    "é²œè‚‰", "é¸،è›‹", "ç‰›ه¥¶", "é£ںç”¨و²¹", "ه¤§ç±³", "é‌¢ç²‰", "و‍œه†»", "ه·§ه…‹هٹ›", "ه’–ه•،è±†",
-    "ن؟‌هپ¥ه“پ", "ç»´ç”ںç´ ", "é’™ç‰‡", "é…µç´ ", "ç›ٹç”ںèڈŒ" // Supplements
+    "食品", "零食", "蔬果", "罐头", "饮料", "糖果", "饼干", "调料", "茶叶", "酒水", 
+    "鲜肉", "鸡蛋", "牛奶", "食用油", "大米", "面粉", "果冻", "巧克力", "咖啡豆",
+    "保健品", "维生素", "钙片", "酵素", "益生菌" // Supplements
 ];
 
-function isEdiblePreCheck(title, description) {
-    const text = (title + " " + description).toLowerCase();
-    
-    // Check strict keywords first
-    for (const keyword of STRICT_EDIBLE_KEYWORDS) {
-        if (text.includes(keyword)) {
-            return { isEdible: true, keyword: keyword };
+// Helper to delay
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+// Helper for random delay (User requested randomization)
+const randomDelay = (min, max) => {
+    const ms = Math.floor(Math.random() * (max - min + 1) + min);
+    return new Promise(resolve => setTimeout(resolve, ms));
+};
+
+// Helper: Human-like Smooth Slide Scroll
+const humanScroll = async (page, distance, options = {}) => {
+    const {
+        steps = Math.floor(Math.random() * 15) + 20, // 20-35 steps (smoother)
+        minStepDelay = 10,
+        maxStepDelay = 40,
+        variance = 0.1 // 10% distance variance
+    } = options;
+
+    await page.evaluate(async (dist, steps, min, max, vari) => {
+        const vh = window.innerHeight;
+        // If distance not provided, default to 0.8 screen height
+        const targetDist = dist || (vh * 0.8);
+        
+        // Add randomness to total distance
+        const actualDistance = targetDist * (1 + (Math.random() * vari * 2 - vari));
+        const stepSize = actualDistance / steps;
+
+        for (let i = 0; i < steps; i++) {
+            // Irregular step size (mimic thumb drag acceleration/deceleration)
+            // Start slow, speed up, end slow (Ease-in-out-ish)
+            // Simplified: just some random variance per step
+            const currentStep = stepSize * (0.9 + Math.random() * 0.2); 
+            
+            window.scrollBy(0, currentStep);
+            
+            // Random delay
+            const delay = Math.floor(Math.random() * (max - min + 1)) + min;
+            await new Promise(r => setTimeout(r, delay));
         }
+    }, distance, steps, minStepDelay, maxStepDelay, variance);
+};
+
+// --- OpenAI / DeepInfra Setup ---
+const DEEPINFRA_API_KEY = 'PH4r4lox3jZBlFQROJ78bdaaLnuUKvNB'; // Hardcoded as requested
+const MAIN_MODEL = 'google/gemma-3-4b-it';
+const BACKUP_MODEL = 'google/gemma-3-12b-it';
+
+const openai = new OpenAI({
+    baseURL: 'https://api.deepinfra.com/v1/openai',
+    apiKey: DEEPINFRA_API_KEY
+});
+
+// --- Constants ---
+const USER_AGENTS = [
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1',
+    'Mozilla/5.0 (Linux; Android 13; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36',
+    'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36'
+];
+
+// Helper to get random user agent
+function getRandomUserAgent() {
+    return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
+}
+
+// Function to find Chrome executable
+function getExecutablePath() {
+    if (process.env.PDD_CHROME_PATH && fs.existsSync(process.env.PDD_CHROME_PATH)) {
+        return process.env.PDD_CHROME_PATH;
     }
-    return { isEdible: false };
+
+    const paths = [
+        "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+        "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+        process.env.LOCALAPPDATA + "\\Google\\Chrome\\Application\\chrome.exe"
+    ];
+
+    for (const p of paths) {
+        if (fs.existsSync(p)) return p;
+    }
+    
+    console.error("Chrome executable not found. Please install Chrome or set PDD_CHROME_PATH.");
+    process.exit(1);
 }
 
-// Initialize AI (DeepInfra)
-let aiClient = null;
-
-const AI_TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS) > 0 ? Number(process.env.AI_TIMEOUT_MS) : 180000;
-const AI_MAX_ATTEMPTS = Number(process.env.AI_MAX_ATTEMPTS) > 0 ? Number(process.env.AI_MAX_ATTEMPTS) : 3;
-const AI_BASE_RETRY_DELAY_MS = Number(process.env.AI_BASE_RETRY_DELAY_MS) > 0 ? Number(process.env.AI_BASE_RETRY_DELAY_MS) : 1500;
-
-const PUPPETEER_PROTOCOL_TIMEOUT_MS =
-  Number(process.env.PUPPETEER_PROTOCOL_TIMEOUT_MS) > 0
-    ? Number(process.env.PUPPETEER_PROTOCOL_TIMEOUT_MS)
-    : 180000;
-const PUPPETEER_DEFAULT_TIMEOUT_MS =
-  Number(process.env.PUPPETEER_DEFAULT_TIMEOUT_MS) > 0
-    ? Number(process.env.PUPPETEER_DEFAULT_TIMEOUT_MS)
-    : 120000;
-
-let AI_PRIMARY_MODEL = process.env.AI_MODEL || "qwen/qwen-vl-plus";
-let AI_FALLBACK_MODEL = process.env.AI_FALLBACK_MODEL || AI_PRIMARY_MODEL;
-let AI_MODEL = AI_PRIMARY_MODEL;
-if (process.env.DEEPINFRA_API_KEY) {
-    AI_PRIMARY_MODEL = process.env.DEEPINFRA_MODEL || process.env.AI_MODEL || "google/gemma-3-12b-it";
-    AI_FALLBACK_MODEL = process.env.DEEPINFRA_FALLBACK_MODEL || "google/gemma-3-27b-it";
-    AI_MODEL = AI_PRIMARY_MODEL;
-    aiClient = new OpenAI({
-        baseURL: "https://api.deepinfra.com/v1/openai",
-        apiKey: process.env.DEEPINFRA_API_KEY,
-        timeout: AI_TIMEOUT_MS,
-        maxRetries: 0,
-    });
-    console.log(`AI Initialized (DeepInfra: primary=${AI_PRIMARY_MODEL}, fallback=${AI_FALLBACK_MODEL})`);
-} else {
-    console.log('Warning: No AI API KEY found. AI features will use mock data.');
-}
-
-const isModelBusyError = (e) => {
-    const message = (e && e.message) ? String(e.message) : String(e);
-    const code = (e && e.code) ? e.code : '';
-    return (
-        message.includes('429') ||
-        String(code) === '429' ||
-        message.toLowerCase().includes('model busy') ||
-        message.toLowerCase().includes('rate limit') ||
-        message.toLowerCase().includes('too many requests')
-    );
-};
-
-const isTimeoutError = (e) => {
-    const message = (e && e.message) ? String(e.message) : String(e);
-    const name = (e && e.name) ? String(e.name) : '';
-    const code = (e && e.code) ? String(e.code) : '';
-    const status = (e && typeof e.status !== 'undefined') ? String(e.status) : '';
-    return (
-        name.toLowerCase().includes('timeout') ||
-        message.toLowerCase().includes('timeout') ||
-        code === 'ETIMEDOUT' ||
-        code === 'UND_ERR_CONNECT_TIMEOUT' ||
-        code === 'ECONNRESET' ||
-        message.toLowerCase().includes('socket hang up') ||
-        status === '408'
-    );
-};
-
-const AI_BUSY_FALLBACK_MODEL = "google/gemma-3-27b-it";
-
-
-// --- Configuration ---
 // Allow URL to be passed via command line argument
 const cliUrl = process.argv[2];
 let CATEGORY_URL = cliUrl && cliUrl.startsWith('http') 
     ? cliUrl 
-    : 'https://mobile.pinduoduo.com/search_result.html?search_key=%E5%8D%95%E8%82%A9%E5%8C%85%E5%A5%B3&search_type=goods&source=index&options=3&paste=1&search_met_track=manual&refer_page_el_sn=99885&refer_page_name=search_result&refer_page_id=10015_1771136715200_6j6plj2ual&refer_page_sn=10015&page_id=10015_1771136725342_6mr9yzf00z&bsch_is_search_mall=&bsch_show_active_page=&flip=0%3B0%3B0%3B0%3B630af7c3-043b-2964-39b0-12664add80c2%3B%2F20%3B0%3B0%3B47270af4a8bda0d0d524441a2e99ac18&sort_type=default&price_index=0&price=0%2C25&filter=price%2C0%2C25&opt_tag_name=&brand_tab_filter=&item_index=1'; 
+    : 'https://mobile.pinduoduo.com/?lastTabItemID=16'; 
 
 if (cliUrl) {
     console.log('Using URL from command line:', cliUrl);
@@ -197,6 +210,7 @@ process.on('SIGINT', () => {
     isRunning = false;
 });
 
+// Helper: Ask question in terminal
 function askQuestion(query) {
     const rl = readline.createInterface({
         input: process.stdin,
@@ -208,416 +222,1515 @@ function askQuestion(query) {
     }));
 }
 
-// Helper: Process with AI
-async function enrichWithAI(title, description, price) {
-    if (!aiClient) {
-        return {
-            translatedTitle: title + " (Translation Pending)",
-            translatedDesc: description + " (Translation Pending)",
-            aiMetadata: {
-                synonyms: ["Placeholder"],
-                market_tags: ["Tag"],
-                category_suggestion: "General"
+// Mobile Emulation (Pixel 7-ish)
+async function applyMobileEmulation(page) {
+    await page.setUserAgent(getRandomUserAgent());
+    await page.setViewport({
+        width: 412,
+        height: 915,
+        isMobile: true,
+        hasTouch: true,
+        deviceScaleFactor: 2.6
+    });
+}
+
+// Safe goto wrapper with retries
+async function safeGoto(page, url, options = {}, retries = 2) {
+    for (let i = 0; i <= retries; i++) {
+        try {
+            if (!isRunning) return null;
+            const response = await page.goto(url, options);
+            if (response && response.status() >= 400) {
+                 // Check for 429
+                 if (response.status() === 429) {
+                     console.log(`[SafeGoto] Hit 429 on attempt ${i+1}. Waiting longer...`);
+                     await delay(5000 * (i + 1));
+                     throw new Error('Rate Limited');
+                 }
+                 // Other errors might be temporary
             }
-        };
+            return response;
+        } catch (e) {
+            console.log(`[SafeGoto] Attempt ${i+1} failed for ${url}: ${e.message}`);
+            if (i === retries) {
+                console.error(`[SafeGoto] Giving up on ${url}`);
+                // return null; // Don't crash, just return null
+                throw e; // Let caller decide
+            }
+            await delay(2000 * (i + 1));
+        }
     }
+}
+
+// Check if element exists
+async function elementExists(page, selector, timeout = 1000) {
+    try {
+        await page.waitForSelector(selector, { timeout });
+        return true;
+    } catch (e) {
+        return false;
+    }
+}
+
+// Scroll down slowly and human-like with NOISE
+async function autoScroll(page, maxScrolls = 20) {
+    try {
+        let scrolls = 0;
+        let previousHeight = 0;
+        
+        while (scrolls < maxScrolls) {
+            if (!isRunning) break;
+            
+            // 1. Random Scroll Up (Noise) - 20% chance
+            if (Math.random() < 0.2 && scrolls > 1) {
+                const upDist = Math.floor(Math.random() * 200 + 100);
+                // console.log(`[Noise] Scrolling UP by ${upDist}px`);
+                await page.evaluate((dist) => window.scrollBy(0, -dist), upDist);
+                await randomDelay(1000, 2000);
+            }
+
+            // 2. Normal Scroll Down
+            // Random scroll distance between 200 and 500
+            const distance = Math.floor(Math.random() * (500 - 200 + 1) + 200);
+            
+            await page.evaluate((dist) => {
+                window.scrollBy(0, dist);
+            }, distance);
+            
+            scrolls++;
+            
+            // 3. Random Long Pause (Noise) - 5% chance
+            if (Math.random() < 0.05) {
+                console.log('[Noise] User distraction... pausing for 10s+');
+                await randomDelay(10000, 15000);
+            } else {
+                // Normal pause between scrolls (500ms to 1500ms)
+                const pause = Math.floor(Math.random() * (1500 - 500 + 1) + 500);
+                await new Promise(r => setTimeout(r, pause));
+            }
+            
+            // Check if we reached the bottom (height didn't change for a few scrolls)
+            const newHeight = await page.evaluate('document.body.scrollHeight');
+            if (newHeight === previousHeight && scrolls > 5) {
+                // Try one big scroll to see if it triggers load
+                 await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+                 await new Promise(r => setTimeout(r, 2000));
+                 const checkHeight = await page.evaluate('document.body.scrollHeight');
+                 if (checkHeight === newHeight) {
+                     console.log('Reached bottom of page or no more content loading.');
+                     break;
+                 }
+            }
+            previousHeight = newHeight;
+        }
+    } catch (e) {
+        console.log('Auto-scroll error:', e.message);
+    }
+}
+
+// --- Translation Function ---
+async function translateText(text, context = 'general', extraInfo = '') {
+    if (!text || !text.trim()) return '';
+    // Skip if already looks Arabic (basic check)
+    if (/[\u0600-\u06FF]/.test(text) && text.length > text.length * 0.5) return text;
+
+    let systemContent = `You are a professional translator. Translate the following product text from Chinese/English to Arabic. 
+                    
+    CRITICAL RULES:
+    1. Return ONLY the Arabic translation, no explanations.
+    2. If the text is a brand name or technical term, keep it in English.
+    3. DO NOT include any delivery promises, shipping times, or dates (e.g., "Delivered in 48 hours", "2024", "Fast Shipping"). REMOVE these phrases completely from the translation.`;
+
+    if (context === 'product_name') {
+        systemContent = `You are a professional translator for the Iraqi market. 
+        Your task is to translate the following product name to Arabic.
+
+        INPUT:
+        "${text}"
+
+        RULES:
+        1. Translate the product name to simple, clear Arabic.
+        2. DO NOT use flowery or overly formal language (avoid "literary" translation).
+        3. Keep Brand Names and Model Numbers in English (e.g., "Midea", "Xiaomi").
+        4. STRICTLY AVOID REPETITION.
+        5. Return ONLY the Arabic name. No explanations.`;
+    } else if (context === 'option') {
+        systemContent = `Translate this product variant/option name to concise Arabic (e.g., Color, Size, Style).
+        - "2件套" -> "طقم قطعتين"
+        - "黑色" -> "أسود"
+        - Keep numbers and units clear.
+        - Return ONLY the translation. NO extra text.
+        - REMOVE any Russian/Cyrillic characters.
+        - If the text is garbage/random characters, try to infer or return empty string.`;
+    }
+
+    const tryTranslate = async (model) => {
+        const response = await openai.chat.completions.create({
+            model: model,
+            messages: [
+                {
+                    role: "system",
+                    content: systemContent
+                },
+                {
+                    role: "user",
+                    content: text
+                }
+            ],
+            temperature: 0.3,
+            max_tokens: 1000
+        });
+        let content = response.choices[0].message.content.trim();
+        content = content.replace(/```/g, ''); // Remove code blocks markers
+        
+        // Cleanup: Remove explanations if the model ignores the "ONLY" rule
+        // Check for common separators like "---", "**Explanation", "Note:"
+        const explanationMarkers = ['---', '**Explanation', '**Rationale', 'Note:', 'Explanation:'];
+        for (const marker of explanationMarkers) {
+            if (content.includes(marker)) {
+                content = content.split(marker)[0].trim();
+            }
+        }
+        
+        // If multiple lines, assume the first line is the title/translation
+        // and subsequent lines are commentary (unless it's a very long single paragraph)
+        if (content.includes('\n')) {
+             const lines = content.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+             if (lines.length > 0) {
+                 content = lines[0];
+             }
+        }
+
+        // Post-Processing: Remove Cyrillic characters (Russian, etc.)
+        // Range: \u0400-\u04FF (Cyrillic), \u0500-\u052F (Cyrillic Supplement)
+        content = content.replace(/[\u0400-\u04FF\u0500-\u052F]/g, '').trim();
+
+        // Remove extra hyphens or slashes if they are left dangling
+        content = content.replace(/^[-/]+|[-/]+$/g, '').trim();
+
+        return content.replace(/^["']|["']$/g, '').trim();
+    };
 
     try {
-        const safeTitle = String(title || '').slice(0, 220);
-        const safeDescription = String(description || '').slice(0, 600);
-        const safePrice = String(price || '').slice(0, 50);
-
-        const prompt = `
-        You are a product data enrichment assistant for an Iraqi e-commerce site.
-        
-        Original Product Title (Chinese): "${safeTitle}"
-        Product Description: "${safeDescription}"
-        Price: "${safePrice}"
-
-        Task:
-        1. Extract the Brand Name in English (e.g., "Nike", "Sony", "Xiaomi"). If no brand is found, ignore it.
-        2. Translate the Product Name to ARABIC accurately.
-           - TARGET LANGUAGE: ARABIC (Iraq dialect or MSA).
-           - INPUT: Chinese -> OUTPUT: Arabic.
-           - DO NOT output English (except for the Brand Name).
-           - Remove marketing fluff like "hot sale", "new arrival", "2024", "Ready Stock".
-           - Example: "冬季加绒卫衣" -> "كنزة شتوية مبطنة" (NOT "Winter Fleece Sweater").
-        3. Combine them into "product_name_ar" format: "[Arabic Name]".
-           - ONLY include the brand if it is a well-known international brand (e.g. Nike, Adidas, Sony).
-           - If the brand is generic, unknown, or "No Brand", DO NOT include it in the title.
-           - NEVER include text like "No Brand", "Generic", "Other", "ماركة غير معروفة" in the title.
-           - IMPORTANT: You MUST translate the actual title. Do NOT use placeholder text like "اسم المنتج بالعربية".
-        4. Extract "product_details_ar" as a structured Key-Value JSON object in ARABIC.
-        5. Generate "aiMetadata" based strictly on the product Title and Description.
-            - "synonyms": Array of 3-5 alternative Arabic names SPECIFIC to this product.
-            - "market_tags": Array of 3-5 relevant tags in Arabic.
-            - "category_suggestion": A specific category path in Arabic.
-        6. DETECT IF THE PRODUCT IS EDIBLE (Food, Drink, Nuts, Cans, Snacks, Ingredients, Supplements, Vitamins, Medicine).
-            - Set "is_edible": true if it is food/edible/supplement.
-            - Set "is_edible": false if it is NOT edible (e.g. clothes, electronics, tools).
-            - BE VERY CAREFUL. "Food Container" is NOT edible. "Dog Food" IS edible (sort of, but usually restricted). "Almond Oil for Skin" is NOT edible (cosmetic). "Almond Oil for Cooking" IS edible.
-            - If in doubt, set true to be safe.
-
-         CRITICAL INSTRUCTIONS:
-         - The "product_name_ar" MUST be in ARABIC script (except the brand).
-        - If the original title is "WASSUP BEAVER...", translate "WASSUP BEAVER" as the Brand, and the rest as the Arabic name.
-        - NEVER return "اسم غير متوفر" (Name Not Available). ALWAYS generate a descriptive Arabic name based on the description if the title is unclear.
-        - Example: If title is "2025 Winter Jacket", output "سترة شتوية 2025".
-        - The translation MUST be high quality and natural for Arabic speakers in Iraq.
-        - If the product name is vague or generic in Chinese, infer the specific type from description or context.
-        - The "product_details_ar" field MUST be a JSON OBJECT (key-value pairs), NOT a string.
-        - Example format for details:
-          "product_details_ar": { 
-              "المادة": "قماش كتان", 
-              "الميزة": "ألوان متعددة", 
-              "التصميم": "إبداعي", 
-              "الاستخدام": "غرفة المعيشة" 
-          }
-        - STRICTLY EXCLUDE any "return policy", "refund", "replacement", "shipping", "free shipping", or "guarantee" information from details.
-        - STRICTLY EXCLUDE any PRICE or COST information (e.g., "السعر", "Price", "29.9 ريال") from details.
-        - DO NOT include keys with EMPTY values (e.g. "الماركة": "" should be removed).
-        - Do NOT include any Chinese characters (like ¥, 包邮, 品牌, etc.) in values.
-        - English text IS ALLOWED for Brand Names and Model Numbers.
-        - Convert all prices and measurements to Arabic format if possible.
-
-        Return ONLY a valid JSON object with this structure (no markdown, no \`\`\`json blocks):
-        {
-            "product_name_ar": "Put Translated Name Here",
-            "is_edible": false,
-            "product_details_ar": {
-                "الماركة": "قيمة",
-                "اللون": "قيمة",
-                "المادة": "قيمة"
-            },
-            "aiMetadata": {
-                "synonyms": ["مرادف1", "مرادف2"],
-                "market_tags": ["تاق1", "تاق2"],
-                "category_suggestion": "اسم التصنيف"
-            }
+        // console.log(`Translating with ${MAIN_MODEL}...`);
+        return await tryTranslate(MAIN_MODEL);
+    } catch (error) {
+        console.warn(`Translation failed with ${MAIN_MODEL}, trying backup ${BACKUP_MODEL}...`);
+        try {
+            return await tryTranslate(BACKUP_MODEL);
+        } catch (backupError) {
+            console.error('Translation error (both models failed):', backupError.message);
+            return text; // Fallback to original
         }
-        `;
+    }
+}
 
-        let attempts = 0;
+// --- Description Formatter ---
+async function formatDescriptionToKV(text) {
+    if (!text || !text.trim()) return {};
+    
+    const prompt = `
+    Analyze the following product description text and extract key-value pairs.
+    Text: "${text}"
+    
+    Return a valid JSON object where keys are the attribute names (translated to Arabic) and values are the attribute values (translated to Arabic).
+    Example input: "Color: Red, Size: XL"
+    Example output: {"اللون": "أحمر", "المقاس": "XL"}
+    
+    Return ONLY the raw JSON object.
+    `;
+
+    const tryFormat = async (model) => {
+        const response = await openai.chat.completions.create({
+            model: model,
+            messages: [
+                {
+                    role: "system",
+                    content: "You are an AI assistant that extracts structured data from text. Output valid JSON only."
+                },
+                {
+                    role: "user",
+                    content: prompt
+                }
+            ],
+            temperature: 0.3,
+            max_tokens: 1000
+        });
         
-        while (attempts < AI_MAX_ATTEMPTS) {
-            try {
-                const create = async (model) => {
-                    return await aiClient.chat.completions.create({
-                        model,
-                        messages: [{ role: "user", content: prompt }],
-                        temperature: 0.2,
-                        max_tokens: 1000,
-                    });
-                };
-
-                let response;
-                try {
-                    response = await create(AI_PRIMARY_MODEL);
-                } catch (e) {
-                    if (isTimeoutError(e)) {
-                        throw e;
-                    }
-                    if (isModelBusyError(e)) {
-                        console.log(`AI busy on ${AI_PRIMARY_MODEL}. Falling back to ${AI_BUSY_FALLBACK_MODEL}...`);
-                        response = await create(AI_BUSY_FALLBACK_MODEL);
-                    } else if (AI_FALLBACK_MODEL && AI_FALLBACK_MODEL !== AI_PRIMARY_MODEL) {
-                        console.log(`AI error on ${AI_PRIMARY_MODEL}. Falling back to ${AI_FALLBACK_MODEL}...`);
-                        response = await create(AI_FALLBACK_MODEL);
-                    } else {
-                        throw e;
-                    }
-                }
-
-                let text = response.choices[0].message.content;
-                text = text.replace(/```json/g, '').replace(/```/g, '').trim();
-                
-                // Attempt to fix common JSON syntax errors from AI
-                // 1. Remove trailing commas in objects/arrays: ,} -> } or ,] -> ]
-                text = text.replace(/,(\s*[}\]])/g, '$1');
-                
-                const jsonStart = text.indexOf('{');
-                let parsed = null;
-
-                if (jsonStart !== -1) {
-                    let endSearchPos = text.lastIndexOf('}');
-                    while (endSearchPos > jsonStart) {
-                        try {
-                            const candidate = text.substring(jsonStart, endSearchPos + 1);
-                            parsed = JSON.parse(candidate);
-                            break;
-                        } catch (e) {
-                            endSearchPos = text.lastIndexOf('}', endSearchPos - 1);
-                        }
-                    }
-                }
-
-                if (!parsed) {
-                    console.error("Failed to parse AI response. Raw text:", text);
-                    throw new Error("JSON parsing failed after multiple attempts.");
-                }
-
-                // CHECK FOR INVALID/PLACEHOLDER NAMES
-                if (parsed.product_name_ar) {
-                     const badNames = [
-                         'اسم غير متوفر',
-                         'name not available',
-                         'اسم المنتج بالعربيه',
-                         'اسم المنتج بالعربية',
-                         'put translated name here',
-                         'arabic name',
-                         'ترجمة اسم المنتج'
-                     ];
-                     const lowerName = parsed.product_name_ar.toLowerCase();
-                     
-                     // Check if name matches any bad pattern or contains Chinese
-                     if (badNames.some(bad => lowerName.includes(bad)) || /[\u4e00-\u9fa5]/.test(parsed.product_name_ar)) {
-                         console.log(`AI returned invalid name: "${parsed.product_name_ar}". Retrying...`);
-                         throw new Error('AI returned invalid name (placeholder or Chinese)');
-                     }
-                } else {
-                    throw new Error('AI returned empty product_name_ar');
-                }
-
-                try {
-                    const stripChinese = (str) => {
-                        if (typeof str !== 'string') return str;
-                        // Don't strip immediately, let's keep it for now or refine logic
-                        // Only strip if it's mixed, but for Arabic name we want PURE Arabic.
-                        // However, if AI returns "Brand (English) + Arabic", that's fine.
-                        return str.trim(); 
-                    };
-
-                    // if (parsed.product_name_ar) { ... } // Removed redundant check block since we did it above
-
-                    if (parsed.product_details_ar) {
-                        for (const key in parsed.product_details_ar) {
-                            // Strip Chinese
-                            parsed.product_details_ar[key] = stripChinese(parsed.product_details_ar[key]);
-                            
-                            // Check if value still has Chinese characters
-                            if (/[\u4e00-\u9fa5]/.test(parsed.product_details_ar[key])) {
-                                delete parsed.product_details_ar[key]; // Remove key if translation failed
-                            }
-
-                            // Remove empty keys
-                            if (!parsed.product_details_ar[key] || parsed.product_details_ar[key].trim() === '') {
-                                delete parsed.product_details_ar[key];
-                            }
-                        }
-                    }
-
-                    if (parsed.aiMetadata) {
-                         // Ensure arrays are arrays
-                         if (!Array.isArray(parsed.aiMetadata.synonyms)) parsed.aiMetadata.synonyms = [];
-                         if (!Array.isArray(parsed.aiMetadata.market_tags)) parsed.aiMetadata.market_tags = [];
-                         if (!parsed.aiMetadata.category_suggestion) parsed.aiMetadata.category_suggestion = "ط¹ط§ظ…";
-                    } else {
-                        // Fallback: Try to infer from parsed name if possible, otherwise use generic but marked as fallback
-                         parsed.aiMetadata = {
-                             synonyms: [parsed.product_name_ar], // Use the name itself as a synonym at least
-                             market_tags: ["ظ…ظ†طھط¬ ظ…ظ…ظٹط²"],
-                             category_suggestion: "ط£ط®ط±ظ‰"
-                         };
-                    }
-
-                    return parsed;
-                } catch (jsonError) {
-                    throw jsonError; 
-                }
-            } catch (e) {
-                attempts++;
-                const message = (e && e.message) ? e.message : String(e);
-                console.error(`AI Error (Attempt ${attempts}/${AI_MAX_ATTEMPTS}):`, message);
-
-                const isRateLimit = isModelBusyError(e) || message.includes('429');
-                const isTimeout = isTimeoutError(e);
-
-                if (isRateLimit) {
-                    const waitTime = Math.min(45000, 5000 * attempts) + Math.floor(Math.random() * 1000);
-                    console.log(`Rate limit hit. Waiting ${(waitTime / 1000).toFixed(1)}s...`);
-                    await delay(waitTime);
-                    continue;
-                }
-
-                if (isTimeout) {
-                    const waitTime = Math.min(45000, AI_BASE_RETRY_DELAY_MS * (2 ** Math.max(0, attempts - 1))) + Math.floor(Math.random() * 1000);
-                    await delay(waitTime);
-                    continue;
-                }
-
-                await delay(2000 + Math.floor(Math.random() * 500));
-            }
+        let content = response.choices[0].message.content.trim();
+        if (content.startsWith('```json')) {
+            content = content.replace(/^```json/, '').replace(/```$/, '');
+        } else if (content.startsWith('```')) {
+            content = content.replace(/^```/, '').replace(/```$/, '');
         }
-        throw new Error("Max AI attempts reached");
+        return JSON.parse(content);
+    };
+
+    try {
+        return await tryFormat(MAIN_MODEL);
+    } catch (error) {
+        console.warn(`Description formatting failed with ${MAIN_MODEL}, trying backup...`);
+        try {
+            return await tryFormat(BACKUP_MODEL);
+        } catch (e) {
+            console.error('Description formatting error:', e.message);
+            // Fallback: return simple object with full text
+            return { "وصف": text };
+        }
+    }
+}
+
+// --- AI Metadata Generation ---
+async function generateAiMetadata(productName, description) {
+    const prompt = `
+    Analyze the following product (Name: "${productName}", Description: "${description}") and generate metadata in JSON format.
+    The output must be a valid JSON object with the following structure:
+    {
+       "synonyms": ["synonym1", "synonym2", "synonym3"], 
+       "market_tags": ["tag1", "tag2", "tag3"], 
+       "category_suggestion": "category_name" 
+    }
+    Generate 3-5 synonyms in Arabic, 3-5 market tags in Arabic, and 1 category suggestion in Arabic.
+    Return ONLY the raw JSON object, no markdown, no code blocks.
+    `;
+
+    const tryGenerate = async (model) => {
+        const response = await openai.chat.completions.create({
+            model: model,
+            messages: [
+                {
+                    role: "system",
+                    content: "You are an AI assistant that analyzes products and generates metadata in JSON format. Output valid JSON only."
+                },
+                {
+                    role: "user",
+                    content: prompt
+                }
+            ],
+            temperature: 0.5,
+            max_tokens: 500
+        });
+        
+        let content = response.choices[0].message.content.trim();
+        // Strip markdown code blocks if present
+        if (content.startsWith('```json')) {
+            content = content.replace(/^```json/, '').replace(/```$/, '');
+        } else if (content.startsWith('```')) {
+            content = content.replace(/^```/, '').replace(/```$/, '');
+        }
+        return JSON.parse(content);
+    };
+
+    try {
+        // console.log(`Generating metadata with ${MAIN_MODEL}...`);
+        return await tryGenerate(MAIN_MODEL);
+    } catch (error) {
+        console.warn(`Metadata generation failed with ${MAIN_MODEL}, trying backup ${BACKUP_MODEL}...`);
+        try {
+            return await tryGenerate(BACKUP_MODEL);
+        } catch (backupError) {
+            console.error('Metadata generation error:', backupError.message);
+            return {}; // Return empty object on failure
+        }
+    }
+}
+
+// --- Check if Edible ---
+function isEdible(text) {
+    if (!text) return false;
+    const lower = text.toLowerCase();
+    
+    // Check strict list first
+    for (const kw of STRICT_EDIBLE_KEYWORDS) {
+        if (lower.includes(kw)) return true;
+    }
+    
+    // Check general list (maybe require word boundaries or combination?)
+    // For now, simple inclusion
+    for (const kw of EDIBLE_KEYWORDS) {
+        if (lower.includes(kw)) return true;
+    }
+    return false;
+}
+
+// --- URL Helpers (Global Scope) ---
+const getGoodsIdFromUrl = (url) => {
+    if (!url) return null;
+    try {
+        const parsed = new URL(String(url));
+        const goodsId = parsed.searchParams.get('goods_id');
+        if (!goodsId) return null;
+        return { goodsId, parsed };
     } catch (e) {
-        console.error("AI Generation Error:", e.message);
-        // CRITICAL CHANGE: If all attempts failed or returned bad names, SKIP this product.
-        // Return a special flag to the caller.
-        return {
-            shouldSkip: true,
-            reason: "AI Translation Failed (Max Attempts)"
+        return null;
+    }
+};
+
+const normalizeProductUrl = (url) => {
+    const info = getGoodsIdFromUrl(url);
+    if (!info) return url || null;
+    const { goodsId, parsed } = info;
+    if (parsed.hostname === 'm.pinduoduo.com' && parsed.pathname.startsWith('/home')) {
+        return `https://mobile.pinduoduo.com/goods.html?goods_id=${goodsId}`;
+    }
+    return String(url);
+};
+
+const isProductUrl = (url) => {
+    const info = getGoodsIdFromUrl(url);
+    if (!info) return false;
+    const { parsed } = info;
+    const path = parsed.pathname || '';
+    if (parsed.hostname === 'm.pinduoduo.com' && path.startsWith('/home')) return true;
+    if (path.includes('goods.html') || path.includes('goods_detail')) return true;
+    if (path.includes('/goods')) return true;
+    return false;
+};
+
+// --- Database Insertion (Aligned with pinduoduo-scraper2.js) ---
+async function saveProductToDb(productData) {
+    try {
+        // 0. Clean Data (Remove skuId globally first)
+        if (productData.generated_options && Array.isArray(productData.generated_options)) {
+            productData.generated_options = productData.generated_options.map(opt => {
+                const { skuId, ...rest } = opt;
+                return rest;
+            });
+        }
+
+        // 2. Save to Database (Prisma)
+        console.log('Checking database for existing product...');
+        const existingProduct = await prisma.product.findFirst({
+            where: { purchaseUrl: productData.url }
+        });
+
+        if (existingProduct) {
+            console.log(`Skipping duplicate in DB (ID: ${existingProduct.id})`);
+            return;
+        }
+
+        console.log('Inserting into database...');
+
+        // --- PROCESSING OPTIONS (Aligned with scraper2) ---
+        // Filter out Chinese characters from options
+        const containsChinese = (str) => /[\u4e00-\u9fa5]/.test(str);
+        
+        // Filter out invalid/suspicious options
+        const invalidKeywords = [
+            '定制', '专拍', '补差', '邮费', '不发货', '联系客服', // Chinese
+            'تخصيص', 'اتصال', 'رابط', 'فرق', 'إيداع', 'لا يرسل', 'خدمة العملاء', 'مخصص' // Arabic
+        ];
+
+        // 1. Filter
+        let validOptions = (productData.generated_options || []).filter(opt => {
+            const text = (opt.color || '') + ' ' + (opt.sizes ? opt.sizes.join(' ') : '');
+            const hasInvalidKeyword = invalidKeywords.some(kw => text.includes(kw));
+            if (hasInvalidKeyword) {
+                console.log(`Skipping invalid/suspicious option: ${text}`);
+                return false;
+            }
+            return true;
+        });
+
+        // 2. Translate (Async)
+        const optionTranslationCache = new Map();
+        const getTranslatedOption = async (text) => {
+            if (!text || !containsChinese(text)) return text;
+            if (optionTranslationCache.has(text)) return optionTranslationCache.get(text);
+            const translated = await translateText(text, 'option');
+            if (translated) {
+                optionTranslationCache.set(text, translated);
+                return translated;
+            }
+            return text;
         };
-    }
-}
 
-const CHROME_PATHS = [
-  'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-  'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-  'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
-  'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
-];
+        const colors = new Map(); // value -> original
+        const sizes = new Map();  // value -> original
 
-function getExecutablePath() {
-  for (const p of CHROME_PATHS) {
-    if (fs.existsSync(p)) return p;
-  }
-  return null;
-}
+        // Process options for translation and unique collection
+        for (const opt of validOptions) {
+            if (opt.color) {
+                let colorValue = opt.color;
+                if (containsChinese(colorValue)) {
+                    console.log(`Chinese color detected: ${colorValue}. Attempting translation...`);
+                    const translatedColor = await getTranslatedOption(colorValue);
+                    if (translatedColor && !containsChinese(translatedColor)) {
+                        opt.color = translatedColor;
+                        colorValue = translatedColor;
+                    }
+                }
+                if (!colors.has(colorValue)) colors.set(colorValue, opt.originalColor || colorValue);
+            }
 
-const delay = (ms) => new Promise(resolve => {
-    const end = Date.now() + ms;
-    const timer = setInterval(() => {
-        if (Date.now() >= end) {
-            clearInterval(timer);
-            resolve();
-        }
-    }, 100);
-});
-const humanDelay = (min = 1000, max = 3000) => delay(Math.floor(Math.random() * (max - min + 1)) + min);
-
-async function applyPageTimeouts(page) {
-    if (!page) return;
-    try { page.setDefaultTimeout(PUPPETEER_DEFAULT_TIMEOUT_MS); } catch (e) {}
-    try { page.setDefaultNavigationTimeout(PUPPETEER_DEFAULT_TIMEOUT_MS); } catch (e) {}
-}
-
-async function waitForStableUrl(page, stableMs = 1200, timeoutMs = 12000) {
-    const start = Date.now();
-    let lastUrl = '';
-    let lastChangeAt = Date.now();
-    try { lastUrl = page.url(); } catch (e) { lastUrl = ''; }
-    lastChangeAt = Date.now();
-
-    while (Date.now() - start < timeoutMs) {
-        if (!page || (page.isClosed && page.isClosed())) return lastUrl;
-        await delay(200);
-        let cur = '';
-        try { cur = page.url(); } catch (e) { cur = lastUrl; }
-        if (cur && cur !== lastUrl) {
-            lastUrl = cur;
-            lastChangeAt = Date.now();
-        }
-        if (Date.now() - lastChangeAt >= stableMs) return lastUrl;
-    }
-    return lastUrl;
-}
-
-async function safeEvaluate(page, pageFunction, args = [], maxAttempts = 4) {
-    let lastErr = null;
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        try {
-            return await page.evaluate(pageFunction, ...args);
-        } catch (e) {
-            lastErr = e;
-            const msg = String(e?.message || e || '');
-            const isContextDestroyed =
-                msg.includes('Execution context was destroyed') ||
-                msg.includes('Cannot find context') ||
-                msg.includes('Target closed') ||
-                msg.includes('Session closed') ||
-                msg.includes('Most likely the page has been closed') ||
-                msg.includes('Navigating frame was detached') ||
-                msg.includes('frame was detached');
-
-            if (!isContextDestroyed) throw e;
-
-            try {
-                await delay(300 * attempt);
-                await Promise.race([
-                    page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 8000 }).catch(() => null),
-                    waitForStableUrl(page, 1400, 12000)
-                ]);
-            } catch (e2) {}
-        }
-    }
-    throw lastErr || new Error('safeEvaluate failed');
-}
-
-async function safeGoto(page, url, options = {}, maxRetries = 3) {
-    for (let i = 0; i < maxRetries; i++) {
-        try {
-            return await page.goto(url, options);
-        } catch (e) {
-            const msg = e.message || '';
-            if (i === maxRetries - 1) throw e;
-            
-            if (msg.includes('ERR_CONNECTION_REFUSED') || 
-                msg.includes('ERR_CONNECTION_RESET') || 
-                msg.includes('Timeout') ||
-                msg.includes('net::ERR_')) {
-                console.log(`[Navigation] Retry ${i+1}/${maxRetries} for ${url} (${msg})`);
-                await delay(2000 * (i + 1));
-            } else {
-                throw e;
+            if (opt.sizes && Array.isArray(opt.sizes)) {
+                opt.sizes.forEach(s => {
+                    const original = (s === opt.sizes[0] && opt.originalSize) ? opt.originalSize : s;
+                     // scraper2 logic for sizes: use anyway even if Chinese, but we can translate if we want.
+                     // scraper2: if (containsChinese(s)) console.log... but uses it.
+                    if (!sizes.has(s)) sizes.set(s, original);
+                });
             }
         }
+
+        // Prepare Data for DB
+        const colorValues = Array.from(colors.keys());
+        const originalColorValues = Array.from(colors.values());
+        
+        // Build Options Array for Prisma
+        const optionsCreateData = [];
+        if (colorValues.length > 0) {
+            optionsCreateData.push({
+                name: 'اللون',
+                values: JSON.stringify(colorValues),
+                originalValues: JSON.stringify(originalColorValues)
+            });
+        }
+        // Add Size option if we ever extract sizes
+        if (sizes.size > 0) {
+            optionsCreateData.push({
+                name: 'المقاس',
+                values: JSON.stringify(Array.from(sizes.keys())),
+                originalValues: JSON.stringify(Array.from(sizes.values()))
+            });
+        }
+
+        // Helper function for profit calculation
+        const calculateFinalPrice = (base) => {
+            const price = Number(base) || 0;
+            if (price <= 0) return 0;
+            return Math.ceil((price * 1.15) / 10) * 10;
+        };
+
+        // Build Variants Array for Prisma
+        const variantsCreateData = [];
+        for (const opt of validOptions) {
+             const color = opt.color;
+             const variantImg = opt.thumbnail || productData.main_images[0] || '';
+             
+             // Price normalization logic from scraper2
+             // "normalizeVariantBasePrice"
+             let variantPrice = parseFloat(opt.price) || parseFloat(productData.general_price) || 0;
+             // Scraper2 multiplies by 200 if < 100 or < 1000 while main > 5000.
+             // Our opt.price in scraper.js is ALREADY multiplied by 200 (line 1026: parseFloat(...) * 200).
+             // So we might not need further multiplication, but let's be safe.
+             // Actually, line 1026: `price = parseFloat(...) * 200`. So it is already in IQD.
+             
+             if (opt.sizes && Array.isArray(opt.sizes) && opt.sizes.length > 0) {
+                 for (const size of opt.sizes) {
+                     variantsCreateData.push({
+                        combination: JSON.stringify({ "اللون": color, "المقاس": size }),
+                        price: calculateFinalPrice(variantPrice),
+                        basePriceIQD: variantPrice,
+                        image: variantImg,
+                        weight: 0,
+                        height: 0,
+                        length: 0,
+                        width: 0,
+                        isPriceCombined: false
+                     });
+                 }
+             } else {
+                 variantsCreateData.push({
+                    combination: JSON.stringify({ "اللون": color }),
+                    price: calculateFinalPrice(variantPrice),
+                    basePriceIQD: variantPrice,
+                    image: variantImg,
+                    weight: 0,
+                    height: 0,
+                    length: 0,
+                    width: 0,
+                    isPriceCombined: false
+                 });
+             }
+        }
+
+        // Create Product
+        const newProduct = await prisma.product.create({
+            data: {
+                name: productData.product_name,
+                price: calculateFinalPrice(productData.general_price),
+                basePriceIQD: parseFloat(productData.general_price) || 0,
+                image: productData.main_images && productData.main_images.length > 0 ? productData.main_images[0] : '',
+                purchaseUrl: productData.url,
+                specs: JSON.stringify(productData.product_details),
+                aiMetadata: productData.aiMetadata || {},
+                scrapedReviews: productData.scrapedReviews ? productData.scrapedReviews.map(rev => ({
+                    name: rev.name,
+                    photos: rev.photos || [],
+                    comment: rev.comment
+                })) : [],
+                generated_options: productData.generated_options || [], // Store full options JSON
+                isAirRestricted: false,
+                isActive: true,
+                status: 'PUBLISHED',
+                
+                // Create Options inline
+                options: {
+                    create: optionsCreateData
+                },
+                // Create Variants inline
+                variants: {
+                    create: variantsCreateData
+                }
+            }
+        });
+        console.log(`Product created: ID ${newProduct.id}`);
+
+        // Create Product Images (Gallery)
+        if (productData.main_images && productData.main_images.length > 0) {
+            await prisma.productImage.createMany({
+                data: productData.main_images.map((url, i) => ({
+                    productId: newProduct.id,
+                    url: url,
+                    order: i,
+                    type: "GALLERY"
+                }))
+            });
+        }
+
+        // Create Description Images
+        if (productData.product_desc_imgs && productData.product_desc_imgs.length > 0) {
+            await prisma.productImage.createMany({
+                data: productData.product_desc_imgs.map((url, i) => ({
+                    productId: newProduct.id,
+                    url: url,
+                    order: i + 100,
+                    type: "DESCRIPTION"
+                }))
+            });
+        }
+
+        console.log(`✅ Successfully inserted into DB! Product ID: ${newProduct.id}`);
+
+        // 3. Generate Embedding (DeepInfra)
+        try {
+            console.log('Triggering embedding generation (google/embeddinggemma-300m)...');
+            await processProductEmbedding(newProduct.id);
+        } catch (embedErr) {
+            console.error(`⚠️ Embedding generation failed for Product ${newProduct.id}:`, embedErr.message);
+        }
+
+    } catch (e) {
+        console.error('Save Error:', e.message);
     }
 }
 
-async function createBrowser() {
-  const executablePath = getExecutablePath();
-  if (!executablePath) {
-    console.error('Chrome/Edge executable not found.');
-    process.exit(1);
-  }
+// Cookie Management
+const COOKIE_FILE = path.join(__dirname, '..', 'pinduoduo-cookies.json');
 
-  return await puppeteer.launch({
-    executablePath,
-    headless: false,
-    defaultViewport: null,
-    protocolTimeout: PUPPETEER_PROTOCOL_TIMEOUT_MS,
-    // userDataDir: 'chrome_data_pdd_fresh_v36',
-    userDataDir: 'chrome_data_pdd_persistent', // Use fixed directory to keep session alive
-    args: [
+async function saveCookies(page) {
+    try {
+        const cookies = await page.cookies();
+        fs.writeFileSync(COOKIE_FILE, JSON.stringify(cookies, null, 2));
+        // console.log('Cookies saved.');
+    } catch (e) {
+        console.error('Failed to save cookies:', e.message);
+    }
+}
+
+async function loadCookies(page) {
+    if (fs.existsSync(COOKIE_FILE)) {
+        try {
+            const cookies = JSON.parse(fs.readFileSync(COOKIE_FILE));
+            await page.setCookie(...cookies);
+            console.log(`Loaded ${cookies.length} cookies.`);
+        } catch (e) {
+            console.error('Failed to load cookies:', e.message);
+        }
+    }
+}
+
+// Browser Creation
+async function createBrowser(useGuest = false, initialUrl = null) {
+    const executablePath = getExecutablePath();
+    const userDataDir = process.env.PDD_USER_DATA_DIR || path.join(os.homedir(), 'AppData', 'Local', 'Google', 'Chrome', 'User Data');
+    const debugPort = 9222;
+    // const useGuest = process.env.PDD_GUEST === '1'; // Removed duplicate declaration
+
+    // 0. Try to CONNECT to an existing browser first (The "Connect-or-Launch" Pattern)
+    // Skip connection attempt if we strictly want a Guest (incognito-like) session
+    if (!useGuest) {
+        try {
+            console.log(`Trying to connect to existing Chrome on port ${debugPort}...`);
+            const browser = await puppeteer.connect({
+                browserURL: `http://127.0.0.1:${debugPort}`,
+                defaultViewport: null
+            });
+            console.log('✅ Successfully connected to existing Chrome instance!');
+            return browser;
+        } catch (e) {
+            console.log('Could not connect to existing instance (it might be closed or not running with debug port). Launching new one...');
+        }
+    }
+
+    // Check if Chrome is running and locked - STRICT CLEAN SLATE PROTOCOL
+    // DISABLED: User explicitly requested to remove aggressive kill checks
+    /* 
+    if (process.env.PDD_AUTO_KILL_CHROME === '1') {
+        console.log('🛡️ Initiating Strict Clean Slate Protocol (PDD_AUTO_KILL_CHROME=1)...');
+        // ... (existing commented out code) ...
+    }
+    */
+    
+    // SMART CLEANUP: If no Chrome process is running, but lock file exists, delete it.
+    try {
+        const { stdout } = await exec('tasklist /FI "IMAGENAME eq chrome.exe" /FO CSV /NH');
+        const isRunning = stdout.includes('chrome.exe');
+        
+        if (!isRunning) {
+            const lockFile = path.join(userDataDir, 'SingletonLock');
+            if (fs.existsSync(lockFile)) {
+                console.log('⚠️ No Chrome process running, but "SingletonLock" found. Deleting stale lock file...');
+                try { fs.unlinkSync(lockFile); } catch(e) {}
+            }
+        }
+    } catch (e) {
+        // Ignore errors checking process list (e.g. permission issues)
+    }
+
+    // 3. Detect Best Profile (if not specified)
+    let profileDir = process.env.PDD_PROFILE_DIR;
+    
+    // User Override: If user specifically asked for "Profile 3" (or any other), prioritize that.
+    // In this case, we hardcode "Profile 3" as a fallback if env var isn't set, per user request.
+    if (!profileDir) {
+        // console.log('No PDD_PROFILE_DIR set. Defaulting to "Profile 3" as requested.');
+        profileDir = 'Profile 3'; 
+    }
+
+    if (!profileDir && false) { // Disable auto-detection for now since user wants specific profile
+        try {
+            console.log('Detecting best profile (largest History file)...');
+            const localStatePath = path.join(userDataDir, 'Local State');
+            if (fs.existsSync(localStatePath)) {
+                const stateData = JSON.parse(fs.readFileSync(localStatePath, 'utf8'));
+                const profiles = stateData.profile.info_cache || {};
+                
+                let bestProfile = 'Default';
+                let maxSize = -1;
+                
+                for (const pName of Object.keys(profiles)) {
+                    const historyPath = path.join(userDataDir, pName, 'History');
+                    try {
+                        if (fs.existsSync(historyPath)) {
+                            const stats = fs.statSync(historyPath);
+                            if (stats.size > maxSize) {
+                                maxSize = stats.size;
+                                bestProfile = pName;
+                            }
+                        }
+                    } catch(e) {}
+                }
+                
+                if (maxSize > 0) {
+                    console.log(`Auto-selected profile: "${bestProfile}" (History size: ${(maxSize/1024/1024).toFixed(2)} MB)`);
+                    profileDir = bestProfile;
+                } else {
+                    console.log('Could not determine best profile by History size. Defaulting to "Default".');
+                    profileDir = 'Default';
+                }
+            }
+        } catch (e) {
+            console.warn('Profile detection failed:', e.message);
+            profileDir = 'Default';
+        }
+    }
+
+    // const useGuest = process.env.PDD_GUEST === '1'; // Removed duplicate declaration
+    
+    const args = [
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-infobars',
         '--window-position=0,0',
         '--ignore-certificate-errors',
         '--ignore-certificate-errors-spki-list',
-        '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        '--lang=zh-CN,zh'
-    ]
-  });
-}
+        '--disable-blink-features=AutomationControlled', // Critical for anti-detection
+        '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36',
+        '--lang=zh-CN,zh',
+        `--remote-debugging-port=${debugPort}` // Enable Debug Port for future connections
+    ];
+    
+    // Immediate Navigation: Add URL to args
+    if (initialUrl) {
+        args.push(initialUrl);
+    }
 
-async function autoScroll(page) {
-    await page.evaluate(async () => {
-        await new Promise((resolve) => {
-            let totalHeight = 0;
-            const distance = 100;
-            const timer = setInterval(() => {
-                const scrollHeight = document.body.scrollHeight;
-                window.scrollBy(0, distance);
-                totalHeight += distance;
-                if (totalHeight >= 600) { 
-                    clearInterval(timer);
-                    resolve();
-                }
-            }, 100);
+    if (useGuest) {
+        args.push('--guest');
+        console.log('Launching in GUEST mode (no profile).');
+    } else {
+        console.log(`Launching with User Data Dir: ${userDataDir}`);
+        // Puppeteer adds --user-data-dir automatically if userDataDir option is set
+        // But we explicitly add it here just in case we need to ensure it matches
+        // Actually, Puppeteer's default behavior is robust. 
+        // We will rely on Puppeteer's userDataDir option mostly, but let's keep it clean.
+        
+        console.log(`Using Profile Directory: ${profileDir}`);
+        args.push(`--profile-directory=${profileDir}`);
+    }
+
+    try {
+        return await puppeteer.launch({
+            executablePath,
+            headless: false,
+            defaultViewport: null,
+            protocolTimeout: 600000,
+            userDataDir: useGuest ? undefined : userDataDir,
+            args: args
         });
-    });
+    } catch (e) {
+        // IGNORE "already running" error and try to connect
+        // This handles cases where Puppeteer thinks the process failed but it actually launched
+        // or when it conflicts with an existing process but we can still connect.
+        if (e.message.includes('user data directory is already in use') || e.message.includes('already running') || e.code === 0) {
+            console.log('⚠️ Puppeteer detected "Already Running" error. Assuming browser is active and trying to connect...');
+            
+            // Retry connecting multiple times (wait for browser to be ready)
+            for (let attempt = 1; attempt <= 5; attempt++) {
+                console.log(`   Connection Attempt ${attempt}/5...`);
+                await randomDelay(2000, 5000); // Wait 2s between attempts
+                
+                try {
+                    const browser = await puppeteer.connect({
+                        browserURL: `http://127.0.0.1:${debugPort}`,
+                        defaultViewport: null
+                    });
+                    console.log('✅ Successfully connected to the running instance (after ignoring launch error)!');
+                    return browser;
+                } catch (connErr) {
+                    // console.log(`   Attempt ${attempt} failed: ${connErr.message}`);
+                }
+            }
+            
+            console.error('❌ Failed to connect to the browser after multiple attempts.');
+            
+            // Last Resort: If we can't connect, maybe it's a stale lock file and no browser is running.
+            // Check process list again, if no chrome.exe, delete lock and RETRY LAUNCH.
+            try {
+                const { stdout } = await exec('tasklist /FI "IMAGENAME eq chrome.exe" /FO CSV /NH');
+                if (!stdout.includes('chrome.exe')) {
+                     console.log('⚠️ No Chrome process found running. This might be a stale SingletonLock.');
+                     console.log('🗑️ Deleting SingletonLock and Retrying Launch...');
+                     
+                     // Delete known lock files
+                     const lockFiles = ['SingletonLock', 'SingletonCookie', 'SingletonSocket'];
+                     for (const file of lockFiles) {
+                        const lockPath = path.join(userDataDir, file);
+                        if (fs.existsSync(lockPath)) {
+                            try { fs.unlinkSync(lockPath); } catch(e) {}
+                        }
+                     }
+                     
+                     // Recursive retry (one level deep ideally, but here just launch)
+                     return await puppeteer.launch({
+                        executablePath,
+                        headless: false,
+                        defaultViewport: null,
+                        protocolTimeout: 600000,
+                        userDataDir: useGuest ? undefined : userDataDir,
+                        args: args
+                    });
+                }
+            } catch (retryErr) {
+                console.error('Last resort retry failed:', retryErr.message);
+            }
+
+            console.error('   This usually means the browser is running but NOT with "--remote-debugging-port=9222".');
+            console.error('   Please CLOSE all Chrome windows manually and try running the script again.');
+        }
+        throw e;
+    }
 }
 
-async function run() {
+// Scrape Single Product
+async function scrapeProduct(page, url) {
+    console.log(`Analyzing product page: ${url}`);
+    
+    // --- DUPLICATE CHECK (User Request) ---
+    // Check if product is already scraped BEFORE starting the heavy scraping process
+    const goodsInfo = getGoodsIdFromUrl(url);
+    if (goodsInfo && goodsInfo.goodsId) {
+        try {
+            const existing = await prisma.product.findFirst({
+                where: {
+                    purchaseUrl: {
+                        contains: `goods_id=${goodsInfo.goodsId}`
+                    }
+                },
+                select: { id: true }
+            });
+
+            if (existing) {
+                console.log(`[Duplicate Check] Product with goods_id ${goodsInfo.goodsId} already exists in DB (ID: ${existing.id}). Skipping scrape.`);
+                return null; // Caller will handle this by navigating back
+            }
+        } catch (dbErr) {
+            console.warn(`[Duplicate Check] DB Error checking for duplicate: ${dbErr.message}. Proceeding with scrape...`);
+        }
+    }
+
+    try {
+        // 1. Initial "Reading" Pause
+        console.log('Simulating human reading...');
+        await randomDelay(1000, 3000);
+
+        // 2. Extract Basic Info (Name, Images, Description)
+        const basicData = await page.evaluate(() => {
+            const getText = (sel) => {
+                const el = document.querySelector(sel);
+                return el ? el.innerText.trim() : '';
+            };
+            const getSrc = (sel) => document.querySelector(sel)?.src || '';
+            const getAllSrc = (sel) => Array.from(document.querySelectorAll(sel)).map(img => img.src).filter(src => src);
+
+            // Strict Name Extraction from .tLYIg_Ju inside .Vrv3bF_E (if possible) or just .tLYIg_Ju
+            // User requested: "translate it based on the name in that span class only(tLYIg_Ju enable-select)"
+            // "this span class is inside this span class (Vrv3bF_E)"
+            let product_name = '';
+            const parentSpan = document.querySelector('.Vrv3bF_E');
+            if (parentSpan) {
+                const targetSpan = parentSpan.querySelector('.tLYIg_Ju');
+                if (targetSpan) {
+                    product_name = targetSpan.innerText.trim();
+                }
+            }
+            
+            // Fallback to direct selector if parent not found
+            if (!product_name) {
+                product_name = getText('.tLYIg_Ju');
+            }
+            
+            console.log('[DEBUG] RAW EXTRACTED NAME:', product_name);
+            
+            // Improved Image Extraction Strategy
+            let main_images = [];
+            const seenImages = new Set();
+
+            const addImage = (src) => {
+                if (!src || !src.startsWith('http')) return;
+                // Clean URL
+                let cleanSrc = src.split('?')[0];
+                if (seenImages.has(cleanSrc)) return;
+                
+                // Filter out icons/avatars
+                if (cleanSrc.includes('avatar') || cleanSrc.includes('icon') || cleanSrc.includes('coupon') || cleanSrc.includes('video-snapshot')) return;
+
+                seenImages.add(cleanSrc);
+                main_images.push(cleanSrc);
+            };
+
+            // Strategy 0: Priority UniqID (Highest Priority - User Request)
+            // Look for .PPuOGFfM with data-uniqid, sort by ID (1, 2, 3...)
+            const uniqIdImages = [];
+            const uniqIdElements = document.querySelectorAll('.PPuOGFfM');
+            
+            uniqIdElements.forEach(el => {
+                const uniqId = el.getAttribute('data-uniqid');
+                if (uniqId) {
+                     let imgSrc = '';
+                     const imgEl = el.tagName === 'IMG' ? el : el.querySelector('img');
+                     
+                     if (imgEl) {
+                         imgSrc = imgEl.src;
+                         // Fallback to data-src if src is missing or base64
+                         if (!imgSrc || imgSrc.startsWith('data:')) {
+                             imgSrc = imgEl.getAttribute('data-src');
+                         }
+                     }
+                     
+                     if (imgSrc) {
+                         const idNum = parseInt(uniqId, 10);
+                         if (!isNaN(idNum)) {
+                             uniqIdImages.push({ src: imgSrc, id: idNum });
+                         }
+                     }
+                }
+            });
+            
+            // Sort by ID ascending (1, 2, 3...) to ensure "1" (or lowest) comes first
+            uniqIdImages.sort((a, b) => a.id - b.id);
+            
+            if (uniqIdImages.length > 0) {
+                 uniqIdImages.forEach(item => addImage(item.src));
+            }
+
+            // Strategy 1: User's Selector (High Priority if present)
+            // Try both nested img and direct img match
+            const userImages = getAllSrc('.QFNLpbqP img');
+            if (userImages.length > 0) {
+                userImages.forEach(addImage);
+            } else {
+                 const userImagesDirect = getAllSrc('.QFNLpbqP');
+                 userImagesDirect.forEach(addImage);
+            }
+
+            // Strategy 2: Common Slider Containers
+            if (main_images.length === 0) {
+                const sliderSelectors = [
+                    '.goods-slider img',
+                    '.swiper-slide img',
+                    '.swiper-container img',
+                    '.banner-slider img',
+                    '.slick-slide img',
+                    '#main > div > div:first-child img' // Often the first div is the slider
+                ];
+                const sliderImages = getAllSrc(sliderSelectors.join(', '));
+                sliderImages.forEach(addImage);
+            }
+
+            // Strategy 3: Top-Area Large Images (Fallback)
+            if (main_images.length === 0) {
+                const allImgs = Array.from(document.querySelectorAll('img'));
+                allImgs.forEach(img => {
+                    const rect = img.getBoundingClientRect();
+                    // Must be in top 60% of viewport and reasonably large
+                    if (rect.top < window.innerHeight * 0.6 && img.naturalWidth > 300) {
+                        if (img.naturalHeight > 0) {
+                            const aspect = img.naturalWidth / img.naturalHeight;
+                            // Avoid wide banners (> 2.2) or tall thin strips (< 0.4)
+                            if (aspect > 2.2 || aspect < 0.4) return;
+                        }
+                        addImage(img.src);
+                    }
+                });
+            }
+
+            const descriptionText = getText('.jvsKAdEs');
+            
+            return {
+                product_name,
+                main_images,
+                descriptionText
+            };
+        });
+
+        console.log(`Scraped Basic Data: ${basicData.product_name ? basicData.product_name.substring(0, 20) : ''}...`);
+
+        // 3. Interaction for Generated Options
+        console.log('Starting Option Extraction Sequence...');
+        
+        // Get actual viewport dimensions from the browser
+        const dimensions = await page.evaluate(() => {
+            return {
+                width: window.innerWidth,
+                height: window.innerHeight
+            };
+        });
+        
+        const vw = dimensions.width;
+        const vh = dimensions.height;
+        console.log(`Detected Viewport: ${vw}x${vh}`);
+
+        // Step 1: Click "Buy" / "Options" Button (Red Button)
+        // Strategy: Try to find the element containing "发起拼单" (Group Buy) or "购买" (Buy) first.
+        // If not found, use coordinate fallback (Adjusted to 85% width for the red button).
+        
+        console.log('Attempting to click Red Buy Button...');
+        
+        // Strategy: Force Geometric Click based on User Instruction
+        // "okay from the bottom center, go 300px to the right and click"
+        // Center X = 50% (0.5) + 300px
+        
+        // Humanize Coordinates: Center + (270 to 300)
+        const xOffset = 270 + Math.random() * 30; // Random between 270 and 300
+        const xTarget = (vw * 0.5) + xOffset;
+        const yTarget = vh * (0.97 + Math.random() * 0.02); // 97% - 99% Height
+        
+        console.log(`[GEOMETRIC CLICK] Target: (${xTarget.toFixed(1)}, ${yTarget.toFixed(1)}) [Center + ~270-300px, ~98% H]`);
+        
+        // Method 1: Mouse Click
+        await page.mouse.move(xTarget, yTarget);
+        await page.mouse.down();
+        await randomDelay(150, 250); // Slightly longer press
+        await page.mouse.up();
+        
+        // Method 2: Touch Tap (if supported/available)
+        try {
+                if (page.touchscreen) {
+                    console.log('Attempting Touch Tap...');
+                    await page.touchscreen.tap(xTarget, yTarget);
+                }
+        } catch(e) {}
+        
+        await randomDelay(3000, 6000);
+
+        // Step 2: Click Thumbnail/Group Buy (Geometric: Center - 280px X, Center Y)
+        // User requested change: 280px offset, show dot, keep randomness
+        const xBase = (vw * 0.5) - 280;
+        const yBase = vh * 0.5;
+        
+        // Add more randomness (+/- 10px)
+        const x2 = xBase + (Math.random() * 20 - 10);
+        const y2 = yBase + (Math.random() * 20 - 10);
+        
+        console.log(`Clicking Target at (${x2.toFixed(1)}, ${y2.toFixed(1)}) [Center - 280px X, Center Y]...`);
+        
+        // Show visual indicator (Blue Dot for Thumbnail)
+        await page.evaluate((x, y) => {
+            const el = document.createElement('div');
+            el.style.position = 'fixed';
+            el.style.left = x + 'px';
+            el.style.top = y + 'px';
+            el.style.width = '20px';
+            el.style.height = '20px';
+            el.style.backgroundColor = 'blue';
+            el.style.borderRadius = '50%';
+            el.style.zIndex = '999999';
+            el.style.pointerEvents = 'none';
+            el.style.border = '2px solid white';
+            document.body.appendChild(el);
+            setTimeout(() => el.remove(), 2000);
+        }, x2, y2);
+        
+        await page.mouse.move(x2, y2);
+        await page.mouse.down();
+        await randomDelay(100, 200);
+        await page.mouse.up();
+        console.log('Waiting 3 seconds after thumbnail click...');
+        await randomDelay(3000, 6000);
+
+        // Step 3: Extract Options from .TpUpcNRp
+        const generated_options = await page.evaluate(() => {
+            const options = [];
+            const items = document.querySelectorAll('.TpUpcNRp');
+            console.log('[DEBUG] Found ' + items.length + ' items with class .TpUpcNRp');
+            items.forEach((item, index) => {
+                // User said "img is inside .PQoZYCec", so we look for 'img' within that class
+                let imgEl = item.querySelector('.PQoZYCec img');
+                // Fallback: in case .PQoZYCec IS the image itself
+                if (!imgEl) {
+                    const el = item.querySelector('.PQoZYCec');
+                    if (el && el.tagName === 'IMG') imgEl = el;
+                }
+
+                const textEl = item.querySelector('.RITrraU3');
+                const thumbnail = imgEl ? imgEl.src : '';
+                const rawText = textEl ? textEl.innerText.trim() : '';
+                let price = 0;
+                let colorName = rawText;
+
+                // 1. Extract Price (Last number in text)
+                const allNumbers = rawText.match(/[\d.]+/g);
+                if (allNumbers && allNumbers.length > 0) {
+                    price = parseFloat(allNumbers[allNumbers.length - 1]) * 200; // IQD Conversion
+                }
+
+                // 2. Clean Color Name
+                // Remove "券后" and anything after it
+                if (colorName.includes('券后')) {
+                    colorName = colorName.split('券后')[0].trim();
+                }
+
+                // Remove the price from the end of the string if it exists
+                // The price usually appears as a number at the end, sometimes preceded by a hyphen
+                // Example: "Color Name - 10.5" or "Color Name 10.5"
+                
+                // Regex to match trailing number (integer or decimal) potentially preceded by space or hyphen
+                // This removes " - 1.2" or " 1.2" from "Name - 1.2"
+                colorName = colorName.replace(/[-]?\s*[\d.]+$/, '').trim();
+
+                // Normalize spaces
+                colorName = colorName.replace(/\s+/g, ' ').trim();
+
+                options.push({
+                    color: colorName,
+                    sizes: [],
+                    price: price,
+                    thumbnail: thumbnail
+                });
+            });
+            return options;
+        });
+
+        console.log(`[DEBUG] Collected ${generated_options.length} options from .TpUpcNRp`);
+
+        // Step 4: Close Options (Tap Top Part)
+        const xTop = vw * 0.5;
+        const yTop = vh * 0.1; // Very top (10% height)
+        console.log(`Closing options (Click 1 at ${xTop}, ${yTop})...`);
+        await page.mouse.click(xTop, yTop);
+        await randomDelay(2000, 5000);
+        console.log(`Closing options (Click 2 at ${xTop}, ${yTop})...`);
+        await page.mouse.click(xTop, yTop);
+        await randomDelay(3000, 6000);
+
+        // --- 5. REVIEWS SCRAPING ---
+        let scrapedReviews = [];
+        try {
+            console.log('--- Starting Reviews Scraping Sequence ---');
+            
+            // 1. Click "商品评价" (Product Reviews)
+            // Strategy: Try multiple selectors provided by user
+            // Selectors: .VoYGP4Rl (original), .Oi_xBKes, .e9rzVEAe, .F2MXl7Xc, .IpR_6z4r
+            const reviewSelectors = ['.VoYGP4Rl', '.Oi_xBKes', '.e9rzVEAe', '.F2MXl7Xc', '.IpR_6z4r'];
+            let reviewsPageOpened = false;
+            const preReviewsUrl = page.url(); // Capture current URL
+
+            for (const selector of reviewSelectors) {
+                if (reviewsPageOpened) break;
+
+                try {
+                    const reviewsBtn = await page.$(selector);
+                    if (reviewsBtn) {
+                        console.log(`Found reviews button candidate (${selector}). Clicking...`);
+                        await reviewsBtn.click();
+                        await randomDelay(3000, 6000); // Wait for reviews page to load
+                        
+                        // Verify Navigation: Check if URL changed or we are on a reviews-like page
+                        const currentUrl = page.url();
+                        const hasNavigated = currentUrl !== preReviewsUrl;
+                        
+                        if (hasNavigated || currentUrl.includes('comment') || currentUrl.includes('reviews')) {
+                             console.log(`Navigated to reviews page using ${selector}. Proceeding with scraping...`);
+                             reviewsPageOpened = true;
+                        } else {
+                            console.log(`⚠️ Clicked ${selector} but URL did not change. Trying next candidate...`);
+                        }
+                    }
+                } catch (err) {
+                    console.log(`Error attempting selector ${selector}: ${err.message}`);
+                }
+            }
+
+            if (reviewsPageOpened) {
+                // 2. Slow Scroll (Human-like slide) - 3 Screens
+                console.log('Scrolling reviews page (Human-like slide)...');
+                for (let i = 0; i < 3; i++) {
+                    await page.evaluate(async () => {
+                        const distance = window.innerHeight;
+                        const steps = 30; // More steps, faster
+                        const stepDistance = distance / steps;
+                        for (let j = 0; j < steps; j++) {
+                            window.scrollBy(0, stepDistance);
+                            // 20-40ms delay for "slide" feel
+                            await new Promise(resolve => setTimeout(resolve, 20 + Math.random() * 20)); 
+                        }
+                    });
+                    await randomDelay(800, 1500); // Shorter pause between slides
+                }
+                
+                // 3. Collect Reviews Data
+                console.log('Extracting review data...');
+                scrapedReviews = await page.evaluate(() => {
+                    const reviews = [];
+                    const reviewItems = document.querySelectorAll('.LFMbudEX'); // Review Container
+                    
+                    reviewItems.forEach(item => {
+                        // User Name
+                        const userEl = item.querySelector('.BQX0_Yxu');
+                        const userName = userEl ? userEl.innerText.trim() : 'Anonymous';
+
+                        // Review Text
+                        const textEl = item.querySelector('.QznBag3Z');
+                        const content = textEl ? textEl.innerText.trim() : '';
+
+                        // SKU Info (What she bought)
+                        const skuEl = item.querySelector('.qnRmJ_Uy');
+                        const skuInfo = skuEl ? skuEl.innerText.trim() : '';
+
+                        // Images
+                        const imgEls = item.querySelectorAll('.db85mmgV img');
+                        const images = [];
+                        imgEls.forEach(img => {
+                            if (img.src) images.push(img.src);
+                        });
+
+                        if (content || images.length > 0) {
+                            reviews.push({
+                                name: userName,
+                                comment: content + (skuInfo ? ` (Option: ${skuInfo})` : ''),
+                                photos: images,
+                            });
+                        }
+                    });
+                    return reviews;
+                });
+                console.log(`[DEBUG] Collected ${scrapedReviews.length} reviews.`);
+
+                // 4. Go Back to Product Page
+                console.log(`Going back to product page (looping goBack)...`);
+                
+                let backAttempts = 0;
+                const maxBackAttempts = 2; // Reduced from 4 to 2 (Anti-Spam)
+                let onProduct = false;
+
+                while (backAttempts < maxBackAttempts) {
+                    try {
+                        console.log(`[Nav] Back Attempt ${backAttempts + 1}...`);
+                        await page.goBack();
+                        await randomDelay(2000, 3500);
+                        
+                        const currentUrl = page.url();
+                        const onReviews = currentUrl.includes('comment') || currentUrl.includes('reviews');
+                        // isProductUrl is available globally
+                        onProduct = isProductUrl(currentUrl) && !onReviews;
+                        
+                        if (onProduct) {
+                            console.log('[Nav] Successfully returned to product page via goBack().');
+                            break;
+                        } else {
+                            console.log(`[Nav] Still on ${currentUrl} (Not Product).`);
+                        }
+                    } catch (e) {
+                        console.log(`[Nav] goBack() error: ${e.message}`);
+                    }
+                    backAttempts++;
+                }
+
+                if (!onProduct) {
+                     console.log(`[Nav] Failed to return via goBack. Forcing navigation to ${preReviewsUrl}...`);
+                     try {
+                        // Use location.href via evaluate to potentially avoid some puppeteer overhead, 
+                        // but page.goto is standard. 
+                        // If we force navigation, we accept we might have history stack issues, 
+                        // but we tried our best to go back.
+                        await page.goto(preReviewsUrl, { waitUntil: 'domcontentloaded' });
+                        await randomDelay(3000, 5000);
+                     } catch (e) {
+                        console.log(`[Nav] Force navigation failed: ${e.message}`);
+                     }
+                }
+
+            } else {
+                console.log('Could not find any "商品评价" button or failed to navigate. Skipping reviews.');
+            }
+
+        } catch (err) {
+            console.error('Error scraping reviews:', err.message);
+            // Non-fatal, continue with product data
+        }
+
+        // --- 6. DESCRIPTION IMAGES SCRAPING ---
+        let productDescImgs = [];
+        try {
+            console.log('--- Starting Description Images Scraping Sequence ---');
+            await randomDelay(3000, 6000); // Wait 3 seconds after returning from reviews
+
+            const currentUrlForDesc = page.url();
+            console.log(`[DEBUG] Current URL for Desc Images: ${currentUrlForDesc}`);
+
+            // Safety Check: Must contain 'goods' or 'product' AND NOT be a category/search page
+            const isProductPage = (currentUrlForDesc.includes('goods') || currentUrlForDesc.includes('product')) 
+                                  && !currentUrlForDesc.includes('classification') 
+                                  && !currentUrlForDesc.includes('search_result');
+
+            if (!isProductPage) {
+                 console.warn(`⚠️ Warning: It seems we are NOT on a product page (URL: ${currentUrlForDesc}). Skipping description images.`);
+            } else {
+            // 1. Check for description container existence (without scrolling loop)
+            // User requested to remove the initial "search scroll" and rely on the lazy scroll sequence.
+            let foundDescContainer = await page.evaluate(() => {
+                return !!(document.querySelector('.mP10ZXCw') || document.querySelector('.UhNRiWLO'));
+            });
+
+            if (!foundDescContainer) {
+                 console.log('Description container not found in DOM immediately.');
+            }
+
+            if (foundDescContainer) {
+                console.log('Found description container. Starting slow scroll for lazy loading...');
+                
+                // Slow Scroll through .Blmqu2TV and its nested children
+                await page.evaluate(async () => {
+                    // Try to find the specific nested container structure user mentioned:
+                    // .UhNRiWLO > .BTmMjWa_ > .Blmqu2TV
+                    let container = document.querySelector('.Blmqu2TV');
+                    
+                    // If .Blmqu2TV isn't found directly, try finding it via the parent chain
+                    if (!container) {
+                        const parent = document.querySelector('.UhNRiWLO');
+                        if (parent) {
+                            container = parent.querySelector('.Blmqu2TV');
+                        }
+                    }
+
+                    if (container) {
+                        // Scroll the container into view first
+                        container.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        await new Promise(r => setTimeout(r, 1000));
+
+                        // Now scroll down the page to cover the height of the container
+                        const totalHeight = container.scrollHeight;
+                        
+                        // Human-like slow slide scroll: ~15px every ~20ms (approx 750px/sec)
+                        let currentScroll = 0;
+                        const minStep = 10;
+                        const maxStep = 20;
+                        
+                        while (currentScroll < totalHeight) {
+                            const step = Math.floor(Math.random() * (maxStep - minStep + 1)) + minStep;
+                            window.scrollBy(0, step);
+                            currentScroll += step;
+                            
+                            // Variable delay for natural feel
+                            await new Promise(r => setTimeout(r, 15 + Math.random() * 10));
+                        }
+                        
+                        // Scroll back up slightly to trigger any bottom intersection observers
+                        window.scrollBy(0, -200);
+                        await new Promise(r => setTimeout(r, 500));
+                        window.scrollBy(0, 200);
+                    } else {
+                        console.log('[DEBUG-Browser] .Blmqu2TV container not found.');
+                    }
+                });
+                
+                await randomDelay(3000, 6000); // Final wait for last images
+
+                // 2. Collect Images from divs with data-uniqid inside .Blmqu2TV
+                console.log('Extracting description images from .Blmqu2TV > div[data-uniqid]...');
+                productDescImgs = await page.evaluate(() => {
+                    let container = document.querySelector('.Blmqu2TV');
+                    if (!container) {
+                        // Try finding via parent
+                         const parent = document.querySelector('.UhNRiWLO');
+                         if (parent) {
+                             container = parent.querySelector('.Blmqu2TV');
+                         }
+                    }
+                    
+                    if (!container) {
+                        console.log('[DEBUG-Browser] Container .Blmqu2TV not found during extraction.');
+                        return [];
+                    }
+                    
+                    const images = [];
+                    // User said: inside .Blmqu2TV -> div[data-uniqid] -> img
+                    // We select all divs with data-uniqid attribute
+                    const uniqIdDivs = container.querySelectorAll('div[data-uniqid]');
+                    
+                    console.log(`[DEBUG-Browser] Found ${uniqIdDivs.length} divs with data-uniqid`);
+
+                    if (uniqIdDivs.length > 0) {
+                        uniqIdDivs.forEach(div => {
+                            const img = div.querySelector('img');
+                            if (img) {
+                                let src = img.src;
+                                let dataSrc = img.getAttribute('data-src');
+
+                                // Handle spaces in src/data-src
+                                if (src) src = src.trim();
+                                if (dataSrc) dataSrc = dataSrc.trim();
+
+                                if (!src || src.startsWith('data:') || src.includes('base64')) {
+                                    src = dataSrc;
+                                }
+                                
+                                if (src && src.startsWith('http')) {
+                                    images.push(src);
+                                }
+                            }
+                        });
+                    }
+                    
+                    // Fallback: If no images found via uniqid, try broader search
+                    if (images.length === 0) {
+                         console.log('[DEBUG-Browser] No images found via data-uniqid, falling back to all images in .Blmqu2TV');
+                         const allImgs = container.querySelectorAll('img');
+                         console.log(`[DEBUG-Browser] Found ${allImgs.length} images in .Blmqu2TV via fallback`);
+                         allImgs.forEach(img => {
+                            let src = img.src;
+                            let dataSrc = img.getAttribute('data-src');
+                            
+                            if (src) src = src.trim();
+                            if (dataSrc) dataSrc = dataSrc.trim();
+
+                            if (!src || src.startsWith('data:') || src.includes('base64')) {
+                                src = dataSrc;
+                            }
+                            if (src && src.startsWith('http')) {
+                                images.push(src);
+                            }
+                         });
+                    }
+
+                    return Array.from(new Set(images)); // Deduplicate
+                });
+                console.log(`[DEBUG] Collected ${productDescImgs.length} description images.`);
+            } else {
+                console.log('Could not find description container (.mP10ZXCw or .UhNRiWLO) after scrolling.');
+            }
+            } // End of isProductPage check
+
+        } catch (err) {
+            console.error('Error scraping description images:', err.message);
+        }
+
+        // --- 7. AI Translation & Processing ---
+        console.log('--- Processing Data with AI (Translation & Metadata) ---');
+        
+        // Slice arrays
+        const limitedReviews = scrapedReviews.slice(0, 8);
+        const limitedOptions = generated_options.slice(0, 30);
+        
+        // Translate Name & Description
+        console.log('Translating product name and description...');
+        const translatedName = await translateText(basicData.product_name, 'product_name', basicData.descriptionText);
+        
+        // Format description as KV pairs (implicitly translated via prompt)
+        console.log('Formatting description to Key-Value pairs...');
+        const descriptionKV = await formatDescriptionToKV(basicData.descriptionText);
+        
+        // Translate Options
+        console.log(`Translating ${limitedOptions.length} options...`);
+        const translatedOptions = await Promise.all(limitedOptions.map(async (opt) => {
+            const translatedColor = await translateText(opt.color, 'option');
+            // Remove skuId and ensure clean object
+            const { skuId, ...rest } = opt;
+            return {
+                ...rest,
+                color: translatedColor,
+                // Assuming price and other fields don't need translation or are numeric
+            };
+        }));
+        
+        // Translate Reviews & Clean Up
+        console.log(`Translating ${limitedReviews.length} reviews...`);
+        const translatedReviews = await Promise.all(limitedReviews.map(async (rev) => {
+            const translatedComment = await translateText(rev.comment);
+            return {
+                name: rev.name,
+                photos: rev.photos,
+                comment: translatedComment
+            };
+        }));
+
+        // Generate Metadata
+        console.log('Generating AI Metadata...');
+        const aiMetadata = await generateAiMetadata(translatedName, basicData.descriptionText);
+
+        // 4. Construct Final Object
+        const finalData = {
+            product_name: translatedName,
+            main_images: basicData.main_images,
+            url: url,
+            product_details: descriptionKV, // Key-Value formatted description
+            product_desc_imgs: productDescImgs,
+            general_price: translatedOptions.length > 0 ? Math.min(...translatedOptions.map(o => o.price)) : 0,
+            generated_options: translatedOptions,
+            scrapedReviews: translatedReviews,
+            aiMetadata: aiMetadata
+        };
+
+        return finalData;
+
+    } catch (e) {
+        console.error(`Error scraping ${url}:`, e.message);
+        return null;
+    }
+}
+
+// Main Execution
+(async () => {
+    // Check DB first
     await ensureDatabaseSchema();
+    
     console.log('[Start] Initializing Pinduoduo Scraper (Click-and-Scrape Mode)...');
     
-    // Ask for URL or use predefined
-    console.log('----------------------------------------------------');
     let urlInput = '';
     
-    // Check if CATEGORY_URL is already set in the code (length > 10)
     if (CATEGORY_URL && CATEGORY_URL.length > 10) {
         urlInput = CATEGORY_URL;
         console.log('Using predefined CATEGORY_URL from script.');
@@ -628,3073 +1741,496 @@ async function run() {
     }
 
     urlInput = urlInput.trim();
-    if (!urlInput.startsWith('http')) {
-        console.error('â‌Œ Error: Invalid URL provided. The URL must start with "http" or "https".');
-        console.error('You entered:', urlInput);
-        console.log('Please restart the script and paste the correct URL.');
+    if (!urlInput) {
+        console.error('No URL provided. Exiting.');
         process.exit(1);
     }
-    
-    // const urlInput = "https://mobile.pinduoduo.com/catgoods.html?refer_page_name=index&opt_id=25667&opt_name=%E4%B8%8A%E8%A1%A3%E5%A4%96%E5%A5%97&opt_type=2&goods_id=836596630021&refer_page_id=10002_1770945474906_zhvvkggy6l&refer_page_sn=10002";
+
     console.log('Using URL:', urlInput);
     console.log('----------------------------------------------------');
     CATEGORY_URL = urlInput.trim();
 
-    let browser = await createBrowser();
-    console.log('Browser launched');
-    let page = await browser.newPage();
-    console.log('Page created');
+    // Create or connect to browser
+    let browser;
+    try {
+        // FIX: Pass 'true' for useGuest (as requested by user), and pass CATEGORY_URL for immediate load
+        browser = await createBrowser(true, CATEGORY_URL);
+        console.log('Browser launched');
+    } catch (err) {
+        console.error('❌ FATAL: Could not create or connect to browser.');
+        throw err;
+    }
+
+    // --- 1. INITIALIZE PAGE FIRST ---
+    // Get all pages
+    const pages = await browser.pages();
+    
+    // If we connected to an existing browser, find the tab with our target URL or create new
+    // If we launched a new one with initialUrl, the first page should be it.
+    let page;
+    
+    // Check if any existing page matches our target
+    const targetPage = pages.find(p => p.url().includes('mobile.pinduoduo.com'));
+    
+    if (targetPage) {
+        console.log('Using existing Pinduoduo tab...');
+        page = targetPage;
+    } else if (pages.length > 0) {
+        // Use the first available page (often "about:blank" if just launched without args, or our initialUrl page)
+        console.log('Using first available tab...');
+        page = pages[0];
+    } else {
+        console.log('Creating new page...');
+        page = await browser.newPage();
+    }
+
+    // --- 2. LOGIN DELAY (DESKTOP MODE) ---
+    console.log('⏳ 30 SECONDS LOGIN DELAY (Please Login if needed)...');
+    console.log('👉 NOTE: You are in DESKTOP mode to allow QR Code Login.');
+    
+    // Simulate user activity during the delay
+    const delayDuration = 30000;
+    const interval = 2000;
+    
+    for(let i=0; i<delayDuration; i+=interval) {
+         const remaining = Math.round((delayDuration - i) / 1000);
+         process.stdout.write(`\r⏳ Waiting... ${remaining}s `);
+         
+         // Keep session alive with tiny scroll
+         try {
+            if (page) await page.mouse.move(Math.random()*100, Math.random()*100);
+         } catch(e) {}
+         
+         await new Promise(r => setTimeout(r, interval));
+    }
+    console.log('\n✅ Login Delay Finished. Preparing Scraper...');
+
+    // --- 3. APPLY DESKTOP MODE (NO VIEWPORT CHANGES) ---
+    console.log('Keeping existing Desktop Viewport (User Request)...');
+    
+    // REMOVED: Explicit Viewport setting to avoiding "screen to the left" issue
+    // REMOVED: Zoom setting
+    // REMOVED: Mobile Emulation
+
+    console.log('⚠️ DESKTOP MODE ACTIVE: Using default browser view.');
+
+    // Inject stealth scripts into ANY page (not just new ones)
+    const injectStealth = async (p) => {
+        await p.evaluate(() => {
+            // 1. Pass the Webdriver Test
+            Object.defineProperty(navigator, 'webdriver', { get: () => false });
+            
+            // 2. Pass Chrome Test
+            window.chrome = { runtime: {} };
+            
+            // 3. Pass Permissions Test
+            const originalQuery = window.navigator.permissions.query;
+            window.navigator.permissions.query = (parameters) => (
+                parameters.name === 'notifications' ? Promise.resolve({ state: 'denied' }) : originalQuery(parameters)
+            );
+
+            // 4. Spoof Hardware Concurrency (Simulate 8-core CPU)
+            Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
+
+            // 5. Spoof Device Memory (Simulate 8GB RAM)
+            Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
+
+            // 6. Spoof Languages (Match US/English or Chinese based on UA)
+            Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh', 'en-US', 'en'] });
+
+            // 7. Spoof Plugins (Basic Array)
+            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+        });
+    };
+
+    // Inject on New Document (Persistent)
+    await page.evaluateOnNewDocument(() => {
+        Object.defineProperty(navigator, 'webdriver', { get: () => false });
+        window.chrome = { runtime: {} };
+        const originalQuery = window.navigator.permissions.query;
+        window.navigator.permissions.query = (parameters) => (
+            parameters.name === 'notifications' ? Promise.resolve({ state: 'denied' }) : originalQuery(parameters)
+        );
+        Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
+        Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
+        Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh', 'en-US', 'en'] });
+        Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+    });
+    
+    // Inject IMMEDIATELY into current page
+    try { await injectStealth(page); } catch(e) {}
+    
+    // Refresh page to apply mobile view if needed, OR just proceed if user navigated
+    // We will let the "Diagnostic Pause" handle the visual check
+
+
+    // If it's not our URL (e.g. blank), go there NOW (after applying anti-detection)
+    if (!page.url().includes('mobile.pinduoduo.com')) {
+         // Human-like pre-navigation delay
+         console.log('Performing human-like pre-navigation behaviors...');
+         // REMOVED mouse moves as they are suspicious on mobile emulation
+         await delay(Math.random() * 1000 + 500);
+ 
+         // Use Soft Navigation instead of page.goto
+         await page.evaluate((url) => window.location.href = url, CATEGORY_URL);
+         await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(()=>console.log('Nav timeout (ok)'));
+    }
     
     // Enable console log forwarding from the browser to the terminal
     page.on('console', msg => {
-        const type = msg.type();
         const text = msg.text();
-        // Filter out some noise if needed, but user wants logs so keep most
         if (!text.includes('ERR_BLOCKED_BY_CLIENT')) {
-            // console.log(`[Browser Console] ${type.toUpperCase()}: ${text}`);
+            // console.log(`[Browser Console] ${msg.type().toUpperCase()}: ${text}`);
         }
     });
 
+    // Use global hasPageError
     page.on('pageerror', err => {
         console.log(`[Browser Error]: ${err.toString()}`);
+        if (err.toString().includes('424') || err.toString().includes('403')) {
+            hasPageError = true;
+        }
     });
 
-    await applyPageTimeouts(page);
+    let lastProductUrl = '';
+    let lastProductAt = 0;
     
-    // --- STEALTH MEASURES ---
-    
-    // 1. Set Mobile Viewport (Android)
-    // await page.setViewport({ width: 360, height: 800, isMobile: true, hasTouch: true });
-    
-    // Switch to Desktop Viewport
-    await page.setViewport({ width: 1366, height: 768 });
-    
-    // 2. Override Navigator Properties to mimic Android
-    await page.evaluateOnNewDocument(() => {
-        // Force language to Chinese
-        Object.defineProperty(navigator, 'language', { get: () => 'zh-CN' });
-        Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh'] });
-        
-        // Add minimal mouse movement to simulate human
-        window.addEventListener('load', () => {
-             document.body.addEventListener('mousemove', () => {});
-             document.body.addEventListener('touchstart', () => {});
-        });
-    });
+    // Rate limit tracking variables
+    let rateLimitHits = 0;
+    let rateLimitBackoffMs = 60000;
+    let lastRateLimitAt = 0;
 
-    // 4. Load cookies if exist
-    try {
-        const cookiePath = path.join(__dirname, 'pdd_cookies.json');
-        if (fs.existsSync(cookiePath)) {
-            const cookies = JSON.parse(fs.readFileSync(cookiePath, 'utf8'));
-            if (cookies.length > 0) {
-                console.log(`Loading ${cookies.length} saved cookies...`);
-                await page.setCookie(...cookies);
-            }
-        }
-    } catch (err) {
-        console.error('Failed to load cookies:', err.message);
-    }
-
-    // 5. Perform Login DIRECTLY on the target Category Page
-    // Why? Navigating from Home -> Category often triggers "Drifting" or "Bot Detection".
-    // It's better to just go straight to the category, log in there if needed, and then start scraping.
-    
-    // FORCE LOGIN NAVIGATION IF NOT LOGGED IN
-    console.log('Visiting Login URL first to ensure valid session...');
-    try {
-        await safeGoto(page, 'https://mobile.pinduoduo.com/login.html', { waitUntil: 'domcontentloaded', timeout: PAGE_LOAD_TIMEOUT });
-    } catch(e) { console.log('Login goto error (might be redirect):', e.message); }
-    
-    console.log('Login page loaded (or redirected).');
-
-    console.log('================================================================');
-    console.log('  PAUSING FOR MANUAL LOGIN (30 seconds)');
-    console.log('  1. Please login manually using SMS/Phone.');
-    console.log('  2. Once logged in, you should see the home page.');
-    console.log('  3. The script will then redirect to the category page.');
-    console.log('================================================================');
-    await delay(30000); 
-
-    // CLEAN CATEGORY URL to remove tracking params
-    let cleanUrl = CATEGORY_URL;
-    try {
-        const u = new URL(CATEGORY_URL);
-        const searchKey = u.searchParams.get('search_key');
-        const catId = u.searchParams.get('cat_id');
-        const optId = u.searchParams.get('opt_id');
-        
-        // Construct a clean URL
-        if (searchKey) {
-            cleanUrl = `https://mobile.pinduoduo.com/search_result.html?search_key=${encodeURIComponent(searchKey)}&search_type=goods`;
-        } else if (catId) {
-            cleanUrl = `https://mobile.pinduoduo.com/catgoods.html?cat_id=${catId}&opt_id=${optId || catId}`;
-        } else if (optId) {
-                cleanUrl = `https://mobile.pinduoduo.com/catgoods.html?opt_id=${optId}`;
-        }
-        
-        console.log('Original URL:', CATEGORY_URL);
-        console.log('Cleaned URL:', cleanUrl);
-    } catch(e) {
-        console.log('Error cleaning URL:', e.message);
-        cleanUrl = CATEGORY_URL; // Fallback
-    }
-
-    console.log('Visiting Clean Category URL:', cleanUrl);
-    await safeGoto(page, cleanUrl, { waitUntil: 'domcontentloaded', timeout: PAGE_LOAD_TIMEOUT });
-    console.log('Category page loaded.');
-    
-    // SWITCH TO MOBILE VIEWPORT AFTER LOGIN & NAVIGATION
-    console.log('Switching to Mobile Viewport for scraping...');
-    await page.setViewport({ width: 360, height: 800, isMobile: true, hasTouch: true });
-    await delay(2000);
-    
-    /*
-    console.log('Visiting Category URL (and performing login check there):', CATEGORY_URL);
-    await safeGoto(page, CATEGORY_URL, { waitUntil: 'domcontentloaded', timeout: PAGE_LOAD_TIMEOUT });
-    console.log('Goto done');
-
-    console.log('================================================================');
-    console.log('  PAUSING FOR MANUAL LOGIN / CHECK (40 seconds)');
-    console.log('  1. If you see a login screen, please log in.');
-    console.log('  2. If you see "Sold Out", try refreshing manually.');
-    console.log('  3. Make sure you see the product list before this timer ends.');
-    console.log('================================================================');
-    console.log('Starting delay...');
-    await delay(40000); 
-    console.log('Delay finished. Resuming...');
-    */
-    
-    // SAVE COOKIES AFTER LOGIN
-    try {
-        const cookies = await page.cookies();
-        const cookiePath = path.join(__dirname, 'pdd_cookies.json');
-        fs.writeFileSync(cookiePath, JSON.stringify(cookies, null, 2));
-        console.log('âœ… Login cookies saved to pdd_cookies.json');
-    } catch (err) {
-        console.error('Failed to save cookies:', err.message);
-    }
-
-    // Wait extra time for the page to fully stabilize
-    console.log('Waiting 5s for page stabilization...');
-    await delay(5000);
-
-    // --- SCROLL PAST HEADER ---
-    console.log('Scrolling down to bypass header/category icons...');
-    
-    try {
-        // Scroll down one full screen height + a bit more
-        await page.evaluate(async () => {
-            const viewportHeight = window.innerHeight;
-            window.scrollBy(0, viewportHeight + 200);
-            await new Promise(r => setTimeout(r, 1000));
-        });
-    } catch (e) {
-        console.warn('âڑ ï¸ڈ Scroll error (ignoring):', e.message);
-        // If execution context destroyed, it usually means page refreshed or navigated.
-        // We can just wait a bit and proceed.
-        await delay(1000);
-    }
-    
-    await humanDelay(2000, 3000);
-
-    // 3. Click and Scrape Loop
-    console.log('[Phase 1] Starting Click-and-Scrape Loop...');
-    
-    // STRATEGY CHANGE: Blind Click in Center-Right
-    // Since element detection is being blocked or misled by PDD's anti-bot structure,
-    // we will simulate a human tapping on a likely product location.
-    // On mobile view (375x667 approx), products are usually in a 2-column grid.
-    // A tap at roughly (75% width, 50% height) should hit the right-side product.
-    
-    let products = [];
-    try {
-        if (fs.existsSync(OUTPUT_FILE)) {
-            products = JSON.parse(fs.readFileSync(OUTPUT_FILE));
-        }
-    } catch(e) {}
-    
-    // Track scroll position to restore it if we drift and reload
-    let accumulatedScrollY = 0;
-
-    // Helper: Ensure we are on the category page before scraping
-    const ensureCategoryContext = async () => {
-        const currentUrl = page.url();
-        let isOnTargetCategory = true;
-        
+    page.on('framenavigated', frame => {
         try {
-            const targetUrlObj = new URL(CATEGORY_URL);
-            const currentUrlObj = new URL(currentUrl);
-            
-            // If current URL is a product page, we definitely drifted
-            if (currentUrl.includes('goods_id') || currentUrl.includes('goods.html') || currentUrl.includes('goods_detail')) {
-                isOnTargetCategory = false;
-            } else {
-                // Check key parameters to ensure we are on the same category/search context
-                const paramsToCheck = ['opt_id', 'cat_id', 'search_key', 'subjects_id'];
-                for (const param of paramsToCheck) {
-                    const targetVal = targetUrlObj.searchParams.get(param);
-                    if (targetVal) {
-                        const currentVal = currentUrlObj.searchParams.get(param);
-                        // If target has a param, current MUST have it and match
-                        if (currentVal !== targetVal) {
-                            console.log(`Drift Param Mismatch [${param}]: Expected ${targetVal}, Got ${currentVal}`);
-                            isOnTargetCategory = false;
-                            break;
-                        }
-                    }
-                }
+            if (frame.parentFrame()) return;
+            const url = frame.url();
+            if (isProductUrl(url)) {
+                const normalized = normalizeProductUrl(url);
+                lastProductUrl = normalized;
+                lastProductAt = Date.now();
+                // console.log(`[Nav] Product URL detected: ${normalized}`);
             }
-        } catch(e) {
-            // Fallback loose check
-            isOnTargetCategory = currentUrl.includes('catgoods') || currentUrl.includes('search_result') || currentUrl.includes('subjects');
-        }
+        } catch (e) {}
+    });
 
-        if (!isOnTargetCategory) {
-             console.log('⚠️ Critical Drift Detected: Not on provided Category URL.');
-             console.log(`   Target:  ${CATEGORY_URL}`);
-             console.log(`   Current: ${currentUrl}`);
-             console.log('   -> Reloading Category Page and Restoring Scroll Position...');
-             
-             try {
-                 await safeGoto(page, CATEGORY_URL, { waitUntil: 'domcontentloaded', timeout: PAGE_LOAD_TIMEOUT });
-                 await humanDelay(2000, 3000);
-                 
-                 // Restore Scroll Position
-                 if (accumulatedScrollY > 0) {
-                     console.log(`   -> Restoring scroll to Y=${accumulatedScrollY} (triggering lazy load)...`);
-                     await page.evaluate(async (targetY) => {
-                         const viewportHeight = window.innerHeight;
-                         let currentY = 0;
-                         // Scroll in steps to trigger lazy loading
-                         while (currentY < targetY) {
-                             window.scrollBy(0, viewportHeight);
-                             currentY += viewportHeight;
-                             // Wait a bit for content to load
-                             await new Promise(r => setTimeout(r, 400)); 
-                         }
-                         // Final adjustment
-                         window.scrollTo(0, targetY);
-                     }, accumulatedScrollY);
-                     await humanDelay(1500, 2500);
-                     console.log('   -> Scroll position restored.');
-                 }
-             } catch(e) {
-                 console.log('Error returning to category:', e.message);
-             }
-        }
-    };
+    page.on('response', res => {
+        try {
+            if (res.status() === 429) {
+                rateLimitHits += 1;
+                rateLimitBackoffMs = Math.min(rateLimitBackoffMs > 0 ? rateLimitBackoffMs * 2 : 60000, 300000);
+                lastRateLimitAt = Date.now();
+                console.log('Rate limited (429). Cooling down...');
+            }
+        } catch (e) {}
+    });
 
-    // Main Loop
-    // User requested infinite loop until manually stopped
+    // Mobile Emulation - DISABLED (User Request)
+    // await applyMobileEmulation(page);
+
+    // Initial Navigation - Check if already there
+    const currentUrl = page.url();
+    if (currentUrl.includes('pinduoduo.com')) {
+         console.log('Page already at target (via launch args).');
+    } else {
+         console.log('Visiting Category URL (and performing login check there):', CATEGORY_URL);
+         await safeGoto(page, CATEGORY_URL, { waitUntil: 'domcontentloaded', timeout: PAGE_LOAD_TIMEOUT });
+    }
+
+    // Check if we are redirected to login
+    const url = page.url();
+    if (url.includes('login') || url.includes('verification')) {
+        console.log('Login/Verification required. Please solve it in the browser window.');
+        console.log('Waiting for you to navigate back to category or product list...');
+    }
+    
+    // Save cookies after initial load
+    await saveCookies(page);
+    console.log('✅ Cookies saved.');
+
+    // --- AUTOMATION MODE: Click and Scrape ---
+    let processedUrls = new Set();
+    
+    console.log('Starting Scrape Loop (Quadrant-Based)...');
+
+    // --- MAIN LOOP ---
+    let consecutiveFailures = 0;
+    let productIndex = 0; 
+    let batchQueue = []; // Queue for randomized quadrant order
+
+    // Initial check to ensure we are on category page
+    const pageUrl = page.url();
+    // Simple check: if we are on pinduoduo and not on home page, assume user navigated correctly
+    if (!pageUrl.includes('search_result') && !pageUrl.includes('catgoods') && !pageUrl.includes('goods_id')) {
+        console.log('Navigating to Category Page...');
+        await page.evaluate((url) => window.location.href = url, CATEGORY_URL);
+        await randomDelay(5000, 10000); 
+    }
+    
+    // Initial "Human Scroll Slide Down" (Half screen approx)
+    console.log('Performing initial human-like slide scroll...');
+
+    await humanScroll(page, 400, { steps: 15, variance: 0.1 });
+    await randomDelay(2000, 4000);
+
     while (isRunning) {
-
-        // --- STRICT DRIFT CHECK & RESTORE ---
-        await ensureCategoryContext();
-
-        
-            // --- 3-POINT CLICK STRATEGY ---
-        // console.log('Starting search sequence...'); // Simplified log
-        
-        // Removed initial scroll to prevent "going down immediately"
-        
-        // Define the click points (percentages of viewport)
-        const clickPoints = [
-            { name: "Top-Left",  xPct: 0.25, yPct: 0.35 },
-            { name: "Top-Right", xPct: 0.75, yPct: 0.35 },
-            { name: "Bot-Right", xPct: 0.75, yPct: 0.70 },
-            { name: "Bot-Left",  xPct: 0.25, yPct: 0.70 }
-        ];
-
-        for (const point of clickPoints) {
-            if (!isRunning) break;
-
-            console.log(`> Checking ${point.name}...`);
-
-            const clickCoordinates = await page.evaluate((pt) => {
-                 const width = window.innerWidth;
-                 const height = window.innerHeight;
-                 
-                 // Add randomization (+/- 15px)
-                 const randomX = Math.floor(Math.random() * 30) - 15; 
-                 const randomY = Math.floor(Math.random() * 30) - 15; 
-                 
-                 return {
-                     x: Math.floor(width * pt.xPct) + randomX,
-                     y: Math.floor(height * pt.yPct) + randomY
-                 };
-            }, point);
-            
-            // console.log(`Clicking at (${clickCoordinates.x}, ${clickCoordinates.y})...`);
-            
-            // Listen for new target
-            const newTargetPromise = new Promise(resolve => browser.once('targetcreated', resolve));
-            const currentUrl = page.url();
-
-            try {
-                // Use evaluating touchstart for mobile simulation if mouse click fails
-                await page.mouse.click(clickCoordinates.x, clickCoordinates.y);
-            } catch (e) {
-                // console.log('Click failed:', e.message);
-            }
-
-            // Wait for navigation
-            let newPage = null;
-            let navigationHappened = false;
-
-            try {
-                const target = await Promise.race([
-                    newTargetPromise,
-                    delay(3000).then(() => null)
-                ]);
-
-                if (target && target.type() === 'page') {
-                    // console.log('New tab detected.');
-                    newPage = await target.page();
-                    
-                    // ENABLE CONSOLE LOGS FOR NEW TAB
-                    newPage.on('console', msg => {
-                        const type = msg.type();
-                        const text = msg.text();
-                        if (!text.includes('ERR_BLOCKED_BY_CLIENT')) {
-                            // console.log(`[Browser NewPage] ${type.toUpperCase()}: ${text}`);
-                        }
-                    });
-
-                    await applyPageTimeouts(newPage);
-                    
-                    // STEALTH: Ensure new page looks like it came from the main page
-                    await newPage.bringToFront();
-                    
-                    // IMPORTANT: Set viewport for the new tab too!
-                    await newPage.setViewport({ width: 360, height: 800, isMobile: true, hasTouch: true });
-                    
-                    try {
-                        await newPage.setExtraHTTPHeaders({ 
-                            'Referer': currentUrl,
-                            // 'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8' // Already handled by args
-                        });
-                    } catch(e) {}
-                } else {
-                    // console.log('No new tab. Checking navigation...');
-                    await delay(2000); 
-                    if (page.url() !== currentUrl && !page.url().includes('catgoods')) {
-                        console.log('Navigated in same tab.');
-                        newPage = page;
-                        navigationHappened = true;
-                        await applyPageTimeouts(newPage);
-                    } else {
-                         // console.log('No navigation. Next...');
-                         // Just continue to next point in loop
-                         continue; 
-                    }
-                }
-            } catch (e) {
-                console.log('Target detection error:', e.message);
+        try {
+            // 1. Ensure we are on Category Page (or go back if stuck)
+            if (isProductUrl(page.url())) {
+                console.log('Unexpectedly on Product Page. Going back...');
+                await page.goBack();
+                await randomDelay(3000, 6000);
                 continue;
             }
 
-            if (!newPage) continue;
-
-            // --- SCRAPE PRODUCT PAGE ---
-            try {
-                await newPage.waitForLoadState ? newPage.waitForLoadState('domcontentloaded') : newPage.waitForSelector('body', { timeout: 15000 });
-                await humanDelay(2000, 4000);
-                await waitForStableUrl(newPage, 1200, 12000);
-
-                // CHECK FOR "SOLD OUT" STATE
-                const isLogin = await safeEvaluate(newPage, () => {
-                    const t = (document.body && document.body.innerText) ? document.body.innerText : '';
-                    const s = String(t || '');
-                    return s.includes('ç™»ه½•') && (s.includes('و‰«ç پç™»ه½•') || s.includes('هگŒو„ڈوœچهٹ،هچڈè®®') || s.includes('éڑگç§پو”؟ç­–'));
-                }, [], 12);
-
-                if (isLogin) {
-                    console.log('âڑ ï¸ڈ Hit login page. Skipping product and returning to listing...');
-                    if (!navigationHappened && newPage.close) await newPage.close();
-                    else {
-                        try {
-                            await newPage.goBack({ waitUntil: 'domcontentloaded', timeout: PAGE_LOAD_TIMEOUT });
-                        } catch (e) {
-                            try {
-                                await newPage.goto(currentUrl || CATEGORY_URL, { waitUntil: 'domcontentloaded', timeout: PAGE_LOAD_TIMEOUT });
-                            } catch (e2) {}
-                        }
-                    }
-                    continue;
-                }
-
-                const isSoldOut = await safeEvaluate(newPage, () => {
-                    const text = document.body.innerText;
-                    return text.includes('ه•†ه“په·²ه”®ç½„') || text.includes('ه·²ه”®ه®Œ') || text.includes('ن¸‹و‍¶');
-                });
-
-                if (isSoldOut) {
-                    console.log('âڑ ï¸ڈ Product is SOLD OUT (or Anti-Bot triggered). Skipping...');
-                    console.log('   -> Hint: If this happens for ALL products, try deleting pdd_cookies.json and re-login.');
-                    if (!navigationHappened) await newPage.close();
-                    else await newPage.goBack();
-                    continue;
-                }
-
-                const productUrl = newPage.url();
-                console.log(`Scraping Product URL: ${productUrl}`);
-
-                // --- ROBUST DEDUPLICATION ---
-                try {
-                    const urlObj = new URL(productUrl);
-                    const goodsId = urlObj.searchParams.get('goods_id');
+            // 2. Scroll Logic (Refill Batch Queue and Scroll)
+            if (batchQueue.length === 0) {
+                 // If this is NOT the very first batch (productIndex > 0), scroll down
+                if (productIndex > 0) {
+                    console.log(`\n--- Finished Batch. Scrolling Down (Human Slide)... ---`);
                     
-                    if (goodsId) {
-                        // 1. Check if already in current session (in-memory)
-                        const alreadyScrapedInSession = products.some(p => p.url && p.url.includes(goodsId));
-                        if (alreadyScrapedInSession) {
-                            console.log(`Product already scraped in THIS SESSION. Skipping: ${goodsId}`);
-                            if (!navigationHappened) await newPage.close();
-                            else await newPage.goBack();
-                            continue; 
-                        }
-
-                        // 2. Check Database
-                        const existingProduct = await prisma.product.findFirst({
-                            where: {
-                                purchaseUrl: {
-                                    contains: goodsId
-                                }
-                            }
-                        });
-
-                        if (existingProduct) {
-                             console.log(`Product already in DB (ID: ${existingProduct.id}). Skipping: ${goodsId}`);
-                             if (!navigationHappened) await newPage.close();
-                             else await newPage.goBack();
-                             continue; 
-                        }
-                    }
-                } catch (dbCheckError) {
-                    console.error('Error checking DB for duplicate:', dbCheckError.message);
-                }
-
-                // Deduplicate by URL (Fallback)
-                if (products.some(p => p.url === productUrl)) {
-                    console.log('Duplicate product URL. Skipping.');
-                    if (!navigationHappened) await newPage.close();
-                    else await newPage.goBack(); 
-                    continue;
-                }
-
-                // --- WAIT FOR PAGE LOAD ---
-                // Ensure the page is fully loaded before scraping
-                try {
-                    await newPage.waitForLoadState ? newPage.waitForLoadState('domcontentloaded') : newPage.waitForSelector('body', { timeout: 15000 });
-                    await humanDelay(2000, 4000);
-                } catch (e) {
-                    console.log('Page load timeout, attempting scrape anyway...');
-                }
-
-                /*
-                // --- RANDOM MOVES ON PRODUCT PAGE (Anti-Detection) ---
-                console.log('Performing random moves on product page...');
-                try {
-                     await newPage.evaluate(async () => {
-                         const wait = (ms) => new Promise(r => setTimeout(r, ms));
-                         const height = document.body.scrollHeight;
-                         
-                         // Scroll down a bit
-                         window.scrollBy(0, 300 + Math.random() * 200);
-                         await wait(1000 + Math.random() * 1000);
-                         
-                         // Scroll up a bit
-                         window.scrollBy(0, -100);
-                         await wait(500 + Math.random() * 500);
-                         
-                         // Maybe scroll to bottom
-                         if (Math.random() > 0.5) {
-                             window.scrollTo(0, height * 0.7);
-                             await wait(1000);
-                         }
-                     });
-                     
-                     // Stay on page for 5-10 seconds
-                     const stayTime = 5000 + Math.random() * 5000;
-                     console.log(`Staying on product page for ${(stayTime/1000).toFixed(1)}s...`);
-                     await delay(stayTime);
-                } catch(e) {
-                    console.log('Random moves failed:', e.message);
-                }
-                */
-
-                const openOptionsModalIfNeeded = async (page) => {
-                    const modalSelector = '.HidQ9ROd, div[role="dialog"][aria-modal="true"], div[role="dialog"]';
-
-                    const hasVisibleSkuModal = async () => {
-                        return await page.evaluate((sel) => {
-                            const visible = (el) => {
-                                if (!el) return false;
-                                if (el.getAttribute && el.getAttribute('aria-hidden') === 'true') return false;
-                                const style = window.getComputedStyle(el);
-                                if (!style) return false;
-                                if (style.display === 'none' || style.visibility === 'hidden') return false;
-                                const opacity = parseFloat(style.opacity || '1');
-                                if (!Number.isNaN(opacity) && opacity <= 0.02) return false;
-                                const r = el.getBoundingClientRect();
-                                if (!r || r.width < 40 || r.height < 40) return false;
-                                const intersects =
-                                    r.bottom > 0 &&
-                                    r.right > 0 &&
-                                    r.top < window.innerHeight &&
-                                    r.left < window.innerWidth;
-                                if (!intersects) return false;
-                                const x = Math.floor(Math.min(window.innerWidth - 2, Math.max(1, r.left + r.width * 0.5)));
-                                const y = Math.floor(Math.min(window.innerHeight - 2, Math.max(1, r.top + r.height * 0.5)));
-                                const top = document.elementFromPoint(x, y);
-                                if (top && (el === top || el.contains(top))) return true;
-                                return false;
-                            };
-
-                            const isSku = (m) => {
-                                try {
-                                    if (m && m.matches && m.matches('.HidQ9ROd')) return true;
-                                } catch (e) {}
-                                if (m && m.querySelector && m.querySelector('.iW4aEGbb')) return false;
-                                const t = String(m?.innerText || m?.textContent || '');
-                                if (t.includes('ه·²é€‰') || t.includes('è¯·é€‰و‹©') || t.includes('è§„و ¼')) return true;
-                                if (m.querySelector('.O7pEFvHR') || m.querySelector('.bIhLWVqm') || m.querySelector('li.TpUpcNRp') || m.querySelector('div._8gg8ho2u')) return true;
-                                return false;
-                            };
-
-                            const modals = Array.from(document.querySelectorAll(sel));
-                            return modals.some(m => visible(m) && isSku(m));
-                        }, modalSelector).catch(() => false);
-                    };
-
-                    if (await hasVisibleSkuModal()) {
-                        console.log('[PDD] Options modal already open');
-                        return true;
-                    }
-
-                    const tryClickAndWaitModal = async (x, y, modalWaitMs = 2500) => {
-                        let before = '';
-                        try { before = page.url(); } catch (e) { before = ''; }
-
-                        try {
-                            try { await page.mouse.move(Math.max(1, x - 18), Math.max(1, y - 18)); } catch (e) {}
-                            await humanDelay(700, 1200);
-                            await page.mouse.click(x, y);
-                        } catch (e) {
-                            return false;
-                        }
-
-                        await humanDelay(1200, 2200);
-                        const ok = await page.waitForFunction(
-                            (sel) => {
-                                const visible = (el) => {
-                                    if (!el) return false;
-                                    if (el.getAttribute && el.getAttribute('aria-hidden') === 'true') return false;
-                                    const style = window.getComputedStyle(el);
-                                    if (!style) return false;
-                                    if (style.display === 'none' || style.visibility === 'hidden') return false;
-                                    const opacity = parseFloat(style.opacity || '1');
-                                    if (!Number.isNaN(opacity) && opacity <= 0.02) return false;
-                                    const r = el.getBoundingClientRect();
-                                    if (!r || r.width < 40 || r.height < 40) return false;
-                                    const intersects =
-                                        r.bottom > 0 &&
-                                        r.right > 0 &&
-                                        r.top < window.innerHeight &&
-                                        r.left < window.innerWidth;
-                                    if (!intersects) return false;
-                                    const x = Math.floor(Math.min(window.innerWidth - 2, Math.max(1, r.left + r.width * 0.5)));
-                                    const y = Math.floor(Math.min(window.innerHeight - 2, Math.max(1, r.top + r.height * 0.5)));
-                                    const top = document.elementFromPoint(x, y);
-                                    if (top && (el === top || el.contains(top))) return true;
-                                    return false;
-                                };
-
-                                const isSku = (m) => {
-                                    try {
-                                        if (m && m.matches && m.matches('.HidQ9ROd')) return true;
-                                    } catch (e) {}
-                                    if (m && m.querySelector && m.querySelector('.iW4aEGbb')) return false;
-                                    const t = String(m?.innerText || m?.textContent || '');
-                                    if (t.includes('ه·²é€‰') || t.includes('è¯·é€‰و‹©') || t.includes('è§„و ¼')) return true;
-                                    if (m.querySelector('.O7pEFvHR') || m.querySelector('.bIhLWVqm') || m.querySelector('li.TpUpcNRp') || m.querySelector('div._8gg8ho2u')) return true;
-                                    return false;
-                                };
-
-                                const modals = Array.from(document.querySelectorAll(sel));
-                                return modals.some(m => visible(m) && isSku(m));
-                            },
-                            { timeout: modalWaitMs },
-                            modalSelector
-                        ).catch(() => null);
-                        if (ok) return true;
-
-                        let after = '';
-                        try { after = page.url(); } catch (e) { after = before; }
-                        if (after.includes('/order_checkout.html') || after.includes('order_checkout.html')) {
-                            try {
-                                await page.goBack({ waitUntil: 'domcontentloaded', timeout: PAGE_LOAD_TIMEOUT });
-                                await waitForStableUrl(page, 1400, 15000);
-                            } catch (e) {}
-                        }
-
-                        return false;
-                    };
-
-                    await waitForStableUrl(page, 1200, 15000);
-
-                    const getViewport = async () => {
-                        const vp = (page.viewport && page.viewport()) ? page.viewport() : null;
-                        if (vp && vp.width && vp.height) return { width: vp.width, height: vp.height };
-                        const ev = await page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight })).catch(() => null);
-                        return { width: ev?.width || 360, height: ev?.height || 800 };
-                    };
-
-                    const tryOpenViaBottomRight = async (modalWaitMs = 9000) => {
-                        const vp = await getViewport();
-                        const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
-                        const maxX = Math.floor(vp.width - 2);
-                        const maxY = Math.floor(vp.height - 2);
-                        const marginX = 3 + Math.floor(Math.random() * 9);
-                        const marginY = 1 + Math.floor(Math.random() * 6);
-
-                        const x = clamp(maxX - marginX, 1, maxX);
-                        const y = clamp(maxY - marginY, 1, maxY);
-
-                        console.log(`[PDD] Trying to open options via bottom-right click (x=${x},y=${y})`);
-                        return await tryClickAndWaitModal(x, y, modalWaitMs);
-                    };
-
-                    for (let attempt = 0; attempt < 5; attempt++) {
-                        if (attempt > 0) await humanDelay(1400, 2600);
-                        const ok = await tryOpenViaBottomRight(9000);
-                        if (ok) return true;
-                    }
-
-                    return false;
-                };
-
-                const clickO7pEFvHRAndWait = async (page, scopeSelectors = null) => {
-                    const closeIfIwwPopupOpened = async () => {
-                        const pt = await page.evaluate(() => {
-                            const popup = document.querySelector('.iW4aEGbb');
-                            if (!popup) return null;
-                            const close =
-                                popup.querySelector('div[role="button"][aria-label*="ه…³é—­"]') ||
-                                popup.querySelector('button[aria-label*="ه…³é—­"]') ||
-                                popup.querySelector('div[role="button"][aria-label="ه…³é—­ه¼¹çھ—"]') ||
-                                popup.querySelector('div[role="button"][aria-label="ه…³é—­"]') ||
-                                popup.querySelector('button') ||
-                                null;
-                            const el = close || popup;
-                            const r = el.getBoundingClientRect();
-                            if (!r || r.width < 4 || r.height < 4) return { x: Math.floor(window.innerWidth / 2), y: Math.floor(window.innerHeight * 0.2) };
-                            const x = Math.floor(r.left + r.width * 0.5);
-                            const y = Math.floor(r.top + r.height * 0.5);
-                            return { x, y };
-                        }).catch(() => null);
-
-                        if (!pt?.x || !pt?.y) return false;
-
-                        try {
-                            for (let i = 0; i < 2; i++) {
-                                try { await page.mouse.move(Math.max(1, pt.x - 16), Math.max(1, pt.y - 16)); } catch (e) {}
-                                await humanDelay(450, 900);
-                                await page.mouse.click(pt.x, pt.y);
-                                await humanDelay(650, 1200);
-                                const still = await page.$('.iW4aEGbb').catch(() => null);
-                                if (!still) return true;
-                            }
-                        } catch (e) {}
-                        return false;
-                    };
-
-                    const clickNormalizedPoint = async (nx, ny) => {
-                        const vp = (page.viewport && page.viewport()) ? page.viewport() : null;
-                        const width = (vp && vp.width) ? vp.width : 360;
-                        const height = (vp && vp.height) ? vp.height : 800;
-                        const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
-                        const x = clamp(Math.floor((Number(nx) / 1000) * width), 1, Math.floor(width - 2));
-                        const y = clamp(Math.floor((Number(ny) / 1000) * height), 1, Math.floor(height - 2));
-                        try {
-                            try { await page.mouse.move(Math.max(1, x - 18), Math.max(1, y - 18)); } catch (e) {}
-                            await humanDelay(650, 1200);
-                            await page.mouse.click(x, y);
-                            return true;
-                        } catch (e) {
-                            return false;
-                        }
-                    };
-
-                    const clickCenterLeft = async () => {
-                        const pt = await page.evaluate(() => {
-                            const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
-                            const modal = document.querySelector('.HidQ9ROd') || document.querySelector('div[role="dialog"][aria-modal="true"]') || document.querySelector('div[role="dialog"]');
-                            if (modal) {
-                                const r = modal.getBoundingClientRect();
-                                if (r && r.width > 40 && r.height > 40) {
-                                    const x = clamp(Math.floor(r.left + r.width * 0.25), 1, Math.floor(window.innerWidth - 2));
-                                    const y = clamp(Math.floor(r.top + r.height * 0.5), 1, Math.floor(window.innerHeight - 2));
-                                    return { x, y };
-                                }
-                            }
-                            const x = clamp(Math.floor(window.innerWidth * 0.25), 1, Math.floor(window.innerWidth - 2));
-                            const y = clamp(Math.floor(window.innerHeight * 0.5), 1, Math.floor(window.innerHeight - 2));
-                            return { x, y };
-                        }).catch(() => null);
-
-                        if (!pt?.x || !pt?.y) return false;
-                        try {
-                            try { await page.mouse.move(Math.max(1, pt.x - 18), Math.max(1, pt.y - 18)); } catch (e) {}
-                            await humanDelay(650, 1200);
-                            await page.mouse.click(pt.x, pt.y);
-                            return true;
-                        } catch (e) {
-                            return false;
-                        }
-                    };
-
-                    const nudgeModalScroll = async () => {
-                        if (!scopeSelectors) return;
-                        const did = await page.evaluate(() => {
-                            const modal = document.querySelector('.HidQ9ROd') || document.querySelector('div[role="dialog"][aria-modal="true"]') || document.querySelector('div[role="dialog"]');
-                            if (!modal) return false;
-                            const all = [modal, ...Array.from(modal.querySelectorAll('*'))];
-                            const scroller = all.find(el => {
-                                try {
-                                    return el.scrollHeight > el.clientHeight + 80;
-                                } catch (e) {
-                                    return false;
-                                }
-                            });
-                            if (!scroller) return false;
-                            const max = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
-                            if (max <= 0) return false;
-                            const next = Math.min(max, scroller.scrollTop + Math.floor(scroller.clientHeight * 0.6));
-                            scroller.scrollTop = next;
-                            return true;
-                        }).catch(() => false);
-                        if (did) await humanDelay(650, 1200);
-                    };
-
-                    const waitForOptionsList = async (timeoutMs = 6000) => {
-                        const fast = await page.waitForSelector('li.TpUpcNRp, div._8gg8ho2u', { timeout: Math.min(2500, timeoutMs) }).catch(() => null);
-                        if (fast) return true;
-                        const ok = await page.waitForFunction(() => {
-                            const modal = document.querySelector('.HidQ9ROd') || document.querySelector('div[role="dialog"][aria-modal="true"]') || document.querySelector('div[role="dialog"]');
-                            const root = modal || document;
-                            const groupCount = root.querySelectorAll('.bIhLWVqm').length;
-                            const optionCount = root.querySelectorAll('.bIhLWVqm .F7sZG3xe, .bIhLWVqm .s1O5M5fO .F7sZG3xe, .s1O5M5fO .F7sZG3xe').length;
-                            if (groupCount > 0 && optionCount >= 2) return true;
-                            const nodes = Array.from(root.querySelectorAll('li, div[role="button"], button, a'));
-                            let count = 0;
-                            for (const el of nodes) {
-                                const t = String(el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
-                                if (!t) continue;
-                                if (!t.includes('آ¥') && !t.includes('ï؟¥')) continue;
-                                const r = el.getBoundingClientRect();
-                                if (!r || r.width < 40 || r.height < 16 || r.height > 140) continue;
-                                count++;
-                                if (count >= 2) return true;
-                            }
-                            return false;
-                        }, { timeout: timeoutMs }).catch(() => null);
-                        return !!ok;
-                    };
-
-                    if (scopeSelectors) {
-                        console.log('[PDD] Trying normalized click to open thumbnails/options (x=159,y=447)');
-                        const ok = await clickNormalizedPoint(159, 447);
-                        if (ok) {
-                            await closeIfIwwPopupOpened();
-                            await nudgeModalScroll();
-                            const hasAfter = await waitForOptionsList(7000);
-                            if (hasAfter) {
-                                console.log('[PDD] Options detected after normalized click');
-                                return true;
-                            }
-                        }
-                    }
-
-                    const pickClickable = async (selector) => {
-                        const handles = await page.$$(selector).catch(() => []);
-                        for (const h of handles) {
-                            const box = await h.boundingBox().catch(() => null);
-                            if (!box) continue;
-                            if (box.width < 3 || box.height < 3) continue;
-                            return { handle: h, box };
-                        }
-                        return null;
-                    };
-
-                    const clickByBox = async (box) => {
-                        const x = Math.floor(box.x + box.width * 0.5);
-                        const y = Math.floor(box.y + box.height * 0.5);
-                        try { await page.mouse.move(Math.max(1, x - 18), Math.max(1, y - 18)); } catch (e) {}
-                        await humanDelay(550, 1100);
-                        await page.mouse.click(x, y);
-                    };
-
-                    const selectors = [];
-                    if (!scopeSelectors) {
-                        selectors.push('.O7pEFvHR', '.O7pEFvHR img');
-                    } else {
-                        const scopes = Array.isArray(scopeSelectors) ? scopeSelectors : [scopeSelectors];
-                        for (const s of scopes) {
-                            selectors.push(`${s} .O7pEFvHR`, `${s} .O7pEFvHR img`);
-                        }
-                    }
-
-                    console.log(`[PDD] Trying to click O7pEFvHR via ${selectors.length} selectors`);
-                    let target = null;
-                    let usedSelector = '';
-                    for (const sel of selectors) {
-                        const picked = await pickClickable(sel);
-                        if (picked) {
-                            target = picked;
-                            usedSelector = sel;
-                            break;
-                        }
-                    }
-
-                    if (!target) {
-                        if (!scopeSelectors) {
-                            console.log('[PDD] O7pEFvHR not found/clickable (no modal scope); skipping heuristic click');
-                            return false;
-                        }
-
-                        console.log('[PDD] O7pEFvHR not found/clickable; trying heuristic click inside SKU popup');
-
-                        const scopes = scopeSelectors
-                            ? (Array.isArray(scopeSelectors) ? scopeSelectors : [scopeSelectors])
-                            : [];
-                        const pt = await page.evaluate((scopeSelList) => {
-                            const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
-                            const toPt = (r) => {
-                                const x = clamp(Math.floor(r.left + r.width * 0.5), 1, Math.floor(window.innerWidth - 2));
-                                const y = clamp(Math.floor(r.top + r.height * 0.5), 1, Math.floor(window.innerHeight - 2));
-                                return { x, y };
-                            };
-
-                            const visibleRect = (r) => {
-                                if (!r || r.width < 12 || r.height < 12) return false;
-                                if (r.bottom < 0 || r.right < 0) return false;
-                                if (r.top > window.innerHeight || r.left > window.innerWidth) return false;
-                                return true;
-                            };
-
-                            const isGoodSrc = (src) => {
-                                const s = String(src || '');
-                                if (!s) return false;
-                                if (!s.startsWith('http')) return false;
-                                if (s.includes('avatar') || s.includes('icon') || s.includes('coupon')) return false;
-                                return true;
-                            };
-
-                            const areas = [];
-                            const roots = [];
-                            if (scopeSelList && scopeSelList.length > 0) {
-                                for (const sel of scopeSelList) {
-                                    const el = document.querySelector(sel);
-                                    if (el) roots.push(el);
-                                }
-                            }
-                            if (roots.length === 0) roots.push(document);
-
-                            for (const root of roots) {
-                                const imgs = Array.from(root.querySelectorAll('img'));
-                                for (const img of imgs) {
-                                    if (img.closest && img.closest('.iW4aEGbb')) continue;
-                                    const r = img.getBoundingClientRect();
-                                    if (!visibleRect(r)) continue;
-                                    if (!isGoodSrc(img.currentSrc || img.src)) continue;
-                                    const score = r.width * r.height;
-                                    areas.push({ score, rect: r });
-                                }
-                                const divs = Array.from(root.querySelectorAll('div[role="button"], button'));
-                                for (const el of divs) {
-                                    if (el.closest && el.closest('.iW4aEGbb')) continue;
-                                    const t = String(el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
-                                    if (!t) continue;
-                                    if (!t.includes('ه›¾') && !t.includes('ه›¾ç‰‡')) continue;
-                                    const r = el.getBoundingClientRect();
-                                    if (!visibleRect(r)) continue;
-                                    const score = r.width * r.height * 0.6;
-                                    areas.push({ score, rect: r });
-                                }
-                            }
-
-                            areas.sort((a, b) => b.score - a.score);
-                            const best = areas[0];
-                            if (!best) return null;
-                            return toPt(best.rect);
-                        }, scopes).catch(() => null);
-
-                        if (!pt?.x || !pt?.y) return false;
-
-                        try {
-                            try { await page.mouse.move(Math.max(1, pt.x - 18), Math.max(1, pt.y - 18)); } catch (e) {}
-                            await humanDelay(600, 1200);
-                            await page.mouse.click(pt.x, pt.y);
-                            console.log('[PDD] Heuristic click executed');
-                            await closeIfIwwPopupOpened();
-                            await nudgeModalScroll();
-                        } catch (e) {
-                            return false;
-                        }
-                    }
-
-                    if (target) {
-                        console.log(`[PDD] Clicking O7pEFvHR using: ${usedSelector}`);
-                        try {
-                            await page.evaluate((sel) => {
-                                const el = document.querySelector(sel);
-                                if (el && el.scrollIntoView) el.scrollIntoView({ block: 'center', inline: 'center' });
-                            }, usedSelector).catch(() => null);
-                            await humanDelay(500, 900);
-                            const pt = await page.evaluate((sel) => {
-                                const el = document.querySelector(sel);
-                                if (!el) return null;
-                                const r = el.getBoundingClientRect();
-                                if (!r || r.width < 4 || r.height < 4) return null;
-                                const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
-                                const xs = [0.5, 0.35, 0.65, 0.2, 0.8].map(p => Math.floor(r.left + r.width * p));
-                                const ys = [0.5, 0.35, 0.65, 0.2, 0.8].map(p => Math.floor(r.top + r.height * p));
-                                for (const y of ys) {
-                                    for (const x of xs) {
-                                        const xx = clamp(x, 1, Math.floor(window.innerWidth - 2));
-                                        const yy = clamp(y, 1, Math.floor(window.innerHeight - 2));
-                                        const top = document.elementFromPoint(xx, yy);
-                                        if (top && (el === top || el.contains(top))) return { x: xx, y: yy };
-                                    }
-                                }
-                                return null;
-                            }, usedSelector).catch(() => null);
-
-                            if (pt?.x && pt?.y) {
-                                try { await page.mouse.move(Math.max(1, pt.x - 18), Math.max(1, pt.y - 18)); } catch (e) {}
-                                await humanDelay(550, 1100);
-                                await page.mouse.click(pt.x, pt.y);
-                            } else {
-                                const refreshed = await pickClickable(usedSelector);
-                                if (refreshed?.box) target = refreshed;
-                                await clickByBox(target.box);
-                            }
-                            console.log('[PDD] Clicked O7pEFvHR');
-                            await closeIfIwwPopupOpened();
-                            await nudgeModalScroll();
-                        } catch (e) {
-                            console.log(`[PDD] O7pEFvHR click failed: ${e?.message || e}`);
-                            return false;
-                        }
-                    }
-
-                    const has = await waitForOptionsList(7000);
-                    if (has) {
-                        console.log('[PDD] Options list detected');
-                        return true;
-                    }
-
-                    console.log('[PDD] Options list not detected; trying center-left click inside modal');
-                    try {
-                        const ok = await clickCenterLeft();
-                        if (ok) {
-                            await closeIfIwwPopupOpened();
-                            await nudgeModalScroll();
-                            const hasAfter = await waitForOptionsList(7000);
-                            if (hasAfter) {
-                                console.log('[PDD] Options list detected after center-left click');
-                                return true;
-                            }
-                        }
-                    } catch (e) {}
-
-                    const fallbackCounts = await page.evaluate(() => {
-                        const modal = document.querySelector('.HidQ9ROd') || document.querySelector('div[role="dialog"][aria-modal="true"]') || document.querySelector('div[role="dialog"]');
-                        const root = modal || document;
-                        const li = root.querySelectorAll('li').length;
-                        const buttons = root.querySelectorAll('button, div[role="button"]').length;
-                        const groups = root.querySelectorAll('.bIhLWVqm').length;
-                        const opts = root.querySelectorAll('.bIhLWVqm .F7sZG3xe, .s1O5M5fO .F7sZG3xe').length;
-                        return { li, buttons, groups, opts };
-                    }).catch(() => ({ li: 0, buttons: 0 }));
-                    console.log(`[PDD] Options list not detected (li=${fallbackCounts.li}, buttons=${fallbackCounts.buttons}, groups=${fallbackCounts.groups || 0}, opts=${fallbackCounts.opts || 0})`);
-                    return false;
-                };
-
-                console.log('[PDD] Opening options popup before clicking O7pEFvHR');
-                const optionsModalOpened = await openOptionsModalIfNeeded(newPage);
-                let hasOptionsList = false;
-                if (optionsModalOpened) {
-                    hasOptionsList = await clickO7pEFvHRAndWait(newPage, [
-                        '.HidQ9ROd',
-                        'div[role="dialog"][aria-modal="true"]',
-                        'div[role="dialog"]'
-                    ]);
-                } else {
-                    console.log('[PDD] Could not open options modal');
-                }
-                if (hasOptionsList) {
-                    const liCount = await newPage.$$eval('li.TpUpcNRp', els => els.length).catch(() => 0);
-                    const cardCount = await newPage.$$eval('div._8gg8ho2u', els => els.length).catch(() => 0);
-                    console.log(`[PDD] Options elements found: li.TpUpcNRp=${liCount}, div._8gg8ho2u=${cardCount}`);
-                } else {
-                    console.log('[PDD] Options list not found; continuing without selecting any options');
-                }
-
-                await waitForStableUrl(newPage, 1400, 15000);
-
-                console.log('[Main] Starting main product data extraction (safeEvaluate)...');
-                const data = await safeEvaluate(newPage, async () => {
-                    const wait = (ms) => new Promise(r => setTimeout(r, ms));
-                    
-                    // HELPER: Strict Price Extraction from User Target
-                    const getTargetPrice = (root) => {
-                         const r = (root && typeof root.querySelector === 'function') ? root : document;
-                         const targetDiv = r.querySelector('.ujEqGzEB') || document.querySelector('.ujEqGzEB');
-                         if (targetDiv) {
-                             // Try aria-label first (e.g. "é¦–ن»¶آ¥29.88")
-                             const imgSpan = targetDiv.querySelector('span[role="img"]');
-                             if (imgSpan && imgSpan.getAttribute('aria-label')) {
-                                 const label = imgSpan.getAttribute('aria-label');
-                                 const match = label.match(/آ¥\s*(\d+(\.\d+)?)/);
-                                 if (match) return 'آ¥' + match[1];
-                             }
-                             // Fallback to text content
-                             const text = targetDiv.innerText;
-                             const match = text.match(/آ¥\s*(\d+(\.\d+)?)/);
-                             if (match) return match[0];
-                         }
-
-                         const altPriceEl =
-                            r.querySelector('div.kYzukoxf') ||
-                            r.querySelector('.Ngfn6pTR .kYzukoxf') ||
-                            document.querySelector('div.kYzukoxf') ||
-                            document.querySelector('.Ngfn6pTR .kYzukoxf');
-                         if (altPriceEl) {
-                             const text = altPriceEl.innerText.replace(/\n/g, ' ').trim();
-                             const match = text.match(/آ¥\s*(\d+(\.\d+)?)/);
-                             if (match) return match[0];
-                         }
-
-                         return null;
-                    };
-
-                    const waitForPriceAfterClick = async (prevPriceStr, root) => {
-                        const start = Date.now();
-                        let last = null;
-                        let stable = 0;
-                        while (Date.now() - start < 7000) {
-                            const cur = getTargetPrice(root);
-                            if (cur) {
-                                if (cur === last) stable++;
-                                else {
-                                    last = cur;
-                                    stable = 0;
-                                }
-                                const changed = prevPriceStr ? (cur !== prevPriceStr) : true;
-                                if (changed && stable >= 1) return cur;
-                                if (!prevPriceStr && stable >= 1) return cur;
-                            }
-                            await wait(120);
-                        }
-                        return getTargetPrice(root) || last || null;
-                    };
-
-                    // 1. Title Extraction (User specific selector)
-                    let title = '';
-                    const titleEl = document.querySelector('.tLYIg_Ju span') || 
-                                   document.querySelector('.KlGVpw3u span') ||
-                                   document.querySelector('.goods-name');
-                    if (titleEl) title = titleEl.innerText.trim();
-                    if (!title) title = document.title;
-
-                    // 2. Price Extraction (Initial fallback)
-                     let price = getTargetPrice(document);
-                     const priceEl = document.querySelector('.goods-price, [class*="price-info"], [class*="goods-price"]');
-                     if (!price && priceEl) {
-                          price = priceEl.innerText.trim();
-                     }
-                     if (!price) {
-                         const bodyText = document.body.innerText;
-                         const priceMatch = bodyText.match(/آ¥\s*(\d+(\.\d+)?)/);
-                         if (priceMatch) price = priceMatch[0];
-                     }
- 
-                     // 3. Description & Details
-                     let description = '';
-                     let productDetails = {};
-                     
-                     // Extract key-value details from .jvsKAdEs > .iUUH2sOQ
-                     // Structure: .iUUH2sOQ -> .rMnkPxwx (Key) + .KjtdjVU2 (Value)
-                     const detailItems = document.querySelectorAll('.iUUH2sOQ');
-                     detailItems.forEach(item => {
-                         const key = item.querySelector('.rMnkPxwx')?.innerText.trim();
-                         const val = item.querySelector('.KjtdjVU2')?.innerText.trim();
-                         if (key && val) {
-                             productDetails[key] = val;
-                             description += `${key}: ${val}\n`; // Append to text description as well
-                         }
-                     });
-
-                     // Fallback description if details are empty
-                     if (!description) {
-                         description = document.querySelector('.goods-details, [class*="detail-desc"]')?.innerText.trim() || '';
-                     }
-                     
-                     // 4. Variant & Price Extraction from Modal
-                    let variants = {};
-                    let skuMap = {}; // Store price for each combination
-                    let variantImages = {}; // Map color -> imageUrl
-                    let skuThumbMap = {}; // Map optionKey -> imageUrl (per SKU or per single option)
-                    let lowestVariantPrice = null; // Track lowest price found in variants
-
-                    try {
-                        const extractOptionCardsFromRoot = () => {
-                            const liEls = Array.from(document.querySelectorAll('li.TpUpcNRp'));
-                            const containerEls = liEls.length > 0
-                                ? liEls.map(li => li.querySelector('div._8gg8ho2u') || li).filter(Boolean)
-                                : Array.from(document.querySelectorAll('div._8gg8ho2u'));
-                            const items = [];
-                            const seen = new Set();
-
-                            for (const c of containerEls) {
-                                const nameEl = c?.querySelector?.('.RITrraU3 span.U63Kdv8C') || c?.querySelector?.('.RITrraU3 span') || c?.querySelector?.('span.U63Kdv8C');
-                                const textRaw = nameEl?.innerText || nameEl?.textContent || '';
-                                const text = String(textRaw || '').replace(/\s+/g, ' ').trim();
-
-                                const priceEl = c?.querySelector?.('.nvN5jV0G') || c?.querySelector?.('[class*="nvN5jV0G"]');
-                                const priceRaw = priceEl?.innerText || priceEl?.textContent || '';
-                                const pm = String(priceRaw || '').match(/(\d+(\.\d+)?)/);
-                                const priceStr = pm ? (`آ¥${pm[1]}`) : null;
-
-                                const imgEl =
-                                    c.querySelector('.PQoZYCec img') ||
-                                    c.querySelector('.PQoZYCec img[data-src]') ||
-                                    c.querySelector('.PQoZYCec img[data-lazy-src]') ||
-                                    c.querySelector('.PQoZYCec img[data-original]') ||
-                                    c.querySelector('img');
-                                const rawSrc =
-                                    imgEl?.getAttribute('src') ||
-                                    imgEl?.getAttribute('data-src') ||
-                                    imgEl?.getAttribute('data-lazy-src') ||
-                                    imgEl?.getAttribute('data-original') ||
-                                    imgEl?.src ||
-                                    '';
-                                let thumb = rawSrc ? rawSrc.split('?')[0] : null;
-                                if (!thumb) {
-                                    const pq = c.querySelector('.PQoZYCec') || c;
-                                    const styleBg = pq?.style?.backgroundImage || '';
-                                    let bg = styleBg;
-                                    if (!bg) {
-                                        try { bg = window.getComputedStyle(pq).backgroundImage || ''; } catch (e) {}
-                                    }
-                                    const m = String(bg || '').match(/url\((['"]?)(.*?)\1\)/i);
-                                    const url = m?.[2] || '';
-                                    thumb = url ? url.split('?')[0] : null;
-                                }
-
-                                if (text && priceStr) {
-                                    const k = `${text}||${priceStr}||${thumb || ''}`;
-                                    if (seen.has(k)) continue;
-                                    seen.add(k);
-                                    items.push({ text, priceStr, thumb });
-                                }
-                            }
-
-                            return items;
-                        };
-
-                        const cardsOnPage = extractOptionCardsFromRoot();
-                        if (cardsOnPage.length > 0) {
-                            for (const card of cardsOnPage) {
-                                skuMap[card.text] = card.priceStr;
-                                if (card.thumb) skuThumbMap[card.text] = card.thumb;
-                            }
-                        }
-
-                        const modal = document.querySelector('.HidQ9ROd') || document.querySelector('div[role="dialog"][aria-modal="true"]') || document.querySelector('div[role="dialog"]');
-                        if (modal) {
-                                const waitForOptionCards = async (timeoutMs = 2500) => {
-                                    const start = Date.now();
-                                    while (Date.now() - start < timeoutMs) {
-                                        const hasLi = document.querySelectorAll('li.TpUpcNRp').length > 0;
-                                        const hasCards = document.querySelectorAll('div._8gg8ho2u').length > 0;
-                                        if (hasLi || hasCards) return true;
-                                        await wait(120);
-                                    }
-                                    return false;
-                                };
-
-                                const host = modal.querySelector('.O7pEFvHR');
-                                if (host) {
-                                    try {
-                                        host.scrollIntoView({ block: 'center', inline: 'center' });
-                                    } catch (e) {}
-                                    try {
-                                        host.click();
-                                    } catch (e) {}
-                                    await waitForOptionCards(3000);
-                                    const cardsAfterHostClick = extractOptionCardsFromRoot();
-                                    if (cardsAfterHostClick.length > 0) {
-                                        for (const card of cardsAfterHostClick) {
-                                            skuMap[card.text] = card.priceStr;
-                                            if (card.thumb) skuThumbMap[card.text] = card.thumb;
-                                        }
-                                    }
-                                }
-
-                                const getModalThumb = () => {
-                                    const img = modal.querySelector('.O7pEFvHR img');
-                                    const raw =
-                                        img?.getAttribute?.('src') ||
-                                        img?.getAttribute?.('data-src') ||
-                                        img?.getAttribute?.('data-lazy-src') ||
-                                        img?.currentSrc ||
-                                        img?.src ||
-                                        '';
-                                    if (raw) return String(raw).split('?')[0];
-
-                                    const host = modal.querySelector('.O7pEFvHR');
-                                    if (host) {
-                                        const styleBg = host.style?.backgroundImage || '';
-                                        let bg = styleBg;
-                                        if (!bg) {
-                                            try { bg = window.getComputedStyle(host).backgroundImage || ''; } catch (e) {}
-                                        }
-                                        const m = String(bg || '').match(/url\((['"]?)(.*?)\1\)/i);
-                                        const url = m?.[2] || '';
-                                        if (url) return url.split('?')[0];
-                                    }
-                                    return null;
-                                };
-
-                                // Extract basic variants list first
-                                const groups = Array.from(modal.querySelectorAll('.bIhLWVqm'));
-                                let specKeys = [];
-                                let specValues = [];
-
-                                groups.forEach(group => {
-                                    const keyEl = group.querySelector('.sku-specs-key');
-                                    const valContainer = group.querySelector('.s1O5M5fO');
-                                    
-                                    if (keyEl && valContainer) {
-                                        const key = keyEl.innerText.trim();
-                                        const vals = Array.from(valContainer.querySelectorAll('.F7sZG3xe')) // Get the clickables
-                                                         .map(el => ({ 
-                                                             text: el.querySelector('span.J109_25J')?.innerText.trim(),
-                                                             element: el 
-                                                         }))
-                                                         .filter(v => v.text);
-                                        variants[key] = vals.map(v => v.text);
-                                        specKeys.push(key);
-                                        specValues.push(vals);
-                                    }
-                                });
-                                
-                                if (specValues.length === 0) {
-                                    console.error('CRITICAL: Modal opened but no variants found. Structure might have changed.');
-                                }
-
-                                const isDisabledOption = (el) => {
-                                    if (!el) return true;
-                                    const ariaDisabled = el.getAttribute('aria-disabled');
-                                    if (ariaDisabled && ariaDisabled.toLowerCase() === 'true') return true;
-                                    if (el.hasAttribute('disabled')) return true;
-                                    const cls = String(el.className || '').toLowerCase();
-                                    if (cls.includes('disabled')) return true;
-                                    return false;
-                                };
-
-                                const getOptionText = (el) => {
-                                    return el?.querySelector('span.J109_25J')?.innerText.trim() || el?.innerText.trim() || '';
-                                };
-
-                                const safeClick = async (el) => {
-                                    if (!el) return false;
-                                    try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch(e) {}
-                                    try { el.click(); return true; } catch(e) {}
-                                    try {
-                                        el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
-                                        return true;
-                                    } catch(e) {}
-                                    return false;
-                                };
-
-                                const getGroupOptions = (groupEl) => {
-                                    const valContainer = groupEl?.querySelector('.s1O5M5fO');
-                                    if (!valContainer) return [];
-                                    return Array.from(valContainer.querySelectorAll('.F7sZG3xe'))
-                                        .map(el => ({ text: getOptionText(el), element: el }))
-                                        .filter(v => v.text && !isDisabledOption(v.element));
-                                };
-
-                                const getGroup1 = () => Array.from(modal.querySelectorAll('.bIhLWVqm'))[0] || null;
-                                const getGroup2 = () => Array.from(modal.querySelectorAll('.bIhLWVqm'))[1] || null;
-
-                                const isSelectedOption = (el) => {
-                                    if (!el) return false;
-                                    const clsRaw = String(el.className || '');
-                                    const cls = clsRaw.toLowerCase();
-                                    if (cls.includes('hr353bdx')) return true;
-                                    if (cls.includes('kv0lnch3')) return true;
-                                    const ariaChecked = el.getAttribute('aria-checked');
-                                    if (ariaChecked && ariaChecked.toLowerCase() === 'true') return true;
-                                    const ariaSelected = el.getAttribute('aria-selected');
-                                    if (ariaSelected && ariaSelected.toLowerCase() === 'true') return true;
-                                    const ariaPressed = el.getAttribute('aria-pressed');
-                                    if (ariaPressed && ariaPressed.toLowerCase() === 'true') return true;
-                                    const dataState = el.getAttribute('data-state');
-                                    if (dataState && (dataState === 'checked' || dataState === 'selected')) return true;
-                                    const dataSelected = el.getAttribute('data-selected');
-                                    if (dataSelected && dataSelected.toLowerCase() === 'true') return true;
-                                    if (el.querySelector && el.querySelector('[aria-checked="true"], [aria-selected="true"]')) return true;
-                                    if (cls.includes('selected') || cls.includes('active') || cls.includes('checked') || cls.includes('current') || cls.includes('cur') || cls.includes('on')) return true;
-                                    return false;
-                                };
-
-                                const getGroupOptionElements = (groupEl) => {
-                                    const valContainer = groupEl?.querySelector('.s1O5M5fO');
-                                    if (!valContainer) return [];
-                                    return Array.from(valContainer.querySelectorAll('.F7sZG3xe'))
-                                        .filter(el => !isDisabledOption(el) && !!getOptionText(el));
-                                };
-
-                                const getOptionStyleKey = (el) => {
-                                    try {
-                                        const s = window.getComputedStyle(el);
-                                        const bg = s.backgroundColor || '';
-                                        const border = s.borderColor || '';
-                                        const color = s.color || '';
-                                        const fw = s.fontWeight || '';
-                                        const outline = s.outlineColor || '';
-                                        return `${bg}|${border}|${color}|${fw}|${outline}`;
-                                    } catch (e) {
-                                        return '';
-                                    }
-                                };
-
-                                const getSelectedOptionEl = (groupEl) => {
-                                    const optionEls = getGroupOptionElements(groupEl);
-                                    if (optionEls.length === 0) return null;
-
-                                    const ariaSelectedEl = optionEls.find(isSelectedOption) || null;
-                                    if (ariaSelectedEl) return ariaSelectedEl;
-
-                                    const keyCounts = new Map();
-                                    for (const el of optionEls) {
-                                        const key = getOptionStyleKey(el);
-                                        keyCounts.set(key, (keyCounts.get(key) || 0) + 1);
-                                    }
-
-                                    let bestEl = null;
-                                    let bestCount = Infinity;
-                                    for (const el of optionEls) {
-                                        const key = getOptionStyleKey(el);
-                                        const c = keyCounts.get(key) || 0;
-                                        if (c > 0 && c < bestCount) {
-                                            bestCount = c;
-                                            bestEl = el;
-                                        }
-                                    }
-
-                                    if (bestEl && bestCount < optionEls.length) return bestEl;
-                                    return null;
-                                };
-
-                                const getSelectedOptionText = (groupEl) => {
-                                    const selectedEl = getSelectedOptionEl(groupEl);
-                                    return selectedEl ? getOptionText(selectedEl) : null;
-                                };
-
-                                const findOptionElByText = (groupEl, text) => {
-                                    if (!groupEl) return null;
-                                    const valContainer = groupEl.querySelector('.s1O5M5fO');
-                                    if (!valContainer) return null;
-                                    const optionEls = Array.from(valContainer.querySelectorAll('.F7sZG3xe'));
-                                    for (const el of optionEls) {
-                                        if (isDisabledOption(el)) continue;
-                                        if (getOptionText(el) === text) return el;
-                                    }
-                                    return null;
-                                };
-
-                                const waitFor = async (predicate, timeoutMs = 2500, intervalMs = 120) => {
-                                    const start = Date.now();
-                                    while (Date.now() - start < timeoutMs) {
-                                        try {
-                                            if (predicate()) return true;
-                                        } catch (e) {}
-                                        await wait(intervalMs);
-                                    }
-                                    return false;
-                                };
-
-                                const waitForStableTargetPrice = async (root, timeoutMs = 5000, intervalMs = 150, stableTicks = 2) => {
-                                    const start = Date.now();
-                                    let last = null;
-                                    let stable = 0;
-                                    while (Date.now() - start < timeoutMs) {
-                                        const cur = getTargetPrice(root);
-                                        if (cur) {
-                                            if (cur === last) stable++;
-                                            else {
-                                                last = cur;
-                                                stable = 0;
-                                            }
-                                            if (stable >= stableTicks) return cur;
-                                        }
-                                        await wait(intervalMs);
-                                    }
-                                    return getTargetPrice(root) || last || null;
-                                };
-
-                                const waitForStableModalThumb = async (prevThumb, timeoutMs = 5000, intervalMs = 150, stableTicks = 2) => {
-                                    const start = Date.now();
-                                    let last = getModalThumb();
-                                    let stable = 0;
-                                    while (Date.now() - start < timeoutMs) {
-                                        const cur = getModalThumb();
-                                        if (cur) {
-                                            if (cur !== last) {
-                                                last = cur;
-                                                stable = 0;
-                                            } else {
-                                                stable++;
-                                            }
-                                            if (prevThumb && cur !== prevThumb && stable >= stableTicks) return cur;
-                                            if (!prevThumb && stable >= stableTicks) return cur;
-                                        }
-                                        await wait(intervalMs);
-                                    }
-                                    return getModalThumb() || last || null;
-                                };
-
-                                const recordSku = (key, priceStr, thumb) => {
-                                    if (!key || !priceStr) return;
-                                    skuMap[key] = priceStr;
-                                    if (thumb) {
-                                        skuThumbMap[key] = thumb;
-                                    }
-                                    const pMatch = String(priceStr || '').match(/(\d+(\.\d+)?)/);
-                                    if (pMatch) {
-                                        const pVal = parseFloat(pMatch[1]);
-                                        if (Number.isFinite(pVal)) {
-                                            if (lowestVariantPrice === null || pVal < lowestVariantPrice) {
-                                                lowestVariantPrice = pVal;
-                                                price = `آ¥${pMatch[1]}`;
-                                            }
-                                        }
-                                    }
-                                };
-
-                                if (Object.keys(skuMap).length === 0 && Array.isArray(specValues) && specValues.length > 0) {
-                                    const startedAt = Date.now();
-                                    const timeBudgetMs = 65000;
-                                    const group1 = specValues[0] || [];
-                                    const group2 = specValues[1] || [];
-                                    const group1Opts = group1.filter(v => v?.text && v?.element && !isDisabledOption(v.element));
-                                    const group2Opts = group2.filter(v => v?.text && v?.element && !isDisabledOption(v.element));
-
-                                    if (group1Opts.length > 0 && group2Opts.length === 0) {
-                                        for (const o1 of group1Opts) {
-                                            if (Date.now() - startedAt > timeBudgetMs) break;
-                                            const prevPrice = getTargetPrice(document);
-                                            const prevThumb = getModalThumb();
-                                            await safeClick(o1.element);
-                                            await wait(180);
-                                            const priceStr = await waitForPriceAfterClick(prevPrice, document);
-                                            const thumb = await waitForStableModalThumb(prevThumb, 4500, 160, 2);
-                                            if (thumb) variantImages[o1.text] = thumb;
-                                            recordSku(o1.text, priceStr || prevPrice || priceStr, thumb);
-                                        }
-                                    } else if (group1Opts.length > 0 && group2Opts.length > 0) {
-                                        for (const o1 of group1Opts) {
-                                            if (Date.now() - startedAt > timeBudgetMs) break;
-                                            const prevThumbColor = getModalThumb();
-                                            await safeClick(o1.element);
-                                            await wait(220);
-                                            const colorThumb = await waitForStableModalThumb(prevThumbColor, 4500, 160, 2);
-                                            if (colorThumb) variantImages[o1.text] = colorThumb;
-
-                                            for (const o2 of group2Opts) {
-                                                if (Date.now() - startedAt > timeBudgetMs) break;
-                                                const prevPrice = getTargetPrice(document);
-                                                const prevThumb = getModalThumb();
-                                                await safeClick(o2.element);
-                                                await wait(200);
-                                                const priceStr = await waitForPriceAfterClick(prevPrice, document);
-                                                const thumb = await waitForStableModalThumb(prevThumb, 4500, 160, 2);
-                                                const key = `${o1.text}__SEP__${o2.text}`;
-                                                recordSku(key, priceStr || prevPrice || priceStr, thumb || colorThumb);
-                                            }
-                                        }
-                                    }
-                                }
-
-                                const extractCardTextPrice = (c) => {
-                                    const nameEl = c?.querySelector?.('.RITrraU3 span.U63Kdv8C') || c?.querySelector?.('.RITrraU3 span') || c?.querySelector?.('span.U63Kdv8C');
-                                    let textRaw = nameEl?.innerText || nameEl?.textContent || '';
-                                    let text = String(textRaw || '').replace(/\s+/g, ' ').trim();
-                                    if (!text) {
-                                        const spans = Array.from(c?.querySelectorAll?.('span') || []);
-                                        for (const s of spans) {
-                                            const t = String(s?.innerText || s?.textContent || '').replace(/\s+/g, ' ').trim();
-                                            if (!t) continue;
-                                            if (t.includes('آ¥') || t.includes('ï؟¥')) continue;
-                                            if (t.includes('ه·²é€‰') || t.includes('è¯·é€‰و‹©')) continue;
-                                            if (t.length > 80) continue;
-                                            text = t;
-                                            break;
-                                        }
-                                    }
-
-                                    const priceEl = c?.querySelector?.('.nvN5jV0G') || c?.querySelector?.('[class*="nvN5jV0G"]');
-                                    let priceRaw = priceEl?.innerText || priceEl?.textContent || '';
-                                    if (!priceRaw) {
-                                        const t = String(c?.innerText || c?.textContent || '');
-                                        const m = t.match(/[آ¥ï؟¥]\s*(\d+(\.\d+)?)/);
-                                        if (m) priceRaw = m[0];
-                                    }
-                                    const pm = String(priceRaw || '').match(/(\d+(\.\d+)?)/);
-                                    const priceStr = pm ? (`آ¥${pm[1]}`) : null;
-
-                                    return { text, priceStr };
-                                };
-
-                                const extractCardThumb = (c) => {
-                                    const imgEl = c.querySelector('.PQoZYCec img') || c.querySelector('.PQoZYCec img[data-src]') || c.querySelector('.PQoZYCec img[data-lazy-src]') || c.querySelector('.PQoZYCec img[data-original]') || c.querySelector('img');
-                                    const rawSrc =
-                                        imgEl?.getAttribute('src') ||
-                                        imgEl?.getAttribute('data-src') ||
-                                        imgEl?.getAttribute('data-lazy-src') ||
-                                        imgEl?.getAttribute('data-original') ||
-                                        imgEl?.src ||
-                                        '';
-                                    if (rawSrc) return rawSrc.split('?')[0];
-
-                                    const pq = c.querySelector('.PQoZYCec') || c;
-                                    const styleBg = pq?.style?.backgroundImage || '';
-                                    let bg = styleBg;
-                                    if (!bg) {
-                                        try { bg = window.getComputedStyle(pq).backgroundImage || ''; } catch (e) {}
-                                    }
-                                    const m = String(bg || '').match(/url\((['"]?)(.*?)\1\)/i);
-                                    const url = m?.[2] || '';
-                                    return url ? url.split('?')[0] : null;
-                                };
-
-                                const scanThumbsViaO7pEFvHR = async (group1Texts, group2Texts, maxSwipes = 28) => {
-                                    const out = {};
-                                    const seenKeys = new Set();
-                                    const host = modal.querySelector('.O7pEFvHR') || modal.querySelector('.O7pEFvHR img');
-                                    if (!host) return out;
-
-                                    const getSelectedSummaryText = () => {
-                                        const el = modal.querySelector('.xJDS9NLo .Mbx2m60G') || modal.querySelector('.Mbx2m60G');
-                                        const t = el?.innerText || el?.textContent || '';
-                                        return String(t || '').replace(/\s+/g, ' ').trim();
-                                    };
-
-                                    const normalizeSelectedSummary = (t) => {
-                                        return String(t || '').replace(/^ه·²é€‰\s*[:ï¼ڑ]\s*/g, '').trim();
-                                    };
-
-                                    const pickComboKey = (summary) => {
-                                        const s = String(summary || '');
-                                        const v1 = (group1Texts || []).find(t => t && s.includes(t)) || null;
-                                        const v2 = (group2Texts || []).find(t => t && s.includes(t)) || null;
-                                        if (v1 && v2) return `${v1}__SEP__${v2}`;
-                                        return summary || null;
-                                    };
-
-                                    const swipeLeft = async () => {
-                                        try {
-                                            const r = host.getBoundingClientRect();
-                                            const startX = Math.floor(r.left + r.width * 0.78);
-                                            const endX = Math.floor(r.left + r.width * 0.22);
-                                            const y = Math.floor(r.top + r.height * 0.5);
-                                            const touchStart = new Touch({ identifier: Date.now(), target: host, clientX: startX, clientY: y });
-                                            const touchEnd = new Touch({ identifier: Date.now(), target: host, clientX: endX, clientY: y });
-                                            host.dispatchEvent(new TouchEvent('touchstart', { touches: [touchStart], bubbles: true }));
-                                            host.dispatchEvent(new TouchEvent('touchmove', { touches: [touchEnd], bubbles: true }));
-                                            host.dispatchEvent(new TouchEvent('touchend', { changedTouches: [touchEnd], bubbles: true }));
-                                            await wait(380);
-                                            return true;
-                                        } catch (e) {
-                                            try {
-                                                const r = host.getBoundingClientRect();
-                                                const startX = Math.floor(r.left + r.width * 0.78);
-                                                const endX = Math.floor(r.left + r.width * 0.22);
-                                                const y = Math.floor(r.top + r.height * 0.5);
-                                                host.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: startX, clientY: y }));
-                                                host.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, cancelable: true, clientX: endX, clientY: y }));
-                                                host.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX: endX, clientY: y }));
-                                                await wait(380);
-                                                return true;
-                                            } catch (e2) {}
-                                        }
-                                        return false;
-                                    };
-
-                                    let stagnation = 0;
-                                    let lastKey = null;
-                                    for (let i = 0; i < maxSwipes; i++) {
-                                        const summary = normalizeSelectedSummary(getSelectedSummaryText());
-                                        const key = pickComboKey(summary);
-                                        const thumb = getModalThumb();
-                                        if (key && thumb) out[key] = thumb;
-
-                                        if (key && key === lastKey) stagnation++;
-                                        else stagnation = 0;
-                                        lastKey = key || lastKey;
-
-                                        if (key) seenKeys.add(key);
-                                        if (seenKeys.size >= 6 && stagnation >= 2) break;
-
-                                        const didSwipe = await swipeLeft();
-                                        if (!didSwipe) break;
-                                    }
-
-                                    return out;
-                                };
-
-                                const extractOptionCards = (root) => {
-                                    const scope = (root || document);
-                                    const liEls = Array.from(scope.querySelectorAll('li.TpUpcNRp'));
-                                    const containerEls = liEls.length > 0
-                                        ? liEls.map(li => li.querySelector('div._8gg8ho2u')).filter(Boolean)
-                                        : Array.from(scope.querySelectorAll('div._8gg8ho2u'));
-                                    const items = [];
-                                    const seen = new Set();
-                                    const addFromContainer = (c) => {
-                                        const thumb = extractCardThumb(c);
-                                        const { text, priceStr } = extractCardTextPrice(c);
-
-                                        if (text && priceStr) {
-                                            const k = `${text}||${priceStr}||${thumb || ''}`;
-                                            if (seen.has(k)) return;
-                                            seen.add(k);
-                                            items.push({ text, priceStr, thumb });
-                                        }
-                                    };
-
-                                    for (const c of containerEls) addFromContainer(c);
-
-                                    if (items.length === 0) {
-                                        const priceEls = Array.from(scope.querySelectorAll('.nvN5jV0G, [class*="nvN5jV0G"]'));
-                                        const candidates = [];
-                                        const uniq = new Set();
-                                        for (const p of priceEls) {
-                                            const t = String(p?.innerText || p?.textContent || '').replace(/\s+/g, ' ').trim();
-                                            if (!t || (!t.includes('آ¥') && !t.includes('ï؟¥'))) continue;
-                                            const c = p.closest('li') || p.closest('div') || p.parentElement;
-                                            if (!c) continue;
-                                            const key = c === scope ? null : (c.getAttribute?.('class') || '') + '::' + (c.innerText || '').slice(0, 60);
-                                            if (key && uniq.has(key)) continue;
-                                            if (key) uniq.add(key);
-                                            candidates.push(c);
-                                            if (candidates.length >= 40) break;
-                                        }
-                                        for (const c of candidates) addFromContainer(c);
-                                    }
-
-                                    return items;
-                                };
-
-                                const cards = extractOptionCards(modal);
-                                if (cards.length > 0) {
-                                    for (const card of cards) {
-                                        skuMap[card.text] = card.priceStr;
-                                        if (card.thumb) skuThumbMap[card.text] = card.thumb;
-
-                                        const pMatch = card.priceStr.match(/(\d+(\.\d+)?)/);
-                                        if (pMatch) {
-                                            const pVal = parseFloat(pMatch[1]);
-                                            if (lowestVariantPrice === null || pVal < lowestVariantPrice) {
-                                                lowestVariantPrice = pVal;
-                                                price = card.priceStr;
-                                            }
-                                        }
-                                    }
-                                }
-                        }
-                    } catch (e) {
-                        console.log('Variant extraction failed:', e.message);
-                    }
-
-                     // 5. Image Extraction with Slider Logic
-                     let images = [];
-                     
-                     // Helper to capture current visible images
-                     const captureImages = () => {
-                         // STRICT SLIDER SELECTOR: Only target images within the known slider container classes
-                         // .goods-slider, .swiper-slide, or specific top containers
-                         // We avoid #main > div img as it is too broad and catches header icons/text
-                         const sliderSelectors = [
-                             '.goods-slider img',
-                             '.swiper-slide img',
-                             '.swiper-container img',
-                             '.banner-slider img',
-                             '#main > div > div:first-child img', // Often the first div is the slider
-                             '.slick-slide img'
-                         ];
-                         
-                         const imgs = document.querySelectorAll(sliderSelectors.join(', '));
-                         
-                         imgs.forEach(img => {
-                             if (img.src && img.src.startsWith('http') && img.naturalWidth > 400) {
-                                 // Clean the URL
-                                 let cleanSrc = img.src.split('?')[0];
-                                 
-                                 // Filter out video snapshots, avatars, icons, and coupons
-                                if (cleanSrc.includes('video-snapshot') || 
-                                    cleanSrc.includes('avatar') || 
-                                    cleanSrc.includes('icon') || 
-                                    cleanSrc.includes('coupon') || 
-                                    cleanSrc.includes('.slim.png')) return;
-
-                                // ASPECT RATIO CHECK: Exclude wide banners or tiny strips
-                                // Product images are usually 1:1 or 3:4. 
-                                // Banners are usually > 2:1.
-                                if (img.naturalHeight > 0) {
-                                    const aspect = img.naturalWidth / img.naturalHeight;
-                                    if (aspect > 2.2 || aspect < 0.4) {
-                                        // console.log(`Skipping image due to aspect ratio ${aspect.toFixed(2)}: ${cleanSrc}`);
-                                        return;
-                                    }
-                                }
-
-                                images.push(cleanSrc);
-                            }
-                        });
-                        
-                        // FALLBACK: If strict slider extraction failed (empty), try slightly broader but still top-area
-                        if (images.length === 0) {
-                            // Get images from the top 50% of the page only
-                            const allImgs = document.querySelectorAll('img');
-                            allImgs.forEach(img => {
-                                const rect = img.getBoundingClientRect();
-                                if (rect.top < window.innerHeight * 0.6 && img.naturalWidth > 400) {
-                                     let cleanSrc = img.src.split('?')[0];
-                                     if (cleanSrc.startsWith('http') && 
-                                         !cleanSrc.includes('avatar') && 
-                                         !cleanSrc.includes('icon') &&
-                                         !cleanSrc.includes('coupon')) {
-                                         
-                                         // Aspect Ratio Check for Fallback too
-                                         if (img.naturalHeight > 0) {
-                                             const aspect = img.naturalWidth / img.naturalHeight;
-                                             if (aspect > 2.2 || aspect < 0.4) return;
-                                         }
-
-                                         images.push(cleanSrc);
-                                     }
-                                }
-                            });
-                        }
-                     };
- 
-                     // Initial capture
-                     captureImages();
- 
-                     // Attempt to slide right (swipe left gesture) to reveal more images
-                     const sliderContainer = document.querySelector('#main > div') || document.body;
-                     
-                     if (sliderContainer) {
-                         for (let i = 0; i < 5; i++) { // Swipe 5 times
-                             try {
-                                 // Simulate touch swipe left SAFE
-                                 // Some environments (Headless) might not support Touch constructor directly or it behaves oddly
-                                 // Use a simpler dispatch if possible, or wrap in try/catch
-                                 if (typeof Touch !== 'undefined' && typeof TouchEvent !== 'undefined') {
-                                     const touchStart = new Touch({ identifier: Date.now(), target: sliderContainer, clientX: 300, clientY: 200 });
-                                     const touchEnd = new Touch({ identifier: Date.now(), target: sliderContainer, clientX: 50, clientY: 200 });
-         
-                                     sliderContainer.dispatchEvent(new TouchEvent('touchstart', { touches: [touchStart], bubbles: true }));
-                                     sliderContainer.dispatchEvent(new TouchEvent('touchmove', { touches: [touchEnd], bubbles: true }));
-                                     sliderContainer.dispatchEvent(new TouchEvent('touchend', { changedTouches: [touchEnd], bubbles: true }));
-                                 }
-                             } catch (e) {
-                                 // console.log('Swipe simulation failed (non-fatal):', e.message);
-                             }
-                             
-                             await wait(800); // Wait for animation
-                             captureImages();
-                         }
-                     }
-
-                     // --- MAIN IMAGE FIX: Prioritize Images from Specific Picture Div ---
-                     // User Request: "set the first main img is the imgs shows in that the picture div"
-                     // This usually refers to the main gallery or a specific container that holds the high-res images
-                     
-                     // 1. Try to find the specific "Picture Div" (often .goods-slider or .slick-slider)
-                     // If we found images in the slider, we should prioritize them.
-                     // The `images` array already collects them, but let's make sure they are unique and ordered correctly.
-                     
-                     images = [...new Set(images)]; // Deduplicate first
-                     
-                     // If we have slider images, they are already at the top.
-                     // But if the user meant the "Details" images (which are sometimes high res), we should be careful.
-                     // Usually "Main Image" is the first one in the slider.
-                     
-                     // Let's verify if there's a specific container the user might be referring to.
-                     // Often in Pinduoduo mobile, the main image is in a swiper at the top.
-                     // We already target that. 
-                     
-                     // However, sometimes "other pictures" (like description images) get mixed in if we use broad selectors.
-                     // Our `captureImages` is already quite strict.
-                     
-                     // Let's double check if we can be even stricter for the FIRST image.
-                    // Look for the absolute first image in the slider container
-                    let firstSliderImg = document.querySelector('.goods-slider img') || 
-                                         document.querySelector('.swiper-slide-active img') || 
-                                         document.querySelector('.slick-current img') ||
-                                         document.querySelector('#main > div > div:first-child img');
-
-                    // Validation: If first image is a banner (wide), ignore it
-                    if (firstSliderImg) {
-                        if (firstSliderImg.naturalHeight > 0) {
-                            const aspect = firstSliderImg.naturalWidth / firstSliderImg.naturalHeight;
-                            if (aspect > 2.0 || aspect < 0.5) {
-                                // console.log('First slider image rejected due to aspect ratio:', aspect);
-                                firstSliderImg = null;
-                            }
-                        }
-                    }
-
-                    // Fallback: If no slider image found, find the largest image in the top 500px
-                    if (!firstSliderImg) {
-                        const allImgs = Array.from(document.querySelectorAll('img'));
-                        let maxArea = 0;
-                        let bestImg = null;
-                        
-                        allImgs.forEach(img => {
-                             const rect = img.getBoundingClientRect();
-                             if (rect.top < 600 && rect.height > 100 && rect.width > 100) {
-                                 const area = rect.width * rect.height;
-                                 const aspect = rect.width / rect.height;
-                                 
-                                 // Only consider reasonable aspect ratios
-                                 if (aspect > 0.5 && aspect < 2.0) {
-                                     if (area > maxArea) {
-                                         maxArea = area;
-                                         bestImg = img;
-                                     }
-                                 }
-                             }
-                        });
-                        if (bestImg) firstSliderImg = bestImg;
-                    }
-                                         
-                    if (firstSliderImg && firstSliderImg.src) {
-                        const mainSrc = firstSliderImg.src.split('?')[0];
-                        // Move this image to the front of the array if it exists
-                        images = images.filter(img => img !== mainSrc);
-                        images.unshift(mainSrc);
-                    } else if (images.length > 0) {
-                         // If we couldn't pinpoint the slider element but captured images,
-                         // ensure the first one in the captured list stays first.
-                         // (Already handled by array order, but good to be explicit)
-                     }
-
- 
-                     // --- REORDERED LOGIC: Close Modal -> Reviews -> (Desc Images moved to Part 3) ---
-
-                     // 1. Close the variant modal explicitly (MOVED UP)
-                     try {
-                         const closeBtn = document.querySelector('div[role="button"][aria-label="关闭弹窗"]') || 
-                                          document.querySelector('.pD0kR4N1') ||
-                                          document.querySelector('div[role="button"] .pD0kR4N1')?.parentElement;
-                         
-                         if (closeBtn) {
-                             closeBtn.click();
-                             await wait(1000);
-                         } else {
-                             const mask = document.querySelector('.ReactModal__Overlay, [class*="overlay"], [class*="mask"]');
-                             if (mask) { 
-                                 mask.click(); 
-                                 await wait(1000);
-                             }
-                         }
-                     } catch(e) {}
-
-                    // 2. Check for Reviews (MOVED UP)
-                    console.log('[Reviews] Checking for reviews...');
-                    await wait(2000);
-
-                    let hasReviews = false;
-                    let reviewCount = 0;
-                    try {
-                        const reviewText = String.fromCharCode(21830, 21697, 35780, 20215); // 商品评价
-                        const reviewTextShort = String.fromCharCode(35780, 20215); // 评价
-                        
-                        let reviewBtn = null;
-                        
-                        // Strategy 1: XPath
-                        try {
-                            const xpath = `//*[contains(text(), '${reviewTextShort}')]`;
-                            const result = document.evaluate(xpath, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
-                            console.log(`[Reviews] XPath found ${result.snapshotLength} candidates.`);
-                            
-                            for (let i = 0; i < result.snapshotLength; i++) {
-                                const el = result.snapshotItem(i);
-                                if (el.tagName === 'SCRIPT' || el.tagName === 'STYLE') continue;
-                                const text = el.innerText || el.textContent;
-                                if (text && text.length < 30) { 
-                                    if (text.includes(reviewText) || text.includes(reviewTextShort)) {
-                                        if (text.includes(reviewText)) {
-                                            reviewBtn = el;
-                                            const m = text.match(/(\d+)/);
-                                            if (m) reviewCount = parseInt(m[1], 10);
-                                            console.log(`[Reviews] Found strict match: ${text} (Count: ${reviewCount})`);
-                                            break;
-                                        }
-                                        if (!reviewBtn) {
-                                            reviewBtn = el;
-                                            const m = text.match(/(\d+)/);
-                                            if (m) reviewCount = parseInt(m[1], 10);
-                                            console.log(`[Reviews] Found candidate: ${text} (Count: ${reviewCount})`);
-                                        }
-                                    }
-                                }
-                            }
-                        } catch(e) { console.log('[Reviews] XPath error:', e.message); }
-
-                        // Strategy 2: DOM Scan
-                        if (!reviewBtn) {
-                            console.log('[Reviews] XPath failed, scanning DOM...');
-                            const allElements = Array.from(document.querySelectorAll('div, span, p, a, button'));
-                            reviewBtn = allElements.find(el => {
-                                const text = el.innerText || el.textContent || '';
-                                return (text.includes(reviewText) || text.includes(reviewTextShort)) && text.length < 20;
-                            });
-                            if (reviewBtn) {
-                                const text = reviewBtn.innerText || '';
-                                const m = text.match(/(\d+)/);
-                                if (m) reviewCount = parseInt(m[1], 10);
-                            }
-                        }
-
-                        // Strategy 3: Regex
-                        if (!reviewBtn) {
-                             console.log('[Reviews] DOM scan failed, looking for regex match (Number + 评价)...');
-                             const allElements = Array.from(document.querySelectorAll('div, span, p'));
-                             for (const el of allElements) {
-                                 const text = el.innerText || '';
-                                 const m = text.match(/(\d+)\+?\s*[\u8bc4\u4ef7]/);
-                                 if (m && text.length < 15) {
-                                     reviewBtn = el;
-                                     reviewCount = parseInt(m[1], 10);
-                                     console.log(`[Reviews] Found regex match: ${text} (Count: ${reviewCount})`);
-                                     break;
-                                 }
-                             }
-                        }
-
-                        if (reviewBtn) {
-                            console.log(`[Reviews] Found review button (Count: ${reviewCount}). Will click in separate step.`);
-                            hasReviews = true;
-                        } else {
-                            console.log('[Reviews] No review button found.');
-                        }
-                    } catch (e) {
-                        console.log(`[Reviews] Error checking reviews: ${e.message}`);
-                    }
-
-                    return { title, price, description, images: [...new Set(images)], variants, skuMap, skuThumbMap, productDetails, variantImages, hasReviews, reviewCount };
-                }, [], 12);
-
-                // --- PART 2A: CLICK REVIEWS (Separate Context) ---
-                if (data.hasReviews) {
-                    console.log('[Reviews] Clicking review button (Separate Context)...');
-                    await safeEvaluate(newPage, async () => {
-                         const wait = (ms) => new Promise(r => setTimeout(r, ms));
-                         console.log('[Reviews] Locating review button for click...');
-                         
-                         try {
-                            const reviewText = String.fromCharCode(21830, 21697, 35780, 20215); // 商品评价
-                            const reviewTextShort = String.fromCharCode(35780, 20215); // 评价
-                            let reviewBtn = null;
-                            
-                            // Strategy 1: XPath
-                            try {
-                                const xpath = `//*[contains(text(), '${reviewTextShort}')]`;
-                                const result = document.evaluate(xpath, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
-                                for (let i = 0; i < result.snapshotLength; i++) {
-                                    const el = result.snapshotItem(i);
-                                    if (el.tagName === 'SCRIPT' || el.tagName === 'STYLE') continue;
-                                    const text = el.innerText || el.textContent;
-                                    if (text && text.length < 30 && (text.includes(reviewText) || text.includes(reviewTextShort))) {
-                                        reviewBtn = el;
-                                        console.log('[Reviews] Found button via XPath strategy.');
-                                        break;
-                                    }
-                                }
-                            } catch(e) {}
-
-                            // Strategy 2: DOM Scan
-                            if (!reviewBtn) {
-                                const allElements = Array.from(document.querySelectorAll('div, span, p, a, button'));
-                                reviewBtn = allElements.find(el => {
-                                    const text = el.innerText || el.textContent || '';
-                                    return (text.includes(reviewText) || text.includes(reviewTextShort)) && text.length < 20;
-                                });
-                                if (reviewBtn) console.log('[Reviews] Found button via DOM Scan strategy.');
-                            }
-
-                            // Strategy 3: Regex
-                            if (!reviewBtn) {
-                                 const allElements = Array.from(document.querySelectorAll('div, span, p'));
-                                 for (const el of allElements) {
-                                     const text = el.innerText || '';
-                                     if (text.match(/(\d+)\+?\s*[\u8bc4\u4ef7]/) && text.length < 15) {
-                                         reviewBtn = el;
-                                         console.log('[Reviews] Found button via Regex strategy.');
-                                         break;
-                                     }
-                                 }
-                            }
-
-                            if (reviewBtn) {
-                                console.log(`[Reviews] Found button, clicking...`);
-                                reviewBtn.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                                await wait(800);
-                                
-                                try {
-                                    const touchStart = new Event('touchstart', { bubbles: true, cancelable: true });
-                                    const touchEnd = new Event('touchend', { bubbles: true, cancelable: true });
-                                    reviewBtn.dispatchEvent(touchStart);
-                                    reviewBtn.dispatchEvent(touchEnd);
-                                    await wait(100);
-                                    reviewBtn.click();
-                                } catch (err) {
-                                    reviewBtn.click();
-                                }
-                            } else {
-                                console.log('[Reviews] Button not found in Click step.');
-                            }
-                         } catch (e) {
-                             console.log(`[Reviews] Error clicking reviews: ${e.message}`);
-                         }
-                    }, [], 12);
-                    
-                    console.log('[Reviews] Click action completed. Waiting 5s for navigation...');
-                    await new Promise(r => setTimeout(r, 5000));
-                }
-
-                // --- PART 2B: EXTRACT REVIEWS (Separate Context) ---
-                let reviews = [];
-                if (data.hasReviews) {
-                     
-                     console.log('[Reviews] Starting review extraction (New Context)...');
-                     // Pass scroll limit flag: if count < 5, don't scroll deeply
-                     const shouldDeepScroll = !data.reviewCount || data.reviewCount > 5;
-                     
-                     reviews = await safeEvaluate(newPage, async (shouldDeepScroll) => {
-                         console.log('[Reviews] Inside safeEvaluate. Deep Scroll:', shouldDeepScroll);
-                         const wait = (ms) => new Promise(r => setTimeout(r, ms));
-                         const extractedReviews = [];
-                         try {
-                             // Scroll Logic
-                             const reviewContent = document.querySelector('.comment-item') || document.querySelector('img[src*="avatar"]'); 
-                             if (!reviewContent) {
-                                 console.log('[Reviews] Review content not immediately visible, waiting...');
-                                 await wait(2000);
-                             }
-
-                            console.log(`[Reviews] Starting scroll sequence (Forced 3 screens)...`);
-                            const scrollLoops = 3; // User requested fixed 3 screens down
-                            
-                            for (let i = 0; i < scrollLoops; i++) {
-                                const startY = window.scrollY;
-                                window.scrollBy(0, window.innerHeight);
-                                await wait(1500 + Math.random() * 500); // Increased wait time for image loading
-                                 const endY = window.scrollY;
-                                 
-                                 // Check if scroll happened
-                                 if (Math.abs(endY - startY) < 10) {
-                                     console.log('[Reviews] Window scroll failed, trying container scroll...');
-                                     
-                                     // OPTIMIZATION: Don't scan all divs. Look for likely containers.
-                                     // 1. Try finding a div with 'scroll' class or style
-                                     // 2. Or just pick the largest div
-                                     const likelyContainers = Array.from(document.querySelectorAll('div[class*="container"], div[class*="list"], div[class*="scroll"], .main, #main'));
-                                     
-                                     let scrollable = likelyContainers.find(d => {
-                                         const style = window.getComputedStyle(d);
-                                         return (style.overflowY === 'auto' || style.overflowY === 'scroll') && d.scrollHeight > d.clientHeight;
-                                     });
-
-                                     // Fallback: If no obvious container, try the body or root element
-                                     if (!scrollable) {
-                                         const body = document.body;
-                                         if (body.scrollHeight > body.clientHeight) scrollable = body;
-                                     }
-
-                                     if (scrollable) {
-                                         console.log('[Reviews] Found scrollable container:', scrollable.className);
-                                         scrollable.scrollBy(0, 500);
-                                         await wait(500);
-                                     } else {
-                                         console.log('[Reviews] No scrollable container found.');
-                                     }
-                                 }
-                             }
-                             
-                             console.log('[Reviews] Extracting reviews...');
-                            const maxReviews = 20;
-                             
-                             // Strategy 0: User-Provided Specific Selectors (Priority)
-                             // Review Item: div.LFMbudEX
-                             // Name: span.BQX0_Yxu
-                             // Variant: span.X2uOYqB0
-                             // Comment: .dTH6vA6C
-                             // Photos: div.db85mmgV
-                             
-                             const specificReviewItems = document.querySelectorAll('div.LFMbudEX');
-                             if (specificReviewItems && specificReviewItems.length > 0) {
-                                 console.log(`[Reviews] Found ${specificReviewItems.length} reviews using specific selector (div.LFMbudEX).`);
-                                 
-                                 specificReviewItems.forEach(item => {
-                                     try {
-                                        if (extractedReviews.length >= maxReviews) return;
-                                         // Name
-                                         const nameEl = item.querySelector('span.BQX0_Yxu');
-                                         const name = nameEl ? nameEl.innerText.trim() : 'Pinduoduo Shopper';
-                                         
-                                         // Variant/Option
-                                         const variantEl = item.querySelector('span.X2uOYqB0');
-                                         const variantText = variantEl ? variantEl.innerText.trim() : '';
-                                         
-                                         // Comment
-                                         const commentEl = item.querySelector('.dTH6vA6C');
-                                         let comment = commentEl ? commentEl.innerText.trim() : '';
-                                         
-                                         // Append variant to comment if exists (so it's visible)
-                                         if (variantText) {
-                                             comment = comment ? `${comment}\n(Option: ${variantText})` : `(Option: ${variantText})`;
-                                         }
-                                         
-                                        // Photos: div.db85mmgV -> div.x0U3sYw6 -> img
-                                        const photoContainer = item.querySelector('div.db85mmgV');
-                                        let photos = [];
-                                        if (photoContainer) {
-                                            // Check specifically for the image wrapper class provided by user
-                                            const photoWrappers = photoContainer.querySelectorAll('div.x0U3sYw6');
-                                            
-                                            if (photoWrappers && photoWrappers.length > 0) {
-                                                 photos = Array.from(photoWrappers)
-                                                    .map(w => {
-                                                        const img = w.querySelector('img');
-                                                        return img ? (img.getAttribute('data-src') || img.src) : null;
-                                                    })
-                                                    .filter(src => src && !src.includes('avatar') && !src.startsWith('data:'))
-                                                    .map(src => src.split('?')[0]);
-                                            } else {
-                                                // Fallback to direct image search if wrapper class changes
-                                                photos = Array.from(photoContainer.querySelectorAll('img'))
-                                                   .filter(img => img.naturalWidth > 50 && !img.src.includes('avatar'))
-                                                   .map(img => img.src.split('?')[0]);
-                                            }
-                                        }
-                                         
-                                         if (comment || photos.length > 0) {
-                                             extractedReviews.push({ name, comment, photos: [...new Set(photos)] });
-                                         }
-                                     } catch (err) {
-                                         console.log('[Reviews] Error extracting specific review item:', err.message);
-                                     }
-                                 });
-                             } else {
-                                 console.log('[Reviews] Specific selector (div.LFMbudEX) not found. Trying fallback strategy...');
-                                 
-                                 // Strategy 1: Group elements by class name (Fallback)
-                                 const candidates = Array.from(document.querySelectorAll('div'));
-                                 const classCounts = {};
-                                 
-                                 // Limit candidates to first 2000 to avoid freezing
-                                 const limit = Math.min(candidates.length, 2000);
-                                 
-                                 for (let i=0; i<limit; i++) {
-                                     const d = candidates[i];
-                                     if (d.className && typeof d.className === 'string' && d.innerText.length > 5) {
-                                         const c = d.className;
-                                         if (!classCounts[c]) classCounts[c] = [];
-                                         classCounts[c].push(d);
-                                     }
-                                 }
-                                 
-                                 let bestClass = null;
-                                 let maxCount = 0;
-                                 for (const [cls, items] of Object.entries(classCounts)) {
-                                     if (items.length > 1) {
-                                         const first = items[0];
-                                         const text = first.innerText.trim();
-                                         // Check for images inside
-                                         const imgs = first.querySelectorAll('img');
-                                         const hasValidImg = Array.from(imgs).some(img => img.naturalWidth > 50 && !img.src.includes('avatar'));
-                                         
-                                         if (text.length > 5 && (hasValidImg || items.length > 3)) {
-                                             if (items.length > maxCount) { maxCount = items.length; bestClass = cls; }
-                                         }
-                                     }
-                                 }
-
-                                 if (bestClass) {
-                                     console.log(`[Reviews] Best review class: ${bestClass} (Count: ${maxCount})`);
-                                     const items = classCounts[bestClass];
-                                     items.forEach(item => {
-                                        if (extractedReviews.length >= maxReviews) return;
-                                         const text = item.innerText.trim();
-                                         const imgs = Array.from(item.querySelectorAll('img')).filter(img => img.naturalWidth > 50 && !img.src.includes('avatar')).map(img => img.src.split('?')[0]);
-                                         if (text && (imgs.length > 0 || text.length > 10)) {
-                                             const lines = text.split('\n').map(l => l.trim()).filter(l => l);
-                                             let name = 'Pinduoduo Shopper';
-                                             let comment = text;
-                                             if (lines.length > 1 && lines[0].length < 20) { name = lines[0]; comment = lines.slice(1).join(' '); }
-                                             extractedReviews.push({ name, comment, photos: [...new Set(imgs)] });
-                                         }
-                                     });
-                                 } else {
-                                     console.log('[Reviews] No best class found. Fallback to image scan.');
-                                     const visibleImgs = Array.from(document.querySelectorAll('img')).filter(img => img.naturalWidth > 100 && !img.src.includes('avatar')).map(img => img.src.split('?')[0]);
-                                     const uniqueImgs = [...new Set(visibleImgs)];
-                                     for (let i = 0; i < uniqueImgs.length; i += 3) {
-                                        if (extractedReviews.length >= maxReviews) break;
-                                         extractedReviews.push({ 
-                                            name: 'Pinduoduo Shopper', 
-                                            comment: '\u0635\u0648\u0631 \u0645\u0646 \u062a\u0642\u064a\u064a\u0645\u0627\u062a \u0627\u0644\u0639\u0645\u0644\u0627\u0621', // Photos from customer reviews
-                                            photos: uniqueImgs.slice(i, i+3) 
-                                        });
-                                     }
-                                 }
-                             }
-
-                             console.log(`[Reviews] Extracted ${extractedReviews.length} reviews.`);
-
-                             // Go Back
-                            console.log('[Reviews] Going back...');
-                            const backBtnText = String.fromCharCode(36820, 22238); // 返回
-                            const backBtn = document.querySelector(`div[role="button"][aria-label*="${backBtnText}"]`) || 
-                                            document.querySelector('[data-testid="back-button"]') ||
-                                            Array.from(document.querySelectorAll('div, span')).find(el => el.innerText === backBtnText);
-                                            
-                            if (backBtn) backBtn.click();
-                            else window.history.back();
-                             
-                         } catch (e) { console.log('Review error:', e.message); }
-                         return extractedReviews;
-                    }, [shouldDeepScroll], 12);
-                     
-                     console.log(`[Reviews] Extracted ${reviews.length} reviews. Waiting 2s for back navigation...`);
-                     await new Promise(r => setTimeout(r, 2000));
-                }
-                data.reviews = reviews;
-
-                // --- TRANSLATE REVIEWS (BATCHED) ---
-                if (data.reviews && data.reviews.length > 0 && aiClient) {
-                    const reviewsToTranslate = data.reviews.slice(0, 8);
-                    console.log(`[Reviews] Translating top ${reviewsToTranslate.length} reviews to Arabic...`);
-                    
-                    const reviewBatches = [];
-                    // Reduced batch size to prevent token limit truncation
-                    for (let i = 0; i < reviewsToTranslate.length; i += 3) {
-                        reviewBatches.push(reviewsToTranslate.slice(i, i + 3));
-                    }
-
-                    const translatedReviews = [];
-
-                    for (const batch of reviewBatches) {
-                        const batchContent = JSON.stringify(batch.map(r => ({ n: r.name, c: r.comment })));
-                        const prompt = `
-                        Translate these product reviews to Arabic (Iraqi dialect preferred for comments).
-                        Input: ${batchContent}
-                        
-                        IMPORTANT:
-                        - Return ONLY a raw JSON array.
-                        - NO markdown blocks (do not use \`\`\`json).
-                        - Keep the order EXACTLY the same.
-                        - Each item: {"n": "Translated Name", "c": "Translated Comment"}
-                        - "Pinduoduo Shopper" -> "متسوق" or similar.
-                        - "Photos from customer reviews" -> "صور من تقييمات العملاء"
-                        `;
-
-                        try {
-                            const res = await aiClient.chat.completions.create({
-                                model: AI_PRIMARY_MODEL,
-                                messages: [{ role: "user", content: prompt }],
-                                temperature: 0.4,
-                                max_tokens: 1000
-                            });
-                            
-                            let jsonStr = res.choices[0].message.content.replace(/```json/g, '').replace(/```/g, '').trim();
-                             const start = jsonStr.indexOf('[');
-                             const end = jsonStr.lastIndexOf(']');
-                             
-                             if (start !== -1) {
-                                 if (end !== -1 && end > start) {
-                                     jsonStr = jsonStr.substring(start, end + 1);
-                                 } else {
-                                     // No closing bracket found, or it's before start. Likely truncated.
-                                     // Keep from start to end of string to attempt repair later.
-                                     jsonStr = jsonStr.substring(start);
-                                 }
-                             } else {
-                                 // If no array found, try to find single object and wrap in array
-                                 const startObj = jsonStr.indexOf('{');
-                                 const endObj = jsonStr.lastIndexOf('}');
-                                 if (startObj !== -1 && endObj !== -1) {
-                                     jsonStr = `[${jsonStr.substring(startObj, endObj + 1)}]`;
-                                 }
-                             }
-                             
-                             // Escape unescaped double quotes within string values
-                             // This is a heuristic and might need refinement
-                             // jsonStr = jsonStr.replace(/(?<!\\)"/g, '\\"'); // Too aggressive, breaks structure
-                             
-                             let transBatch;
-                             try {
-                                transBatch = JSON.parse(jsonStr);
-                             } catch (e) {
-                                 console.log('[Reviews] JSON Parse Error. Attempting to fix common JSON issues...');
-                                 try {
-                                     // Try to fix common JSON issues: trailing commas
-                                     const fixedJsonStr = jsonStr.replace(/,\s*]/g, ']').replace(/,\s*}/g, '}');
-                                     transBatch = JSON.parse(fixedJsonStr);
-                                 } catch (e2) {
-                                     console.log('[Reviews] Simple fix failed. Attempting to recover truncated JSON...');
-                                     try {
-                                         // Check for truncation: Prefer splitting at the last object separator "},"
-                                    const lastCommaIndex = jsonStr.lastIndexOf('},');
-                                    let recovered = false;
-                                    
-                                    if (lastCommaIndex !== -1) {
-                                        try {
-                                            const truncatedJson = jsonStr.substring(0, lastCommaIndex + 1) + ']';
-                                            transBatch = JSON.parse(truncatedJson);
-                                            console.log(`[Reviews] Recovered ${transBatch.length} reviews by splitting at last comma.`);
-                                            recovered = true;
-                                        } catch (eComma) {}
-                                    }
-                                    
-                                    if (!recovered) {
-                                        // Fallback: Find the last closing brace '}'
-                                        const lastBraceIndex = jsonStr.lastIndexOf('}');
-                                        if (lastBraceIndex !== -1) {
-                                            const truncatedJson = jsonStr.substring(0, lastBraceIndex + 1) + ']';
-                                            transBatch = JSON.parse(truncatedJson);
-                                            console.log(`[Reviews] Recovered ${transBatch.length} reviews by finding last brace.`);
-                                        } else {
-                                            throw e2;
-                                        }
-                                    }
-                                     } catch (e3) {
-                                         console.log('[Reviews] Failed to parse translated reviews JSON:', e3.message);
-                                         console.log('Raw response:', res.choices[0].message.content);
-                                         transBatch = null; 
-                                     }
-                                 }
-                             }
-                            
-                            if (Array.isArray(transBatch) && transBatch.length > 0) {
-                                batch.forEach((r, idx) => {
-                                    if (idx < transBatch.length) {
-                                        translatedReviews.push({
-                                            ...r,
-                                            name: transBatch[idx].n || r.name,
-                                            comment: transBatch[idx].c || r.comment
-                                        });
-                                    } else {
-                                        // Fallback for missing translations (truncated items)
-                                        console.log(`[Reviews] Item ${idx} missing translation (likely truncated). Using original.`);
-                                        translatedReviews.push(r);
-                                    }
-                                });
-                            } else {
-                                // Fallback: use original
-                                console.log('[Reviews] Translation failed or invalid format. Using original reviews.');
-                                translatedReviews.push(...batch);
-                            }
-
-                        } catch (e) {
-                            console.log('[Reviews] Translation error:', e.message);
-                            translatedReviews.push(...batch);
-                        }
-
-                        // Rate Limit Buffer to avoid 429
-                        await new Promise(r => setTimeout(r, 1000));
-                    }
-                    
-                    data.reviews = translatedReviews;
-                    console.log(`[Reviews] Translation complete. ${data.reviews.length} reviews ready.`);
-                }
-
-                // --- ENSURE NAVIGATION BACK TO MAIN PAGE ---
-                try {
-                    const isMainPage = await newPage.evaluate(() => {
-                        // Check for common main page elements: Title, Price, or Bottom Bar buttons
-                        return !!document.querySelector('.goods-details-title') || 
-                               !!document.querySelector('.enable-select') || // Price/Title area often has this
-                               !!document.querySelector('div[aria-label="收藏"]') || // Favorite button
-                               !!document.querySelector('div[aria-label="客服"]');   // Customer service
+                    // Scroll approx 1 full screen height with HUMAN SLIDE
+                    const vh = await page.evaluate(() => window.innerHeight);
+                    await humanScroll(page, vh, {
+                        steps: 25,
+                        variance: 0.15
                     });
                     
-                    if (!isMainPage && data.hasReviews) {
-                        console.log('[Reviews] Not on main page after review extraction. Forcing browser back navigation...');
-                        await newPage.goBack();
-                        await wait(3000);
-                    }
-                } catch (e) {
-                    console.log('[Reviews] Error checking page state:', e.message);
+                    await randomDelay(4000, 8000); // Wait for content to load
                 }
 
-                // --- PART 3: DESCRIPTION IMAGES (Separate Context) ---
-                console.log('[Description] Starting description image extraction (New Context)...');
-                const product_desc_imgs = await safeEvaluate(newPage, async () => {
-                     const wait = (ms) => new Promise(r => setTimeout(r, ms));
-                     const imgs = [];
-                     
-                     // Scroll
-                     console.log('[Description] Scrolling...');
-                     const steps = 20;
-                     const stepSize = document.body.scrollHeight / steps;
-                     for (let i = 0; i < steps; i++) {
-                         window.scrollBy(0, stepSize);
-                         await wait(100);
-                     }
-                     await wait(2000);
-
-                     // Extract
-                     const allImgs = Array.from(document.querySelectorAll('img'));
-                     allImgs.forEach(img => {
-                         let src = img.getAttribute('data-src') || img.src;
-                         if (src && !src.startsWith('data:') && img.naturalWidth > 300) {
-                             if (!src.includes('avatar') && !src.includes('icon')) {
-                                 imgs.push(src.split('?')[0]);
-                             }
-                         }
-                     });
-                     return [...new Set(imgs)];
-                });
-                data.product_desc_imgs = product_desc_imgs;
-
-                // Enrich
-                console.log(`Enriching: ${data.title.substring(0, 20)}...`);
-                
-                let general_price = 0;
-                if (data.price) {
-                     const match = data.price.match(/(\d+(\.\d+)?)/);
-                     if (match) general_price = parseFloat(match[1]) * 200; 
-                }
-
-                // --- EDIBLE CHECK (KEYWORD PRE-FILTER) ---
-                const preCheck = isEdiblePreCheck(data.title, data.description);
-                if (preCheck.isEdible) {
-                    console.log(`Skipping product (EDIBLE KEYWORD DETECTED: ${preCheck.keyword}): ${data.title.substring(0, 30)}...`);
-                    if (!navigationHappened) await newPage.close();
-                    else await newPage.goBack();
-                    continue;
-                }
-
-                const aiData = await enrichWithAI(data.title, data.description, data.price);
-
-                // CHECK: Did AI fail completely?
-                if (aiData.shouldSkip) {
-                    console.error(`Skipping product due to AI translation failure: ${aiData.reason}`);
-                    if (!navigationHappened) await newPage.close();
-                    else await newPage.goBack();
-                    continue;
-                }
-
-                // CHECK: Is it edible (AI Detection)?
-                if (aiData.is_edible) {
-                    console.log(`Skipping product (AI DETECTED EDIBLE): ${data.title.substring(0, 30)}...`);
-                    if (!navigationHappened) await newPage.close();
-                    else await newPage.goBack();
-                    continue;
-                }
-
-                // --- GENERATE OPTIONS FROM SKU MAP (WITH TRANSLATION) ---
-                let generated_options = [];
-                const variantImages = data.variantImages || {};
-                const skuThumbMap = data.skuThumbMap || {};
-
-                if (data.skuMap && Object.keys(data.skuMap).length > 0) {
-                    const rawVariantEntries = Object.entries(data.skuMap || {});
-                    // console.log(`Variant prices BEFORE translation (${rawVariantEntries.length})`);
-                    const rawPreviewLimit = 5; // Reduced limit
-                    
-                    // Helper to translate color/size via AI if possible, or simple mapping
-                    // Since we want strict Arabic, we might need a quick AI pass or just use the aiData logic
-                    // For now, let's process the structure first, then maybe translate the labels
-
-                    const resolveThumbnail = (optionKey, colorStr) => {
-                        if (optionKey && skuThumbMap[optionKey]) return skuThumbMap[optionKey];
-                        if (!colorStr) return null;
-                        if (variantImages[colorStr]) return variantImages[colorStr];
-                        const keys = Object.keys(variantImages || {});
-                        const matchingKey = keys.find(k => k && (k.includes(colorStr) || colorStr.includes(k)));
-                        return matchingKey ? variantImages[matchingKey] : null;
-                    };
-
-                    for (const [key, priceStr] of rawVariantEntries) {
-                        let color = key;
-                        let size = null;
-
-                        if (key.includes('__SEP__')) {
-                            const parts = key.split('__SEP__');
-                            color = parts[0];
-                            size = parts[1];
-                        }
-
-                        let priceVal = 0;
-                        const match = String(priceStr || '').match(/(\d+(\.\d+)?)/);
-                        if (match) priceVal = parseFloat(match[1]) * 200;
-
-                        color = String(color || '')
-                            .replace(/\n.*$/, '')
-                            .replace(/م€گ.*?م€‘/g, '')
-                            .replace(/\s+/g, ' ')
-                            .trim();
-
-                        if (size) {
-                            size = String(size || '');
-                            size = size.replace(/(\d+(\.\d+)?)\s*[-~]\s*(\d+(\.\d+)?)\s*و–¤/g, (m, p1, p2, p3) => {
-                                const start = parseFloat(p1) / 2;
-                                const end = parseFloat(p3) / 2;
-                                return `${start}-${end}kg`;
-                            });
-                            size = size.replace(/(\d+(\.\d+)?)\s*و–¤/g, (m, p1) => `${parseFloat(p1) / 2}kg`);
-                            size = size.replace(/\n.*$/, '').replace(/م€گ.*?م€‘/g, '').replace(/\s+/g, ' ').trim();
-                            if (!size) size = null;
-                        }
-
-                        generated_options.push({
-                            color,
-                            sizes: size ? [size] : [],
-                            price: priceVal,
-                            thumbnail: resolveThumbnail(key, color)
-                        });
-                    }
-
-                    console.log(`Generated options from SKU map (${generated_options.length})`);
-
-                    // LIMIT OPTIONS: If more than 50, limit to 50
-                    if (generated_options.length > 30) {
-                        console.log(`[Options] Too many options (${generated_options.length}). Limiting to 30.`);
-                        generated_options = generated_options.slice(0, 30);
-                    }
- 
-                     // --- TRANSLATE OPTIONS IF AI IS AVAILABLE ---
-                     if (aiClient && generated_options.length > 0) {
-                         console.log(`Translating ${generated_options.length} options via AI (chunked)...`);
-
-                         const translateChunk = async (chunk) => {
-                             const optionsText = JSON.stringify(chunk.map(o => ({ c: o.color, s: (o.sizes && o.sizes[0]) ? o.sizes[0] : "" })));
-                             const transPrompt = `
-                             Translate these product options to Arabic.
-                             Input: ${optionsText}
-                             
-                             IMPORTANT:
-                             - Return ONLY a JSON array. Do not include any conversational text like "Here is the JSON" or markdown code blocks.
-                             - Keep the number of items EXACTLY the same as input.
-                             - Keep the order EXACTLY the same as input.
-                             - Each output item must be {"c": "...", "s": "..."}.
-                             - If the input contains "kg" (kilograms), KEEP "kg" in the translation (e.g. "80kg" -> "80kg" or "80 كغم").
-                            - Do NOT convert numbers back to original units.
-                            - Remove any Chinese characters or marketing text like "快要断码", "图片色" (Image Color), "高质量", "建议", "斤".
-                            - "图片色" or "默认" should be translated as "كما في الصورة" (As shown in image) or "اللون الافتراضي" (Default Color).
-                            - Remove any newlines or extra whitespace.
-                            - Return pure, clean Arabic names for colors and sizes.
-                            - TRANSLATE COLORS TO ARABIC (e.g. "Black" -> "أسود", "红色" -> "أحمر").
-                            - TRANSLATE "建议" (Recommended) to "مقترح" or remove it if just a label.
-                            - STRICTLY REMOVE any "return policy", "refund", "replacement" (e.g. "包退", "包换") text from option names.
-                             `;
-
-                             const translate = async (model) => {
-                                 return await aiClient.chat.completions.create({
-                                     model,
-                                     messages: [{ role: "user", content: transPrompt }],
-                                     temperature: 0.3,
-                                     max_tokens: 1000
-                                 });
-                             };
-
-                             let transRes;
-                             try {
-                                transRes = await translate(AI_PRIMARY_MODEL);
-                            } catch (e) {
-                                if (isTimeoutError(e)) {
-                                    throw e;
-                                }
-                                if (isModelBusyError(e)) {
-                                    console.log(`AI busy on ${AI_PRIMARY_MODEL}. Falling back to ${AI_BUSY_FALLBACK_MODEL} for options translation...`);
-                                    transRes = await translate(AI_BUSY_FALLBACK_MODEL);
-                                } else if (AI_FALLBACK_MODEL && AI_FALLBACK_MODEL !== AI_PRIMARY_MODEL) {
-                                    console.log(`AI error on ${AI_PRIMARY_MODEL}. Falling back to ${AI_FALLBACK_MODEL} for options translation...`);
-                                    transRes = await translate(AI_FALLBACK_MODEL);
-                                } else {
-                                    throw e;
-                                }
-                            }
-
-                             let transJson = transRes.choices[0].message.content.replace(/```json/g, '').replace(/```/g, '').trim();
-                             const startIdx = transJson.indexOf('[');
-                             const endIdx = transJson.lastIndexOf(']');
-                             if (startIdx !== -1 && endIdx !== -1) transJson = transJson.substring(startIdx, endIdx + 1);
-
-                             const transArr = JSON.parse(transJson);
-                             if (!Array.isArray(transArr) || transArr.length !== chunk.length) {
-                                 throw new Error(`Translation length mismatch (${Array.isArray(transArr) ? transArr.length : 'invalid'} vs ${chunk.length})`);
-                             }
-                             return transArr;
-                         };
-
-                         const applyTranslation = (chunk, transArr) => {
-                            for (let i = 0; i < chunk.length; i++) {
-                                const opt = chunk[i];
-                                const t = transArr[i] || {};
-                                
-                                // Save original values before translation
-                                if (!opt.originalColor) opt.originalColor = opt.color;
-                                if (Array.isArray(opt.sizes) && opt.sizes.length > 0 && !opt.originalSize) {
-                                     opt.originalSize = opt.sizes[0];
-                                }
-
-                                if (t.c) opt.color = String(t.c).trim().replace(/\s+/g, ' ');
-                                if (Array.isArray(opt.sizes) && opt.sizes.length > 0) {
-                                    if (t.s !== undefined && t.s !== null) {
-                                        const nextSize = String(t.s).trim().replace(/\s+/g, ' ');
-                                        if (nextSize) opt.sizes[0] = nextSize;
-                                    }
-                                }
-                            }
-                        };
-
-                         const baseChunkSize = Number(process.env.AI_OPTIONS_TRANSLATE_CHUNK_SIZE) > 0 ? Number(process.env.AI_OPTIONS_TRANSLATE_CHUNK_SIZE) : 25;
-                         const queue = [];
-                         for (let i = 0; i < generated_options.length; i += baseChunkSize) {
-                             queue.push([i, Math.min(i + baseChunkSize, generated_options.length)]);
-                         }
-
-                         while (queue.length > 0) {
-                             const [start, end] = queue.shift();
-                             const chunk = generated_options.slice(start, end);
-                             let ok = false;
-                             let attempts = 0;
-                             const maxAttempts = 3;
-                             while (!ok && attempts < maxAttempts) {
-                                 attempts++;
-                                 try {
-                                     const transArr = await translateChunk(chunk);
-                                     applyTranslation(chunk, transArr);
-                                     ok = true;
-                                 } catch (e) {
-                                     if (attempts >= maxAttempts) break;
-                                     await delay(700);
-                                 }
-                             }
-                             if (!ok) {
-                                 if (chunk.length <= 1) continue;
-                                 const mid = start + Math.floor((end - start) / 2);
-                                 queue.unshift([mid, end]);
-                                 queue.unshift([start, mid]);
-                             }
-                         }
-
-                         console.log('Options translation applied (chunked best-effort).');
-                     } else {
-                         console.log('Skipping options translation (AI not ready or no options).');
-                     }
-
-                    // console.log(`Variant prices AFTER translation (${generated_options.length})`);
-                    /*
-                    const postLines = [];
-                    for (const opt of generated_options) {
-                        const s = (opt.sizes && opt.sizes[0]) ? opt.sizes[0] : '';
-                        postLines.push(`${opt.color}${s ? `__SEP__${s}` : ''} => ${opt.price} IQD`);
-                    }
-                    const postPreviewLimit = 120;
-                    postLines.slice(0, postPreviewLimit).forEach(l => console.log(`  ${l}`));
-                    if (postLines.length > postPreviewLimit) console.log(`  ... truncated ${postLines.length - postPreviewLimit} more`);
-                    */
-                    console.log(`> Processed ${generated_options.length} variants.`);
+                // Generate new randomized batch (0, 1, 2, 3)
+                 console.log('Generating new randomized click order for this screen...');
+                 const indices = [0, 1, 2, 3];
+                 // Fisher-Yates Shuffle
+                 for (let i = indices.length - 1; i > 0; i--) {
+                     const j = Math.floor(Math.random() * (i + 1));
+                     [indices[i], indices[j]] = [indices[j], indices[i]];
                  }
-
-
-
-                // --- FIX: If general_price is 0 but we have options with prices, use the min option price ---
-                if (general_price <= 0 && generated_options.length > 0) {
-                    const validOptionPrices = generated_options
-                        .map(o => o.price)
-                        .filter(p => p > 0);
-                    
-                    if (validOptionPrices.length > 0) {
-                        general_price = Math.min(...validOptionPrices);
-                        console.log(`[Price Fix] General price was 0, updated to ${general_price} from minimum option price.`);
-                    }
-                }
-
-                const enrichedProduct = {
-                    product_name: aiData.product_name_ar || 'اسم غير متوفر',
-                    // original_name: data.title, // REMOVED as per request
-                    main_images: data.images.slice(0, 5),
-                    url: productUrl,
-                    // product_details: data.productDetails, // REMOVED as per request
-                    product_details: aiData.product_details_ar, // Use Arabic details as main 'product_details'
-                    // product_details_ar: aiData.product_details_ar, // REMOVED redundancy
-                    product_desc_imgs: data.product_desc_imgs || [], // Description Images
-                    general_price: general_price,
-                    generated_options: generated_options, // New Field
-                    scrapedReviews: data.reviews || [], // Store reviews at top level (renamed from reviews)
-                    aiMetadata: { ...(aiData.aiMetadata || {}) }, // Removed reviews from here
-                    isAirRestricted: aiData.isAirRestricted || false, // New Field
-                    // variants: data.variants, // REMOVED as per request
-                    // skuMap: data.skuMap // REMOVED as per request
-                };
-
-                // Calculate Final Price with 15% Profit
-                const calculateFinalPrice = (base) => {
-                    const price = Number(base) || 0;
-                    if (price <= 0) return 0;
-                    // Formula: (BaseIQD + Domestic) * 1.15 / 10 * 10 (ceil)
-                    // Assuming domestic shipping is 0 or handled separately in cart logic, 
-                    // but usually scraper stores the inclusive price.
-                    // Let's stick to the basic profit margin here.
-                    return Math.ceil((price * 1.15) / 10) * 10;
-                };
-
-                const finalPrice = calculateFinalPrice(general_price);
-
-                // CHECK: Skip product if price is too low (<= 250 IQD) - REMOVED AS REQUESTED
-                /*
-                if (finalPrice <= 250) {
-                    console.log(`Skipping product: Price too low (Final: ${finalPrice}, Base: ${general_price}). URL: ${productUrl}`);
-                    if (!navigationHappened) await newPage.close();
-                    else await newPage.goBack();
-                    continue;
-                }
-                */
-
-                products.push(enrichedProduct);
-                console.log(`Scraped successfully. Total: ${products.length}`);
-                
-                fs.writeFileSync(OUTPUT_FILE, JSON.stringify(products, null, 2));
-
-                // --- DATABASE INSERTION ---
-                // console.log('Inserting into Database...');
-                try {
-                    // 1. Create Product
-                    const newProduct = await prisma.product.create({
-                        data: {
-                            name: enrichedProduct.product_name,
-                            price: finalPrice, // Store FINAL price with profit
-                            basePriceIQD: enrichedProduct.general_price || 0, // Store BASE price (Cost)
-                            image: enrichedProduct.main_images[0] || '',
-                            purchaseUrl: enrichedProduct.url,
-                            specs: JSON.stringify(enrichedProduct.product_details || {}),
-                            aiMetadata: enrichedProduct.aiMetadata || {},
-                            scrapedReviews: enrichedProduct.scrapedReviews || [], // Save reviews to DB
-                            isAirRestricted: enrichedProduct.isAirRestricted || false, // Save to DB
-                            status: "PUBLISHED",
-                            isActive: true,
-                        }
-                    });
-                    console.log(`Product created: ID ${newProduct.id}`);
-
-                    // 2. Create Product Images (Gallery)
-                    if (enrichedProduct.main_images && enrichedProduct.main_images.length > 0) {
-                        await prisma.productImage.createMany({
-                            data: enrichedProduct.main_images.map((url, i) => ({
-                                productId: newProduct.id,
-                                url: url,
-                                order: i,
-                                type: "GALLERY"
-                            }))
-                        });
-                    }
-
-                    // 3. Create Description Images
-                    if (enrichedProduct.product_desc_imgs && enrichedProduct.product_desc_imgs.length > 0) {
-                        await prisma.productImage.createMany({
-                            data: enrichedProduct.product_desc_imgs.map((url, i) => ({
-                                productId: newProduct.id,
-                                url: url,
-                                order: i + 100, // Offset to keep them after gallery
-                                type: "DESCRIPTION"
-                            }))
-                        });
-                    }
-
-                    // 4. Create Product Options (Color & Size) - VALIDATED
-                    const colors = new Map();
-                    const sizes = new Map();
-                    
-                    // Filter out Chinese characters from options
-                    const containsChinese = (str) => /[\u4e00-\u9fa5]/.test(str);
-                    
-                    // Filter out invalid/suspicious options (Custom orders, deposits, etc.)
-                    const invalidKeywords = [
-                        '定制', '专拍', '补差', '邮费', '不发货', '联系客服', // Chinese
-                        'تخصيص', 'اتصال', 'رابط', 'فرق', 'إيداع', 'لا يرسل', 'خدمة العملاء', 'مخصص' // Arabic
-                    ];
-
-                    enrichedProduct.generated_options = enrichedProduct.generated_options.filter(opt => {
-                        const text = (opt.color || '') + ' ' + (opt.sizes ? opt.sizes.join(' ') : '');
-                        const hasInvalidKeyword = invalidKeywords.some(kw => text.includes(kw));
-
-                        if (hasInvalidKeyword) {
-                            console.log(`Skipping invalid/suspicious option: ${text} (Price: ${opt.price})`);
-                            return false;
-                        }
-                        return true;
-                    });
-
-                    const optionTranslationCache = new Map();
-                    const translateOptionLabel = async (label) => {
-                        const text = String(label || '').trim();
-                        if (!text || !aiClient || !containsChinese(text)) return text;
-                        if (optionTranslationCache.has(text)) return optionTranslationCache.get(text);
-                        const prompt = `Translate this product option label to Arabic. Return only the translated text without quotes or extra words.\nInput: ${text}`;
-                        try {
-                            const res = await aiClient.chat.completions.create({
-                                model: AI_PRIMARY_MODEL,
-                                messages: [{ role: "user", content: prompt }],
-                                temperature: 0.2,
-                                max_tokens: 80
-                            });
-                            let translated = res.choices[0].message.content.replace(/```/g, '').trim();
-                            translated = translated.replace(/^[\"']|[\"']$/g, '').trim();
-                            if (translated && !containsChinese(translated)) {
-                                optionTranslationCache.set(text, translated);
-                                return translated;
-                            }
-                        } catch (e) {}
-                        optionTranslationCache.set(text, text);
-                        return text;
-                    };
-
-                    for (const opt of enrichedProduct.generated_options) {
-                        if (opt.color) {
-                            let colorValue = opt.color;
-                            if (containsChinese(colorValue)) {
-                                console.log(`Chinese color detected: ${colorValue}. Attempting fallback translation/usage...`);
-                                const translatedColor = await translateOptionLabel(colorValue);
-                                if (translatedColor && !containsChinese(translatedColor)) {
-                                    opt.color = translatedColor;
-                                    colorValue = translatedColor;
-                                } else {
-                                    console.log(`Chinese color retained: ${colorValue}.`);
-                                }
-                            }
-                            if (!colors.has(colorValue)) colors.set(colorValue, opt.originalColor || colorValue);
-                        }
-
-                        if (opt.sizes && Array.isArray(opt.sizes)) {
-                            opt.sizes.forEach(s => {
-                                const original = (s === opt.sizes[0] && opt.originalSize) ? opt.originalSize : s;
-                                if (!containsChinese(s)) {
-                                    if (!sizes.has(s)) sizes.set(s, original);
-                                } else {
-                                    console.log(`Chinese size detected: ${s}. Using it anyway.`);
-                                    if (!sizes.has(s)) sizes.set(s, original);
-                                }
-                            });
-                        }
-                    }
-
-                    // Only create options if we have valid values
-                    if (colors.size > 0) {
-                        const colorValues = Array.from(colors.keys());
-                        const originalColorValues = Array.from(colors.values());
-                        await prisma.productOption.create({
-                            data: {
-                                productId: newProduct.id,
-                                name: "اللون",
-                                values: JSON.stringify(colorValues),
-                                originalValues: JSON.stringify(originalColorValues)
-                            }
-                        });
-                    }
-
-                    if (sizes.size > 0) {
-                        const sizeValues = Array.from(sizes.keys());
-                        const originalSizeValues = Array.from(sizes.values());
-                        await prisma.productOption.create({
-                            data: {
-                                productId: newProduct.id,
-                                name: "المقاس",
-                                values: JSON.stringify(sizeValues),
-                                originalValues: JSON.stringify(originalSizeValues)
-                            }
-                        });
-                    }
-
-                    // 5. Create Variants - VALIDATED
-                    const variantsData = [];
-                    const normalizeVariantBasePrice = (basePrice) => {
-                        let p = Number(basePrice) || 0;
-                        if (p > 0 && p < 100) {
-                            console.log(`Warning: Suspiciously low price (${p}). Assuming RMB and multiplying by 200.`);
-                            p = p * 200;
-                        } else if (p > 0 && p < 1000 && enrichedProduct.general_price > 5000) {
-                            console.log(`Warning: Variant price ${p} vs Main ${enrichedProduct.general_price}. Assuming RMB.`);
-                            p = p * 200;
-                        }
-                        return p;
-                    };
-                    for (const opt of enrichedProduct.generated_options) {
-                        // SKIP if color is Chinese (DISABLED: User wants to keep them)
-                        // if (containsChinese(opt.color)) continue;
-
-                        const color = opt.color;
-                        const fallbackBasePrice = normalizeVariantBasePrice(opt.price || enrichedProduct.general_price || 0);
-                        const variantImg = opt.thumbnail || enrichedProduct.main_images[0] || '';
-                        
-                        if (opt.sizes && Array.isArray(opt.sizes) && opt.sizes.length > 0) {
-                            for (const size of opt.sizes) {
-                                const variantBasePrice = fallbackBasePrice;
-                                const variantFinalPrice = calculateFinalPrice(variantBasePrice);
-                                const combinationObj = {
-                                    "اللون": color,
-                                    "المقاس": size
-                                };
-                                variantsData.push({
-                                    productId: newProduct.id,
-                                    combination: JSON.stringify(combinationObj),
-                                    price: variantFinalPrice,
-                                    basePriceIQD: variantBasePrice,
-                                    image: variantImg
-                                });
-                            }
-                        } else {
-                            const variantBasePrice = fallbackBasePrice;
-                            const variantFinalPrice = calculateFinalPrice(variantBasePrice);
-                            const combinationObj = { "اللون": color };
-                            variantsData.push({
-                                productId: newProduct.id,
-                                combination: JSON.stringify(combinationObj),
-                                price: variantFinalPrice,
-                                basePriceIQD: variantBasePrice,
-                                image: variantImg
-                            });
-                        }
-                    }
-
-                    if (variantsData.length > 0) {
-                        await prisma.productVariant.createMany({
-                            data: variantsData
-                        });
-                    }
-                    // console.log('Database insertion complete.');
-
-                    // Generate and save embedding for new product
-                    if (newProduct && newProduct.id) {
-                        try {
-                            // console.log('Triggers the embedding...');
-                            await processProductEmbedding(newProduct.id);
-                        } catch (embedErr) {
-                            console.error(`Embedding generation failed for product ${newProduct.id} (non-fatal):`, embedErr.message);
-                        }
-                    }
-
-                } catch (dbErr) {
-                    console.error('Database Insertion Failed:', dbErr.message);
-                }
-
-                // --- SKIP DB INSERTION (Local Mode) ---
-                // console.log('Skipping Database Insertion (Local Mode)');
-
-            } catch (scrapeErr) {
-                console.error('Scrape error:', scrapeErr.message);
-            }
-
-            // Clean up
-            if (!navigationHappened) {
-                try {
-                    if (newPage && !newPage.isClosed()) await newPage.close();
-                } catch(e) { console.log('Error closing tab:', e.message); }
-                try { await page.bringToFront(); } catch(e){}
-            } else {
-                console.log('Going back to category page...');
-                const previousUrl = page.url();
-                try {
-                    await page.goBack({ waitUntil: 'domcontentloaded', timeout: 15000 });
-                } catch (e) {
-                    console.log('goBack failed or timed out:', e.message);
-                }
-                
-                await humanDelay(2000, 3000);
-
-                // ROBUSTNESS CHECK: Did we actually go back?
-                const isCategoryUrl = (url) => {
-                    if (!url) return false;
-                    return url.includes('catgoods') || url.includes('search_result') || url.includes('subjects') || url.includes('search') || url.includes('opt');
-                };
-                const isProductUrl = (url) => {
-                    if (!url) return false;
-                    return url.includes('goods_id') || url.includes('goods.html') || url.includes('goods_detail');
-                };
-
-                let currentUrl = page.url();
-                let isCategoryPage = isCategoryUrl(currentUrl) && !isProductUrl(currentUrl);
-
-                for (let attempt = 1; attempt <= 3 && !isCategoryPage; attempt++) {
-                    console.log(`⚠️ Not back on category page yet. Going back again (${attempt}/3)...`);
-                    try {
-                        await page.goBack({ waitUntil: 'domcontentloaded', timeout: 15000 });
-                    } catch (e) {
-                        console.log('goBack failed or timed out:', e.message);
-                    }
-                    await humanDelay(2000, 3000);
-                    currentUrl = page.url();
-                    isCategoryPage = isCategoryUrl(currentUrl) && !isProductUrl(currentUrl);
-                    if (currentUrl === previousUrl) break;
-                }
-
-                if (!isCategoryPage) {
-                    console.log('⚠️ Could not reach category page after back attempts.');
-                }
+                 batchQueue = indices;
+                 console.log('New Batch Order:', batchQueue);
             }
             
-            // Random Delay between 10-15 seconds before next item
-            const fixedDelayMs = Number(process.env.PDD_NEXT_ITEM_DELAY_MS || 0);
-            const minDelayMs = Number(process.env.PDD_NEXT_ITEM_DELAY_MIN_MS || 10000);
-            const maxDelayMs = Number(process.env.PDD_NEXT_ITEM_DELAY_MAX_MS || 15000);
-            const nextItemDelay = fixedDelayMs > 0 ? fixedDelayMs : (minDelayMs + Math.random() * Math.max(0, (maxDelayMs - minDelayMs)));
-            console.log(`Waiting ${(nextItemDelay/1000).toFixed(1)}s before next item...`);
-            await delay(nextItemDelay);
-        } // End of 4-click loop
+            // "Coffee Break" Logic - Every 15-25 products, take a long break
+            if (productIndex > 0 && productIndex % (Math.floor(Math.random() * 10) + 15) === 0) {
+                const breakTime = Math.floor(Math.random() * 60000) + 60000; // 1-2 minutes
+                console.log(`\n☕ Taking a "Coffee Break" for ${Math.round(breakTime/1000)}s to simulate human rest...`);
+                await delay(breakTime);
+                
+                // Randomly scroll up a bit and back down to look active
+                if (Math.random() > 0.5) {
+                    await page.evaluate(() => window.scrollBy(0, -300));
+                    await delay(2000);
+                    await page.evaluate(() => window.scrollBy(0, 300));
+                }
+            }
 
-        console.log('Scrolling down one screen...');
-        try {
-            await page.evaluate(() => window.scrollBy(0, window.innerHeight));
-            // Update accumulatedScrollY for drift restoration
-            try {
-                accumulatedScrollY = await page.evaluate(() => window.scrollY);
-            } catch (e) {}
+            // 3. Determine Quadrant from Queue
+            const quadrantIdx = batchQueue.shift(); // Get next random index
+            const quadrantNames = ['Top Left', 'Top Right', 'Bottom Left', 'Bottom Right'];
+            const quadrantName = quadrantNames[quadrantIdx];
+            
+            console.log(`\nAttempting Product #${productIndex + 1} (Quadrant: ${quadrantName})...`);
+
+            // --- DETECT "PHONE CONTAINER" & SELECT QUADRANT ---
+            const clickTarget = await page.evaluate((qIdx) => {
+                // Try to find the main content container (usually centered on desktop)
+                const container = document.querySelector('#main') || 
+                                  document.querySelector('.page-container') || 
+                                  document.querySelector('.goods-list-container') || 
+                                  document.querySelector('._3BdU0') || 
+                                  document.body;
+                
+                const rect = container.getBoundingClientRect();
+                
+                let targetRect = {
+                    left: rect.left,
+                    top: rect.top,
+                    width: rect.width,
+                    height: rect.height
+                };
+
+                // Heuristic: If body is full width, assume phone is a 400-500px column in the middle
+                if (targetRect.width > 800) {
+                     const phoneWidth = 450;
+                     targetRect.left = (window.innerWidth / 2) - (phoneWidth / 2);
+                     targetRect.width = phoneWidth;
+                }
+
+                // Define the 4 quadrants relative to the detected "phone" container
+                const quadrants = [
+                    { name: 'Top Left', xPct: 0.25, yPct: 0.25 },
+                    { name: 'Top Right', xPct: 0.75, yPct: 0.25 },
+                    { name: 'Bottom Left', xPct: 0.25, yPct: 0.75 },
+                    { name: 'Bottom Right', xPct: 0.75, yPct: 0.75 }
+                ];
+                
+                // Use sequential index instead of random
+                const choice = quadrants[qIdx];
+                
+                const x = targetRect.left + (targetRect.width * choice.xPct);
+                
+                // Better approach for Y:
+                const viewportHeight = window.innerHeight;
+                // Target the middle-ish area of the screen
+                const y = (viewportHeight * 0.3) + (viewportHeight * 0.4 * choice.yPct); // Map 0-1 to 30%-70% of screen height
+                
+                // Add Gaussian-like Random Jitter (+/- 5px)
+                const jitterX = (Math.random() - 0.5) * 10; 
+                const jitterY = (Math.random() - 0.5) * 10;
+                
+                return {
+                    x: x + jitterX,
+                    y: y + jitterY,
+                    name: choice.name,
+                    containerWidth: targetRect.width
+                };
+            }, quadrantIdx); // Pass quadrantIdx to evaluate
+
+            // Click Logic
+            const clickX = clickTarget.x;
+            const clickY = clickTarget.y;
+            
+            console.log(`Targeting "${clickTarget.name}" at (${clickX.toFixed(0)}, ${clickY.toFixed(0)}) inside ${clickTarget.containerWidth.toFixed(0)}px width container...`);
+
+            // Highlight (Red Dot)
+            await page.evaluate((x, y) => {
+                const el = document.createElement('div');
+                el.style.position = 'fixed';
+                el.style.left = x + 'px';
+                el.style.top = y + 'px';
+                el.style.width = '20px';
+                el.style.height = '20px';
+                el.style.backgroundColor = 'red';
+                el.style.borderRadius = '50%';
+                el.style.zIndex = '99999';
+                el.style.pointerEvents = 'none';
+                document.body.appendChild(el);
+                setTimeout(() => el.remove(), 2000);
+            }, clickX, clickY);
+
+            await randomDelay(1000, 2000); 
+
+            // Simulate Click (Touch or Mouse)
+            // Use Mouse primarily for Desktop Mode as requested
+            console.log('Clicking with Mouse...');
+            
+            // Human-like mouse movement (Bezier-ish via steps)
+            const steps = Math.floor(Math.random() * 5) + 10; // 10-15 steps
+            await page.mouse.move(clickX, clickY, {steps: steps});
+            
+            await delay(Math.random() * 200 + 100); // Slight pause before click
+            await page.mouse.down();
+            await delay(Math.random() * 100 + 50);
+            await page.mouse.up();
+            
+            /* 
+            if (page.touchscreen) {
+                await page.touchscreen.touchStart(clickX, clickY);
+                await delay(Math.floor(Math.random() * 100) + 50); 
+                await page.touchscreen.touchEnd();
+            } else {
+                await page.mouse.move(clickX, clickY, {steps: 10});
+                await page.mouse.down();
+                await delay(Math.floor(Math.random() * 100) + 50);
+                await page.mouse.up();
+            }
+            */
+
+            // Wait for navigation
+            console.log('Waiting for potential navigation...');
+            await randomDelay(5000, 10000);
+            
+            // Check if entered product page
+            const currentUrl = page.url();
+            let scraped = false;
+
+            if (isProductUrl(currentUrl)) {
+                console.log('✅ Entered Product Page. Scraping...');
+                const pData = await scrapeProduct(page, currentUrl);
+                if (pData) await saveProductToDb(pData);
+                // Mark as processed so we go back, even if scraping failed (e.g. sold out)
+                scraped = true;
+            } else {
+                // Fallback Content Check
+                const isProductContent = await page.evaluate(() => !!(document.querySelector('.goods-name') || document.querySelector('.pdd-goods-name')));
+                if (isProductContent) {
+                    console.log('✅ Content matches Product Page. Scraping...');
+                    const pData = await scrapeProduct(page, currentUrl); // Use current URL even if weird
+                    if (pData) await saveProductToDb(pData);
+                    scraped = true;
+                } else {
+                    console.log('⚠️ Click did not open a product (or URL mismatch). Skipping to next...');
+                }
+            }
+
+            if (scraped) {
+                console.log('Going back to category...');
+                
+                // Robust Navigation Back to Category
+                // Because we might have pushed history entries (e.g. forced goto), simple goBack() might land on Reviews or Product again.
+                // We loop goBack() until we are on a "safe" page (Category).
+                
+                let attempts = 0;
+                const maxAttempts = 2; // Reduced from 5 to 2 (Anti-Spam)
+                
+                while (attempts < maxAttempts) {
+                    const currentUrl = page.url();
+                    
+                    // Define what is "unsafe" (Product or Reviews pages)
+                    // Use isProductUrl() helper which is smarter about distinguishing products from categories
+                    const isProduct = isProductUrl(currentUrl);
+                    // Also check for Reviews specifically
+                    const isReview = currentUrl.includes('comment') || currentUrl.includes('reviews') || currentUrl.includes('subject_review');
+                    
+                    // Extra safety: If URL contains 'catgoods' or 'search_result', it is DEFINITELY NOT a product/review we want to leave
+                    const isCategory = currentUrl.includes('catgoods') || currentUrl.includes('search_result') || currentUrl.includes('classification');
+
+                    // If we are on a product or review page (and NOT a category page), we need to go back
+                    if ((isProduct || isReview) && !isCategory) {
+                        console.log(`[Back Nav] Currently on ${isProduct ? 'Product' : 'Review'} page (${currentUrl}). Going back (Attempt ${attempts + 1})...`);
+                        try {
+                            await page.goBack();
+                            await randomDelay(2000, 4000); // Wait for navigation to settle
+                        } catch (e) {
+                            console.log(`[Back Nav] goBack() failed: ${e.message}`);
+                        }
+                    } else {
+                        console.log(`[Back Nav] Successfully returned to non-product/review page: ${currentUrl}`);
+                        break; // We are safe
+                    }
+                    
+                    attempts++;
+                }
+
+                if (attempts >= maxAttempts) {
+                     console.log('⚠️ Failed to return to category via history. Forcing reload of Category URL.');
+                     // Fallback: If history fails, force load. We lose scroll position but better than being stuck.
+                     try {
+                        await page.goto(CATEGORY_URL, { waitUntil: 'domcontentloaded' });
+                     } catch(e) { console.log('Force reload failed:', e.message); }
+                }
+
+                console.log('Waiting 15 seconds before next product...');
+                await randomDelay(15000, 30000);
+            }
+
         } catch (e) {
-            console.log('Scroll error:', e.message);
+            console.error('Error in iteration:', e.message);
+            consecutiveFailures++;
+            if (consecutiveFailures > 5) {
+                console.log('Too many failures. Pausing...');
+                await randomDelay(10000, 20000);
+                consecutiveFailures = 0; // Reset after pause?
+            }
         }
-        await humanDelay(3000, 5000);
+
+        // Always increment index to try next position/batch
+        productIndex++;
+        
+        // Check running flag
+        if (!isRunning) break;
     }
 
-    console.log('[End] Scraping Complete.');
-    await browser.close();
-    await prisma.$disconnect();
-}
-
-run().catch(err => console.error('Fatal Error:', err));
-
-process.on('unhandledRejection', (reason, p) => {
-  console.error('Unhandled Rejection at:', p, 'reason:', reason);
-});
-
-// Force keep-alive
-setInterval(() => {
-    try {
-        fs.appendFileSync('scraper_debug.log', `Tick: ${new Date().toISOString()}\n`);
-    } catch(e) {}
-}, 5000);
+    console.log('Scraper finished.');
+    // await prisma.$disconnect();
+})();

@@ -114,7 +114,8 @@ const FlashSales: React.FC<FlashSalesProps> = ({
                     src={product.image} 
                     alt={product.name}
                     priority={index < 2}
-                    className="h-full w-full"
+                    objectFit="contain"
+                    className="h-full w-full bg-white"
                   />
                 </div>
                 <div className="flex flex-col p-3">
