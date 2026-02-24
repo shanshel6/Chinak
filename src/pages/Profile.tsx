@@ -12,7 +12,6 @@ import {
   HelpCircle, 
   Info, 
   LogOut,
-  Settings,
   FileText,
   Trash2,
   Truck,
@@ -410,18 +409,7 @@ const Profile: React.FC = () => {
                     <ChevronLeft size={20} className="text-slate-300 dark:text-slate-600" />
                   </button>
 
-                  <button 
-                    onClick={() => navigate('/advanced-settings')}
-                    className="w-full flex items-center justify-between p-4 border-b border-slate-50 dark:border-slate-700/50 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors group"
-                  >
-                    <div className="flex items-center gap-4">
-                      <div className="flex size-10 items-center justify-center rounded-xl bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-400 group-hover:scale-110 transition-transform">
-                        <Settings size={20} />
-                      </div>
-                      <p className="text-sm font-bold text-slate-900 dark:text-white">إعدادات متقدمة</p>
-                    </div>
-                    <ChevronLeft size={20} className="text-slate-300 dark:text-slate-600" />
-                  </button>
+
 
                   <button 
                     onClick={() => navigate('/delete-account')}

@@ -97,25 +97,50 @@ const ProductDetails: React.FC = () => {
     }
 
     // Fallback: Use first value of each option
-    if (initialProd?.options?.length) {
-      const options: Record<string, string> = {};
-      initialProd.options.forEach((opt: any) => {
-        try {
-          const values = typeof opt.values === 'string' ? JSON.parse(opt.values) : opt.values;
-          if (Array.isArray(values) && values.length > 0) {
-            const firstVal = values[0];
-            options[opt.name] = typeof firstVal === 'object' 
-              ? (firstVal.value || firstVal.name || String(firstVal)) 
-              : String(firstVal);
-          }
-        } catch (e) {
-          // Ignore
-        }
-      });
-      return options;
-    }
+    // Removed to ensure we default to the cheapest variant once full data is loaded
+    // if (initialProd?.options?.length) {
+    //   const options: Record<string, string> = {};
+    //   initialProd.options.forEach((opt: any) => {
+    //     try {
+    //       const values = typeof opt.values === 'string' ? JSON.parse(opt.values) : opt.values;
+    //       if (Array.isArray(values) && values.length > 0) {
+    //         const firstVal = values[0];
+    //         options[opt.name] = typeof firstVal === 'object' 
+    //           ? (firstVal.value || firstVal.name || String(firstVal)) 
+    //           : String(firstVal);
+    //       }
+    //     } catch (e) {
+    //       // Ignore
+    //     }
+    //   });
+    //   return options;
+    // }
     return {};
   });
+
+  // Effect to select the cheapest variant by default if no options are selected
+  useEffect(() => {
+    if (product?.variants?.length && Object.keys(selectedOptions).length === 0) {
+      const minVariant = product.variants.reduce((min: any, curr: any) => {
+        if (!curr.price) return min;
+        if (!min) return curr;
+        return curr.price < min.price ? curr : min;
+      }, null);
+
+      if (minVariant?.combination) {
+        try {
+          const combination = typeof minVariant.combination === 'string' 
+            ? JSON.parse(minVariant.combination) 
+            : minVariant.combination;
+          if (combination && Object.keys(combination).length > 0) {
+            setSelectedOptions(combination);
+          }
+        } catch (e) {
+          console.warn('Failed to auto-select min variant', e);
+        }
+      }
+    }
+  }, [product, selectedOptions]);
 
   const allReviews = useMemo(() => reviews || [], [reviews]);
 

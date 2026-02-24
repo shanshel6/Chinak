@@ -1512,9 +1512,10 @@ async function scrapeProduct(page, url) {
             console.log(`[DEBUG] Current URL for Desc Images: ${currentUrlForDesc}`);
 
             // Safety Check: Must contain 'goods' or 'product' AND NOT be a category/search page
+            // Allow 'search_result' in URL if it's part of query params (e.g. refer_page_name) and we have goods_id
             const isProductPage = (currentUrlForDesc.includes('goods') || currentUrlForDesc.includes('product')) 
                                   && !currentUrlForDesc.includes('classification') 
-                                  && !currentUrlForDesc.includes('search_result');
+                                  && (!currentUrlForDesc.includes('search_result') || currentUrlForDesc.includes('goods_id'));
 
             if (!isProductPage) {
                  console.warn(`⚠️ Warning: It seems we are NOT on a product page (URL: ${currentUrlForDesc}). Skipping description images.`);
@@ -2183,7 +2184,8 @@ async function scrapeProduct(page, url) {
                     const isReview = currentUrl.includes('comment') || currentUrl.includes('reviews') || currentUrl.includes('subject_review');
                     
                     // Extra safety: If URL contains 'catgoods' or 'search_result', it is DEFINITELY NOT a product/review we want to leave
-                    const isCategory = currentUrl.includes('catgoods') || currentUrl.includes('search_result') || currentUrl.includes('classification');
+                    // BUT: If it contains 'goods_id', it IS a product page, so we must exclude it from being a "category"
+                    const isCategory = (currentUrl.includes('catgoods') || currentUrl.includes('search_result') || currentUrl.includes('classification')) && !currentUrl.includes('goods_id');
 
                     // If we are on a product or review page (and NOT a category page), we need to go back
                     if ((isProduct || isReview) && !isCategory) {

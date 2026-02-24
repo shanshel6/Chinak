@@ -50,8 +50,6 @@ const SearchBar: React.FC<SearchBarProps> = ({
             </motion.span>
           </AnimatePresence>
         </div>
-
-        <Camera size={20} className="text-slate-400" strokeWidth={2} />
       </div>
     </div>
   );

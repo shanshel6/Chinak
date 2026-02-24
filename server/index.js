@@ -807,6 +807,7 @@ app.use(express.static(distPath));
 
 // --- Authentication Middleware ---
 const authenticateToken = async (req, res, next) => {
+  try { fs.appendFileSync('e:/mynewproject2/server/perf.log', `[Auth] Checking token at ${new Date().toISOString()}\n`); } catch (e) {}
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
 
@@ -3155,7 +3156,9 @@ app.get('/api/admin/products/check-existence', authenticateToken, isAdmin, async
 });
 
 app.get('/api/admin/products', authenticateToken, isAdmin, hasPermission('manage_products'), async (req, res) => {
+  const startTime = Date.now();
   console.log('GET /api/admin/products hit', req.query);
+  try { fs.appendFileSync('e:/mynewproject2/server/perf.log', `GET /api/admin/products hit at ${new Date().toISOString()}\n`); } catch (e) {}
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 21;
@@ -3207,6 +3210,8 @@ app.get('/api/admin/products', authenticateToken, isAdmin, hasPermission('manage
       }),
       prisma.product.count({ where })
     ]);
+    console.log(`DB Query took: ${Date.now() - startTime}ms`);
+    try { fs.appendFileSync('e:/mynewproject2/server/perf.log', `DB Query took: ${Date.now() - startTime}ms\n`); } catch (e) {}
 
     // Handle empty products array gracefully
     if (!products || products.length === 0) {
@@ -7898,7 +7903,9 @@ app.get('/*any', (req, res) => {
 
 setupLinkCheckerCron();
 
-httpServer.listen(PORT, '0.0.0.0', () => {
+console.log('Attempting to start server on port:', process.env.PORT || 5001);
+
+const server = httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`Server is running on port ${PORT} (accessible from network)`);
   
   // Trigger MeiliSearch indexing on startup
@@ -7907,3 +7914,8 @@ httpServer.listen(PORT, '0.0.0.0', () => {
     ensureMeiliIndexed().catch(err => console.error('[Meili Debug] Startup index check failed:', err));
   }, 5000);
 });
+
+server.on('error', (e) => {
+  console.error('SERVER LISTEN ERROR:', e);
+});
+

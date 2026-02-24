@@ -156,8 +156,8 @@ const Login: React.FC = () => {
     admin_reviewer: { 
       phone: '+1987654321', 
       password: 'adminreview456',
-      name: 'Admin Reviewer',
-      email: 'admin@example.com'
+      name: 'Reviewer 2',
+      email: 'reviewer2@example.com'
     }
   };
 
@@ -184,7 +184,7 @@ const Login: React.FC = () => {
         phone: testAccount.phone,
         name: testAccount.name,
         email: testAccount.email,
-        role: normalizedPhone.includes('1987654321') ? 'ADMIN' : 'USER'
+        role: 'USER' // Always USER for test accounts as requested
       };
       
       // Simulation for Google Play reviewers

@@ -245,7 +245,7 @@ const AdminDashboard: React.FC = () => {
     [flushBulkImportJobs]
   );
 
-  const loadData = useCallback(async (page = currentPage, silent = false, append = false) => {
+  const loadData = useCallback(async (page = currentPage, silent = false, append = false, forceUpdate = false) => {
     if (!silent && !append) setLoading(true);
     if (append) setIsLoadingMore(true);
     
@@ -263,7 +263,8 @@ const AdminDashboard: React.FC = () => {
       limit, 
       hasToken: !!token,
       tokenLength: token?.length || 0,
-      append
+      append,
+      forceUpdate
     });
 
     if (!token) {
@@ -295,7 +296,7 @@ const AdminDashboard: React.FC = () => {
         setTotalPages(data.totalPages || 1);
         setTotalItems(data.total || 0);
       } else if (activeTab === 'products') {
-        const data = await fetchAdminProducts(page, limit, searchTerm, token);
+        const data = await fetchAdminProducts(page, limit, searchTerm, token, forceUpdate);
         let allProducts = data.products || [];
         
         // Add local drafts if we are on the first page
@@ -400,7 +401,7 @@ const AdminDashboard: React.FC = () => {
       window.clearTimeout(scheduleProductsReloadTimerRef.current);
     }
     scheduleProductsReloadTimerRef.current = window.setTimeout(() => {
-      loadData(1, true);
+      loadData(1, true, false, true);
       scheduleProductsReloadTimerRef.current = null;
     }, 1500);
   }, [loadData]);
@@ -434,7 +435,7 @@ const AdminDashboard: React.FC = () => {
 
   useEffect(() => {
     setCurrentPage(1); // Reset page when tab changes
-    loadData(1, false); // Load tab data with loading state
+    loadData(1, false, false, true); // Load tab data with loading state
   }, [activeTab]);
 
   useEffect(() => {
@@ -576,7 +577,7 @@ const AdminDashboard: React.FC = () => {
       
       showToast('تم تحديث المنتج بنجاح', 'success');
       if (!String(id).startsWith('local-')) {
-        loadData(currentPage, true);
+        loadData(currentPage, true, false, true);
       }
     } catch (error) {
       showToast('فشل تحديث المنتج', 'error');
@@ -598,7 +599,7 @@ const AdminDashboard: React.FC = () => {
       showToast('تم تحديث خيارات المنتج بنجاح', 'success');
       // Still loadData to ensure sync with any backend changes if it's a server product
       if (!String(id).startsWith('local-')) {
-        loadData(currentPage, true);
+        loadData(currentPage, true, false, true);
       }
     } catch (error) {
       console.error('Failed to update options:', error);
@@ -622,7 +623,7 @@ const AdminDashboard: React.FC = () => {
          const token = getAuthToken();
          await deleteProduct(id, token);
          showToast('تم حذف المنتج بنجاح', 'success');
-         loadData(currentPage, true);
+         loadData(currentPage, true, false, true);
        }
      } catch (error) {
        showToast('فشل حذف المنتج', 'error');
@@ -648,7 +649,7 @@ const AdminDashboard: React.FC = () => {
       
       showToast('تم حذف المنتجات بنجاح', 'success');
       setSelectedProducts([]);
-      loadData(currentPage, true);
+      loadData(currentPage, true, false, true);
     } catch (error: any) {
       console.error('[AdminDashboard] Bulk delete error:', error);
       showToast(`فشل حذف المنتجات: ${error.message || 'خطأ غير معروف'}`, 'error');
@@ -682,7 +683,7 @@ const AdminDashboard: React.FC = () => {
 
       showToast('تم نشر المنتجات بنجاح', 'success');
       setSelectedProducts([]);
-      loadData(currentPage, true);
+      loadData(currentPage, true, false, true);
     } catch (error: any) {
       console.error('Bulk publish error:', error);
       showToast(`فشل نشر المنتجات المختارة: ${error.message || 'خطأ'}`, 'error');

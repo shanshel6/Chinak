@@ -287,26 +287,25 @@ export async function request(endpoint: string, options: any = {}, retries = 2) 
 
     // Handle test tokens for Google Play reviewers
     if (token?.startsWith('test-token-')) {
-      const isAdmin = token.includes('1987654321');
+      const isReviewer2 = token.includes('1987654321');
+      const isAdmin = false; // Disable admin access for test tokens as requested
       
+      const userData = {
+        id: 'reviewer-id-' + (isReviewer2 ? '2' : '1'),
+        phone: isReviewer2 ? '+1987654321' : '+1234567890',
+        name: isReviewer2 ? 'Reviewer 2' : 'Google Play Reviewer',
+        email: isReviewer2 ? 'reviewer2@example.com' : 'reviewer@example.com',
+        role: 'USER'
+      };
+
       if (endpoint.includes('/auth/me')) {
-        return {
-          id: 'reviewer-id-' + (isAdmin ? 'admin' : 'user'),
-          phone: isAdmin ? '+1987654321' : '+1234567890',
-          name: isAdmin ? 'Admin Reviewer' : 'Google Play Reviewer',
-          email: isAdmin ? 'admin@example.com' : 'reviewer@example.com',
-          role: isAdmin ? 'ADMIN' : 'USER'
-        };
+        return userData;
       }
+      
       if (endpoint.includes('/auth/sync-supabase-user')) {
         return { 
           success: true,
-          user: {
-            id: 'reviewer-id-' + (isAdmin ? 'admin' : 'user'),
-            phone: isAdmin ? '+1987654321' : '+1234567890',
-            name: isAdmin ? 'Admin Reviewer' : 'Google Play Reviewer',
-            role: isAdmin ? 'ADMIN' : 'USER'
-          }
+          user: userData
         };
       }
 
@@ -376,10 +375,10 @@ export async function request(endpoint: string, options: any = {}, retries = 2) 
         return {
           token: token,
           user: {
-            id: 'reviewer-id-' + (token.includes('1987654321') ? 'admin' : 'user'),
+            id: 'reviewer-id-' + (token.includes('1987654321') ? '2' : '1'),
             phone: token.includes('1987654321') ? '+1987654321' : '+1234567890',
-            name: token.includes('1987654321') ? 'Admin Reviewer' : 'Google Play Reviewer',
-            role: token.includes('1987654321') ? 'ADMIN' : 'USER'
+            name: token.includes('1987654321') ? 'Reviewer 2' : 'Google Play Reviewer',
+            role: 'USER' // Always USER as requested
           }
         };
       }
@@ -404,7 +403,7 @@ export async function request(endpoint: string, options: any = {}, retries = 2) 
     
     // Add timeout handling
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), options.timeout || 30000); // Default 30s timeout
+    const timeoutId = setTimeout(() => controller.abort(), options.timeout || 60000); // Default 60s timeout
 
     try {
       if (import.meta.env.DEV) {
@@ -899,14 +898,14 @@ export const fetchProducts = async (page = 1, limit = 20, search = '', maxPrice?
   return request(url);
 }
 
-export async function fetchAdminProducts(page = 1, limit = 20, search = '', token?: string | null) {
+export async function fetchAdminProducts(page = 1, limit = 20, search = '', token?: string | null, skipCache = false) {
   const queryParams = new URLSearchParams({
     page: page.toString(),
     limit: limit.toString(),
     search
   });
   
-  const response = await request(`/admin/products?${queryParams.toString()}`, { token });
+  const response = await request(`/admin/products?${queryParams.toString()}`, { token, skipCache });
   
   // If we are on the first page, we could potentially inject local drafts here too, 
   // but we are already doing it in the component. Let's keep it consistent.
