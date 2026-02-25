@@ -30,6 +30,7 @@ const CartEmpty = lazy(() => import('./pages/CartEmpty'));
 const Profile = lazy(() => import('./pages/Profile'));
 const MyOrders = lazy(() => import('./pages/MyOrders'));
 const Favorites = lazy(() => import('./pages/Favorites'));
+const Categories = lazy(() => import('./pages/Categories'));
 const Notifications = lazy(() => import('./pages/Notifications'));
 const SearchResults = lazy(() => import('./pages/SearchResults'));
 const ShippingTracking = lazy(() => import('./pages/ShippingTracking'));
@@ -202,6 +203,7 @@ function AnimatedRoutes() {
           </ProtectedRoute>
         } />
         <Route path="/cart/empty" element={<PageTransition><CartEmpty /></PageTransition>} />
+        <Route path="/categories" element={<PageTransition><Categories /></PageTransition>} />
         <Route path="/order-not-found" element={<PageTransition><OrderNotFound /></PageTransition>} />
         <Route path="/login" element={<PageTransition><Login /></PageTransition>} />
         <Route path="/verify-otp" element={<PageTransition><VerifyOTP /></PageTransition>} />

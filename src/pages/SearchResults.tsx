@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { performCacheMaintenance, searchProducts } from '../services/api';
 import { useWishlistStore } from '../store/useWishlistStore';
 import { usePageCacheStore } from '../store/usePageCacheStore';
+import { useUserPreferencesStore } from '../store/useUserPreferencesStore';
 import SearchHeader from '../components/search/SearchHeader';
 import SearchEmptyState from '../components/search/SearchEmptyState';
 import SearchSuggestionsList from '../components/search/SearchSuggestionsList';
@@ -30,6 +31,7 @@ const SearchResults: React.FC = () => {
   const setSearchScrollPos = usePageCacheStore((state) => state.setSearchScrollPos);
 
   const [searchQuery, setSearchQuery] = useState(initialQuery || cachedQuery);
+  const [isTyping, setIsTyping] = useState(initialQuery ? false : true);
   const [products, setProducts] = useState<Product[]>(searchResults);
   const [filteredProducts, setFilteredProducts] = useState<Product[]>(searchResults);
   const [loading, setLoading] = useState(false);
@@ -40,7 +42,12 @@ const SearchResults: React.FC = () => {
   const [totalResults, setTotalResults] = useState(0);
   const [activeFilter] = useState('all');
   const [sortBy] = useState<'none' | 'price_asc' | 'price_desc' | 'rating'>('none');
-  const [recentSearches, setRecentSearches] = useState<string[]>([]);
+  
+  // Use User Preferences Store
+  const recentSearches = useUserPreferencesStore((state) => state.searchHistory);
+  const addSearchHistory = useUserPreferencesStore((state) => state.addSearchHistory);
+  const clearHistory = useUserPreferencesStore((state) => state.clearHistory);
+  
   const [isTyping, setIsTyping] = useState(false);
   const scrollTargetsRef = useRef<HTMLElement[]>([]);
 
@@ -62,36 +69,22 @@ const SearchResults: React.FC = () => {
   const popularSearches = ['سماعات لاسلكية', 'آيفون 15', 'ساعة ذكية', 'أحذية رياضية', 'عطور رجالية'];
 
   useEffect(() => {
-    const saved = localStorage.getItem('recent_searches');
-    if (saved) {
-      setRecentSearches(JSON.parse(saved));
-    }
-  }, []);
-
-  useEffect(() => {
     // If query in URL changes, update search query state
     const params = new URLSearchParams(location.search);
     const q = params.get('q');
     if (q && q !== searchQuery) {
       setSearchQuery(q);
+      setIsTyping(false); // When a query is provided via URL, show results immediately
     }
   }, [location.search, searchQuery]);
 
   const addToRecentSearches = useCallback((query: string) => {
     if (!query.trim()) return;
-    const newRecent = [query, ...recentSearches.filter(s => s !== query)].slice(0, 5);
-    setRecentSearches(newRecent);
-    try {
-      localStorage.setItem('recent_searches', JSON.stringify(newRecent));
-    } catch (e) {
-      // If it fails, we just don't save the recent search, no big deal
-      performCacheMaintenance();
-    }
-  }, [recentSearches]);
+    addSearchHistory(query);
+  }, [addSearchHistory]);
 
   const clearRecentSearches = () => {
-    setRecentSearches([]);
-    localStorage.removeItem('recent_searches');
+    clearHistory();
   };
 
   useEffect(() => {

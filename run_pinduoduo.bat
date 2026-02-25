@@ -35,7 +35,7 @@ echo.
 :: Check if URL was passed as an argument
 if "%~1" neq "" (
     echo Launching with provided URL...
-    node server/scripts/pinduoduo-scraper.js "%~1"
+    node server/scripts/pinduoduo-scraper.js "%~1" "%~2"
 ) else (
     echo Please paste the Pinduoduo Category/Search URL below:
     echo (Right-click to paste in CMD/PowerShell)

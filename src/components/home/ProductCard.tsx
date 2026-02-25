@@ -187,8 +187,8 @@ const ProductCard: React.FC<ProductCardProps> = React.memo(({
             </div>
           </div>
           
-          <div className="flex items-center gap-1 text-[10px] font-medium text-slate-500 bg-slate-50 dark:bg-slate-700/50 px-2 py-1 rounded-md">
-            <span>{soldCount}+ بيع</span>
+          <div className="flex items-center gap-1.5 bg-slate-50 dark:bg-slate-800/50 px-2.5 py-1 rounded-full border border-slate-100 dark:border-slate-700/50">
+            <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400">تم بيع {soldCount}</span>
           </div>
         </div>
       </div>

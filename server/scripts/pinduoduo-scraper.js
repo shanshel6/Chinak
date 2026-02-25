@@ -188,7 +188,22 @@ function getExecutablePath() {
 }
 
 // Allow URL to be passed via command line argument
-const cliUrl = process.argv[2];
+let cliUrl = process.argv[2];
+let layoutMode = process.argv[3] === '1' ? 'vertical-4' : 'grid-2x2';
+
+// Handle case where URL and mode are passed as a single quoted string (e.g. from batch "set /p")
+if (cliUrl && cliUrl.includes(' ')) {
+    const parts = cliUrl.trim().split(/\s+/);
+    cliUrl = parts[0];
+    if (parts.length > 1 && parts[1] === '1') {
+        layoutMode = 'vertical-4';
+    }
+}
+
+if (layoutMode === 'vertical-4') {
+    console.log('Using Vertical Layout Mode (1 item/row, 4 items/screen)');
+}
+
 let CATEGORY_URL = cliUrl && cliUrl.startsWith('http') 
     ? cliUrl 
     : 'https://mobile.pinduoduo.com/?lastTabItemID=16'; 
@@ -1199,10 +1214,35 @@ async function scrapeProduct(page, url) {
 
             const descriptionText = getText('.jvsKAdEs');
             
+            // Extract Main Page Price
+            let mainPagePrice = 0;
+            try {
+                // Look for elements starting with currency symbol
+                // We prioritize elements that look like the main price (usually large font, near top)
+                // But simple traversal often works as main price is early in DOM or visually prominent
+                const allElements = Array.from(document.querySelectorAll('span, div, p'));
+                for (const el of allElements) {
+                     // Check if leaf node (no children)
+                     if (el.children.length === 0 && el.innerText) {
+                         const txt = el.innerText.trim();
+                         // Match "¥ 10.5" or "￥10.5" at start of string
+                         const match = txt.match(/^(?:¥|￥)\s*(\d+(?:\.\d+)?)/);
+                         if (match) {
+                             const p = parseFloat(match[1]);
+                             if (p > 0) {
+                                 mainPagePrice = p;
+                                 break; // First match is usually the main price
+                             }
+                         }
+                     }
+                }
+            } catch (e) {}
+
             return {
                 product_name,
                 main_images,
-                descriptionText
+                descriptionText,
+                mainPagePrice
             };
         });
 
@@ -1246,26 +1286,26 @@ async function scrapeProduct(page, url) {
         await randomDelay(150, 250); // Slightly longer press
         await page.mouse.up();
         
-        // Method 2: Touch Tap (if supported/available)
-        try {
-                if (page.touchscreen) {
-                    console.log('Attempting Touch Tap...');
-                    await page.touchscreen.tap(xTarget, yTarget);
-                }
-        } catch(e) {}
+        // Method 2: Touch Tap (Removed to avoid double-clicking)
+        // try {
+        //         if (page.touchscreen) {
+        //             console.log('Attempting Touch Tap...');
+        //             await page.touchscreen.tap(xTarget, yTarget);
+        //         }
+        // } catch(e) {}
         
         await randomDelay(3000, 6000);
 
-        // Step 2: Click Thumbnail/Group Buy (Geometric: Center - 280px X, Center Y)
-        // User requested change: 280px offset, show dot, keep randomness
-        const xBase = (vw * 0.5) - 280;
+        // Step 2: Click Thumbnail/Group Buy (Geometric: Center - 300px X, Center Y)
+        // User requested change: 300px offset, 5px randomization, show dot
+        const xBase = (vw * 0.5) - 300;
         const yBase = vh * 0.5;
         
-        // Add more randomness (+/- 10px)
-        const x2 = xBase + (Math.random() * 20 - 10);
-        const y2 = yBase + (Math.random() * 20 - 10);
+        // Add 5px randomization (+/- 5px)
+        const x2 = xBase + (Math.random() * 10 - 5);
+        const y2 = yBase + (Math.random() * 10 - 5);
         
-        console.log(`Clicking Target at (${x2.toFixed(1)}, ${y2.toFixed(1)}) [Center - 280px X, Center Y]...`);
+        console.log(`Clicking Thumbnail at (${x2.toFixed(1)}, ${y2.toFixed(1)}) [Center - 300px X, Center Y]...`);
         
         // Show visual indicator (Blue Dot for Thumbnail)
         await page.evaluate((x, y) => {
@@ -1311,10 +1351,22 @@ async function scrapeProduct(page, url) {
                 let price = 0;
                 let colorName = rawText;
 
-                // 1. Extract Price (Last number in text)
-                const allNumbers = rawText.match(/[\d.]+/g);
-                if (allNumbers && allNumbers.length > 0) {
-                    price = parseFloat(allNumbers[allNumbers.length - 1]) * 200; // IQD Conversion
+                // 1. Extract Price (Improved Logic)
+                const priceRegex = /(?:¥|￥)\s*(\d+(?:\.\d+)?)/;
+                const priceMatch = rawText.match(priceRegex);
+                
+                if (priceMatch) {
+                     price = parseFloat(priceMatch[1]) * 200; // IQD Conversion
+                } else {
+                    // Fallback: Last number in text, ignoring "sold" counts
+                    // Remove "已拼xxx件" or "Sold xxx" patterns to avoid parsing sold count as price
+                    let cleanText = rawText.replace(/已拼\s*[\d.]+\s*[万+]?件/g, ''); 
+                    cleanText = cleanText.replace(/[\d.]+\s*sold/ig, '');
+                    
+                    const allNumbers = cleanText.match(/[\d.]+/g);
+                    if (allNumbers && allNumbers.length > 0) {
+                        price = parseFloat(allNumbers[allNumbers.length - 1]) * 200; 
+                    }
                 }
 
                 // 2. Clean Color Name
@@ -1709,7 +1761,17 @@ async function scrapeProduct(page, url) {
             url: url,
             product_details: descriptionKV, // Key-Value formatted description
             product_desc_imgs: productDescImgs,
-            general_price: translatedOptions.length > 0 ? Math.min(...translatedOptions.map(o => o.price)) : 0,
+            general_price: (() => {
+                // Priority 1: Main Page Price (converted to IQD)
+                // The home page price is usually the most accurate "displayed" price
+                if (basicData.mainPagePrice && basicData.mainPagePrice > 0) {
+                     return basicData.mainPagePrice * 200;
+                }
+                
+                // Priority 2: Min of Options
+                const validPrices = translatedOptions.map(o => o.price).filter(p => p > 0);
+                return validPrices.length > 0 ? Math.min(...validPrices) : 0;
+            })(),
             generated_options: translatedOptions,
             scrapedReviews: translatedReviews,
             aiMetadata: aiMetadata
@@ -1999,13 +2061,20 @@ async function scrapeProduct(page, url) {
                     await randomDelay(4000, 8000); // Wait for content to load
                 }
 
-                // Generate new randomized batch (0, 1, 2, 3)
-                 console.log('Generating new randomized click order for this screen...');
+                // Generate new batch (0, 1, 2, 3)
+                 console.log('Generating new click order for this screen...');
                  const indices = [0, 1, 2, 3];
-                 // Fisher-Yates Shuffle
-                 for (let i = indices.length - 1; i > 0; i--) {
-                     const j = Math.floor(Math.random() * (i + 1));
-                     [indices[i], indices[j]] = [indices[j], indices[i]];
+                 
+                 if (layoutMode === 'vertical-4') {
+                     // Sequential for vertical layout as per user instruction
+                     console.log('Using Sequential Order for Vertical Layout (Top -> Down)');
+                     // No shuffle
+                 } else {
+                     // Fisher-Yates Shuffle for Grid (Randomized)
+                     for (let i = indices.length - 1; i > 0; i--) {
+                         const j = Math.floor(Math.random() * (i + 1));
+                         [indices[i], indices[j]] = [indices[j], indices[i]];
+                     }
                  }
                  batchQueue = indices;
                  console.log('New Batch Order:', batchQueue);
@@ -2025,67 +2094,117 @@ async function scrapeProduct(page, url) {
                 }
             }
 
-            // 3. Determine Quadrant from Queue
+            // 3. Determine Quadrant/Position from Queue
             const quadrantIdx = batchQueue.shift(); // Get next random index
-            const quadrantNames = ['Top Left', 'Top Right', 'Bottom Left', 'Bottom Right'];
-            const quadrantName = quadrantNames[quadrantIdx];
-            
-            console.log(`\nAttempting Product #${productIndex + 1} (Quadrant: ${quadrantName})...`);
 
-            // --- DETECT "PHONE CONTAINER" & SELECT QUADRANT ---
-            const clickTarget = await page.evaluate((qIdx) => {
-                // Try to find the main content container (usually centered on desktop)
-                const container = document.querySelector('#main') || 
-                                  document.querySelector('.page-container') || 
-                                  document.querySelector('.goods-list-container') || 
-                                  document.querySelector('._3BdU0') || 
-                                  document.body;
-                
-                const rect = container.getBoundingClientRect();
-                
-                let targetRect = {
-                    left: rect.left,
-                    top: rect.top,
-                    width: rect.width,
-                    height: rect.height
-                };
+            let clickTarget;
 
-                // Heuristic: If body is full width, assume phone is a 400-500px column in the middle
-                if (targetRect.width > 800) {
-                     const phoneWidth = 450;
-                     targetRect.left = (window.innerWidth / 2) - (phoneWidth / 2);
-                     targetRect.width = phoneWidth;
-                }
+            if (layoutMode === 'vertical-4') {
+                // --- NEW VERTICAL LAYOUT MODE (1 item per row, 4 items per screen) ---
+                const slotNames = ['Vertical Item 1 (Top)', 'Vertical Item 2', 'Vertical Item 3', 'Vertical Item 4 (Bottom)'];
+                const slotName = slotNames[quadrantIdx];
+                console.log(`\nAttempting Product #${productIndex + 1} (Vertical Slot: ${quadrantIdx + 1})...`);
 
-                // Define the 4 quadrants relative to the detected "phone" container
-                const quadrants = [
-                    { name: 'Top Left', xPct: 0.25, yPct: 0.25 },
-                    { name: 'Top Right', xPct: 0.75, yPct: 0.25 },
-                    { name: 'Bottom Left', xPct: 0.25, yPct: 0.75 },
-                    { name: 'Bottom Right', xPct: 0.75, yPct: 0.75 }
-                ];
+                clickTarget = await page.evaluate((qIdx) => {
+                    const vh = window.innerHeight;
+                    const vw = window.innerWidth;
+                    
+                    // Slot 0: 0.20 (20%)
+                    // Slot 1: 0.40 (40%)
+                    // Slot 2: 0.60 (60%)
+                    // Slot 3: 0.80 (80%)
+                    const yPct = 0.20 + (qIdx * 0.20);
+                    
+                    const y = vh * yPct;
+                    
+                    // X is center of screen (or center of detected container)
+                    const container = document.querySelector('#main') || 
+                                      document.querySelector('.page-container') || 
+                                      document.body;
+                    const rect = container.getBoundingClientRect();
+                    let left = rect.left;
+                    let width = rect.width;
+                    
+                    if (width > 800) {
+                         width = 450;
+                         left = (vw / 2) - (width / 2);
+                    }
+                    
+                    const x = left + (width * 0.5); // Center
+                    
+                    // Jitter
+                    const jitterX = (Math.random() - 0.5) * 15;
+                    const jitterY = (Math.random() - 0.5) * 15;
+
+                    return {
+                        x: x + jitterX,
+                        y: y + jitterY,
+                        name: `Vertical Slot ${qIdx+1} (${(yPct*100).toFixed(0)}%)`,
+                        containerWidth: width
+                    };
+                }, quadrantIdx);
+
+            } else {
+                const quadrantNames = ['Top Left', 'Top Right', 'Bottom Left', 'Bottom Right'];
+                const quadrantName = quadrantNames[quadrantIdx];
                 
-                // Use sequential index instead of random
-                const choice = quadrants[qIdx];
-                
-                const x = targetRect.left + (targetRect.width * choice.xPct);
-                
-                // Better approach for Y:
-                const viewportHeight = window.innerHeight;
-                // Target the middle-ish area of the screen
-                const y = (viewportHeight * 0.3) + (viewportHeight * 0.4 * choice.yPct); // Map 0-1 to 30%-70% of screen height
-                
-                // Add Gaussian-like Random Jitter (+/- 5px)
-                const jitterX = (Math.random() - 0.5) * 10; 
-                const jitterY = (Math.random() - 0.5) * 10;
-                
-                return {
-                    x: x + jitterX,
-                    y: y + jitterY,
-                    name: choice.name,
-                    containerWidth: targetRect.width
-                };
-            }, quadrantIdx); // Pass quadrantIdx to evaluate
+                console.log(`\nAttempting Product #${productIndex + 1} (Quadrant: ${quadrantName})...`);
+    
+                // --- DETECT "PHONE CONTAINER" & SELECT QUADRANT ---
+                clickTarget = await page.evaluate((qIdx) => {
+                    // Try to find the main content container (usually centered on desktop)
+                    const container = document.querySelector('#main') || 
+                                      document.querySelector('.page-container') || 
+                                      document.querySelector('.goods-list-container') || 
+                                      document.querySelector('._3BdU0') || 
+                                      document.body;
+                    
+                    const rect = container.getBoundingClientRect();
+                    
+                    let targetRect = {
+                        left: rect.left,
+                        top: rect.top,
+                        width: rect.width,
+                        height: rect.height
+                    };
+    
+                    // Heuristic: If body is full width, assume phone is a 400-500px column in the middle
+                    if (targetRect.width > 800) {
+                         const phoneWidth = 450;
+                         targetRect.left = (window.innerWidth / 2) - (phoneWidth / 2);
+                         targetRect.width = phoneWidth;
+                    }
+    
+                    // Define the 4 quadrants relative to the detected "phone" container
+                    const quadrants = [
+                        { name: 'Top Left', xPct: 0.25, yPct: 0.25 },
+                        { name: 'Top Right', xPct: 0.75, yPct: 0.25 },
+                        { name: 'Bottom Left', xPct: 0.25, yPct: 0.75 },
+                        { name: 'Bottom Right', xPct: 0.75, yPct: 0.75 }
+                    ];
+                    
+                    // Use sequential index instead of random
+                    const choice = quadrants[qIdx];
+                    
+                    const x = targetRect.left + (targetRect.width * choice.xPct);
+                    
+                    // Better approach for Y:
+                    const viewportHeight = window.innerHeight;
+                    // Target the middle-ish area of the screen
+                    const y = (viewportHeight * 0.3) + (viewportHeight * 0.4 * choice.yPct); // Map 0-1 to 30%-70% of screen height
+                    
+                    // Add Gaussian-like Random Jitter (+/- 5px)
+                    const jitterX = (Math.random() - 0.5) * 10; 
+                    const jitterY = (Math.random() - 0.5) * 10;
+                    
+                    return {
+                        x: x + jitterX,
+                        y: y + jitterY,
+                        name: choice.name,
+                        containerWidth: targetRect.width
+                    };
+                }, quadrantIdx); // Pass quadrantIdx to evaluate
+            }
 
             // Click Logic
             const clickX = clickTarget.x;

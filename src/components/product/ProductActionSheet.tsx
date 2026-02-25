@@ -128,60 +128,68 @@ const ProductActionSheet: React.FC<ProductActionSheetProps> = ({
                   selectedVariantId={currentVariant?.id}
                 />
               )}
+            </div>
 
-              {/* Shipping Method */}
-              <div className="space-y-3">
-                <h3 className="text-slate-900 dark:text-white text-sm font-black flex items-center gap-2">
-                  طريقة الشحن
-                  <span className="text-[10px] text-slate-400 font-normal">(يجب الاختيار)</span>
-                </h3>
-                
-                <div className="flex gap-3">
-                  <button
-                    onClick={() => onShippingChange('air')}
-                    disabled={product?.isAirRestricted}
-                    className={`flex-1 flex flex-col items-center justify-center gap-2 p-4 rounded-2xl border-2 transition-all ${
-                      shippingMethod === 'air'
-                        ? 'border-primary bg-primary/5 text-primary'
-                        : product?.isAirRestricted 
-                          ? 'border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 text-slate-300 dark:text-slate-600 cursor-not-allowed'
-                          : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-500 hover:border-slate-300'
-                    }`}
-                  >
-                    <Plane size={24} />
-                    <div className="flex flex-col items-center gap-0.5">
-                      <span className="font-bold text-sm">شحن جوي</span>
-                      <span className="text-[10px] opacity-80">10-20 يوم</span>
-                      <span className="text-[10px] opacity-60">أسرع لكن أغلى</span>
-                    </div>
-                    {product?.isAirRestricted && <span className="text-[10px] text-red-500 font-bold">غير متوفر</span>}
-                  </button>
-
-                  <button
-                    onClick={() => onShippingChange('sea')}
-                    className={`flex-1 flex flex-col items-center justify-center gap-2 p-4 rounded-2xl border-2 transition-all ${
-                      shippingMethod === 'sea'
-                        ? 'border-primary bg-primary/5 text-primary'
+            {/* Shipping Method - Sticky above footer */}
+            <div className="px-3 py-1.5 bg-white dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800">
+              <h3 className="text-slate-900 dark:text-white text-xs font-black flex items-center gap-2 mb-1.5">
+                طريقة الشحن
+                <span className="text-[10px] text-slate-400 font-normal">(يجب الاختيار)</span>
+              </h3>
+              
+              <div className="flex gap-2">
+                <button
+                  onClick={() => onShippingChange('air')}
+                  disabled={product?.isAirRestricted}
+                  className={`flex-1 flex items-center justify-between gap-2 px-3 py-2 rounded-xl border-2 transition-all ${
+                    shippingMethod === 'air'
+                      ? 'border-primary bg-primary/5 text-primary'
+                      : product?.isAirRestricted 
+                        ? 'border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 text-slate-300 dark:text-slate-600 cursor-not-allowed'
                         : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-500 hover:border-slate-300'
-                    }`}
-                  >
-                    <Ship size={24} />
-                    <div className="flex flex-col items-center gap-0.5">
-                      <span className="font-bold text-sm">شحن بحري</span>
-                      <span className="text-[10px] opacity-80">شهرين</span>
-                      <span className="text-[10px] opacity-60">أرخص</span>
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <Plane size={18} />
+                    <div className="flex flex-col items-start">
+                      <span className="font-bold text-xs">شحن جوي</span>
+                      <span className="text-[10px] opacity-80">10-20 يوم</span>
                     </div>
-                  </button>
-                </div>
+                  </div>
+                  <div className="flex flex-col items-end">
+                    <span className="text-[10px] font-bold text-red-500 bg-red-50 dark:bg-red-500/10 px-1.5 py-0.5 rounded-full">أغلى</span>
+                    {product?.isAirRestricted && <span className="text-[9px] text-red-500 font-bold mt-0.5">غير متوفر</span>}
+                  </div>
+                </button>
+
+                <button
+                  onClick={() => onShippingChange('sea')}
+                  className={`flex-1 flex items-center justify-between gap-2 px-3 py-2 rounded-xl border-2 transition-all ${
+                    shippingMethod === 'sea'
+                      ? 'border-primary bg-primary/5 text-primary'
+                      : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-500 hover:border-slate-300'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <Ship size={18} />
+                    <div className="flex flex-col items-start">
+                      <span className="font-bold text-xs">شحن بحري</span>
+                      <span className="text-[10px] opacity-80">شهرين</span>
+                    </div>
+                  </div>
+                  <div className="flex flex-col items-end">
+                    <span className="text-[10px] font-bold text-green-600 bg-green-50 dark:bg-green-500/10 px-1.5 py-0.5 rounded-full">أرخص</span>
+                  </div>
+                </button>
               </div>
             </div>
 
             {/* Footer Action */}
-            <div className="p-4 border-t border-slate-100 dark:border-slate-800 pb-safe bg-white dark:bg-slate-900">
+            <div className="p-4 pb-safe bg-white dark:bg-slate-900">
               <button
                 onClick={onConfirm}
-                disabled={isAdding || !areOptionsLoaded}
-                className={`w-full py-4 bg-primary hover:bg-primary-dark text-white rounded-xl font-black text-lg shadow-lg shadow-primary/25 transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 mb-2 ${isAdding || !areOptionsLoaded ? 'opacity-50 cursor-not-allowed' : ''}`}
+                disabled={isAdding || !areOptionsLoaded || !shippingMethod}
+                className={`w-full py-4 bg-primary hover:bg-primary-dark text-white rounded-xl font-black text-lg shadow-lg shadow-primary/25 transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 mb-2 ${isAdding || !areOptionsLoaded || !shippingMethod ? 'opacity-50 cursor-not-allowed' : ''}`}
               >
                 {isAdding ? (
                   <>
@@ -192,6 +200,10 @@ const ProductActionSheet: React.FC<ProductActionSheetProps> = ({
                   <>
                     <RefreshCw size={24} className="animate-spin" />
                     <span>جاري تحميل الخيارات...</span>
+                  </>
+                ) : !shippingMethod ? (
+                  <>
+                    <span>يرجى اختيار الشحن</span>
                   </>
                 ) : (
                   <>

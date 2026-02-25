@@ -10,14 +10,6 @@ import ProductCard from '../components/home/ProductCard';
 import { Grid2X2, Smartphone, Shirt, Sparkles, Banknote, AlertCircle, PackageSearch } from 'lucide-react';
 import type { Product } from '../types/product';
 
-const categories = [
-  { id: 'all', name: 'الكل', icon: Grid2X2 },
-  { id: 'electronics', name: 'إلكترونيات', icon: Smartphone },
-  { id: 'fashion', name: 'أزياء', icon: Shirt },
-  { id: 'new', name: 'جديدنا', icon: Sparkles },
-  { id: 'under5k', name: 'أقل من 5,000 د.ع', icon: Banknote },
-];
-
 const categoryToSearchTerm: Record<string, string> = {
   all: '',
   electronics: 'إلكترونيات أجهزة ذكية electronics tech',
@@ -28,6 +20,16 @@ const categoryToSearchTerm: Record<string, string> = {
 
 const Home: React.FC = () => {
   const { t } = useTranslation();
+  
+  // Categories definition with translations and icons
+  const staticCategories = React.useMemo(() => [
+    { id: 'all', name: t('home.recommended') || 'المقترحة', icon: Grid2X2 },
+    { id: 'electronics', name: 'إلكترونيات', icon: Smartphone },
+    { id: 'fashion', name: 'أزياء', icon: Shirt },
+    { id: 'new', name: 'جديدنا', icon: Sparkles },
+    { id: 'under5k', name: 'أقل من 5,000 د.ع', icon: Banknote },
+  ], [t]);
+
   const navigate = useNavigate();
   const wishlistItems = useWishlistStore((state) => state.items);
   const toggleWishlist = useWishlistStore((state) => state.toggleWishlist);
@@ -229,7 +231,7 @@ const Home: React.FC = () => {
     const idleCallback = (window as any).requestIdleCallback || ((cb: any) => setTimeout(cb, 2000));
     
     const handleIdle = () => {
-      categories.forEach(async (cat) => {
+      staticCategories.forEach(async (cat) => {
         if (cat.id !== selectedCategoryId && !prefetchedCategories.current.has(cat.id)) {
           try {
             const searchTerm = categoryToSearchTerm[cat.id] || '';
@@ -305,7 +307,7 @@ const Home: React.FC = () => {
           {selectedCategoryId !== 'all' && (
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-black text-slate-900 dark:text-white">
-                {categories.find(c => c.id === selectedCategoryId)?.name}
+                {staticCategories.find(c => c.id === selectedCategoryId)?.name}
               </h2>
             </div>
           )}

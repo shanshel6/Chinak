@@ -582,12 +582,11 @@ const ProductDetails: React.FC = () => {
   const handleAddToCart = async () => {
     if (!product) return;
 
-    // Default to air shipping if not selected and not restricted
-    let finalShippingMethod = shippingMethod;
-    if (!finalShippingMethod) {
-      finalShippingMethod = product.isAirRestricted ? 'sea' : 'air';
-      setShippingMethod(finalShippingMethod);
+    if (!shippingMethod) {
+      showToast('يرجى اختيار طريقة الشحن', 'error');
+      return;
     }
+    const finalShippingMethod = shippingMethod;
     
     if (!isAuthenticated) {
       showToast('يرجى تسجيل الدخول أولاً لإضافة منتجات إلى السلة', 'info');
