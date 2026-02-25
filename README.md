@@ -1,6 +1,6 @@
 ---
 title: My Shop Backend (Live)
-emoji: 🛍️
+emoji: 🛒
 colorFrom: blue
 colorTo: indigo
 sdk: docker
