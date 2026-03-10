@@ -1,0 +1,184 @@
+import pkg from '@prisma/client';
+import fs from 'fs';
+import { processProductAI } from './services/aiService.js';
+import dotenv from 'dotenv';
+import prisma from './prismaClient.js';
+
+dotenv.config();
+
+const extractNumber = (val) => {
+  if (val === null || val === undefined || val === '') return null;
+  if (typeof val === 'number') return val;
+  
+  const str = String(val);
+  const match = str.match(/(\d+\.?\d*)/);
+  if (match) {
+    const parsed = parseFloat(match[1]);
+    const isGramUnit = (str.includes('جرام') || str.toLowerCase().includes('gram')) && !str.toLowerCase().includes('kg');
+    const isLikelyGrams = !str.toLowerCase().includes('kg') && parsed > 10;
+    if (isGramUnit || isLikelyGrams) {
+      return parsed / 1000;
+    }
+    return isNaN(parsed) ? null : parsed;
+  }
+  return null;
+};
+
+const calculateBulkImportPrice = (rawPrice, domesticFee, weight, length, width, height, explicitMethod) => {
+  const weightInKg = extractNumber(weight) || 0.5;
+  let method = explicitMethod?.toLowerCase();
+  if (!method) {
+    method = (weightInKg > 0 && weightInKg < 1) ? 'air' : 'sea';
+  }
+  const domestic = domesticFee || 0;
+
+  if (method === 'air') {
+    // Air Pricing logic: (Base Price + Domestic Fee + (Weight * Air Rate)) * 1.20
+    const airRate = 15400;
+    const shippingCost = weightInKg * airRate;
+    return Math.ceil(((rawPrice + domestic + shippingCost) * 1.20) / 250) * 250;
+  } else {
+    // Sea: (Base Price + Domestic Fee + Sea Shipping) * 1.20
+    const seaRate = 182000;
+    const l = extractNumber(length) || 0;
+    const w = extractNumber(width) || 0;
+    const h = extractNumber(height) || 0;
+
+    const paddedL = l > 0 ? l + 5 : 0;
+    const paddedW = w > 0 ? w + 5 : 0;
+    const paddedH = h > 0 ? h + 5 : 0;
+
+    const volumeCbm = (paddedL * paddedW * paddedH) / 1000000;
+    const seaShippingCost = Math.max(volumeCbm * seaRate, 500);
+
+    return Math.ceil(((rawPrice + domestic + seaShippingCost) * 1.20) / 250) * 250;
+  }
+};
+
+async function main() {
+  const RESTRICTED_KEYWORDS = [
+    // Dangerous Goods (Batteries, Liquids, etc.)
+    'battery', 'lithium', 'power bank', 'powerbank', 'batteries',
+    'بطارية', 'ليثيوم', 'باور بانك', 'شاحن متنقل',
+    'liquid', 'oil', 'cream', 'gel', 'paste', 'shampoo', 'perfume', 'spray', 'aerosol',
+    'سائل', 'زيت', 'كريم', 'جل', 'معجون', 'شامبو', 'عطر', 'بخاخ',
+    'powder', 'dust', 'مسحوق', 'بودرة',
+    'magnet', 'magnetic', 'مغناطيس', 'مغناطيسي',
+    'knife', 'sword', 'dagger', 'weapon', 'gun', 'rifle',
+    'سكين', 'سيف', 'خنجر', 'سلاح', 'بندقية',
+    'flammable', 'lighter', 'gas', 'قابل للاشتعال', 'ولاعة', 'غاز',
+    // Furniture / Bulky Items
+    'furniture', 'sofa', 'couch', 'chair', 'table', 'desk', 'wardrobe', 'cabinet', 'cupboard', 
+    'bed', 'mattress', 'bookshelf', 'shelf', 'shelves', 'dresser', 'sideboard', 'stool', 'bench',
+    'armchair', 'recliner', 'ottoman', 'bean bag', 'dining set', 'tv stand', 'shoe rack',
+    'أثاث', 'كنبة', 'أريكة', 'كرسي', 'طاولة', 'مكتب', 'دولاب', 'خزانة', 'سرير', 'مرتبة', 
+    'رف', 'ارفف', 'تسريحة', 'كومودينو', 'بوفيه', 'مقعد', 'بنش', 'طقم جلوس', 'طاولة طعام', 
+    'حامل تلفزيون', 'جزامة', 'طقم صالون', 'غرفة نوم'
+  ];
+  const EXCEPTIONS = [
+    'cover', 'cloth', 'slipcover', 'cushion case', 'pillow case', 'protector', 'accessory', 'accessories', 'toy', 'miniature', 'model',
+    'غطاء', 'مفرش', 'تلبيسة', 'كيس وسادة', 'حماية', 'اكسسوار', 'لعبة', 'نموذج', 'مجسم'
+  ];
+
+  const detectAirRestriction = (text) => {
+    if (!text) return false;
+    const lowerText = String(text).toLowerCase();
+    for (const keyword of RESTRICTED_KEYWORDS) {
+      if (lowerText.includes(keyword.toLowerCase())) {
+        const isException = EXCEPTIONS.some(ex => lowerText.includes(ex.toLowerCase()));
+        if (!isException) return true;
+      }
+    }
+    return false;
+  };
+
+  const content = fs.readFileSync('../recent_products.json', 'utf8');
+  
+  // The content is a PowerShell dump. We need to extract the part between "[" and "]"
+  // after the "Content           : " label.
+  const startIndex = content.indexOf('[');
+  const endIndex = content.lastIndexOf(']') + 1;
+  
+  if (startIndex === -1 || endIndex === 0) {
+    console.error('Could not find JSON array in file');
+    return;
+  }
+  
+  let jsonPart = content.substring(startIndex, endIndex);
+  
+  // PowerShell output often adds extra newlines and indentation inside the content.
+  // We need to clean it up.
+  // 1. Remove the line breaks that are followed by lots of spaces (PowerShell formatting)
+  jsonPart = jsonPart.replace(/\r?\n\s+/g, ' ');
+  // 2. Remove any other weird characters
+  jsonPart = jsonPart.replace(/[\u0000-\u001F\u007F-\u009F]/g, '');
+
+  try {
+    const rawData = JSON.parse(jsonPart);
+    console.log(`Successfully parsed ${rawData.length} products!`);
+
+    for (const p of rawData) {
+      const name = p.name ? p.name.replace(/\n/g, ' ').trim() : 'Unnamed';
+      const chineseName = p.chineseName ? p.chineseName.replace(/\n/g, ' ').trim() : null;
+      const description = p.description ? p.description.replace(/\n/g, ' ').trim() : null;
+      
+      let product = await prisma.product.findFirst({
+        where: { name: name }
+      });
+
+      if (!product) {
+        const domesticFee = parseFloat(p.domestic_shipping_fee || p.domesticShippingFee) || 0;
+        const rawPrice = parseFloat(p.price) || parseFloat(p.basePriceRMB) || 0;
+        const price = calculateBulkImportPrice(rawPrice, domesticFee, p.weight, p.length, p.width, p.height, p.shippingMethod);
+
+        product = await prisma.product.create({
+          data: {
+            name: name,
+            chineseName: chineseName,
+            description: description,
+            price: price, // Now uses 90% markup for Air items
+            basePriceRMB: rawPrice,
+            image: p.image || '',
+            purchaseUrl: p.purchaseUrl,
+            status: 'PUBLISHED',
+            isActive: true,
+            isFeatured: !!p.isFeatured,
+            isPriceCombined: true,
+            specs: p.specs,
+            videoUrl: p.videoUrl,
+            domesticShippingFee: domesticFee,
+            isAirRestricted: p.isAirRestricted === true || p.isAirRestricted === 'true' || p.isAirRestricted === 1 || p.is_air_restricted === true || p.is_air_restricted === 'true' || p.is_air_restricted === 1 || p.IsAirRestricted === true || p.IsAirRestricted === 'true' || p.IsAirRestricted === 1 || detectAirRestriction(`${name} ${p.specs || ''}`),
+            minOrder: parseInt(p.min_order || p.minOrder) || 1,
+            deliveryTime: p.delivery_time || p.deliveryTime || p.Delivery_time || null,
+            aiMetadata: p.aiMetadata || p.ai_metadata || p.aimetatags || null
+          }
+        });
+        console.log(`Imported: ${name}`);
+        
+        // Trigger AI processing with a small delay for free-tier rate limits
+        if (process.env.DEEPINFRA_API_KEY || process.env.HUGGINGFACE_API_KEY) {
+          try {
+            console.log(`  -> AI Processing for ${name}...`);
+            await processProductAI(product.id);
+            // 2-second delay to be safe with DeepInfra free tier
+            await new Promise(r => setTimeout(r, 2000));
+          } catch (aiErr) {
+            console.error(`  !! AI Processing failed for ${name}:`, aiErr.message);
+          }
+        }
+      } else {
+        console.log(`Skipped (exists): ${name}`);
+      }
+    }
+    console.log('Import finished!');
+  } catch (err) {
+    console.error('Final attempt to parse failed:', err.message);
+    if (typeof jsonPart !== 'undefined') {
+      console.log('Cleaned snippet:', jsonPart.substring(0, 500));
+    }
+  }
+}
+
+main()
+  .catch(e => console.error(e))
+  .finally(() => prisma.$disconnect());
