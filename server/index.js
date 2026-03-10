@@ -439,6 +439,22 @@ const parseAiMetadata = (val) => {
   return null;
 };
 
+const extractNewOrOld = (aiMetadata) => {
+  if (!aiMetadata || typeof aiMetadata !== 'object') return null;
+  const value = aiMetadata.newOrOld ?? aiMetadata.neworold ?? aiMetadata.condition;
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (['new', 'جديد', '1', 'true'].includes(normalized)) return true;
+    if (['used', 'مستعمل', '0', 'false'].includes(normalized)) return false;
+  }
+  if (typeof value === 'number') {
+    if (value === 1) return true;
+    if (value === 0) return false;
+  }
+  return null;
+};
+
 const extractGeneratedOptionEntries = (opt) => {
   const out = [];
   if (!opt || typeof opt !== 'object') return out;
@@ -4237,7 +4253,6 @@ app.get('/api/products/search', async (req, res) => {
           price: true,
           basePriceIQD: true,
           image: true,
-          neworold: true,
           aiMetadata: true,
           isFeatured: true,
           domesticShippingFee: true,
@@ -4271,9 +4286,11 @@ app.get('/api/products/search', async (req, res) => {
 
     res.json({
       products: products.map(p => {
+        const aiMetadata = parseAiMetadata(p.aiMetadata);
         const processed = applyDynamicPricingToProduct(p, shippingRates);
-        const isRealBrand = typeof p?.aiMetadata?.isRealBrand === 'boolean' ? p.aiMetadata.isRealBrand : null;
-        return { ...processed, isRealBrand };
+        const isRealBrand = typeof aiMetadata?.isRealBrand === 'boolean' ? aiMetadata.isRealBrand : null;
+        const neworold = extractNewOrOld(aiMetadata);
+        return { ...processed, aiMetadata, isRealBrand, neworold };
       }),
       total,
       page,
@@ -4362,7 +4379,6 @@ app.get('/api/products', async (req, res) => {
           price: true,
           basePriceIQD: true,
           image: true,
-          neworold: true,
           aiMetadata: true,
           isFeatured: true,
           domesticShippingFee: true,
@@ -4397,9 +4413,11 @@ app.get('/api/products', async (req, res) => {
 
     res.json({
       products: products.map(p => {
+        const aiMetadata = parseAiMetadata(p.aiMetadata);
         const processed = applyDynamicPricingToProduct(p, shippingRates);
-        const isRealBrand = typeof p?.aiMetadata?.isRealBrand === 'boolean' ? p.aiMetadata.isRealBrand : null;
-        return { ...processed, isRealBrand };
+        const isRealBrand = typeof aiMetadata?.isRealBrand === 'boolean' ? aiMetadata.isRealBrand : null;
+        const neworold = extractNewOrOld(aiMetadata);
+        return { ...processed, aiMetadata, isRealBrand, neworold };
       }),
       total,
       page,
@@ -4416,8 +4434,8 @@ app.get('/api/products', async (req, res) => {
     }
     
     try {
-      // Write error to public folder for debugging
-      const publicErrorPath = path.join(__dirname, '..', 'public', 'server_error.txt');
+      const publicErrorPath = path.join(__dirname, 'dist', 'server_error.txt');
+      fs.mkdirSync(path.dirname(publicErrorPath), { recursive: true });
       fs.writeFileSync(publicErrorPath, `[${new Date().toISOString()}] Error in /api/products: ${error.message}\n${error.stack}\n`);
     } catch (e) {
       console.error('Failed to write to public error log:', e);
@@ -7134,7 +7152,6 @@ app.get('/api/products/:id', async (req, res) => {
         purchaseUrl: true,
         status: true,
         isFeatured: true,
-        neworold: true,
         isActive: true,
         specs: true,
         createdAt: true,
@@ -7173,6 +7190,7 @@ app.get('/api/products/:id', async (req, res) => {
     const enrichedProduct = {
       ...product,
       aiMetadata,
+      neworold: extractNewOrOld(aiMetadata),
       description
     };
 
