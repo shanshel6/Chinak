@@ -28,8 +28,8 @@ export const getBaseDomain = () => {
     const isAndroid = /android/i.test(userAgent);
     
     // Check if we are actually on the production domain or if it's a capacitor app that should connect to prod
-    if (hostname.includes('shanshal66') || hostname.includes('hf.space') || (isCapacitor && !hostname.includes('10.0.2.2') && !hostname.includes('10.0.3.2'))) {
-      return 'https://shanshal66-my-shop-backend.hf.space';
+    if (hostname.includes('shanshal66') || hostname.includes('railway.app') || (isCapacitor && !hostname.includes('10.0.2.2') && !hostname.includes('10.0.3.2'))) {
+      return 'https://chinak-production.up.railway.app';
     }
 
     // If we are in PROD build but running on emulator (10.0.2.2), allow local connection
@@ -37,7 +37,7 @@ export const getBaseDomain = () => {
       return 'http://10.0.2.2:5001';
     }
     
-    return 'https://shanshal66-my-shop-backend.hf.space';
+    return 'https://chinak-production.up.railway.app';
   }
 
   // 3. Mobile / Emulator Check (For development)
@@ -64,7 +64,7 @@ export const getBaseDomain = () => {
     return '';
   }
 
-  return 'https://shanshal66-my-shop-backend.hf.space';
+  return 'https://chinak-production.up.railway.app';
 };
 
 const API_BASE_URL = `${getBaseDomain()}/api`;
