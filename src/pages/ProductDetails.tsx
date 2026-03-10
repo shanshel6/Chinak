@@ -239,6 +239,29 @@ const ProductDetails: React.FC = () => {
     return specs;
   }, [product]);
 
+  const descriptionFromMetadata = useMemo(() => {
+    if (!product) return '';
+    const rawMeta = (product as any).aiMetadata;
+    let meta: any = rawMeta;
+    if (typeof rawMeta === 'string') {
+      try {
+        meta = JSON.parse(rawMeta);
+      } catch {
+        meta = null;
+      }
+    }
+    const metaDescription = meta?.translatedDescription
+      ?? meta?.translatedDesc
+      ?? meta?.descriptionAr
+      ?? meta?.description_ar
+      ?? meta?.product_description
+      ?? meta?.description
+      ?? '';
+    const directDescription = (product.description ?? '').toString();
+    const candidate = directDescription.trim() ? directDescription : String(metaDescription || '').trim();
+    return candidate;
+  }, [product]);
+
   // Effect to initialize options when product data arrives (if not already set)
   useEffect(() => {
     if (product?.options?.length) {
@@ -756,7 +779,7 @@ const ProductDetails: React.FC = () => {
 
           <ProductDescription 
             productName={product.name}
-            description={product.description}
+            description={descriptionFromMetadata}
           />
 
           <ReviewsSection 

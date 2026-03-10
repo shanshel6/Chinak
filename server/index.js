@@ -425,6 +425,20 @@ const cleanStr = (s) => {
   return s.replace(/\bempty\b/gi, '').trim();
 };
 
+const parseAiMetadata = (val) => {
+  if (!val) return null;
+  if (typeof val === 'object') return val;
+  if (typeof val === 'string') {
+    try {
+      const parsed = JSON.parse(val);
+      return parsed && typeof parsed === 'object' ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+};
+
 const extractGeneratedOptionEntries = (opt) => {
   const out = [];
   if (!opt || typeof opt !== 'object') return out;
@@ -7146,9 +7160,25 @@ app.get('/api/products/:id', async (req, res) => {
     });
     if (!product) return res.status(404).json({ error: 'Product not found' });
     
+    const aiMetadata = parseAiMetadata(product.aiMetadata);
+    const description = cleanStr(
+      aiMetadata?.translatedDescription
+        ?? aiMetadata?.translatedDesc
+        ?? aiMetadata?.descriptionAr
+        ?? aiMetadata?.description_ar
+        ?? aiMetadata?.product_description
+        ?? aiMetadata?.description
+        ?? ''
+    );
+    const enrichedProduct = {
+      ...product,
+      aiMetadata,
+      description
+    };
+
     console.log('[DEBUG] Product found, applying pricing...');
     try {
-        const processed = applyDynamicPricingToProduct(product, null);
+        const processed = applyDynamicPricingToProduct(enrichedProduct, null);
         console.log('[DEBUG] Pricing applied successfully');
         res.json(processed);
     } catch (pricingError) {

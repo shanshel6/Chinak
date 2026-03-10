@@ -107,27 +107,27 @@ const ProductDescription: React.FC<ProductDescriptionProps> = ({
     <div className="mb-8">
       {/* Description Section */}
       <section className="relative">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="w-1.5 h-6 bg-primary rounded-full" />
-          <h3 className="text-slate-900 dark:text-white text-lg font-black">الوصف</h3>
+        <div className="flex items-center gap-3 mb-5">
+          <div className="w-2 h-7 bg-primary rounded-full" />
+          <h3 className="text-slate-900 dark:text-white text-xl font-black tracking-tight">الوصف</h3>
         </div>
-        <div className="bg-slate-50 dark:bg-slate-800/40 rounded-2xl p-5 border border-slate-100 dark:border-white/5">
+        <div className="bg-white dark:bg-slate-900/40 rounded-3xl p-6 border border-slate-200/70 dark:border-white/10 shadow-sm">
           {showDescription && (
-            <div className="text-slate-600 dark:text-slate-300 text-[15px] leading-loose whitespace-pre-line font-medium mb-6 last:mb-0">
+            <div className="text-slate-700 dark:text-slate-200 text-[16.5px] leading-8 whitespace-pre-line font-semibold mb-6 last:mb-0">
               {fixMojibake(description)}
             </div>
           )}
           
           {showSpecsInDesc && (
-            <div className="space-y-3">
+            <div className="space-y-4">
               {parsedSpecs.map((spec, index) => (
-                <div key={index} className="flex flex-col sm:flex-row sm:items-start gap-1 sm:gap-2">
+                <div key={index} className="flex flex-col sm:flex-row sm:items-start gap-1.5 sm:gap-3">
                   {spec.label && (
-                    <span className="text-slate-500 dark:text-slate-400 font-bold min-w-[120px]">
+                    <span className="text-slate-500 dark:text-slate-400 font-bold min-w-[140px] text-[14px]">
                       {spec.label}:
                     </span>
                   )}
-                  <span className="text-slate-800 dark:text-slate-200 font-medium">
+                  <span className="text-slate-800 dark:text-slate-100 font-semibold text-[15px]">
                     {spec.value}
                   </span>
                 </div>
