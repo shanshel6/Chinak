@@ -187,8 +187,28 @@ const ProductCard: React.FC<ProductCardProps> = React.memo(({
             </div>
           </div>
           
-          <div className="flex items-center gap-1.5 bg-slate-50 dark:bg-slate-800/50 px-2.5 py-1 rounded-full border border-slate-100 dark:border-slate-700/50">
-            <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400">تم بيع {soldCount}</span>
+          <div className="flex flex-wrap gap-1 items-end justify-end max-w-[50%]">
+            {/* Condition Tag */}
+            {product.neworold !== null && product.neworold !== undefined && (
+              <div className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                product.neworold 
+                  ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300' 
+                  : 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300'
+              }`}>
+                {product.neworold ? 'جديد' : 'مستعمل'}
+              </div>
+            )}
+
+            {/* Brand Tag */}
+            {product.aiMetadata?.isRealBrand !== null && product.aiMetadata?.isRealBrand !== undefined && (
+              <div className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                product.aiMetadata.isRealBrand 
+                  ? 'bg-purple-100 text-purple-700 dark:bg-purple-500/20 dark:text-purple-300' 
+                  : 'bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300'
+              }`}>
+                {product.aiMetadata.isRealBrand ? 'أصلي' : 'تقليد'}
+              </div>
+            )}
           </div>
         </div>
       </div>

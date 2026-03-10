@@ -41,6 +41,19 @@ const FOOD_BLACKLIST = [
   '面包', '零嘴', '饼干', '蛋糕', '方便面', '火锅', '调味',
   '大米', '米', '面', '肉', '海鲜', '酒', '啤酒', '葡萄酒'
 ];
+
+const EXCLUDED_KEYWORDS = [
+  '黄金', '足金', '千足金', '万足金', '18K金', '24K金', 'Au999', 'Au750', // Gold
+  '白银', '纯银', '足银', 'S925', '925银', 'Ag999', 'Ag925', // Silver
+  '真金', '真银', 'Pt950', 'Pt990', '白金' // Real gold/silver/platinum
+];
+
+function isExcludedProduct(title) {
+  if (!title) return false;
+  const t = title.toUpperCase();
+  return EXCLUDED_KEYWORDS.some(k => t.includes(k.toUpperCase()));
+}
+
 const MAX_AI_ATTEMPTS = 3;
 let dbReady = false;
 let dbChecked = false;
@@ -880,7 +893,7 @@ async function run() {
       return false;
     };
 
-    const MAX_PAGES = parseInt(process.env.GOOFISH_MAX_PAGES || '40', 10);
+    const MAX_PAGES = parseInt(process.env.GOOFISH_MAX_PAGES || '3', 10);
     const seenItems = new Set();
     const allItems = [];
     let processedCount = 0;
@@ -1025,9 +1038,19 @@ async function run() {
 
           for (const it of items) {
             if (termProcessedCount >= ITEMS_PER_SEARCH || processedCount >= MAX_PRODUCTS_TO_PROCESS) break;
+            
+            termProcessedCount += 1;
+            console.log(`[${term}] Progress: ${termProcessedCount}/${ITEMS_PER_SEARCH}`);
+
             const key = `${it.url}|${it.image}|${it.title}`;
             if (seenItems.has(key)) continue;
             seenItems.add(key);
+
+            // Exclude gold/silver products based on title
+            if (isExcludedProduct(it.title)) {
+              console.log(`Skipping excluded product (Precious Metal): ${it.title}`);
+              continue;
+            }
 
             const cny = parseCnyPrice(it.priceText);
             const newOrOld = detectNewOrOldFromTexts(it.title, it.conditionText);
@@ -1053,6 +1076,7 @@ async function run() {
                 && cachedTranslation.descriptionAr.length >= 24
                 && cachedTranslation.descriptionAr !== cachedTranslation.titleAr;
               if (canUseCachedDescription) {
+                console.log(`Using cached translation for: ${it.title.substring(0, 15)}...`);
                 titleEn = cachedTranslation.titleAr;
                 descriptionAr = cachedTranslation.descriptionAr;
                 keywords = cachedTranslation.keywords;
@@ -1087,7 +1111,7 @@ async function run() {
             }
             await saveProductToDb(itemData, existingProduct?.id || null);
             processedCount += 1;
-            termProcessedCount += 1;
+            // termProcessedCount += 1;
           }
 
           if (termProcessedCount >= ITEMS_PER_SEARCH || processedCount >= MAX_PRODUCTS_TO_PROCESS) {
