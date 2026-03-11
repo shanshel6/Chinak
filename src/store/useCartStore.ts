@@ -148,10 +148,10 @@ export const useCartStore = create<CartState>()(
               );
 
               if (localMatch && localMatch.lastUpdated && (Date.now() - localMatch.lastUpdated < 5000)) {
-                return { ...serverItem, ...localMatch, id: serverItem.id }; // Keep server ID but local data
+                return { ...serverItem, ...localMatch, id: serverItem.id, quantity: 1 }; // Force quantity 1
               }
               
-              return serverItem;
+              return { ...serverItem, quantity: 1 }; // Force quantity 1
             });
 
             // Add purely local items (id starts with local-) that aren't in server items yet
@@ -196,29 +196,31 @@ export const useCartStore = create<CartState>()(
         });
 
         if (existingItem) {
-          set({
-            items: items.map(item => 
-              item.id === existingItem.id 
-                ? { ...item, quantity: item.quantity + quantity, lastUpdated: Date.now() }
-                : item
-            )
-          });
-          
-          // Background sync
-          try {
-            if (typeof existingItem.id === 'string' && existingItem.id.startsWith('local-')) {
-              // If it's still local, use addToCart to sync (server handles upsert)
-              addToCart(productId, quantity, variantId, selectedOptions, shippingMethod).then(response => {
-                if (response && response.id) {
-                  set({
-                    items: get().items.map(item => item.id === existingItem.id ? response : item)
-                  });
-                }
-              }).catch(() => {});
-            } else {
-              updateCartItem(existingItem.id, existingItem.quantity + quantity).catch(() => {});
-            }
-          } catch (_e) {}
+          // Force quantity to 1
+          if (existingItem.quantity !== 1) {
+             set({
+               items: items.map(item => 
+                 item.id === existingItem.id 
+                   ? { ...item, quantity: 1, lastUpdated: Date.now() }
+                   : item
+               )
+             });
+             try {
+               if (typeof existingItem.id === 'string' && existingItem.id.startsWith('local-')) {
+                  // ...
+               } else {
+                 updateCartItem(existingItem.id, 1).catch(() => {});
+               }
+             } catch (_e) {}
+          } else {
+             set({
+               items: items.map(item => 
+                 item.id === existingItem.id 
+                   ? { ...item, lastUpdated: Date.now() }
+                   : item
+               )
+             });
+          }
         } else if (productInfo) {
           const tempId = `local-${Date.now()}`;
           const newItem: CartItem = {
@@ -226,7 +228,7 @@ export const useCartStore = create<CartState>()(
             productId,
             variantId,
             selectedOptions: sOptions,
-            quantity,
+            quantity: 1, // Force quantity to 1
             shippingMethod,
             product: {
               id: productInfo.id,
@@ -261,7 +263,9 @@ export const useCartStore = create<CartState>()(
       },
 
       updateQuantity: async (itemId, quantity) => {
-         if (quantity < 1) return;
+         // Force quantity to 1 (disable quantity updates > 1)
+         quantity = 1;
+         
          const { items } = get();
          
          set({

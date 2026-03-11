@@ -54,6 +54,68 @@ function isExcludedProduct(title) {
   return EXCLUDED_KEYWORDS.some(k => t.includes(k.toUpperCase()));
 }
 
+function detectRealPriceFromTitle(title, currentPrice) {
+  if (!title) return currentPrice;
+  
+  // Clean title for easier matching
+  const t = title.replace(/\s+/g, '');
+
+  // Patterns for price detection (highest priority first)
+  // 1. "实收300", "300出", "300包邮", "300不包邮", "最低300", "300米", "300m"
+  const patterns = [
+    /实收(\d+(?:\.\d+)?)/,
+    /(\d+(?:\.\d+)?)出/,
+    /(\d+(?:\.\d+)?)包邮/,
+    /(\d+(?:\.\d+)?)不包邮/,
+    /最低(\d+(?:\.\d+)?)/,
+    /卖(\d+(?:\.\d+)?)/,
+    /(\d+(?:\.\d+)?)米/,
+    /(\d+(?:\.\d+)?)m/i,
+    /(\d+(?:\.\d+)?)元出/
+  ];
+
+  // Negative patterns (ignore these numbers if they match)
+  const negativePatterns = [
+    /原价(\d+)/,
+    /买来(\d+)/,
+    /入手(\d+)/,
+    /吊牌(\d+)/,
+    /发售价(\d+)/,
+    /(\d+)mm/, // avoid dimensions like 30mm
+    /(\d+)cm/,
+    /(\d+)kg/
+  ];
+
+  // Helper to check if a number matches a negative pattern in the raw title
+  const isNegative = (numStr) => {
+    for (const np of negativePatterns) {
+      const match = t.match(np);
+      if (match && match[1] === numStr) return true;
+    }
+    return false;
+  };
+
+  for (const p of patterns) {
+    const match = t.match(p);
+    if (match && match[1]) {
+      const priceVal = parseFloat(match[1]);
+      // Safety check: 
+      // 1. Ignore if price is too small (e.g. "1米" might mean 1 meter cable, unless context suggests money)
+      // 2. Ignore if price is suspiciously huge
+      if (priceVal >= 5 && priceVal < 100000) {
+        if (!isNegative(match[1])) {
+             // If detected price is different, return it
+             if (priceVal !== currentPrice) {
+                 return priceVal;
+             }
+        }
+      }
+    }
+  }
+
+  return currentPrice;
+}
+
 const MAX_AI_ATTEMPTS = 3;
 let dbReady = false;
 let dbChecked = false;
@@ -357,9 +419,12 @@ function shuffleTerms(terms) {
 
 async function generateSearchTermsWithAi(existingTerms) {
   const existingSet = new Set(existingTerms.map(normalizeSearchTerm));
+  const termsToAvoid = existingTerms.slice(-150).join(', ');
+
   let results = [];
   let usedAi = false;
   for (let attempt = 0; attempt < MAX_AI_ATTEMPTS && results.length < 50; attempt += 1) {
+    console.log(`[AI Term Gen] Requesting new terms from DeepInfra (attempt ${attempt + 1})...`);
     const prompt = [
       {
         role: 'system',
@@ -370,13 +435,18 @@ async function generateSearchTermsWithAi(existingTerms) {
         content: `Generate exactly 50 unique Chinese category search terms for an e-commerce marketplace like Xianyu. 
 Focus on shopping categories: electronics, phone accessories, home goods, furniture, fashion, shoes, bags, beauty, baby/kids, sports, tools, auto accessories, office, gaming, photography.
 Avoid all food or grocery terms. Avoid brand names. Use short, natural category phrases in Chinese.
+IMPORTANT: Do NOT use any of the following terms: ${termsToAvoid}.
 Return a JSON array only, no other text or punctuation.`
       }
     ];
-    const raw = await callDeepInfra(prompt, 0.4, 220);
-    if (!raw) continue;
+    const raw = await callDeepInfra(prompt, 0.6, 500);
+    if (!raw) {
+      console.log('[AI Term Gen] DeepInfra returned empty or null response.');
+      continue;
+    }
     usedAi = true;
     const cleaned = raw.trim().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
+    console.log('[AI Term Gen] Raw response:', cleaned.substring(0, 100) + '...');
     let parsed = null;
     try {
       parsed = JSON.parse(cleaned);
@@ -401,12 +471,28 @@ Return a JSON array only, no other text or punctuation.`
       if (results.length >= 50) break;
     }
   }
+  
+  if (results.length > 0) {
+    console.log(`[AI Term Gen] Successfully generated ${results.length} terms using DeepInfra:`);
+    console.log(results.join(', '));
+  } else {
+    console.log('[AI Term Gen] Failed to generate terms or API returned empty list.');
+  }
+
   return { terms: results.slice(0, 50), usedAi };
 }
 
 async function getSearchTermsForRun() {
   const history = loadSearchTermHistory();
-  const activeBatch = history.activeBatch;
+  let activeBatch = history.activeBatch;
+
+  // If we have an active batch that is a fallback, but we want AI terms and have a key, discard it.
+  if (activeBatch && activeBatch.source === 'fallback' && DEEPINFRA_API_KEY) {
+    console.log('Found active batch from fallback source, but DeepInfra Key is present. Discarding fallback batch to try AI generation.');
+    activeBatch = null;
+    clearActiveBatch(null); // Clear any active batch
+  }
+
   if (activeBatch && Array.isArray(activeBatch.terms) && activeBatch.terms.length > 0) {
     const batchSource = activeBatch.source || 'resume';
     if (AI_ONLY_TERMS && batchSource !== 'ai') {
@@ -1052,7 +1138,15 @@ async function run() {
               continue;
             }
 
-            const cny = parseCnyPrice(it.priceText);
+            let cny = parseCnyPrice(it.priceText);
+            
+            // Try to detect "real" price from title if different from listed price
+            const detectedPrice = detectRealPriceFromTitle(it.title, cny);
+            if (detectedPrice !== cny && detectedPrice > 0) {
+              console.log(`[Price Correction] Corrected price from ${cny} to ${detectedPrice} based on title: "${it.title}"`);
+              cny = detectedPrice;
+            }
+
             const newOrOld = detectNewOrOldFromTexts(it.title, it.conditionText);
             const realBrand = detectRealBrandFromTexts(it.title, it.conditionText);
             let titleEn = String(it.title || '').trim();

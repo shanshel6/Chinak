@@ -473,40 +473,7 @@ const Cart: React.FC = () => {
                   </div>
                 </div>
                 {!isSelectMode && (
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3 bg-slate-100 dark:bg-slate-700 rounded-lg px-2 py-1">
-                      <button 
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleUpdateQuantity(item.id, item.quantity, -1);
-                        }}
-                        className="text-slate-500 hover:text-primary transition-colors"
-                      >
-                        <Minus size={18} />
-                      </button>
-                      <input 
-                        type="number"
-                        min="1"
-                        value={item.quantity}
-                        onClick={(e) => e.stopPropagation()}
-                        onChange={(e) => {
-                          const val = parseInt(e.target.value);
-                          if (!isNaN(val) && val > 0) {
-                            handleUpdateQuantity(item.id, item.quantity, val - item.quantity);
-                          }
-                        }}
-                        className="text-sm font-bold w-8 text-center bg-transparent border-none outline-none p-0 appearance-none"
-                      />
-                      <button 
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleUpdateQuantity(item.id, item.quantity, 1);
-                        }}
-                        className="text-slate-500 hover:text-primary transition-colors"
-                      >
-                        <Plus size={18} />
-                      </button>
-                    </div>
+                  <div className="flex items-center justify-between mt-2">
                     <div className="flex items-center gap-2">
                       <button 
                         onClick={(e) => {

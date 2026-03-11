@@ -519,6 +519,30 @@ const CheckoutPaymentAddress: React.FC = () => {
             </p>
           </div>
         </section>
+
+        {/* Mandatory Checkbox and Policy Links (Moved to main content) */}
+        <section className="bg-slate-50/50 dark:bg-slate-800/40 p-4 rounded-2xl border border-slate-100 dark:border-slate-700/50">
+          <label className="flex items-start gap-3 cursor-pointer group">
+            <div className="relative flex items-center mt-0.5">
+              <input 
+                type="checkbox" 
+                checked={agreeToTerms}
+                onChange={(e) => setAgreeToTerms(e.target.checked)}
+                className="peer h-6 w-6 rounded-lg border-2 border-slate-400 dark:border-slate-500 bg-white dark:bg-slate-800 checked:bg-primary checked:border-primary transition-all appearance-none cursor-pointer hover:border-primary/50"
+              />
+              <Check size={16} strokeWidth={4} className="absolute left-1 text-white opacity-0 peer-checked:opacity-100 transition-all scale-50 peer-checked:scale-100" />
+            </div>
+            <span className="text-[11px] text-slate-600 dark:text-slate-400 font-bold leading-relaxed select-none">
+              أوافق على <Link to="/terms-of-service" className="text-primary hover:underline">شروط الخدمة</Link> و <Link to="/privacy-policy" className="text-primary hover:underline">سياسة الخصوصية</Link>، وأوافق على تزويدي بتكلفة الشحن الدولي عبر الواتساب للموافقة عليها قبل إتمام الشحن.
+            </span>
+          </label>
+          
+          <div className="flex items-center justify-center gap-6 mt-3 pt-3 border-t border-slate-200/50 dark:border-slate-700/50">
+            <button onClick={() => navigate('/privacy-policy')} className="text-[10px] font-black text-slate-400 hover:text-primary uppercase tracking-widest transition-colors">سياسة الخصوصية</button>
+            <div className="w-1 h-1 rounded-full bg-slate-300 dark:bg-slate-700"></div>
+            <button onClick={() => navigate('/terms-of-service')} className="text-[10px] font-black text-slate-400 hover:text-primary uppercase tracking-widest transition-colors">شروط الخدمة</button>
+          </div>
+        </section>
       </main>
 
       {/* Payment Processing Overlay */}
@@ -544,33 +568,9 @@ const CheckoutPaymentAddress: React.FC = () => {
         </div>
       )}
 
-      {/* Bottom Action Bar (Non-Sticky) */}
-      <div className="relative mt-2 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 p-4 pb-safe">
-        <div className="w-full space-y-4">
-          {/* Mandatory Checkbox and Policy Links */}
-          <div className="bg-slate-50/50 dark:bg-slate-800/40 p-4 rounded-2xl border border-slate-100 dark:border-slate-700/50">
-            <label className="flex items-start gap-3 cursor-pointer group">
-              <div className="relative flex items-center mt-0.5">
-                <input 
-                  type="checkbox" 
-                  checked={agreeToTerms}
-                  onChange={(e) => setAgreeToTerms(e.target.checked)}
-                  className="peer h-6 w-6 rounded-lg border-2 border-slate-400 dark:border-slate-500 bg-white dark:bg-slate-800 checked:bg-primary checked:border-primary transition-all appearance-none cursor-pointer hover:border-primary/50"
-                />
-                <Check size={16} strokeWidth={4} className="absolute left-1 text-white opacity-0 peer-checked:opacity-100 transition-all scale-50 peer-checked:scale-100" />
-              </div>
-              <span className="text-[11px] text-slate-600 dark:text-slate-400 font-bold leading-relaxed select-none">
-                أوافق على <Link to="/terms-of-service" className="text-primary hover:underline">شروط الخدمة</Link> و <Link to="/privacy-policy" className="text-primary hover:underline">سياسة الخصوصية</Link>، وأوافق على تزويدي بتكلفة الشحن الدولي عبر الواتساب للموافقة عليها قبل إتمام الشحن.
-              </span>
-            </label>
-            
-            <div className="flex items-center justify-center gap-6 mt-3 pt-3 border-t border-slate-200/50 dark:border-slate-700/50">
-              <button onClick={() => navigate('/privacy-policy')} className="text-[10px] font-black text-slate-400 hover:text-primary uppercase tracking-widest transition-colors">سياسة الخصوصية</button>
-              <div className="w-1 h-1 rounded-full bg-slate-300 dark:bg-slate-700"></div>
-              <button onClick={() => navigate('/terms-of-service')} className="text-[10px] font-black text-slate-400 hover:text-primary uppercase tracking-widest transition-colors">شروط الخدمة</button>
-            </div>
-          </div>
-
+      {/* Bottom Action Bar (Fixed) */}
+      <div className="fixed bottom-0 left-0 right-0 z-40 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 p-4 pb-safe shadow-[0_-4px_20px_rgba(0,0,0,0.05)]">
+        <div className="w-full">
           <div className="flex gap-4 items-center">
             <div className="flex flex-col">
               <span className="text-[10px] text-slate-400 dark:text-slate-500 font-black uppercase tracking-[0.15em] mb-0.5">المجموع الصافي</span>

@@ -93,10 +93,7 @@ const ProductDescription: React.FC<ProductDescriptionProps> = ({
   const isDescriptionRedundant = (hasSpecs && (
     normalizedDescription === normalizedSpecs || 
     normalizedSpecs.includes(normalizedDescription)
-  )) || (!!productName && (
-    normalizedDescription === normalizedProductName ||
-    normalizedProductName.includes(normalizedDescription)
-  )) || (normalizedDescription.length > 0 && normalizedDescription.length < 20 && hasSpecs && normalizedSpecs.includes(normalizedDescription));
+  )) || (!!productName && normalizedDescription === normalizedProductName);
 
   const showDescription = !!description && !isDescriptionRedundant;
   const showSpecsInDesc = parsedSpecs.length > 0;

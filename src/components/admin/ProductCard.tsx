@@ -95,43 +95,30 @@ const ProductCard: React.FC<ProductCardProps> = ({
   const hasPriceRange = minPrice !== maxPrice;
 
   const { minInclusivePrice, maxInclusivePrice, hasInclusivePriceRange } = React.useMemo(() => {
+    // Return raw database prices without calculation
     if (variants.length === 0) {
       const price = product.price;
       return { minInclusivePrice: price, maxInclusivePrice: price, hasInclusivePriceRange: false };
     }
 
-    const inclusivePrices = variants.map((v: any) => v.price).filter((p: any) => p > 0);
+    const prices = variants.map((v: any) => v.price).filter((p: any) => p > 0);
 
-    if (inclusivePrices.length === 0) {
-       // Fallback if variants exist but have 0 price?
-       // Use product price
+    if (prices.length === 0) {
        const price = product.price;
       return { minInclusivePrice: price, maxInclusivePrice: price, hasInclusivePriceRange: false };
     }
 
-    const min = Math.min(...inclusivePrices);
-    const max = Math.max(...inclusivePrices);
+    const min = Math.min(...prices);
+    const max = Math.max(...prices);
     return { minInclusivePrice: min, maxInclusivePrice: max, hasInclusivePriceRange: min !== max };
-  }, [product, variants, rates]);
+  }, [product, variants]);
 
 
   const handleWeightSubmit = () => {
     const newWeight = parseFloat(tempWeight);
     if (!isNaN(newWeight) && newWeight !== product.weight) {
+      // Update only raw weight
       const updates: any = { weight: newWeight };
-      
-      // Also update price immediately if RMB price is available
-      if (product.basePriceIQD) {
-        const newPrice = calculateInclusivePrice(
-          product.price,
-          product.domesticShippingFee || 0,
-          product.basePriceIQD
-        );
-        if (newPrice !== product.price) {
-          updates.price = newPrice;
-        }
-      }
-      
       onUpdateStatus(product.id, updates);
     }
     setIsEditingWeight(false);
@@ -145,20 +132,8 @@ const ProductCard: React.FC<ProductCardProps> = ({
       const height = parseFloat(parts[2]);
       if (!isNaN(length) && !isNaN(width) && !isNaN(height)) {
         if (length !== product.length || width !== product.width || height !== product.height) {
+          // Update only raw dimensions
           const updates: any = { length, width, height };
-          
-          // Also update price immediately if RMB price is available
-          if (product.basePriceIQD) {
-            const newPrice = calculateInclusivePrice(
-              product.price,
-              product.domesticShippingFee || 0,
-          product.basePriceIQD
-        );
-            if (newPrice !== product.price) {
-              updates.price = newPrice;
-            }
-          }
-          
           onUpdateStatus(product.id, updates);
         }
       }

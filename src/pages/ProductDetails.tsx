@@ -18,7 +18,6 @@ import ProductSpecs from '../components/product/ProductSpecs';
 import ReviewsSection from '../components/product/ReviewsSection';
 import SimilarProducts from '../components/product/SimilarProducts';
 import AddToCartBar from '../components/product/AddToCartBar';
-import ProductActionSheet from '../components/product/ProductActionSheet';
 
 interface Review {
   id: number;
@@ -29,7 +28,7 @@ interface Review {
   images?: string[];
 }
 
-import { AlertCircle, Package } from 'lucide-react';
+import { AlertCircle, Package, Plane, Ship } from 'lucide-react';
 
 const ProductDetails: React.FC = () => {
   const navigate = useNavigate();
@@ -63,7 +62,6 @@ const ProductDetails: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [isAdding, setIsAdding] = useState(false);
   const [isAdded, setIsAdded] = useState(false);
-  const [isActionSheetOpen, setIsActionSheetOpen] = useState(false);
   
   const [shouldRenderDetails, setShouldRenderDetails] = useState(false);
   const [shippingMethod, setShippingMethod] = useState<'air' | 'sea' | null>(null); // Default to null (user must select)
@@ -652,15 +650,8 @@ const ProductDetails: React.FC = () => {
       });
     }
 
-    // 3. Last Resort: Default to first variant if options are selected but no match found
-    // This handles cases where data is inconsistent but we want to allow the sale
-    if (!resolvedVariant && product.variants?.length && Object.keys(selectedOptions).length > 0) {
-       resolvedVariant = product.variants[0];
-    }
-
-    if (product.variants?.length && !resolvedVariant) {
-      showToast('يرجى اختيار جميع الخيارات المطلوبة', 'error');
-      return;
+    if (!resolvedVariant && product.variants?.length) {
+      resolvedVariant = product.variants[0];
     }
 
     // Optimistic state update in the UI
@@ -681,7 +672,6 @@ const ProductDetails: React.FC = () => {
       }, selectedOptions, finalShippingMethod);
 
       trackInteraction(product.id, 'CART', 5);
-      setIsActionSheetOpen(false);
     } catch (err) {
       console.error('Error in addItem:', err);
       setIsAdded(false);
@@ -689,10 +679,6 @@ const ProductDetails: React.FC = () => {
     } finally {
       setIsAdding(false);
     }
-  };
-
-  const openActionSheet = () => {
-    setIsActionSheetOpen(true);
   };
 
   const handleShare = async () => {
@@ -750,13 +736,13 @@ const ProductDetails: React.FC = () => {
         onToggleWishlist={() => toggleWishlist(product.id, product)}
         isWishlisted={isProductInWishlist(product.id)}
       />
-
+      
       <div className="md:grid md:grid-cols-2 md:gap-8 lg:gap-12 md:px-6 md:pt-6">
         <div className="md:sticky md:top-24 h-fit">
           <ImageGallery 
             images={galleryImages}
             productName={product.name}
-            hideIndicators={isActionSheetOpen}
+            hideIndicators={false}
           />
         </div>
 
@@ -820,31 +806,77 @@ const ProductDetails: React.FC = () => {
           />
 
           {/* Spacer for mobile bottom bar */}
-          <div className="h-24 md:h-12"></div>
+          <div className="h-48 md:h-12"></div>
         </main>
+
+        <div className="fixed left-0 right-0 bottom-[calc(env(safe-area-inset-bottom)+90px)] z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200/70 dark:border-white/10 px-4 pt-3 pb-2 transition-all duration-300">
+          <div className="mx-auto max-w-screen-lg">
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => handleShippingMethodChange('air')}
+                disabled={product?.isAirRestricted}
+                className={`relative flex-1 h-14 flex items-center gap-3 px-3 rounded-2xl border-2 transition-all duration-300 ${
+                  shippingMethod === 'air'
+                    ? 'border-primary bg-primary/5 shadow-sm shadow-primary/10'
+                    : product?.isAirRestricted
+                      ? 'border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/60 opacity-60 cursor-not-allowed'
+                      : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-slate-300 dark:hover:border-slate-600'
+                }`}
+              >
+                <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors ${
+                  shippingMethod === 'air' ? 'bg-primary text-white' : 'bg-slate-100 dark:bg-slate-700 text-slate-400 dark:text-slate-500'
+                }`}>
+                  <Plane size={20} className={shippingMethod === 'air' ? 'animate-pulse' : ''} strokeWidth={2.5} />
+                </div>
+                <div className="flex flex-col items-start gap-0.5">
+                  <span className={`text-sm font-black ${shippingMethod === 'air' ? 'text-primary' : 'text-slate-600 dark:text-slate-300'}`}>شحن جوي</span>
+                  <span className="text-[10px] font-medium text-slate-400 dark:text-slate-500">10-20 يوم</span>
+                </div>
+                {shippingMethod === 'air' && (
+                  <div className="absolute left-3 top-1/2 -translate-y-1/2 w-2 h-2 bg-primary rounded-full shadow-[0_0_8px_rgba(var(--primary-rgb),0.6)]"></div>
+                )}
+                {!product?.isAirRestricted && (
+                  <span className="absolute top-0 left-3 -translate-y-1/2 text-[9px] font-bold bg-red-50 text-red-600 border border-red-100 px-1.5 py-0.5 rounded-full shadow-sm">
+                    أسرع ⚡
+                  </span>
+                )}
+              </button>
+
+              <button
+                onClick={() => handleShippingMethodChange('sea')}
+                className={`relative flex-1 h-14 flex items-center gap-3 px-3 rounded-2xl border-2 transition-all duration-300 ${
+                  shippingMethod === 'sea'
+                    ? 'border-primary bg-primary/5 shadow-sm shadow-primary/10'
+                    : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-slate-300 dark:hover:border-slate-600'
+                }`}
+              >
+                <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors ${
+                  shippingMethod === 'sea' ? 'bg-primary text-white' : 'bg-slate-100 dark:bg-slate-700 text-slate-400 dark:text-slate-500'
+                }`}>
+                  <Ship size={20} strokeWidth={2.5} />
+                </div>
+                <div className="flex flex-col items-start gap-0.5">
+                  <span className={`text-sm font-black ${shippingMethod === 'sea' ? 'text-primary' : 'text-slate-600 dark:text-slate-300'}`}>شحن بحري</span>
+                  <span className="text-[10px] font-medium text-slate-400 dark:text-slate-500">شهرين تقريباً</span>
+                </div>
+                {shippingMethod === 'sea' && (
+                  <div className="absolute left-3 top-1/2 -translate-y-1/2 w-2 h-2 bg-primary rounded-full shadow-[0_0_8px_rgba(var(--primary-rgb),0.6)]"></div>
+                )}
+                <span className="absolute top-0 left-3 -translate-y-1/2 text-[9px] font-bold bg-green-50 text-green-600 border border-green-100 px-1.5 py-0.5 rounded-full shadow-sm">
+                  أوفر 💰
+                </span>
+              </button>
+            </div>
+          </div>
+        </div>
 
         <AddToCartBar 
             price={inclusivePrice}
-            onAddToCart={openActionSheet}
+            productId={product.id}
+            onAddToCart={handleAddToCart}
             isAdding={isAdding}
             isAdded={isAdded}
             onGoToCart={() => navigate('/cart')}
-          />
-          
-          {/* Action Sheet for Options & Shipping - Moved outside main for better stacking context */}
-          <ProductActionSheet
-            isOpen={isActionSheetOpen}
-            onClose={() => setIsActionSheetOpen(false)}
-            product={product}
-            selectedOptions={selectedOptions}
-            onOptionSelect={(name, val) => setSelectedOptions(prev => ({ ...prev, [name]: val }))}
-            onVariantSelect={(combination) => setSelectedOptions(combination)}
-            currentVariant={currentVariant}
-            shippingMethod={shippingMethod}
-            onShippingChange={handleShippingMethodChange}
-            onConfirm={handleAddToCart}
-            isAdding={isAdding}
-            price={inclusivePrice}
           />
       </div>
     </div>

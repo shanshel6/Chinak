@@ -31,4 +31,10 @@ export interface Product {
   description?: string;
   chineseName?: string;
   detailImages?: string[];
+  neworold?: boolean;
+  aiMetadata?: {
+    isRealBrand?: boolean;
+    translatedDescription?: string;
+    [key: string]: any;
+  };
 }

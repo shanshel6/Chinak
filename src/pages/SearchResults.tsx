@@ -70,13 +70,6 @@ const SearchResults: React.FC = () => {
 
   const popularSearches = ['سماعات لاسلكية', 'آيفون 15', 'ساعة ذكية', 'أحذية رياضية', 'عطور رجالية'];
 
-  const USD_TO_IQD_RATE = 1500;
-  const RAPID_PROFIT_MULTIPLIER = 1.15;
-  const toNearest10 = (value: number) => Math.ceil(value / 10) * 10;
-  const normalizeRapidPriceToIqd = (value: number) => {
-    if (!Number.isFinite(value) || value <= 0) return 0;
-    return toNearest10(value * USD_TO_IQD_RATE * RAPID_PROFIT_MULTIPLIER);
-  };
   const extractNumericPrice = (item: any) => {
     const raw = item?.priceMoney?.Price
       ?? item?.price
@@ -96,7 +89,7 @@ const SearchResults: React.FC = () => {
 
   const mapRapidItemToProduct = useCallback((item: any): Product => {
     const numericPrice = extractNumericPrice(item);
-    const safePrice = normalizeRapidPriceToIqd(numericPrice);
+    const safePrice = Number.isFinite(numericPrice) ? numericPrice : 0;
     const rawImages = Array.isArray(item?.images) ? item.images : [];
     const normalizedImages = rawImages
       .map((img: any) => {
