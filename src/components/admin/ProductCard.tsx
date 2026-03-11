@@ -18,7 +18,6 @@ import {
   Truck
 } from 'lucide-react';
 import ProductImageCarousel from './ProductImageCarousel';
-import { calculateInclusivePrice } from '../../utils/shipping';
 import type { Product } from '../../types/product';
 
 interface ProductCardProps {
@@ -49,8 +48,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
   onDelete,
   onImportReviews,
   onAddPictures,
-  checkPermission,
-  rates
+  checkPermission
 }) => {
   const { t } = useTranslation();
   const [isEditingPrice, setIsEditingPrice] = useState(false);

@@ -9,7 +9,7 @@ import { calculateInclusivePrice } from '../utils/shipping';
 
 import { useCheckoutStore } from '../store/useCheckoutStore';
 
-import { AlertCircle, ShoppingCart, ArrowLeft, RefreshCw, Minus, Plus, Heart, Trash2, Tag, X, ArrowRight, CheckCheck, Truck } from 'lucide-react';
+import { AlertCircle, ShoppingCart, ArrowLeft, RefreshCw, Heart, Trash2, Tag, X, ArrowRight, CheckCheck, Truck } from 'lucide-react';
 
 import { fetchCoupons } from '../services/api';
 
@@ -24,7 +24,6 @@ const Cart: React.FC = () => {
   const loading = useCartStore((state) => state.isLoading);
   const isSyncing = useCartStore((state) => state.isSyncing);
   const error = useCartStore((state) => state.error);
-  const updateQuantity = useCartStore((state) => state.updateQuantity);
   const removeItem = useCartStore((state) => state.removeItem);
   const removeItems = useCartStore((state) => state.removeItems);
   const fetchCart = useCartStore((state) => state.fetchCart);
@@ -109,16 +108,6 @@ const Cart: React.FC = () => {
       setIsSelectMode(false);
     } catch (err: any) {
       showToast('فشل في حذف المنتجات المختارة', 'error');
-    }
-  };
-
-  const handleUpdateQuantity = async (id: number | string, currentQty: number, delta: number) => {
-    const newQty = currentQty + delta;
-    if (newQty < 1) return;
-    try {
-      await updateQuantity(id, newQty);
-    } catch (err: any) {
-      showToast('فشل في تحديث الكمية', 'error');
     }
   };
 
