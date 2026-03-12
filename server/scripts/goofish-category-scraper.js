@@ -15,7 +15,14 @@ dotenv.config({ path: envPath });
 
 const prisma = new PrismaClient();
 const CNY_TO_IQD_RATE = 200;
-const PRICE_PROFIT_MULTIPLIER = 1.15;
+
+// Dynamic Price Multiplier Logic
+function calculatePriceMultiplier(basePriceIQD) {
+  if (basePriceIQD < 15000) return 1.50; // 50% for < 15k
+  if (basePriceIQD < 40000) return 1.30; // 30% for 15k-40k
+  if (basePriceIQD < 70000) return 1.20; // 20% for 40k-70k
+  return 1.15; // 15% for >= 70k
+}
 
 const DEEPINFRA_API_KEY = process.env.DEEPINFRA_API_KEY;
 const DISABLE_DB_WRITE = String(process.env.GOOFISH_DISABLE_DB_WRITE || '').toLowerCase() === 'true';
@@ -28,7 +35,13 @@ const REQUIRE_DB_WRITE = String(process.env.GOOFISH_REQUIRE_DB_WRITE || 'true').
 const AI_ONLY_TERMS = String(process.env.GOOFISH_AI_ONLY_TERMS || '').toLowerCase() === 'true';
 const TRANSLATION_CACHE_PATH = path.join(__dirname, 'goofish-translation-cache.json');
 const ITEMS_PER_SEARCH = Math.max(1, parseInt(process.env.GOOFISH_ITEMS_PER_SEARCH || '90', 10) || 90);
-const KEYWORDS_PER_PRODUCT = 15;
+const KEYWORDS_PER_PRODUCT = 50;
+const UPDATE_EXISTING = String(process.env.GOOFISH_UPDATE_EXISTING || '').toLowerCase() === 'true';
+const UPDATE_LIMIT = parseInt(process.env.GOOFISH_UPDATE_LIMIT || '', 10);
+const UPDATE_BATCH_SIZE = Math.max(1, parseInt(process.env.GOOFISH_UPDATE_BATCH || '25', 10) || 25);
+const UPDATE_DELAY_MIN = Math.max(0, parseInt(process.env.GOOFISH_UPDATE_DELAY_MIN || '800', 10) || 800);
+const UPDATE_DELAY_MAX = Math.max(UPDATE_DELAY_MIN, parseInt(process.env.GOOFISH_UPDATE_DELAY_MAX || '1600', 10) || 1600);
+const UPDATE_PROGRESS_EVERY = Math.max(1, parseInt(process.env.GOOFISH_UPDATE_PROGRESS_EVERY || '10', 10) || 10);
 const DEFAULT_SEARCH_TERMS = [
   '手机壳', '女包', '斜挎包', '连衣裙', '女鞋', '牛仔裤',
   '男士T恤', '运动鞋', '耳机', '蓝牙音箱', '智能手表', '充电宝',
@@ -45,7 +58,14 @@ const FOOD_BLACKLIST = [
 const EXCLUDED_KEYWORDS = [
   '黄金', '足金', '千足金', '万足金', '18K金', '24K金', 'Au999', 'Au750', // Gold
   '白银', '纯银', '足银', 'S925', '925银', 'Ag999', 'Ag925', // Silver
-  '真金', '真银', 'Pt950', 'Pt990', '白金' // Real gold/silver/platinum
+  '真金', '真银', 'Pt950', 'Pt990', '白金', // Real gold/silver/platinum
+  // Service Keywords (Excluded)
+  '安装', '上门', '服务', '维修', '定金', '订金', '补差价', '专拍', '运费', '链接', 
+  'installation', 'service', 'repair', 'deposit', 'freight', 'link',
+  '回收', '回收站', '上门回收', '回收服务', 'recycle', 'recycling',
+  '办理', '代办', '会员', '充值', '账号', '权益', 'membership', 'recharge', 'account',
+  '教程', '视频教程', 'tutorial', 'video tutorial',
+  '设计', 'design', '代做', '代写', '代跑', '代练'
 ];
 
 function isExcludedProduct(title) {
@@ -55,64 +75,7 @@ function isExcludedProduct(title) {
 }
 
 function detectRealPriceFromTitle(title, currentPrice) {
-  if (!title) return currentPrice;
-  
-  // Clean title for easier matching
-  const t = title.replace(/\s+/g, '');
-
-  // Patterns for price detection (highest priority first)
-  // 1. "实收300", "300出", "300包邮", "300不包邮", "最低300", "300米", "300m"
-  const patterns = [
-    /实收(\d+(?:\.\d+)?)/,
-    /(\d+(?:\.\d+)?)出/,
-    /(\d+(?:\.\d+)?)包邮/,
-    /(\d+(?:\.\d+)?)不包邮/,
-    /最低(\d+(?:\.\d+)?)/,
-    /卖(\d+(?:\.\d+)?)/,
-    /(\d+(?:\.\d+)?)米/,
-    /(\d+(?:\.\d+)?)m/i,
-    /(\d+(?:\.\d+)?)元出/
-  ];
-
-  // Negative patterns (ignore these numbers if they match)
-  const negativePatterns = [
-    /原价(\d+)/,
-    /买来(\d+)/,
-    /入手(\d+)/,
-    /吊牌(\d+)/,
-    /发售价(\d+)/,
-    /(\d+)mm/, // avoid dimensions like 30mm
-    /(\d+)cm/,
-    /(\d+)kg/
-  ];
-
-  // Helper to check if a number matches a negative pattern in the raw title
-  const isNegative = (numStr) => {
-    for (const np of negativePatterns) {
-      const match = t.match(np);
-      if (match && match[1] === numStr) return true;
-    }
-    return false;
-  };
-
-  for (const p of patterns) {
-    const match = t.match(p);
-    if (match && match[1]) {
-      const priceVal = parseFloat(match[1]);
-      // Safety check: 
-      // 1. Ignore if price is too small (e.g. "1米" might mean 1 meter cable, unless context suggests money)
-      // 2. Ignore if price is suspiciously huge
-      if (priceVal >= 5 && priceVal < 100000) {
-        if (!isNegative(match[1])) {
-             // If detected price is different, return it
-             if (priceVal !== currentPrice) {
-                 return priceVal;
-             }
-        }
-      }
-    }
-  }
-
+  // DISABLED: Returning current price as requested
   return currentPrice;
 }
 
@@ -129,24 +92,36 @@ if (process.env.NODE_ENV === 'production' && process.env.ALLOW_SCRAPER_IN_PROD !
 // Simple DeepInfra client using axios
 async function callDeepInfra(messages, temperature = 0.3, maxTokens = 100) {
   if (!DEEPINFRA_API_KEY) return null;
-  try {
-    const response = await axios.post('https://api.deepinfra.com/v1/openai/chat/completions', {
-      model: "google/gemma-3-12b-it",
-      messages,
-      temperature,
-      max_tokens: maxTokens
-    }, {
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${DEEPINFRA_API_KEY}`
-      },
-      timeout: 30000
-    });
-    return response.data.choices[0].message.content.trim();
-  } catch (error) {
-    console.error('DeepInfra API Error:', error.message);
-    return null;
+  const maxAttempts = 5;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const response = await axios.post('https://api.deepinfra.com/v1/openai/chat/completions', {
+        model: "google/gemma-3-12b-it",
+        messages,
+        temperature,
+        max_tokens: maxTokens
+      }, {
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${DEEPINFRA_API_KEY}`
+        },
+        timeout: 45000
+      });
+      return response.data.choices[0].message.content.trim();
+    } catch (error) {
+      const status = error?.response?.status;
+      const isTimeout = String(error?.message || '').includes('timeout');
+      if (status === 429 || status === 503 || isTimeout) {
+        const waitMs = Math.min(30000, 2000 * attempt * attempt);
+        await new Promise((resolve) => setTimeout(resolve, waitMs));
+        continue;
+      }
+      console.error('DeepInfra API Error:', error.message);
+      return null;
+    }
   }
+  console.error('DeepInfra API Error: rate limit');
+  return null;
 }
 
 function hasArabic(value) {
@@ -164,6 +139,8 @@ function cleanAiText(value) {
 function normalizeArabicKeyword(value) {
   return cleanAiText(value)
     .replace(/[\u0610-\u061A\u0640\u064B-\u065F\u0670\u06D6-\u06ED]/g, '')
+    .replace(/[.,!?:;()"'[\]{}<>«»]/g, ' ')
+    .replace(/،/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -178,8 +155,36 @@ function normalizeTranslatedTitle(aiText, fallbackTitle) {
 }
 
 function normalizeKeywordList(value) {
+  const stopwords = new Set([
+    'ال', 'في', 'من', 'على', 'مع', 'عن', 'الى', 'إلى', 'او', 'أو', 'و', 'ب', 'ل',
+    'هذا', 'هذه', 'ذلك', 'تلك', 'هناك', 'هنا', 'لكن', 'ثم', 'قد', 'لم', 'لن', 'لا',
+    'بعض', 'جدا', 'تماما', 'تمامًا', 'اي', 'أي', 'مثل', 'حالة', 'ممتازة',
+    'معروضة', 'للبيع', 'البيع', 'عرض', 'شحن', 'مجاني', 'استرجاع', 'تبديل', 'عدم', 'الحاجة', 'اليها', 'إليها',
+    'تسوق', 'شراء', 'بيع', 'يبيع', 'للشراء', 'موجود', 'متوفر', 'وصل', 'توصيل', 'يشمل',
+    'تتضمن', 'يتضمن', 'شامل', 'متاح', 'مطلوب', 'يريد', 'اريد', 'أريد', 'ابحث', 'أبحث',
+    'جديد', 'شبه', 'كامل', 'كاملة', 'مجموعة', 'عدة', 'متنوعة', 'يوجد', 'اصلي', 'تقليد', 'مقاس', 'حجم',
+    'بسبب', 'تغيير', 'يتم', 'التخلص', 'منها', 'كعنصر', 'غير', 'مستخدم', 'تتضمن',
+    'والباقي', 'الباقي', 'باقي', 'ارجاع', 'إرجاع', 'استبدال', 'لأسباب', 'سبب', 'اسباب', 'أسباب',
+    'من', 'على', 'به', 'او', 'أو', 'لا', 'في', 'مع', 'الان', 'حاليا'
+  ]);
+  const splitToWords = (input) => {
+    const normalized = normalizeArabicKeyword(input);
+    if (!normalized) return [];
+    return normalized
+      .split(/\s+/)
+      .map((word) => word.trim())
+      .flatMap((word) => {
+        if (!word) return [];
+        let cleaned = word;
+        if (cleaned.startsWith('و') && cleaned.length > 2) cleaned = cleaned.slice(1);
+        if (cleaned.startsWith('ال') && cleaned.length > 3) cleaned = cleaned.slice(2);
+        return [cleaned];
+      })
+      .map((word) => word.trim())
+      .filter((word) => word.length >= 2 && !stopwords.has(word) && !/^\d+$/.test(word));
+  };
   if (Array.isArray(value)) {
-    return [...new Set(value.map((k) => normalizeArabicKeyword(k)).filter(Boolean))];
+    return [...new Set(value.flatMap((k) => splitToWords(k)).filter(Boolean))];
   }
   if (typeof value !== 'string') return [];
   const trimmed = value.trim();
@@ -187,10 +192,57 @@ function normalizeKeywordList(value) {
   try {
     const parsed = JSON.parse(trimmed);
     if (Array.isArray(parsed)) {
-      return [...new Set(parsed.map((k) => normalizeArabicKeyword(k)).filter(Boolean))];
+      return [...new Set(parsed.flatMap((k) => splitToWords(k)).filter(Boolean))];
     }
   } catch {}
-  return [...new Set(trimmed.split(/,|،|\n/).map((k) => normalizeArabicKeyword(k)).filter(Boolean))];
+  return [...new Set(trimmed.split(/,|،|\n/).flatMap((k) => splitToWords(k)).filter(Boolean))];
+}
+
+function dedupeKeywordsByShape(list) {
+  const seen = new Set();
+  const unique = [];
+  list.forEach((entry) => {
+    const key = normalizeArabicKeyword(entry).replace(/\s+/g, '');
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    unique.push(entry);
+  });
+  return unique;
+}
+
+const IRAQI_SYNONYMS = {
+  'حذاء': ['قندرة', 'جواتي'],
+  'احذية': ['قنادر', 'جواتي'],
+  'شنطة': ['جنطة', 'جنطه'],
+  'حقيبة': ['جنطة', 'جنطه', 'شنطة'],
+  'كنبة': ['قنفه', 'اريكه'],
+  'اريكة': ['قنفه', 'كنبة'],
+  'مرتبة': ['دوشك'],
+  'موبايل': ['جوال', 'تلفون'],
+  'هاتف': ['جوال', 'موبايل', 'تلفون'],
+  'سماعة': ['سبيكر', 'سماعات'],
+  'مكياج': ['مكياج', 'ميك اب'],
+  'بنطلون': ['سروال'],
+  'تيشيرت': ['تي شيرت'],
+  'شبشب': ['شحاطة', 'شحاطه'],
+  'صندل': ['شحاطة', 'شحاطه'],
+  'ملابس': ['هدوم'],
+  'اطفال': ['ولادي', 'بناتي']
+};
+
+function expandIraqiKeywords(list) {
+  const extras = [];
+  list.forEach((entry) => {
+    const normalized = normalizeArabicKeyword(entry);
+    if (!normalized) return;
+    const tokens = normalized.split(/\s+/).filter(Boolean);
+    tokens.forEach((token) => {
+      const mapped = IRAQI_SYNONYMS[token];
+      if (!mapped) return;
+      mapped.forEach((m) => extras.push(m));
+    });
+  });
+  return dedupeKeywordsByShape(extras);
 }
 
 function buildKeywordCandidatesFromText(text) {
@@ -200,33 +252,26 @@ function buildKeywordCandidatesFromText(text) {
     .split(/\s+/)
     .map((word) => normalizeArabicKeyword(word))
     .filter((word) => word && word.length >= 2);
-  if (words.length === 0) return [];
-  const candidates = [];
-  for (let size = 1; size <= 4; size += 1) {
-    for (let i = 0; i <= words.length - size; i += 1) {
-      candidates.push(words.slice(i, i + size).join(' '));
-    }
-  }
-  return [...new Set(candidates)];
+  return [...new Set(words)];
 }
 
 function ensureKeywordList(value, seedText = '') {
-  const normalized = normalizeKeywordList(value)
+  const normalized = dedupeKeywordsByShape(normalizeKeywordList(value))
     .filter((k) => k.length >= 2)
     .slice(0, KEYWORDS_PER_PRODUCT);
-  if (normalized.length >= KEYWORDS_PER_PRODUCT) return normalized.slice(0, KEYWORDS_PER_PRODUCT);
-  const extras = buildKeywordCandidatesFromText(seedText);
-  for (const kw of extras) {
-    if (normalized.length >= KEYWORDS_PER_PRODUCT) break;
-    if (!normalized.includes(kw)) normalized.push(kw);
-  }
-  const padPool = normalized.length > 0 ? [...normalized] : extras;
+  const extras = dedupeKeywordsByShape(buildKeywordCandidatesFromText(seedText));
+  const iraqiExtras = expandIraqiKeywords([...normalized, ...extras]);
+  const merged = dedupeKeywordsByShape([...normalized, ...extras, ...iraqiExtras])
+    .filter((k) => k.length >= 2)
+    .slice(0, KEYWORDS_PER_PRODUCT);
+  if (merged.length >= KEYWORDS_PER_PRODUCT) return merged.slice(0, KEYWORDS_PER_PRODUCT);
+  const padPool = merged.length > 0 ? [...merged] : extras;
   let idx = 0;
-  while (normalized.length < KEYWORDS_PER_PRODUCT && padPool.length > 0) {
-    normalized.push(padPool[idx % padPool.length]);
+  while (merged.length < KEYWORDS_PER_PRODUCT && padPool.length > 0) {
+    merged.push(padPool[idx % padPool.length]);
     idx += 1;
   }
-  return normalized.slice(0, KEYWORDS_PER_PRODUCT);
+  return merged.slice(0, KEYWORDS_PER_PRODUCT);
 }
 
 
@@ -329,7 +374,8 @@ function getCachedTranslation(cache, title) {
   if (!entry || typeof entry !== 'object') return null;
   const titleAr = normalizeTranslatedTitle(entry.titleAr, title);
   const descriptionAr = cleanAiText(sanitizeTranslationText(entry.descriptionAr || entry.translatedDescription || titleAr || title)) || titleAr || title;
-  const keywords = ensureKeywordList(entry.keywords, title);
+  const seedText = `${titleAr} ${descriptionAr}`.trim();
+  const keywords = ensureKeywordList(entry.keywords, seedText);
   return { titleAr, descriptionAr, keywords };
 }
 
@@ -337,10 +383,12 @@ function setCachedTranslation(cache, title, data) {
   const key = normalizeTranslationCacheKey(title);
   if (!key) return;
   const normalizedTitleAr = normalizeTranslatedTitle(data?.titleAr, title);
+  const descriptionAr = cleanAiText(sanitizeTranslationText(data?.descriptionAr || data?.translatedDescription || normalizedTitleAr || title));
+  const seedText = `${normalizedTitleAr} ${descriptionAr}`.trim();
   cache[key] = {
     titleAr: normalizedTitleAr,
-    descriptionAr: cleanAiText(sanitizeTranslationText(data?.descriptionAr || data?.translatedDescription || normalizedTitleAr || title)),
-    keywords: ensureKeywordList(data?.keywords, normalizedTitleAr || title),
+    descriptionAr,
+    keywords: ensureKeywordList(data?.keywords, seedText),
     updatedAt: new Date().toISOString()
   };
 }
@@ -619,13 +667,26 @@ async function generateTitleAndKeywords(title) {
     return { titleAr: fallback, descriptionAr: fallback, keywords: [] };
   }
   try {
-    const prompt = `Translate this Chinese product title into Arabic in two forms and generate exactly 15 Arabic search keywords (Iraqi-friendly, no diacritics).
+    const prompt = `Translate this Chinese product title into Arabic in two forms and generate exactly 50 Arabic search keywords (Iraqi-friendly, no diacritics).
 Return valid JSON only with this shape:
 {"title_ar":"...","description_ar":"...","keywords":["..."]}
 "title_ar" must be short and suitable as ecommerce card title.
 "description_ar" must be a fuller natural Arabic rendering of the full title text.
+Keywords must be single words only (no spaces). Make them diverse and non-redundant (avoid near-duplicates). Use only nouns and adjectives; do NOT include verbs or marketing/offer words. Include category and subcategory terms, broad category words, material, season, style, target audience, and Iraqi dialect synonyms users might search (e.g., قندرة, جواتي, جنطة, قنفه, دوشك, تلفون, شحاطة). 
+Infer the most likely category from the title and add category-specific variations:
+- Clothing: ملابس، ملابس رجالية/نسائية/اطفال، ملابس صيفية/شتوية، خامات (قطن/بوليستر/حرير)، ستايل (كاجوال/رسمي/رياضي)
+- Shoes: احذية، احذية رياضية/كلاسيك، مقاسات، خامات، استخدام (مشاية/جيم)
+- Bags: حقائب، شنط يد/كتف/ظهر، جلد/قماش، استخدام (مدرسة/سفر)
+- Electronics: الكترونيات، موبايل/اكسسوارات، سماعات/شاحن، مواصفات عامة (بلوتوث/لاسلكي)
+- Home/Furniture: اثاث/منزل/ديكور، مطبخ/غرفة نوم/معيشة، خامات (خشب/معدن/قماش)
+- Beauty: مكياج/عناية، عطر/كريم/سيروم، استخدام (ترطيب/تفتيح)
+- Kids/Toys: اطفال، العاب، لعب تعليمية/ترفيهية، هدايا، عمر مناسب
+- Sports/Fitness: رياضة، لياقة، جيم، تمارين، معدات رياضية
+- Auto/Tools: سيارات، اكسسوارات سيارات، ادوات، عدة، ورشة
+- Office/School: مكتبي، قرطاسية، مدرسة، دراسة، حقيبة مدرسية
+If the category is unclear, include broader shopping terms (منتج، بضاعة، متجر، تسوق).
 Title: "${fallback}"`;
-    const result = await callDeepInfra([{ role: "user", content: prompt }], 0.35, 160);
+    const result = await callDeepInfra([{ role: "user", content: prompt }], 0.35, 260);
     const raw = String(result || '').trim();
     if (!raw) return { titleAr: fallback, descriptionAr: fallback, keywords: [] };
     const parsed = parseAiTranslationPayload(raw);
@@ -636,11 +697,12 @@ Title: "${fallback}"`;
     if (!descriptionAr || descriptionAr.length < 24 || descriptionAr === titleAr) {
       descriptionAr = await translateFullTitleToArabic(fallback, descriptionAr || titleAr || fallback);
     }
+    const seedText = `${titleAr} ${descriptionAr}`.trim();
     const keywords = ensureKeywordList(
       Array.isArray(parsed?.keywords)
         ? parsed.keywords
         : (parsed?.keywords || ''),
-      titleAr || fallback
+      seedText || fallback
     );
     return { titleAr, descriptionAr, keywords };
   } catch (e) {
@@ -785,7 +847,8 @@ async function saveProductToDb(item, existingProductId = null) {
     const newOrOldValue = hasDetectedCondition ? item.newOrOld : null;
 
     const basePriceIQD = Math.max(0, Number(item.priceCny || 0) * CNY_TO_IQD_RATE);
-    const priceIQD = Math.round(basePriceIQD * PRICE_PROFIT_MULTIPLIER);
+    const multiplier = calculatePriceMultiplier(basePriceIQD);
+    const priceIQD = Math.round(basePriceIQD * multiplier);
     if (existing) {
       try {
         await prisma.product.update({
@@ -1271,4 +1334,167 @@ async function run() {
   }
 }
 
-run();
+async function updateExistingGoofishProducts() {
+  await ensureDbReady();
+  const translationCache = loadTranslationCache();
+  const limit = Number.isFinite(UPDATE_LIMIT) && UPDATE_LIMIT > 0 ? UPDATE_LIMIT : Number.POSITIVE_INFINITY;
+  let updatedCount = 0;
+  let scanned = 0;
+  let lastId = 0;
+  let batchIndex = 0;
+  const updatedLog = [];
+  console.log('Starting Goofish keyword update for existing products...');
+  console.log('Update settings:', {
+    limit: Number.isFinite(limit) ? limit : 'all',
+    batchSize: UPDATE_BATCH_SIZE,
+    delayMin: UPDATE_DELAY_MIN,
+    delayMax: UPDATE_DELAY_MAX,
+    progressEvery: UPDATE_PROGRESS_EVERY
+  });
+
+  const safeReconnect = async () => {
+    try {
+      await prisma.$disconnect();
+    } catch {}
+    await humanDelay(3000, 6000);
+    await prisma.$connect();
+  };
+
+  while (scanned < limit) {
+    const take = Math.min(UPDATE_BATCH_SIZE, limit - scanned);
+    let products = [];
+    try {
+      products = await prisma.$queryRaw`
+        SELECT id, name, "purchaseUrl", "aiMetadata", "keywords"
+        FROM "Product"
+        WHERE id > ${lastId}
+          AND ("purchaseUrl" ILIKE ${'%goofish.com%'} OR "purchaseUrl" ILIKE ${'%xianyu.com%'})
+        ORDER BY id ASC
+        LIMIT ${take}
+      `;
+    } catch (error) {
+      if (error?.code === 'P1017' || error?.code === 'P1001') {
+        console.warn('DB connection issue. Reconnecting...');
+        await safeReconnect();
+        continue;
+      }
+      throw error;
+    }
+    console.log(`Batch ${batchIndex + 1}: loaded ${products.length} products`);
+    if (products.length === 0) break;
+
+    for (const product of products) {
+      lastId = product.id;
+      scanned += 1;
+      if (scanned > limit) break;
+
+      const aiMetadata = product.aiMetadata && typeof product.aiMetadata === 'object' ? product.aiMetadata : {};
+      const originalTitle = typeof aiMetadata?.originalTitle === 'string' ? aiMetadata.originalTitle : '';
+      const baseTitle = originalTitle || product.name || '';
+      if (!baseTitle) continue;
+
+      let titleAr = '';
+      let descriptionAr = '';
+      let keywords = [];
+
+      if (DEEPINFRA_API_KEY) {
+        const cached = getCachedTranslation(translationCache, baseTitle);
+        if (cached) {
+          titleAr = cached.titleAr;
+          descriptionAr = cached.descriptionAr;
+          keywords = cached.keywords;
+        } else {
+          if (scanned % UPDATE_PROGRESS_EVERY === 0) {
+            console.log(`Generating keywords for product ${product.id}...`);
+          }
+          const generated = await generateTitleAndKeywords(baseTitle);
+          titleAr = generated.titleAr;
+          descriptionAr = generated.descriptionAr;
+          keywords = generated.keywords;
+          setCachedTranslation(translationCache, baseTitle, generated);
+        }
+      }
+
+      const fallbackDescription = typeof aiMetadata?.translatedDescription === 'string' ? aiMetadata.translatedDescription : '';
+      const seedText = `${titleAr || product.name} ${descriptionAr || fallbackDescription}`.trim();
+      const beforeKeywords = Array.isArray(product.keywords) ? product.keywords : [];
+      const finalKeywords = ensureKeywordList(
+        Array.isArray(keywords) && keywords.length > 0 ? keywords : [],
+        seedText
+      );
+      const nextMetadata = {
+        ...aiMetadata,
+        translatedDescription: descriptionAr || fallbackDescription || seedText
+      };
+      const shouldUpdateName = titleAr && (isChineseTerm(product.name) || !hasArabic(product.name));
+      const keywordsSql = Prisma.join(finalKeywords);
+      try {
+        if (shouldUpdateName) {
+          await prisma.$executeRaw`
+            UPDATE "Product"
+            SET "name" = ${titleAr},
+                "keywords" = ARRAY[${keywordsSql}],
+                "aiMetadata" = ${JSON.stringify(nextMetadata)}::jsonb,
+                "updatedAt" = NOW()
+            WHERE "id" = ${product.id}
+          `;
+        } else {
+          await prisma.$executeRaw`
+            UPDATE "Product"
+            SET "keywords" = ARRAY[${keywordsSql}],
+                "aiMetadata" = ${JSON.stringify(nextMetadata)}::jsonb,
+                "updatedAt" = NOW()
+            WHERE "id" = ${product.id}
+          `;
+        }
+      } catch (error) {
+        if (error?.code === 'P1017' || error?.code === 'P1001') {
+          console.warn(`DB connection issue while updating product ${product.id}. Reconnecting...`);
+          await safeReconnect();
+          continue;
+        }
+        throw error;
+      }
+      updatedCount += 1;
+      if (updatedLog.length < 120) {
+        const beforePreview = beforeKeywords.slice(0, 12);
+        const afterPreview = finalKeywords.slice(0, 12);
+        updatedLog.push({
+          id: product.id,
+          name: product.name,
+          beforeCount: beforeKeywords.length,
+          afterCount: finalKeywords.length,
+          beforePreview,
+          afterPreview
+        });
+      }
+      if (updatedCount % UPDATE_PROGRESS_EVERY === 0) {
+        console.log(`Progress: updated ${updatedCount}, scanned ${scanned}`);
+      }
+      await humanDelay(UPDATE_DELAY_MIN, UPDATE_DELAY_MAX);
+    }
+    batchIndex += 1;
+    if (batchIndex % 4 === 0) {
+      await safeReconnect();
+    }
+  }
+
+  saveTranslationCache(translationCache);
+  console.log(`Existing Goofish products update completed. Updated: ${updatedCount}, Scanned: ${scanned}`);
+  if (updatedLog.length > 0) {
+    console.log('Updated keyword samples:', updatedLog.slice(0, 20));
+  }
+}
+
+if (UPDATE_EXISTING) {
+  updateExistingGoofishProducts()
+    .catch((error) => {
+      console.error('Goofish existing update error:', error);
+      process.exit(1);
+    })
+    .finally(async () => {
+      await prisma.$disconnect();
+    });
+} else {
+  run();
+}

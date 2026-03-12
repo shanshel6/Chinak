@@ -1040,7 +1040,10 @@ export async function rapidSearchItems(query: string, page = 1, limit = 20, _all
     detail_url: p?.purchaseUrl || undefined,
     price: Number(p?.price || 0),
     originalPrice: Number(p?.price || 0),
-    priceMoney: { Price: Number(p?.price || 0) }
+    priceMoney: { Price: Number(p?.price || 0) },
+    neworold: typeof p?.neworold === 'boolean' ? p.neworold : null,
+    aiMetadata: p?.aiMetadata || null,
+    id: p?.id
   }));
   const mappedFallbackItems = finalProducts.map((p: any) => ({
     itemId: String(p?.id || ''),
@@ -1053,7 +1056,10 @@ export async function rapidSearchItems(query: string, page = 1, limit = 20, _all
     detail_url: p?.purchaseUrl || undefined,
     price: Number(p?.price || 0),
     originalPrice: Number(p?.price || 0),
-    priceMoney: { Price: Number(p?.price || 0) }
+    priceMoney: { Price: Number(p?.price || 0) },
+    neworold: typeof p?.neworold === 'boolean' ? p.neworold : null,
+    aiMetadata: p?.aiMetadata || null,
+    id: p?.id
   }));
   return {
     items: mappedItems.length > 0 ? mappedItems : mappedFallbackItems,

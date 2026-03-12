@@ -705,7 +705,7 @@ export async function hybridSearch(query, limit = 50, skip = 0, maxPrice = null,
       SELECT 
         p.id, p.name, p.price, p."basePriceIQD",
         p.image, p."purchaseUrl", p.status, p."isFeatured", 
-        p."isActive", p.specs, 
+        p."isActive", p.specs, p.neworold,
         p."createdAt", p."updatedAt", p."aiMetadata", 
         p."deliveryTime", p."domesticShippingFee",
         COALESCE(s.semantic_score, 0) as semantic_score,

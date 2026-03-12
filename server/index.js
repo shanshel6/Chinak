@@ -4254,6 +4254,7 @@ app.get('/api/products/search', async (req, res) => {
           basePriceIQD: true,
           image: true,
           aiMetadata: true,
+          neworold: true,
           isFeatured: true,
           domesticShippingFee: true,
           deliveryTime: true,
@@ -4289,7 +4290,10 @@ app.get('/api/products/search', async (req, res) => {
         const aiMetadata = parseAiMetadata(p.aiMetadata);
         const processed = applyDynamicPricingToProduct(p, shippingRates);
         const isRealBrand = typeof aiMetadata?.isRealBrand === 'boolean' ? aiMetadata.isRealBrand : null;
-        const neworold = extractNewOrOld(aiMetadata);
+        // Prefer DB value if present, otherwise extract from metadata
+        const neworold = (p.neworold !== null && p.neworold !== undefined) 
+          ? p.neworold 
+          : extractNewOrOld(aiMetadata);
         return { ...processed, aiMetadata, isRealBrand, neworold };
       }),
       total,
@@ -4380,6 +4384,7 @@ app.get('/api/products', async (req, res) => {
           basePriceIQD: true,
           image: true,
           aiMetadata: true,
+          // neworold: true, // Temporarily disabled to fix 500 error
           isFeatured: true,
           domesticShippingFee: true,
           deliveryTime: true,
@@ -4416,7 +4421,10 @@ app.get('/api/products', async (req, res) => {
         const aiMetadata = parseAiMetadata(p.aiMetadata);
         const processed = applyDynamicPricingToProduct(p, shippingRates);
         const isRealBrand = typeof aiMetadata?.isRealBrand === 'boolean' ? aiMetadata.isRealBrand : null;
-        const neworold = extractNewOrOld(aiMetadata);
+        // Prefer DB value if present, otherwise extract from metadata
+        const neworold = (p.neworold !== null && p.neworold !== undefined) 
+          ? p.neworold 
+          : extractNewOrOld(aiMetadata);
         return { ...processed, aiMetadata, isRealBrand, neworold };
       }),
       total,
@@ -5144,6 +5152,7 @@ async function runBulkProductsImport(products, { onProgress } = {}) {
           isActive: true,
           isFeatured: !!p.isFeatured,
           specs: specs,
+          neworold: typeof p.neworold === 'boolean' ? p.neworold : null,
           // storeEvaluation: p.storeEvaluation && typeof p.storeEvaluation === 'object' ? JSON.stringify(p.storeEvaluation) : (p.storeEvaluation || null),
           // reviewsCountShown: p.reviewsCountShown || null,
           // // videoUrl: p.videoUrl || null,
@@ -5552,6 +5561,7 @@ app.post('/api/products', authenticateToken, isAdmin, hasPermission('manage_prod
         isAirRestricted: isAirRestricted === true || isAirRestricted === 'true' || isAirRestricted === 1,
         aiMetadata: parsedAiMetadata,
         deliveryTime: cleanDeliveryTime(deliveryTime),
+        neworold: req.body.neworold !== undefined ? req.body.neworold : null,
         images: {
           create: [
             ...imageUrls.map((url, i) => ({
@@ -7257,7 +7267,16 @@ app.get('/api/search', async (req, res) => {
     }
     const isArabicQuery = /[\u0600-\u06FF]/.test(q);
     const cleanQuery = q.replace(/[\\\/.,()!?;:]/g, ' ').trim();
+    const normalizeArabicResult = normalizeArabic(cleanQuery);
+    const normalizedArabicString = typeof normalizeArabicResult === 'string'
+      ? normalizeArabicResult
+      : String(normalizeArabicResult?.fullString || '').trim();
+    const normalizedArabicKeywords = normalizedArabicString
+      .split(/\s+/)
+      .map(k => k.trim())
+      .filter(k => k.length > 1);
     const keywords = cleanQuery.split(/\s+/).filter(k => k.length > 1);
+    const baseKeywords = Array.from(new Set([...keywords, ...normalizedArabicKeywords]));
     log('start', { qLength: q.length, page: pageNum, limit: limitNum, isArabicQuery, keywordsCount: keywords.length });
 
     const storeSettings = await prisma.storeSettings.findUnique({ where: { id: 1 } });
@@ -7267,7 +7286,7 @@ app.get('/api/search', async (req, res) => {
       airShippingMinFloor: storeSettings?.airShippingMinFloor
     };
 
-    const useFastArabicSearch = isArabicQuery && (keywords.length > 3 || cleanQuery.length > 24);
+    const useFastArabicSearch = isArabicQuery && (baseKeywords.length > 3 || cleanQuery.length > 24);
     const searchProductSelect = {
       id: true,
       name: true,
@@ -7279,6 +7298,8 @@ app.get('/api/search', async (req, res) => {
       status: true,
       isFeatured: true,
       isActive: true,
+      // neworold: true, // Temporarily disabled to fix 500 error
+      aiMetadata: true,
       domesticShippingFee: true,
       deliveryTime: true,
       isAirRestricted: true,
@@ -7297,12 +7318,17 @@ app.get('/api/search', async (req, res) => {
         status: 'PUBLISHED',
         isActive: true,
         OR: [
-          { name: { contains: cleanQuery } },
-          { specs: { contains: cleanQuery } },
+          { name: { contains: cleanQuery, mode: 'insensitive' } },
+          { specs: { contains: cleanQuery, mode: 'insensitive' } },
           { keywords: { has: cleanQuery } },
-          ...keywords.flatMap(term => [
-            { name: { contains: term } },
-            { specs: { contains: term } },
+          ...(normalizedArabicString ? [
+            { name: { contains: normalizedArabicString, mode: 'insensitive' } },
+            { specs: { contains: normalizedArabicString, mode: 'insensitive' } },
+            { keywords: { has: normalizedArabicString } }
+          ] : []),
+          ...baseKeywords.flatMap(term => [
+            { name: { contains: term, mode: 'insensitive' } },
+            { specs: { contains: term, mode: 'insensitive' } },
             { keywords: { has: term } }
           ])
         ]
@@ -7319,7 +7345,12 @@ app.get('/api/search', async (req, res) => {
       ]);
       log('fast_arabic_done', { total, returned: products.length, dbMs: Date.now() - fastStart });
       return res.json({
-        products: products.map(p => applyDynamicPricingToProduct(p, shippingRates)),
+        products: products.map(p => {
+          const processed = applyDynamicPricingToProduct(p, shippingRates);
+          const aiMetadata = parseAiMetadata(p.aiMetadata);
+          const neworold = (p.neworold !== null && p.neworold !== undefined) ? p.neworold : extractNewOrOld(aiMetadata);
+          return { ...processed, neworold };
+        }),
         total,
         hasMore: skip + limitNum < total,
         engine: 'db'
@@ -7370,7 +7401,12 @@ app.get('/api/search', async (req, res) => {
           .filter(Boolean);
 
         return res.json({ 
-          products: mergedResults.map(p => applyDynamicPricingToProduct(p, shippingRates)), 
+          products: mergedResults.map(p => {
+            const processed = applyDynamicPricingToProduct(p, shippingRates);
+            const aiMetadata = parseAiMetadata(p.aiMetadata);
+            const neworold = (p.neworold !== null && p.neworold !== undefined) ? p.neworold : extractNewOrOld(aiMetadata);
+          return { ...processed, neworold };
+          }), 
           total: results.length,
           hasMore: skip + limitNum < results.length,
           engine: 'hybrid'
@@ -7634,6 +7670,7 @@ app.get('/api/search', async (req, res) => {
         .replace(/ى/g, 'ي')
         .replace(/[گ]/g, 'ق')
         .replace(/[چ]/g, 'ج')
+        .replace(/[٠-٩]/g, d => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)))
         .replace(/ناسائ/g, 'نسائ')
         .replace(/ناسا/g, 'نسا')
         .replace(/[\u064B-\u0652]/g, '')
@@ -7697,17 +7734,17 @@ app.get('/api/search', async (req, res) => {
       return Array.from(variations).filter(v => v && v.length > 1);
     }
 
-    const useReducedSearch = isArabicQuery || keywords.length > 3 || cleanQuery.length > 24;
+    const useReducedSearch = isArabicQuery || baseKeywords.length > 3 || cleanQuery.length > 24;
     
     const allSearchTerms = new Set();
-    [q, cleanQuery].filter(Boolean).forEach((term) => {
+    [q, cleanQuery, normalizedArabicString].filter(Boolean).forEach((term) => {
       if (useReducedSearch) {
         simpleArabicVariants(term).forEach(v => allSearchTerms.add(v));
       } else {
         getVariations(term).forEach(v => allSearchTerms.add(v));
       }
     });
-    keywords.forEach(k => {
+    baseKeywords.forEach(k => {
       if (useReducedSearch) {
         simpleArabicVariants(k).forEach(v => allSearchTerms.add(v));
       } else {
@@ -7723,24 +7760,35 @@ app.get('/api/search', async (req, res) => {
     log('keyword_terms_ready', { useReducedSearch, termsCount: searchTermsArray.length });
 
     const normalizedQ = normalizeForSearch(q);
+    const compactNormalizedQ = normalizedQ.replace(/\s+/g, '');
     const stopWords = ['ال', 'في', 'من', 'على', 'مع', 'لـ', 'بـ', 'و', 'عن', 'الى', 'او'];
-    const normalizedKeywords = keywords
+    const normalizedKeywords = Array.from(new Set(baseKeywords
       .map(k => normalizeForSearch(k))
-      .filter(k => k.length > 1 && !stopWords.includes(k));
+      .flatMap(k => k.split(/\s+/))
+      .map(k => k.trim())
+      .filter(k => k.length > 1 && !stopWords.includes(k))
+    ));
 
     const scoreAndSortProducts = (products) => {
       const scoringStart = Date.now();
       const scoredProducts = products.map(product => {
         let score = 0;
         const name = normalizeForSearch(product.name);
-        const productKeywords = Array.isArray(product.keywords) ? product.keywords.map(k => normalizeForSearch(k)) : [];
+        const productKeywords = Array.isArray(product.keywords)
+          ? product.keywords.flatMap(k => normalizeForSearch(k).split(/\s+/)).filter(Boolean)
+          : [];
+        const productKeywordsSet = new Set(productKeywords);
         const specs = normalizeForSearch(product.specs);
+        const aiTextRaw = product.aiMetadata ? JSON.stringify(product.aiMetadata) : '';
+        const aiText = normalizeForSearch(aiTextRaw);
         
         if (name === normalizedQ) score += 10000;
         
         if (name.includes(normalizedQ)) score += 5000;
+        if (compactNormalizedQ && name.replace(/\s+/g, '').includes(compactNormalizedQ)) score += 3500;
         if (specs && specs.includes(normalizedQ)) score += 1500;
         if (productKeywords.some(k => k.includes(normalizedQ))) score += 3000;
+        if (aiText && aiText.includes(normalizedQ)) score += 1200;
         
         let nameMatches = 0;
         
@@ -7761,8 +7809,11 @@ app.get('/api/search', async (req, res) => {
           if (specs && specs.includes(k)) {
             score += 40;
           }
-          if (productKeywords.some(kw => kw.includes(k))) {
+          if (productKeywordsSet.has(k) || productKeywords.some(kw => kw.includes(k))) {
             score += 300;
+          }
+          if (aiText && aiText.includes(k)) {
+            score += 150;
           }
         });
 
@@ -7771,11 +7822,12 @@ app.get('/api/search', async (req, res) => {
 
         const totalUniqueMatches = new Set();
         normalizedKeywords.forEach(k => {
-          if (name.includes(k) || (specs && specs.includes(k)) || productKeywords.some(kw => kw.includes(k))) {
+          if (name.includes(k) || (specs && specs.includes(k)) || productKeywordsSet.has(k) || productKeywords.some(kw => kw.includes(k))) {
             totalUniqueMatches.add(k);
           }
         });
-        const totalCoverage = normalizedKeywords.length > 0 ? totalUniqueMatches.size / normalizedKeywords.length : 0;
+        const matchCount = totalUniqueMatches.size;
+        const totalCoverage = normalizedKeywords.length > 0 ? matchCount / normalizedKeywords.length : 0;
         score += totalCoverage * 2000;
 
         if (normalizedKeywords.length >= 2 && totalCoverage >= 0.8) {
@@ -7784,12 +7836,15 @@ app.get('/api/search', async (req, res) => {
 
         if (product.id.toString() === q.trim()) score += 15000;
 
-        return { ...product, searchScore: score };
+        return { ...product, searchScore: score, matchCount };
       });
       log('keyword_scoring_done', { scored: scoredProducts.length, scoringMs: Date.now() - scoringStart });
       return scoredProducts
         .filter(p => p.searchScore > 0)
         .sort((a, b) => {
+          if (b.matchCount !== a.matchCount) {
+            return b.matchCount - a.matchCount;
+          }
           if (b.searchScore !== a.searchScore) {
             return b.searchScore - a.searchScore;
           }
@@ -7820,13 +7875,15 @@ app.get('/api/search', async (req, res) => {
         return Array.from(variations).filter(v => v.length > 1);
       };
 
-      const seedTerms = Array.from(new Set([cleanQuery, ...keywords])).filter(t => t && t.length > 1).slice(0, 2);
+      const seedTerms = Array.from(new Set([cleanQuery, normalizedArabicString, ...baseKeywords]))
+        .filter(t => t && t.length > 1)
+        .slice(0, 2);
       const prefixTerms = Array.from(new Set(seedTerms.flatMap(buildArabicVariants))).slice(0, 6);
       if (prefixTerms.length > 0) {
         const prefixWhere = {
           status: 'PUBLISHED',
           isActive: true,
-          OR: prefixTerms.map(term => ({ name: { startsWith: term } }))
+          OR: prefixTerms.map(term => ({ name: { startsWith: term, mode: 'insensitive' } }))
         };
         const prefixStart = Date.now();
         const prefixTake = Math.max(skip + limitNum, limitNum * 3, 60);
@@ -7850,8 +7907,8 @@ app.get('/api/search', async (req, res) => {
             status: 'PUBLISHED',
             isActive: true,
             OR: broadenTerms.flatMap(term => ([
-              { name: { contains: term } },
-              { specs: { contains: term } },
+              { name: { contains: term, mode: 'insensitive' } },
+              { specs: { contains: term, mode: 'insensitive' } },
               { keywords: { has: term } }
             ]))
           };
@@ -7892,12 +7949,17 @@ app.get('/api/search', async (req, res) => {
           }
           const paginatedProducts = sortedProducts.slice(skip, skip + limitNum);
           log('keyword_done', { total, returned: paginatedProducts.length });
-          return res.json({ 
-            products: paginatedProducts.map(p => applyDynamicPricingToProduct(p, shippingRates)), 
-            total,
-            hasMore: skip + limitNum < total,
-            engine: 'db'
-          });
+      return res.json({ 
+        products: paginatedProducts.map(p => {
+          const processed = applyDynamicPricingToProduct(p, shippingRates);
+          const aiMetadata = parseAiMetadata(p.aiMetadata);
+          const neworold = (p.neworold !== null && p.neworold !== undefined) ? p.neworold : extractNewOrOld(aiMetadata);
+          return { ...processed, neworold };
+        }), 
+        total,
+        hasMore: skip + limitNum < total,
+        engine: 'db'
+      });
         }
       }
     }
@@ -7908,11 +7970,12 @@ app.get('/api/search', async (req, res) => {
       status: 'PUBLISHED',
       isActive: true,
       OR: [
-        { name: { contains: q } },
+        { name: { contains: q, mode: 'insensitive' } },
         { keywords: { has: q } },
+        ...(normalizedArabicString ? [{ name: { contains: normalizedArabicString, mode: 'insensitive' } }] : []),
         ...searchTermsArray.flatMap(term =>
           [
-            ...searchFields.map(field => ({ [field]: { contains: term } })),
+            ...searchFields.map(field => ({ [field]: { contains: term, mode: 'insensitive' } })),
             { keywords: { has: term } }
           ]
         )
@@ -7947,7 +8010,12 @@ app.get('/api/search', async (req, res) => {
 
     log('keyword_done', { total, returned: paginatedProducts.length });
     res.json({ 
-      products: paginatedProducts.map(p => applyDynamicPricingToProduct(p, shippingRates)), 
+      products: paginatedProducts.map(p => {
+        const processed = applyDynamicPricingToProduct(p, shippingRates);
+        const aiMetadata = parseAiMetadata(p.aiMetadata);
+        const neworold = (p.neworold !== null && p.neworold !== undefined) ? p.neworold : extractNewOrOld(aiMetadata);
+          return { ...processed, neworold };
+      }), 
       total,
       hasMore: skip + limitNum < total,
       engine: 'db'

@@ -319,7 +319,21 @@ const MyOrders: React.FC = () => {
         </div>
 
         {/* Search Bar */}
-        <div className="px-4 py-2 sticky top-[128px] z-40 bg-background-light/95 dark:bg-background-dark/95 backdrop-blur-sm transition-colors border-b border-slate-100 dark:border-slate-800">
+        <div className="px-4 py-2 sticky top-[128px] z-40 bg-background-light/95 dark:bg-background-dark/95 backdrop-blur-sm transition-colors border-b border-slate-100 dark:border-slate-800 space-y-2">
+          {/* Price Change Notification */}
+          <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800/50 rounded-xl p-3 flex items-start gap-3">
+            <div className="text-blue-600 dark:text-blue-400 shrink-0 mt-0.5">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"></path>
+                <path d="M12 16v-4"></path>
+                <path d="M12 8h.01"></path>
+              </svg>
+            </div>
+            <p className="text-xs text-blue-800 dark:text-blue-200 leading-relaxed font-medium">
+              ملاحظة: في حال وجود أي تغيير في الأسعار، سيتم إعلامكم عبر الواتساب.
+            </p>
+          </div>
+
           <label className="relative flex w-full items-center">
             <div className="absolute inset-y-0 right-0 flex items-center pr-4 pointer-events-none text-slate-400">
               <Search size={20} />
@@ -375,7 +389,7 @@ const MyOrders: React.FC = () => {
                 </div>
                 {/* Product Thumbnails */}
                 <div className="flex flex-col gap-3 px-4 py-3">
-                  {order.items.map((item: any, idx: number) => (
+                  {order.items.slice(0, 5).map((item: any, idx: number) => (
                     <div key={idx} className="flex items-center gap-3">
                       <div className="relative size-12 shrink-0 rounded-lg overflow-hidden border border-slate-100 dark:border-slate-700 bg-slate-50 dark:bg-slate-900">
                         <LazyImage 
@@ -429,6 +443,15 @@ const MyOrders: React.FC = () => {
                       </div>
                     </div>
                   ))}
+                  
+                  {order.items.length > 5 && (
+                    <div 
+                      onClick={() => navigate(`/order/${order.id}`)}
+                      className="flex items-center justify-center py-2 text-xs font-bold text-primary bg-primary/5 rounded-lg border border-primary/10 cursor-pointer hover:bg-primary/10 transition-colors mt-1"
+                    >
+                      <span>... عرض {order.items.length - 5} منتجات إضافية</span>
+                    </div>
+                  )}
                 </div>
 
                 {/* Fee and Totals Info */}

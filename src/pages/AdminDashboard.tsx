@@ -1584,7 +1584,22 @@ const AdminDashboard: React.FC = () => {
                 </h4>
                 <div className="space-y-2 text-xs sm:text-sm">
                   <p><span className="text-slate-500">الاسم:</span> <span className="font-bold">{selectedOrder.user?.name || 'مستخدم'}</span></p>
-                  <p><span className="text-slate-500">الهاتف:</span> <span className="font-bold">{selectedOrder.address?.phone || '-'}</span></p>
+                  <p>
+                    <span className="text-slate-500">الهاتف:</span> 
+                    <span 
+                      onClick={() => {
+                        const phone = selectedOrder.address?.phone;
+                        if (phone) {
+                          navigator.clipboard.writeText(phone);
+                          showToast('تم نسخ رقم الهاتف', 'success');
+                        }
+                      }}
+                      className="font-bold cursor-pointer hover:text-primary hover:underline transition-colors"
+                      title="اضغط للنسخ"
+                    >
+                      {selectedOrder.address?.phone || '-'}
+                    </span>
+                  </p>
                   <p><span className="text-slate-500">البريد:</span> <span className="font-bold">{selectedOrder.user?.email || '-'}</span></p>
                   <p>
                     <span className="text-slate-500">طريقة الدفع:</span> 

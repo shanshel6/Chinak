@@ -70,16 +70,14 @@ const SearchProductCard: React.FC<SearchProductCardProps> = React.memo(({
           {product.name}
         </h3>
         <div className="flex flex-wrap gap-1 mb-2 min-h-[1.5em]">
-          {/* Condition Tag */}
-          {product.neworold !== null && product.neworold !== undefined && (
-            <div className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-              product.neworold 
-                ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300' 
-                : 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300'
-            }`}>
-              {product.neworold ? 'جديد' : 'مستعمل'}
-            </div>
-          )}
+          {/* Condition Tag - Default to Used if null */}
+          <div className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+            product.neworold === true
+              ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300' 
+              : 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300'
+          }`}>
+            {product.neworold === true ? 'جديد' : 'مستعمل'}
+          </div>
 
           {/* Brand Tag */}
           {product.aiMetadata?.isRealBrand !== null && product.aiMetadata?.isRealBrand !== undefined && (

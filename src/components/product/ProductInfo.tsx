@@ -16,6 +16,7 @@ interface ProductInfoProps {
   shippingMethod?: 'air' | 'sea' | null;
   onShippingMethodChange?: (method: 'air' | 'sea') => void;
   isAirRestricted?: boolean;
+  neworold?: boolean | null;
 }
 
 const ProductInfo: React.FC<ProductInfoProps> = ({
@@ -28,6 +29,7 @@ const ProductInfo: React.FC<ProductInfoProps> = ({
   calculatedSeaPrice,
   shippingMethod,
   deliveryTime,
+  neworold,
   // onShippingMethodChange, // Unused for now
   // isAirRestricted, // Unused for now
 }) => {
@@ -51,8 +53,21 @@ const ProductInfo: React.FC<ProductInfoProps> = ({
   return (
     <div className="mb-6">
       {/* Price section removed as requested */}
+      
+      {/* New/Used Tag */}
+      {neworold !== null && neworold !== undefined && (
+        <div className="mb-2">
+          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-bold ${
+            neworold 
+              ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-300' 
+              : 'bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300'
+          }`}>
+            {neworold ? 'جديد' : 'مستعمل'}
+          </span>
+        </div>
+      )}
 
-      <h2 className="text-slate-900 dark:text-white text-xl font-bold leading-tight mt-3">{fixMojibake(name)}</h2>
+      <h2 className="text-slate-900 dark:text-white text-xl font-bold leading-tight mt-1">{fixMojibake(name)}</h2>
 
 
       {deliveryTime && (

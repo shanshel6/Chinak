@@ -761,6 +761,7 @@ const ProductDetails: React.FC = () => {
             shippingMethod={shippingMethod}
             onShippingMethodChange={handleShippingMethodChange}
             isAirRestricted={product.isAirRestricted}
+            neworold={product.neworold}
           />
 
           <ProductDescription 
@@ -805,9 +806,23 @@ const ProductDetails: React.FC = () => {
             }}
           />
 
-          {/* Spacer for mobile bottom bar */}
-          <div className="h-48 md:h-12"></div>
+          {/* Spacer for mobile bottom bar - Increased height to prevent overlap */}
+          <div className="h-64 md:h-32"></div>
         </main>
+
+        {/* Price Change Disclaimer - Moved above shipping tabs */}
+        <div className="fixed left-0 right-0 bottom-[calc(env(safe-area-inset-bottom)+160px)] z-30 px-4 transition-all duration-300">
+          <div className="mx-auto max-w-screen-lg">
+            <div className="w-full bg-amber-50/95 dark:bg-amber-900/20 backdrop-blur-sm border border-amber-100 dark:border-amber-900/30 rounded-xl p-3 flex items-center gap-3 shadow-lg shadow-amber-900/5">
+              <div className="min-w-[20px] text-amber-500">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+              </div>
+              <p className="text-[13px] leading-tight text-amber-800 dark:text-amber-300 font-bold">
+                تنويه: الأسعار قد تتغير من المصدر. في حال حدوث تغيير، سنقوم بإبلاغك عبر الواتساب قبل إتمام الطلب.
+              </p>
+            </div>
+          </div>
+        </div>
 
         <div className="fixed left-0 right-0 bottom-[calc(env(safe-area-inset-bottom)+90px)] z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200/70 dark:border-white/10 px-4 pt-3 pb-2 transition-all duration-300">
           <div className="mx-auto max-w-screen-lg">
@@ -877,6 +892,7 @@ const ProductDetails: React.FC = () => {
             isAdding={isAdding}
             isAdded={isAdded}
             onGoToCart={() => navigate('/cart')}
+            isActive={product.isActive}
           />
       </div>
     </div>
