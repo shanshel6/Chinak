@@ -11,7 +11,6 @@ import {
   Info, 
   X, 
   Star,
-  Camera,
   Send,
   Flag
 } from 'lucide-react';
@@ -67,14 +66,9 @@ const ReviewsAndRatings: React.FC = () => {
     }
   }, [productId, loadReviews, checkPurchaseStatus]);
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (files) {
-      // In a real app, you'd upload to a server and get URLs
-      // For this demo, we'll use local URLs
-      const urls = Array.from(files).map(file => URL.createObjectURL(file));
-      setNewImages([...newImages, ...urls]);
-    }
+  const handleImageUpload = () => {
+    // Image upload disabled for now
+    return;
   };
 
   const removeImage = (index: number) => {
@@ -423,15 +417,6 @@ const ReviewsAndRatings: React.FC = () => {
                       </button>
                     </div>
                   ))}
-                  {newImages.length < 4 && (
-                    <label className="size-24 rounded-2xl border-2 border-dashed border-slate-200 dark:border-slate-700 flex flex-col items-center justify-center cursor-pointer hover:bg-primary/5 hover:border-primary/50 transition-all group">
-                      <div className="size-10 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center mb-2 group-hover:bg-primary/10 transition-colors">
-                        <Camera size={20} className="text-slate-400 group-hover:text-primary" />
-                      </div>
-                      <span className="text-[10px] text-slate-500 font-bold group-hover:text-primary transition-colors">أضف صورة</span>
-                      <input type="file" accept="image/*" multiple onChange={handleImageUpload} className="hidden" />
-                    </label>
-                  )}
                 </div>
               </div>
 

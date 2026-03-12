@@ -12,7 +12,6 @@ import {
   Eye, 
   EyeOff, 
   MessageSquareQuote, 
-  Camera, 
   Edit3, 
   Trash2,
   Truck
@@ -742,7 +741,6 @@ const ProductCard: React.FC<ProductCardProps> = ({
                 className="p-2 text-emerald-500 hover:bg-emerald-500/10 rounded-xl transition-colors flex items-center gap-1 shrink-0"
                 title="إضافة صور المنتج"
               >
-                <Camera size={20} />
                 <span className="text-[10px] font-bold">صور</span>
               </button>
               <button

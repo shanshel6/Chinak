@@ -1,5 +1,5 @@
 import React from 'react';
-import { User as UserIcon, Camera } from 'lucide-react';
+import { User as UserIcon, Edit2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import LazyImage from './LazyImage';
 
@@ -30,7 +30,7 @@ const ProfileHeader: React.FC<ProfileHeaderProps> = ({
   error,
   updateLoading,
   handleUpdateProfile,
-  handleImageChange,
+  // handleImageChange, // Unused
   setIsEditing,
   setError
 }) => {
@@ -48,12 +48,6 @@ const ProfileHeader: React.FC<ProfileHeaderProps> = ({
             <UserIcon size={48} className="text-slate-400" />
           )}
         </div>
-        {isEditing && (
-          <label className="absolute bottom-0 right-0 bg-primary rounded-full p-1.5 border-2 border-white dark:border-surface-dark flex items-center justify-center shadow-md cursor-pointer">
-            <Camera size={16} className="text-white" />
-            <input type="file" className="hidden" accept="image/*" onChange={handleImageChange} />
-          </label>
-        )}
       </div>
 
       {isEditing ? (
@@ -103,7 +97,7 @@ const ProfileHeader: React.FC<ProfileHeaderProps> = ({
               onClick={() => setIsEditing(true)}
               className="p-1 text-slate-400 hover:text-primary transition-colors"
             >
-              <Camera size={16} />
+              <Edit2 size={16} />
             </button>
           </div>
           <p className="text-sm text-slate-500 dark:text-slate-400 dir-ltr">{user?.phone}</p>

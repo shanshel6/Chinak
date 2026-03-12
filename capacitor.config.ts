@@ -2,7 +2,7 @@ import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
   appId: 'com.chinak.app',
-  appName: 'Chinak',
+  appName: 'DFC',
   webDir: 'dist',
   server: {
     // When using a physical device, the app cannot reach 10.0.2.2 (which is only for emulators).

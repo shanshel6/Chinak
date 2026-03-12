@@ -9,6 +9,7 @@
     "dev:backend": "cd server && npm run dev",
     "build": "tsc -b && vite build",
     "build:android": "tsc -b && vite build && npx cap sync android",
+    "build:ios": "tsc -b && vite build && npx cap sync ios",
     "lint": "eslint .",
     "preview": "vite preview"
   },
@@ -18,6 +19,7 @@
     "@capacitor/cli": "^8.0.0",
     "@capacitor/clipboard": "^8.0.0",
     "@capacitor/core": "^8.0.0",
+    "@capacitor/ios": "^8.2.0",
     "@capawesome/capacitor-app-update": "^8.0.2",
     "@emotion/is-prop-valid": "^1.4.0",
     "@google/generative-ai": "^0.24.1",
