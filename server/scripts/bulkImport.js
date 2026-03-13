@@ -35,7 +35,7 @@ const extractNumber = (val) => {
 };
 
 const calculateBulkImportPrice = (rawPrice, domesticFee, weight, length, width, height, explicitMethod) => {
-  // Simplified pricing logic: (Base + Domestic) * 1.15
+  // Simplified pricing logic: (Base + Domestic) * 1.25
   // International shipping components are removed.
   
   const domestic = domesticFee || 0;
@@ -43,8 +43,8 @@ const calculateBulkImportPrice = (rawPrice, domesticFee, weight, length, width, 
   // Treat rawPrice as IQD (no heuristic conversion)
   const basePrice = rawPrice;
   
-  // Formula: (Base + Domestic) * 1.15
-  const finalPrice = (basePrice + domestic) * 1.15;
+  // Formula: (Base + Domestic) * 1.25
+  const finalPrice = (basePrice + domestic) * 1.25;
   
   return Math.ceil(finalPrice / 250) * 250;
 };

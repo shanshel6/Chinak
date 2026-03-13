@@ -5,6 +5,8 @@ import { useWishlistStore } from '../store/useWishlistStore';
 import { usePageCacheStore } from '../store/usePageCacheStore';
 import { useUserPreferencesStore } from '../store/useUserPreferencesStore';
 import SearchHeader from '../components/search/SearchHeader';
+import FilterBar from '../components/home/FilterBar';
+import type { ConditionFilter, PriceFilter } from '../components/home/FilterBar';
 import SearchEmptyState from '../components/search/SearchEmptyState';
 import SearchLoadingState from '../components/search/SearchLoadingState';
 import SearchProductCard from '../components/search/SearchProductCard';
@@ -24,6 +26,20 @@ const SearchResults: React.FC = () => {
   const queryParams = new URLSearchParams(location.search);
   const initialQuery = queryParams.get('q') || '';
   const initialImageSearchUrl = (location.state as any)?.imageSearchUrl || '';
+  const parseConditionFilter = (value: string | null | undefined): ConditionFilter => {
+    if (value === 'new' || value === 'used') return value;
+    return null;
+  };
+  const parsePriceFilter = (value: string | null | undefined): PriceFilter => {
+    if (value === '1k' || value === '5k' || value === '10k' || value === '25k') return value;
+    return null;
+  };
+  const initialConditionFilter = parseConditionFilter(
+    queryParams.get('condition') || (location.state as any)?.conditionFilter
+  );
+  const initialPriceFilter = parsePriceFilter(
+    queryParams.get('price') || (location.state as any)?.priceFilter
+  );
 
   const searchResults = usePageCacheStore((state) => state.searchResults);
   const cachedQuery = usePageCacheStore((state) => state.searchQuery);
@@ -33,6 +49,12 @@ const SearchResults: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [draftQuery, setDraftQuery] = useState(initialQuery || cachedQuery);
   const [imageSearchUrl, setImageSearchUrl] = useState<string>(initialImageSearchUrl);
+  
+  const [conditionFilter, setConditionFilter] = useState<ConditionFilter>(initialConditionFilter);
+  const [priceFilter, setPriceFilter] = useState<PriceFilter>(initialPriceFilter);
+  const [draftConditionFilter, setDraftConditionFilter] = useState<ConditionFilter>(initialConditionFilter);
+  const [draftPriceFilter, setDraftPriceFilter] = useState<PriceFilter>(initialPriceFilter);
+  
   const [products, setProducts] = useState<Product[]>(searchResults);
   const [filteredProducts, setFilteredProducts] = useState<Product[]>(searchResults);
   const [loading, setLoading] = useState(false);
@@ -52,6 +74,16 @@ const SearchResults: React.FC = () => {
   const [isTyping, setIsTyping] = useState(false);
   const scrollTargetsRef = useRef<HTMLElement[]>([]);
   const suppressInitialFocusRef = useRef(false);
+  const filterDirtyRef = useRef(false);
+  const searchQueryRef = useRef(searchQuery);
+
+  useEffect(() => {
+    filterDirtyRef.current = draftConditionFilter !== conditionFilter || draftPriceFilter !== priceFilter;
+  }, [draftConditionFilter, conditionFilter, draftPriceFilter, priceFilter]);
+
+  useEffect(() => {
+    searchQueryRef.current = searchQuery;
+  }, [searchQuery]);
 
   const observer = useRef<IntersectionObserver | null>(null);
 
@@ -111,6 +143,7 @@ const SearchResults: React.FC = () => {
       price: safePrice,
       image: mainImage,
       images: normalizedImages,
+      neworold: typeof item?.neworold === 'boolean' ? item.neworold : null,
       purchaseUrl: item?.taobaoItemUrl || item?.itemUrl || item?.detail_url || undefined,
       variants: []
     };
@@ -120,9 +153,14 @@ const SearchResults: React.FC = () => {
     // If query in URL changes, update search query state
     const params = new URLSearchParams(location.search);
     const q = params.get('q');
-    if (q && q !== draftQuery) {
+    const currentSearchQuery = searchQueryRef.current;
+    if (typeof q === 'string' && q !== currentSearchQuery) {
       setDraftQuery(q);
       setSearchQuery(q);
+      setIsTyping(false);
+    } else if (q === null && currentSearchQuery) {
+      setDraftQuery('');
+      setSearchQuery('');
       setIsTyping(false);
     }
     const nextImage = (location.state as any)?.imageSearchUrl;
@@ -133,7 +171,34 @@ const SearchResults: React.FC = () => {
       setIsTyping(false);
       setPage(1);
     }
-  }, [location.search, location.state, draftQuery, imageSearchUrl]);
+    const conditionFromUrl = parseConditionFilter(
+      params.get('condition') ?? (location.state as any)?.conditionFilter
+    );
+    const priceFromUrl = parsePriceFilter(
+      params.get('price') ?? (location.state as any)?.priceFilter
+    );
+    setConditionFilter(prev => prev === conditionFromUrl ? prev : conditionFromUrl);
+    setPriceFilter(prev => prev === priceFromUrl ? prev : priceFromUrl);
+    if (!filterDirtyRef.current) {
+      setDraftConditionFilter(prev => prev === conditionFromUrl ? prev : conditionFromUrl);
+      setDraftPriceFilter(prev => prev === priceFromUrl ? prev : priceFromUrl);
+    }
+  }, [location.search, location.state, imageSearchUrl]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const normalizedQuery = searchQuery.trim();
+    if (normalizedQuery) params.set('q', normalizedQuery);
+    else params.delete('q');
+    if (conditionFilter) params.set('condition', conditionFilter);
+    else params.delete('condition');
+    if (priceFilter) params.set('price', priceFilter);
+    else params.delete('price');
+    const nextSearch = params.toString() ? `?${params.toString()}` : '';
+    if (nextSearch !== location.search) {
+      navigate({ pathname: '/search', search: nextSearch }, { replace: true, state: location.state as any });
+    }
+  }, [searchQuery, conditionFilter, priceFilter, location.search, location.state, navigate]);
 
   useEffect(() => {
     const cachedQueryValue = initialQuery || cachedQuery;
@@ -266,7 +331,9 @@ const SearchResults: React.FC = () => {
             hasMore: typeof rapidData?.hasMore === 'boolean' ? rapidData.hasMore : mappedRapidProducts.length >= 20
           };
         } else {
-          const rapidData = await rapidSearchItems(searchQuery, page, 20, true, null);
+          const condition = conditionFilter === 'new' ? 'new' : conditionFilter === 'used' ? 'used' : undefined;
+          const maxPrice = priceFilter === '1k' ? 1000 : priceFilter === '5k' ? 5000 : priceFilter === '10k' ? 10000 : priceFilter === '25k' ? 25000 : undefined;
+          const rapidData = await rapidSearchItems(searchQuery, page, 'default', condition, maxPrice);
           const rapidItems = Array.isArray(rapidData?.items) ? rapidData.items : [];
           const mappedRapidProducts = rapidItems.map(mapRapidItemToProduct);
           data = {
@@ -329,12 +396,12 @@ const SearchResults: React.FC = () => {
       isMounted = false;
       clearTimeout(timeoutId);
     };
-  }, [searchQuery, imageSearchUrl, page, setSearchData, addToRecentSearches, mapRapidItemToProduct]);
+  }, [searchQuery, imageSearchUrl, page, setSearchData, addToRecentSearches, mapRapidItemToProduct, conditionFilter, priceFilter]);
 
   useEffect(() => {
     setPage(1);
     setHasMore(true);
-  }, [searchQuery, imageSearchUrl]);
+  }, [searchQuery, imageSearchUrl, conditionFilter, priceFilter]);
 
   const getProductBasePrice = useCallback((p: Product) => {
     const variants = (p as any).variants || [];
@@ -380,6 +447,7 @@ const SearchResults: React.FC = () => {
 
   return (
     <div className="relative flex min-h-screen w-full flex-col bg-background-light dark:bg-background-dark font-display text-slate-900 dark:text-white antialiased selection:bg-primary/30 rtl overflow-visible" dir="rtl">
+      <div className="sticky top-0 z-40 bg-white dark:bg-slate-900 shadow-sm transition-transform duration-300" id="search-header">
           <SearchHeader 
            query={draftQuery}
            onQueryChange={(q) => {
@@ -417,6 +485,22 @@ const SearchResults: React.FC = () => {
              setPage(1);
            }}
          />
+         <FilterBar 
+          condition={draftConditionFilter}
+          price={draftPriceFilter}
+          onConditionChange={setDraftConditionFilter}
+          onPriceChange={setDraftPriceFilter}
+          appliedCondition={conditionFilter}
+          appliedPrice={priceFilter}
+          onApply={() => {
+            setConditionFilter(draftConditionFilter);
+            setPriceFilter(draftPriceFilter);
+            setPage(1);
+            setHasMore(true);
+          }}
+          className="border-t border-slate-100 dark:border-slate-800"
+        />
+      </div>
          
          <div className="transition-all duration-300"></div>
 
@@ -480,7 +564,7 @@ const SearchResults: React.FC = () => {
             />
           )}
 
-          {!isTyping && !loading && !error && !searchQuery && !isImageSearchActive && (
+          {isTyping && !loading && !error && !searchQuery && !isImageSearchActive && !draftQuery.trim() && (
             <SearchEmptyState 
               query=""
               popularSearches={popularSearches}

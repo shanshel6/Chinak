@@ -28,7 +28,7 @@ const calculateBulkImportPrice = (rawPrice, domesticFee, weight, length, width, 
     const airRate = (rates?.airShippingRate ?? rates?.airRate ?? 15400);
     const airMinFloor = (rates?.airShippingMinFloor ?? rates?.airMinFloor ?? rates?.minFloor ?? 0);
     const shippingCost = Math.max(weightInKg * airRate, airMinFloor);
-    return Math.ceil(((rawPrice + domestic + shippingCost) * 1.20) / 250) * 250;
+    return Math.ceil(((rawPrice + domestic + shippingCost) * 1.25) / 250) * 250;
   } else {
     const seaRate = (rates?.seaShippingRate ?? rates?.seaRate ?? 182000);
     const seaMinFloor = (rates?.seaShippingMinFloor ?? rates?.minFloor ?? 500); // UPDATED TO 500
@@ -37,7 +37,7 @@ const calculateBulkImportPrice = (rawPrice, domesticFee, weight, length, width, 
     const h = extractNumber(height) || 0;
     const volumeCbm = (l * w * h) / 1000000;
     const seaShippingCost = Math.max(volumeCbm * seaRate, seaMinFloor);
-    return Math.ceil(((rawPrice + domestic + seaShippingCost) * 1.20) / 250) * 250;
+    return Math.ceil(((rawPrice + domestic + seaShippingCost) * 1.25) / 250) * 250;
   }
 };
 
@@ -99,7 +99,7 @@ async function main() {
   console.log(`Base Price: ${testProduct.basePriceRMB} IQD`);
   console.log(`Dims: 10x10x10 (0.001 CBM)`);
   console.log(`Calculated Shipping Cost (should be max(182, 500) = 500): ???`);
-  console.log(`Final Price (with 20% markup + rounding): ${result.price}`);
+  console.log(`Final Price (with 25% markup + rounding): ${result.price}`);
   
   // Expected: (25 + 0 + 500) * 1.2 = 630. Rounded to nearest 250 -> 750 IQD.
   // If old logic (2200 floor): (25 + 0 + 2200) * 1.2 = 2670. Rounded -> 2750 IQD.

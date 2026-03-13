@@ -896,7 +896,7 @@ export const trackInteraction = async (productId: number | string, type: 'VIEW' 
 };
 
 // --- Product API ---
-export const fetchProducts = async (page = 1, limit = 20, search = '', maxPrice?: number) => {
+export async function fetchProducts(page = 1, limit = 10, search = '', maxPrice?: number, condition?: 'new' | 'used') {
   const query = new URLSearchParams({
     page: String(page),
     limit: String(limit),
@@ -904,6 +904,9 @@ export const fetchProducts = async (page = 1, limit = 20, search = '', maxPrice?
   });
   if (typeof maxPrice === 'number') {
     query.set('maxPrice', String(maxPrice));
+  }
+  if (condition) {
+    query.set('condition', condition);
   }
 
   const dbData = await request(`/products?${query.toString()}`, { skipCache: true }).catch(() => null);
@@ -996,7 +999,7 @@ export async function fetchProductById(id: number | string) {
 }
 
 export async function searchProducts(query: string, page = 1, limit = 20) {
-  const rapidData = await rapidSearchItems(query, page, limit, true);
+  const rapidData = await rapidSearchItems(query, page, limit);
   const products = Array.isArray(rapidData?.items) ? rapidData.items : [];
   return {
     products,
@@ -1017,58 +1020,165 @@ export async function convertItemIdStr(itemIdStr: string) {
   });
 }
 
-export async function rapidSearchItems(query: string, page = 1, limit = 20, _allowDbFallback = true, _categoryId?: string | null) {
-  const params = new URLSearchParams({
-    q: String(query || ''),
-    page: String(page),
-    limit: String(limit)
+export async function rapidSearchItems(query: string, page = 1, limit: number | 'default' = 20, condition?: 'new' | 'used', maxPrice?: number) {
+  const resolvedLimit = limit === 'default' ? 20 : Math.max(1, Number(limit) || 20);
+  const normalizeToken = (value: string) => String(value || '')
+    .toLowerCase()
+    .replace(/[أإآ]/g, 'ا')
+    .replace(/ٱ/g, 'ا')
+    .replace(/ة/g, 'ه')
+    .replace(/ى/g, 'ي')
+    .replace(/[\\\/.,()!?;:]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const extractKeywordTokens = (product: any) => {
+    const rawKeywords = Array.isArray(product?.keywords) ? product.keywords : [];
+    return rawKeywords
+      .flatMap((k: any) => normalizeToken(String(k || '')).split(/\s+/))
+      .map((k: string) => k.trim())
+      .filter(Boolean);
+  };
+  const rankMergedTokenResults = (tokenList: string[], responses: any[]) => {
+    const merged = new Map<string, { product: any; bestRankScore: number; tokenMatches: Set<string>; keywordMatches: Set<string> }>();
+    tokenList.forEach((token, index) => {
+      const normalizedToken = normalizeToken(token);
+      if (!normalizedToken) return;
+      const response = responses[index];
+      const tokenProducts = Array.isArray(response?.products) ? response.products : [];
+      const tokenWeight = Math.max(1, tokenList.length - index);
+      tokenProducts.forEach((p: any, productIndex: number) => {
+        const key = String(p?.id || '');
+        if (!key) return;
+        const rankScore = tokenWeight * 1000 - productIndex;
+        const existing = merged.get(key) || {
+          product: p,
+          bestRankScore: Number.NEGATIVE_INFINITY,
+          tokenMatches: new Set<string>(),
+          keywordMatches: new Set<string>()
+        };
+        if (rankScore > existing.bestRankScore) {
+          existing.bestRankScore = rankScore;
+          existing.product = p;
+        }
+        existing.tokenMatches.add(normalizedToken);
+        const productKeywordTokens = extractKeywordTokens(p);
+        if (productKeywordTokens.some((kw: string) => kw === normalizedToken || kw.includes(normalizedToken) || normalizedToken.includes(kw))) {
+          existing.keywordMatches.add(normalizedToken);
+        }
+        merged.set(key, existing);
+      });
+    });
+    return Array.from(merged.values())
+      .map((row) => {
+        const tokenMatchCount = row.tokenMatches.size;
+        const keywordMatchCount = row.keywordMatches.size;
+        const multiKeywordBoost = keywordMatchCount >= 2 ? 200000 : 0;
+        const score = multiKeywordBoost + (keywordMatchCount * 20000) + (tokenMatchCount * 5000) + row.bestRankScore;
+        return { ...row, score };
+      })
+      .sort((a, b) => b.score - a.score)
+      .map((row) => row.product);
+  };
+  const matchesCondition = (p: any) => {
+    if (!condition) return true;
+    const status = typeof p?.neworold === 'boolean' ? p.neworold : null;
+    if (condition === 'new') return status === true;
+    return status === false || status === null;
+  };
+  const matchesPrice = (p: any) => {
+    if (typeof maxPrice !== 'number') return true;
+    const numericPrice = Number(p?.price || 0);
+    return Number.isFinite(numericPrice) && numericPrice <= maxPrice;
+  };
+  const applyClientFilters = (items: any[]) => items.filter((p) => matchesCondition(p) && matchesPrice(p));
+  const mapItem = (p: any) => ({
+    itemId: String(p?.id || ''),
+    itemIdStr: null,
+    title: String(p?.name || 'Product'),
+    image: String(p?.image || ''),
+    images: Array.isArray(p?.images) ? p.images : [],
+    itemUrl: p?.purchaseUrl || undefined,
+    taobaoItemUrl: p?.purchaseUrl || undefined,
+    detail_url: p?.purchaseUrl || undefined,
+    price: Number(p?.price || 0),
+    originalPrice: Number(p?.price || 0),
+    priceMoney: { Price: Number(p?.price || 0) },
+    neworold: typeof p?.neworold === 'boolean' ? p.neworold : null,
+    aiMetadata: p?.aiMetadata || null,
+    id: p?.id
   });
-  const searchData = await request(`/search?${params.toString()}`, { skipCache: true }).catch(() => null);
-  const products = Array.isArray(searchData?.products) ? searchData.products : [];
-  const fallback = products.length === 0 ? await fetchProducts(page, limit, query).catch(() => null) : null;
-  const finalProducts = products.length > 0
+  const buildSearchParams = (qText: string) => {
+    const params = new URLSearchParams({
+      q: String(qText || ''),
+      page: String(page),
+      limit: String(resolvedLimit)
+    });
+    if (typeof maxPrice === 'number') {
+      params.append('maxPrice', String(maxPrice));
+    }
+    if (condition) {
+      params.append('condition', condition);
+    }
+    return params;
+  };
+
+  const searchData = await request(`/search?${buildSearchParams(query).toString()}`, { skipCache: true }).catch(() => null);
+  let products = Array.isArray(searchData?.products) ? searchData.products : [];
+  let total = typeof searchData?.total === 'number' ? searchData.total : products.length;
+  let hasMore = typeof searchData?.hasMore === 'boolean' ? searchData.hasMore : products.length >= resolvedLimit;
+
+  const tokens = String(query || '')
+    .replace(/[\\\/.,()!?;:]/g, ' ')
+    .split(/\s+/)
+    .map((w) => w.trim())
+    .filter((w) => w.length > 1);
+
+  if (products.length === 0 && tokens.length > 1) {
+    const uniqueTokens = Array.from(new Set(tokens));
+    const tokenResponses = await Promise.all(
+      uniqueTokens.map((token) =>
+        request(`/search?${buildSearchParams(token).toString()}`, { skipCache: true }).catch(() => null)
+      )
+    );
+    const mergedProducts = rankMergedTokenResults(uniqueTokens, tokenResponses);
+    if (mergedProducts.length > 0) {
+      products = mergedProducts;
+      total = mergedProducts.length;
+      hasMore = tokenResponses.some((response) => Boolean(response?.hasMore));
+    }
+  }
+
+  const fallback = products.length === 0 ? await fetchProducts(page, resolvedLimit, query, maxPrice, condition).catch(() => null) : null;
+  let finalProducts = products.length > 0
     ? products
     : (Array.isArray(fallback?.products) ? fallback.products : []);
-  const mappedItems = products.map((p: any) => ({
-    itemId: String(p?.id || ''),
-    itemIdStr: null,
-    title: String(p?.name || 'Product'),
-    image: String(p?.image || ''),
-    images: Array.isArray(p?.images) ? p.images : [],
-    itemUrl: p?.purchaseUrl || undefined,
-    taobaoItemUrl: p?.purchaseUrl || undefined,
-    detail_url: p?.purchaseUrl || undefined,
-    price: Number(p?.price || 0),
-    originalPrice: Number(p?.price || 0),
-    priceMoney: { Price: Number(p?.price || 0) },
-    neworold: typeof p?.neworold === 'boolean' ? p.neworold : null,
-    aiMetadata: p?.aiMetadata || null,
-    id: p?.id
-  }));
-  const mappedFallbackItems = finalProducts.map((p: any) => ({
-    itemId: String(p?.id || ''),
-    itemIdStr: null,
-    title: String(p?.name || 'Product'),
-    image: String(p?.image || ''),
-    images: Array.isArray(p?.images) ? p.images : [],
-    itemUrl: p?.purchaseUrl || undefined,
-    taobaoItemUrl: p?.purchaseUrl || undefined,
-    detail_url: p?.purchaseUrl || undefined,
-    price: Number(p?.price || 0),
-    originalPrice: Number(p?.price || 0),
-    priceMoney: { Price: Number(p?.price || 0) },
-    neworold: typeof p?.neworold === 'boolean' ? p.neworold : null,
-    aiMetadata: p?.aiMetadata || null,
-    id: p?.id
-  }));
+
+  if (finalProducts.length === 0 && tokens.length > 1) {
+    const uniqueTokens = Array.from(new Set(tokens));
+    const tokenFallbackResponses = await Promise.all(
+      uniqueTokens.map((token) => fetchProducts(page, resolvedLimit, token, maxPrice, condition).catch(() => null))
+    );
+    const normalizedFallbackResponses = tokenFallbackResponses.map((response) => ({
+      products: Array.isArray(response?.products) ? response.products : []
+    }));
+    finalProducts = rankMergedTokenResults(uniqueTokens, normalizedFallbackResponses);
+    if (finalProducts.length > 0) {
+      total = finalProducts.length;
+      hasMore = tokenFallbackResponses.some((response) => Boolean(response?.hasMore));
+    }
+  }
+
+  products = applyClientFilters(products);
+  finalProducts = applyClientFilters(finalProducts);
+
+  const mappedItems = products.map(mapItem);
+  const mappedFallbackItems = finalProducts.map(mapItem);
   return {
     items: mappedItems.length > 0 ? mappedItems : mappedFallbackItems,
-    total: typeof searchData?.total === 'number'
-      ? searchData.total
+    total: mappedItems.length > 0
+      ? total
       : (typeof fallback?.total === 'number' ? fallback.total : mappedFallbackItems.length),
-    hasMore: typeof searchData?.hasMore === 'boolean'
-      ? searchData.hasMore
-      : Boolean(fallback?.hasMore)
+    hasMore
   };
 }
 

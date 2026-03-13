@@ -5,11 +5,11 @@ async function main() {
     console.log('Executing RAW SQL update for all products and variants...');
 
     // Update Products
-    // Formula: CEIL( ((basePriceRMB + domestic) * 1.15) / 250 ) * 250
+    // Formula: CEIL( ((basePriceRMB + domestic) * 1.25) / 250 ) * 250
     // COALESCE ensures null domestic fees are treated as 0
     const productUpdate = await prisma.$executeRaw`
       UPDATE "Product"
-      SET "price" = CEIL((("basePriceRMB" + COALESCE("domesticShippingFee", 0)) * 1.15) / 250.0) * 250
+      SET "price" = CEIL((("basePriceRMB" + COALESCE("domesticShippingFee", 0)) * 1.25) / 250.0) * 250
       WHERE "basePriceRMB" > 0;
     `;
     console.log(`Updated ${productUpdate} products.`);
@@ -22,7 +22,7 @@ async function main() {
     
     const variantUpdate = await prisma.$executeRaw`
       UPDATE "ProductVariant" AS v
-      SET "price" = CEIL(((v."basePriceRMB" + COALESCE(p."domesticShippingFee", 0)) * 1.15) / 250.0) * 250
+      SET "price" = CEIL(((v."basePriceRMB" + COALESCE(p."domesticShippingFee", 0)) * 1.25) / 250.0) * 250
       FROM "Product" AS p
       WHERE v."productId" = p.id
       AND v."basePriceRMB" > 0;

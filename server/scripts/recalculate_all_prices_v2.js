@@ -26,7 +26,7 @@ async function main() {
 
       if (product.basePriceRMB && product.basePriceRMB > 0) {
         const rawCost = product.basePriceRMB;
-        const calculated = (rawCost + domesticFee) * 1.15;
+        const calculated = (rawCost + domesticFee) * 1.25;
         newProductPrice = Math.ceil(calculated / 250) * 250;
         
         if (newProductPrice !== product.price) {
@@ -41,7 +41,7 @@ async function main() {
 
         if (variant.basePriceRMB && variant.basePriceRMB > 0) {
            const rawCost = variant.basePriceRMB;
-           const calculated = (rawCost + domesticFee) * 1.15;
+           const calculated = (rawCost + domesticFee) * 1.25;
            newVariantPrice = Math.ceil(calculated / 250) * 250;
            
            if (newVariantPrice !== variant.price) {

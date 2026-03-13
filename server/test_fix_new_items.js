@@ -11,7 +11,7 @@ async function testFix() {
     const weight = 0.5;
     
     // Calculate price as done in the scripts
-    const price = Math.ceil(((rawPrice + domesticFee + (weight * 15400)) * 1.20) / 250) * 250;
+    const price = Math.ceil(((rawPrice + domesticFee + (weight * 15400)) * 1.25) / 250) * 250;
     
     console.log(`Calculated Price: ${price}`);
     console.log(`Raw Price (basePriceRMB): ${rawPrice}`);

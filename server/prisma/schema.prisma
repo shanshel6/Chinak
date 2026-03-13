@@ -97,6 +97,7 @@ model Product {
   aiMetadata        Json?
   scrapedReviews    Json?                  // New field for scraped reviews
   generated_options Json?                  // New field for generated options
+  neworold          Boolean?
   embedding         Unsupported("vector")?
   domesticShippingFee Float?
   isAirRestricted   Boolean                @default(false)

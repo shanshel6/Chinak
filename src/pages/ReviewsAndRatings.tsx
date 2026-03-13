@@ -66,10 +66,10 @@ const ReviewsAndRatings: React.FC = () => {
     }
   }, [productId, loadReviews, checkPurchaseStatus]);
 
-  const handleImageUpload = () => {
-    // Image upload disabled for now
-    return;
-  };
+  // Image upload disabled for now
+  // const handleImageUpload = () => {
+  //   return;
+  // };
 
   const removeImage = (index: number) => {
     setNewImages(newImages.filter((_, i) => i !== index));

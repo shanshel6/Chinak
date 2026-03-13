@@ -31,12 +31,12 @@ const calculateBulkImportPrice = (rawPrice, domesticFee, weight, length, width, 
   const domestic = domesticFee || 0;
 
   if (method === 'air') {
-    // Air Pricing logic: (Base Price + Domestic Fee + (Weight * Air Rate)) * 1.20
+    // Air Pricing logic: (Base Price + Domestic Fee + (Weight * Air Rate)) * 1.25
     const airRate = 15400;
     const shippingCost = weightInKg * airRate;
-    return Math.ceil(((rawPrice + domestic + shippingCost) * 1.20) / 250) * 250;
+    return Math.ceil(((rawPrice + domestic + shippingCost) * 1.25) / 250) * 250;
   } else {
-    // Sea: (Base Price + Domestic Fee + Sea Shipping) * 1.20
+    // Sea: (Base Price + Domestic Fee + Sea Shipping) * 1.25
     const seaRate = 182000;
     const l = extractNumber(length) || 0;
     const w = extractNumber(width) || 0;
@@ -49,7 +49,7 @@ const calculateBulkImportPrice = (rawPrice, domesticFee, weight, length, width, 
     const volumeCbm = (paddedL * paddedW * paddedH) / 1000000;
     const seaShippingCost = Math.max(volumeCbm * seaRate, 500);
 
-    return Math.ceil(((rawPrice + domestic + seaShippingCost) * 1.20) / 250) * 250;
+    return Math.ceil(((rawPrice + domestic + seaShippingCost) * 1.25) / 250) * 250;
   }
 };
 

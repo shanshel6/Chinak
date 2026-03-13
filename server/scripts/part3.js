@@ -252,15 +252,15 @@
                     // skuMap: data.skuMap // REMOVED as per request
                 };
 
-                // Calculate Final Price with 15% Profit
+                // Calculate Final Price with fixed 25% Profit
                 const calculateFinalPrice = (base) => {
                     const price = Number(base) || 0;
                     if (price <= 0) return 0;
-                    // Formula: (BaseIQD + Domestic) * 1.15 / 10 * 10 (ceil)
+                    // Formula: (BaseIQD + Domestic) * 1.25 / 10 * 10 (ceil)
                     // Assuming domestic shipping is 0 or handled separately in cart logic, 
                     // but usually scraper stores the inclusive price.
                     // Let's stick to the basic profit margin here.
-                    return Math.ceil((price * 1.15) / 10) * 10;
+                    return Math.ceil((price * 1.25) / 10) * 10;
                 };
 
                 const finalPrice = calculateFinalPrice(general_price);

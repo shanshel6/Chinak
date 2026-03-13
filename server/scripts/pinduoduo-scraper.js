@@ -714,7 +714,7 @@ async function saveProductToDb(productData) {
         const calculateFinalPrice = (base) => {
             const price = Number(base) || 0;
             if (price <= 0) return 0;
-            return Math.ceil((price * 1.15) / 10) * 10;
+            return Math.ceil((price * 1.25) / 10) * 10;
         };
 
         // Build Variants Array for Prisma

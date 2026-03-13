@@ -5,10 +5,12 @@ import { Search } from 'lucide-react';
 
 interface SearchBarProps {
   onNavigate: (path: string, state?: any) => void | Promise<void>;
+  navigationState?: any;
 }
 
 const SearchBar: React.FC<SearchBarProps> = ({ 
-  onNavigate
+  onNavigate,
+  navigationState
 }) => {
   const { t } = useTranslation();
   const [placeholderIndex, setPlaceholderIndex] = useState(0);
@@ -31,7 +33,7 @@ const SearchBar: React.FC<SearchBarProps> = ({
   return (
     <div className="sticky top-0 z-40 bg-white px-3 py-2 shadow-sm transition-all duration-300 dark:bg-slate-900">
       <div 
-        onClick={() => onNavigate('/search')}
+        onClick={() => onNavigate('/search', navigationState)}
         className="relative flex h-10 w-full cursor-pointer items-center gap-2 rounded-full bg-slate-100 px-4 transition-all active:scale-[0.99] dark:bg-slate-800"
       >
         <Search size={18} className="text-slate-400" strokeWidth={2.5} />

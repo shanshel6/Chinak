@@ -18,10 +18,7 @@ const CNY_TO_IQD_RATE = 200;
 
 // Dynamic Price Multiplier Logic
 function calculatePriceMultiplier(basePriceIQD) {
-  if (basePriceIQD < 15000) return 1.50; // 50% for < 15k
-  if (basePriceIQD < 40000) return 1.30; // 30% for 15k-40k
-  if (basePriceIQD < 70000) return 1.20; // 20% for 40k-70k
-  return 1.15; // 15% for >= 70k
+  return 1.25;
 }
 
 const DEEPINFRA_API_KEY = process.env.DEEPINFRA_API_KEY;
@@ -38,10 +35,13 @@ const ITEMS_PER_SEARCH = Math.max(1, parseInt(process.env.GOOFISH_ITEMS_PER_SEAR
 const KEYWORDS_PER_PRODUCT = 50;
 const UPDATE_EXISTING = String(process.env.GOOFISH_UPDATE_EXISTING || '').toLowerCase() === 'true';
 const UPDATE_LIMIT = parseInt(process.env.GOOFISH_UPDATE_LIMIT || '', 10);
+const UPDATE_START_ID = parseInt(process.env.GOOFISH_UPDATE_START_ID || '0', 10);
 const UPDATE_BATCH_SIZE = Math.max(1, parseInt(process.env.GOOFISH_UPDATE_BATCH || '25', 10) || 25);
 const UPDATE_DELAY_MIN = Math.max(0, parseInt(process.env.GOOFISH_UPDATE_DELAY_MIN || '800', 10) || 800);
 const UPDATE_DELAY_MAX = Math.max(UPDATE_DELAY_MIN, parseInt(process.env.GOOFISH_UPDATE_DELAY_MAX || '1600', 10) || 1600);
 const UPDATE_PROGRESS_EVERY = Math.max(1, parseInt(process.env.GOOFISH_UPDATE_PROGRESS_EVERY || '10', 10) || 10);
+const UPDATE_PROGRESS_PATH = path.join(__dirname, 'goofish-update-existing-progress.json');
+const UPDATE_RESET_PROGRESS = String(process.env.GOOFISH_UPDATE_RESET_PROGRESS || '').toLowerCase() === 'true';
 const DEFAULT_SEARCH_TERMS = [
   '手机壳', '女包', '斜挎包', '连衣裙', '女鞋', '牛仔裤',
   '男士T恤', '运动鞋', '耳机', '蓝牙音箱', '智能手表', '充电宝',
@@ -148,8 +148,20 @@ function normalizeArabicKeyword(value) {
 function normalizeTranslatedTitle(aiText, fallbackTitle) {
   const raw = String(aiText || '').trim();
   if (!raw) return fallbackTitle;
+  const parsedPayload = parseAiTranslationPayload(raw);
+  const parsedTitle = cleanAiText(sanitizeTranslationText(parsedPayload?.title_ar || ''));
+  if (parsedTitle && hasArabic(parsedTitle)) return parsedTitle.slice(0, 140);
   const lines = raw.split('\n').map((line) => cleanAiText(line)).filter(Boolean);
-  const arabicLine = lines.find((line) => hasArabic(line) && !/^option\b/i.test(line));
+  const arabicLine = lines
+    .map((line) => line
+      .replace(/^[{\s]*/, '')
+      .replace(/["']?(title_ar|titlear|title)["']?\s*[:：-]\s*/i, '')
+      .replace(/["']?(description_ar|descriptionar|full_description_ar|fulldescriptionar)["']?\s*[:：-]\s*/i, '')
+      .replace(/["'}\s]*$/, '')
+      .trim()
+    )
+    .map((line) => line.split(/,\s*["']?(description_ar|descriptionar|full_description_ar|fulldescriptionar)\b/i)[0].trim())
+    .find((line) => hasArabic(line) && !/^option\b/i.test(line));
   if (arabicLine) return arabicLine.slice(0, 140);
   return cleanAiText(raw).slice(0, 140) || fallbackTitle;
 }
@@ -165,8 +177,21 @@ function normalizeKeywordList(value) {
     'جديد', 'شبه', 'كامل', 'كاملة', 'مجموعة', 'عدة', 'متنوعة', 'يوجد', 'اصلي', 'تقليد', 'مقاس', 'حجم',
     'بسبب', 'تغيير', 'يتم', 'التخلص', 'منها', 'كعنصر', 'غير', 'مستخدم', 'تتضمن',
     'والباقي', 'الباقي', 'باقي', 'ارجاع', 'إرجاع', 'استبدال', 'لأسباب', 'سبب', 'اسباب', 'أسباب',
-    'من', 'على', 'به', 'او', 'أو', 'لا', 'في', 'مع', 'الان', 'حاليا'
+    'من', 'على', 'به', 'او', 'أو', 'لا', 'في', 'مع', 'الان', 'حاليا',
+    'كان', 'كانت', 'لديه', 'عنده', 'صديق', 'سابق', 'اغلق', 'أغلق', 'لبعض', 'بقي', 'دفعات',
+    'مفرغة', 'مفرغ', 'نظرا', 'فهي', 'ليست', 'معباة', 'معبأة', 'فقط', 'تباع', 'بسعر',
+    'منخفض', 'متوفرة', 'بشكل', 'بالجملة', 'بدون', 'خياطة', 'تحمل', 'للاستخدام', 'احترافي',
+    'منافسات', 'يوان'
   ]);
+  const isUsefulKeyword = (word) => {
+    if (!word) return false;
+    if (word.length < 2 || word.length > 24) return false;
+    if (/^\d+$/.test(word)) return false;
+    if (/(.)\1{2,}/.test(word)) return false;
+    if (/اات$/.test(word)) return false;
+    if (/^[^a-zA-Z\u0600-\u06FF]+$/.test(word)) return false;
+    return true;
+  };
   const splitToWords = (input) => {
     const normalized = normalizeArabicKeyword(input);
     if (!normalized) return [];
@@ -181,7 +206,7 @@ function normalizeKeywordList(value) {
         return [cleaned];
       })
       .map((word) => word.trim())
-      .filter((word) => word.length >= 2 && !stopwords.has(word) && !/^\d+$/.test(word));
+      .filter((word) => !stopwords.has(word) && isUsefulKeyword(word));
   };
   if (Array.isArray(value)) {
     return [...new Set(value.flatMap((k) => splitToWords(k)).filter(Boolean))];
@@ -211,8 +236,42 @@ function dedupeKeywordsByShape(list) {
 }
 
 const IRAQI_SYNONYMS = {
+  'طاولة': ['ميز'],
+  'طاوله': ['ميز'],
+  'ميز': ['طاولة', 'طاوله', 'مكتب'],
+  'مكتب': ['ميز', 'طاولة', 'طاوله'],
+  'جربايه': ['سرير'],
+  'سرير': ['جربايه'],
+  'قنفه': ['اريكة', 'كنبة'],
+  'برده': ['ستاره'],
+  'ستاره': ['برده'],
+  'بنكه': ['مروحه'],
+  'مروحه': ['بنكه'],
+  'ثلاجه': ['براد'],
+  'براد': ['ثلاجه'],
+  'مجمد': ['فريزر'],
+  'فريزر': ['مجمد'],
+  'طباخ': ['فرن', 'غاز'],
+  'فرن': ['طباخ'],
+  'كاونتر': ['خزانه', 'مطبخ'],
+  'خزانه': ['كاونتر'],
+  'دوشك': ['مرتبة'],
+  'شرشف': ['مفرش', 'غطاء'],
+  'مفرش': ['شرشف'],
+  'خاولي': ['منشفه'],
+  'منشفه': ['خاولي'],
+  'تراكي': ['اقراط', 'حلق'],
+  'اقراط': ['تراكي'],
+  'سوار': ['اسواره'],
+  'اسواره': ['سوار'],
+  'جنطه': ['حقيبة', 'شنطة'],
   'حذاء': ['قندرة', 'جواتي'],
+  'بوط': ['حذاء', 'جواتي'],
+  'جزم': ['حذاء', 'قندرة'],
   'احذية': ['قنادر', 'جواتي'],
+  'قندرة': ['حذاء', 'احذية'],
+  'قنادر': ['احذية', 'جواتي'],
+  'جواتي': ['حذاء', 'احذية', 'قندرة'],
   'شنطة': ['جنطة', 'جنطه'],
   'حقيبة': ['جنطة', 'جنطه', 'شنطة'],
   'كنبة': ['قنفه', 'اريكه'],
@@ -220,21 +279,314 @@ const IRAQI_SYNONYMS = {
   'مرتبة': ['دوشك'],
   'موبايل': ['جوال', 'تلفون'],
   'هاتف': ['جوال', 'موبايل', 'تلفون'],
+  'جوال': ['هاتف', 'موبايل', 'تلفون'],
+  'تلفون': ['هاتف', 'موبايل', 'جوال'],
+  'تلفزيون': ['شاشه'],
+  'شاشه': ['تلفزيون', 'مونيتر'],
+  'لابتوب': ['حاسوب', 'كمبيوتر'],
+  'حاسوب': ['لابتوب', 'كمبيوتر'],
+  'كمبيوتر': ['لابتوب', 'حاسوب'],
+  'شاحنه': ['شاحن'],
+  'شاحن': ['شاحنه'],
+  'سماعه': ['سبيكر', 'سماعات'],
   'سماعة': ['سبيكر', 'سماعات'],
+  'سبيكر': ['سماعة', 'سماعه', 'سماعات'],
+  'كاميرا': ['camera'],
   'مكياج': ['مكياج', 'ميك اب'],
   'بنطلون': ['سروال'],
   'تيشيرت': ['تي شيرت'],
+  'نعال': ['شبشب', 'شحاطه'],
+  'شحاطه': ['شبشب', 'صندل'],
   'شبشب': ['شحاطة', 'شحاطه'],
   'صندل': ['شحاطة', 'شحاطه'],
+  'كلاو': ['قبعه'],
+  'قبعه': ['كلاو'],
+  'قميص': ['تيشيرت'],
+  'فستان': ['دشداشه'],
+  'دشداشه': ['فستان', 'جلابية', 'ثوب'],
+  'تنوره': ['skirt'],
+  'قاط': ['بدله'],
+  'بدله': ['قاط'],
+  'بايدر': ['دراجه'],
+  'دراجه': ['بايدر'],
+  'سياره': ['عربه'],
+  'عربه': ['سياره'],
   'ملابس': ['هدوم'],
+  'هدوم': ['ملابس'],
+  'نساء': ['نسائي', 'بناتي'],
+  'نسائي': ['نساء', 'بناتي'],
+  'رجال': ['رجالي', 'ولادي'],
+  'رجالي': ['رجال', 'ولادي'],
   'اطفال': ['ولادي', 'بناتي']
 };
+
+Object.assign(IRAQI_SYNONYMS, {
+  'جركس': ['مطرقة', 'شاكوش'],
+  'طرمبه': ['مضخة'],
+  'دافور': ['موقد'],
+  'صوبة': ['مدفأة'],
+  'قنينة': ['زجاجة'],
+  'تنك': ['خزان'],
+  'تنكه': ['علبة', 'معدنية'],
+  'جكارة': ['ولاعة'],
+  'كابينه': ['خزانة'],
+  'دولاب': ['خزانة', 'ملابس'],
+  'طبك': ['طبق'],
+  'شفاط': ['مروحة', 'شفط'],
+  'خلاط': ['خلاط', 'كهربائي'],
+  'مفرمه': ['مفرمة'],
+  'قلايه': ['مقلاة'],
+  'مشبك': ['مشبك', 'غسيل'],
+  'قفل': ['قفل'],
+  'مفتاح': ['مفتاح'],
+  'سلسله': ['سلسلة'],
+  'مسامير': ['مسامير'],
+  'برغي': ['برغي'],
+  'كيبل شحن': ['كابل', 'شحن'],
+  'باور بنك': ['بطارية', 'متنقلة', 'باوربنك'],
+  'ماوس': ['فأرة', 'حاسوب'],
+  'كيبورد': ['لوحة', 'مفاتيح'],
+  'كامره': ['كاميرا'],
+  'ستاند': ['حامل'],
+  'حامل موبايل': ['حامل', 'هاتف'],
+  'كفر': ['غطاء', 'هاتف'],
+  'سكرين': ['واقي', 'شاشة'],
+  'فلتر': ['مرشح'],
+  'فلتر مي': ['فلتر', 'ماء'],
+  'كولر': ['مبرد', 'ماء'],
+  'كولر هواء': ['مبرد', 'هواء'],
+  'جاط': ['وعاء', 'كبير'],
+  'كاسه': ['وعاء'],
+  'ملقط': ['ملقط'],
+  'مصفايه': ['مصفاة'],
+  'مبخره': ['مبخرة'],
+  'مسبحه': ['سبحة'],
+  'مصباح': ['مصباح', 'لمبه'],
+  'كشاف': ['مصباح', 'يدوي'],
+  'لمبه ليد': ['مصباح', 'ليد'],
+  'فيشه': ['قابس', 'كهربائي'],
+  'توصيله': ['وصلة', 'كهربائية'],
+  'مقسم كهرباء': ['موزع', 'كهرباء'],
+  'مروحه سقف': ['مروحة', 'سقفية'],
+  'مروحه مكتب': ['مروحة', 'مكتبية'],
+  'مروحه يد': ['مروحة', 'يدوية'],
+  'ميزان': ['ميزان'],
+  'ميزان الكتروني': ['ميزان', 'الكتروني'],
+  'قنينة غاز': ['اسطوانة', 'غاز'],
+  'راس غاز': ['منظم', 'غاز'],
+  'لي غاز': ['خرطوم', 'غاز'],
+  'كيس زباله': ['كيس', 'قمامة'],
+  'سله': ['سلة'],
+  'سله مهملات': ['سلة', 'قمامة'],
+  'ممسحه': ['ممسحة'],
+  'جارو': ['مكنسة'],
+  'فرشه': ['فرشاة'],
+  'اسفنجه': ['اسفنجة'],
+  'مسند': ['مسند'],
+  'حزام': ['حزام'],
+  'ساعة': ['ساعة'],
+  'ساعة حايط': ['ساعة', 'حائط'],
+  'ساعة يد': ['ساعة', 'يد'],
+  'نظاره': ['نظارة'],
+  'نظاره شمسيه': ['نظارة', 'شمسية'],
+  'مظله': ['مظلة'],
+  'شماسيه': ['مظلة', 'شمسية'],
+  'مكبس': ['مكبس'],
+  'قشاطه': ['مقشرة'],
+  'فتاحه': ['فتاحة'],
+  'مبرد': ['مبرد'],
+  'مقص حديد': ['مقص', 'معدني'],
+  'مطرقه مطاط': ['مطرقة', 'مطاطية'],
+  'قاطع': ['قاطع'],
+  'فيتر': ['مرشح'],
+  'جنطه سفر': ['حقيبة', 'سفر'],
+  'جنطه ظهر': ['حقيبة', 'ظهر'],
+  'محفظه': ['محفظة'],
+  'ميداليه': ['ميدالية', 'مفاتيح']
+});
+
+Object.assign(IRAQI_SYNONYMS, {
+  'جركز': ['مطرقة', 'شاكوش'],
+  'ماطور': ['مولد', 'محرك'],
+  'محوله': ['محول', 'كهربائي'],
+  'مكناسه': ['مكنسة'],
+  'خاشوكه': ['ملعقة'],
+  'طاسه': ['وعاء', 'طنجرة'],
+  'جدر': ['قدر', 'طبخ'],
+  'جدر ضغط': ['قدر ضغط', 'طنجرة ضغط'],
+  'صينيه': ['صينية'],
+  'قوري': ['ابريق', 'شاي'],
+  'استكان': ['كوب', 'شاي'],
+  'كلاص': ['كاس', 'كوب'],
+  'بوري': ['انبوب'],
+  'سطل': ['دلو'],
+  'طشت': ['حوض', 'طست'],
+  'منشر': ['منشر', 'غسيل'],
+  'بطانيه': ['بطانية'],
+  'دواشك': ['مراتب', 'مرتبة'],
+  'مخده': ['وسادة', 'مخدة'],
+  'كبت': ['خزانة'],
+  'تخت': ['سرير'],
+  'جادر': ['غطاء', 'مشمع'],
+  'ترمس': ['حافظة', 'حرارية'],
+  'فريزه': ['مجمد', 'فريزر'],
+  'مكيف': ['مكيف', 'هواء'],
+  'سبلت': ['مكيف', 'سبليت'],
+  'دفايه': ['مدفأة', 'دافيه'],
+  'غساله': ['غسالة'],
+  'نشافه': ['مجفف', 'ملابس'],
+  'مكوه': ['مكواة'],
+  'جويته': ['حذاء', 'جواتي'],
+  'قوطية': ['علبة', 'معدنية'],
+  'كارتون': ['صندوق', 'كرتون'],
+  'علبه': ['علبة'],
+  'باكيت': ['حزمة', 'عبوة'],
+  'شماغ': ['غطاء', 'راس'],
+  'عقال': ['عقال'],
+  'جاكيت': ['سترة', 'جكيت'],
+  'بنطرون': ['سروال', 'بنطلون'],
+  'فنيله': ['قميص', 'داخلي'],
+  'كيبل': ['كابل'],
+  'راوتر': ['موجه', 'انترنت'],
+  'مودم': ['مودم'],
+  'بطاريه': ['بطارية'],
+  'لمبه': ['مصباح', 'لمبة'],
+  'فيش': ['قابس', 'كهربائي'],
+  'ابريز': ['مقبس', 'كهربائي'],
+  'تيب': ['شريط', 'لاصق'],
+  'سكوتش': ['شريط', 'لاصق', 'شفاف'],
+  'كتر': ['مشرط', 'سكين'],
+  'شاكوش': ['مطرقة', 'جركز'],
+  'بنجه': ['مفتاح', 'ربط'],
+  'مفك': ['مفك', 'براغي'],
+  'دريل': ['مثقاب'],
+  'منشار': ['منشار'],
+  'كماشه': ['كماشة'],
+  'زرديه': ['زرادية'],
+  'جنط': ['اطار', 'عجلة'],
+  'تاير': ['اطار', 'سيارة'],
+  'جك': ['رافعة', 'سيارة'],
+  'مضخه': ['مضخة'],
+  'خرطوم': ['انبوب', 'ماء'],
+  'برميل': ['برميل'],
+  'قوطية صبغ': ['علبة', 'طلاء', 'صبغ'],
+  'فرشه صبغ': ['فرشاة', 'طلاء'],
+  'مسطره': ['مسطرة'],
+  'دفتر': ['دفتر'],
+  'قلم رصاص': ['قلم', 'رصاص'],
+  'برايه': ['مبراة'],
+  'ممحاة': ['ممحاة'],
+  'شنطه مدرسه': ['حقيبة', 'مدرسية']
+});
+
+Object.assign(IRAQI_SYNONYMS, {
+  'بوري مي': ['انبوب', 'ماء'],
+  'بوري مجاري': ['انبوب', 'صرف'],
+  'غطا بوري': ['غطاء', 'انبوب'],
+  'وصله بوري': ['وصلة', 'انبوب'],
+  'كوع بوري': ['وصلة', 'زاوية', 'انبوب'],
+  'مضخه مي': ['مضخة', 'ماء'],
+  'موتور مي': ['محرك', 'مضخة', 'ماء'],
+  'حنفيه': ['صنبور'],
+  'لي مي': ['خرطوم', 'ماء'],
+  'رشاش مي': ['مرش', 'ماء'],
+  'كفوف': ['قفازات'],
+  'خوذه': ['خوذة'],
+  'نظارات حمايه': ['نظارات', 'واقية'],
+  'بدله عمل': ['ملابس', 'عمل'],
+  'قلم تعليم': ['قلم', 'تحديد'],
+  'ماركر': ['قلم', 'تحديد'],
+  'سبوره': ['لوح', 'كتابة'],
+  'طباشير': ['طباشير'],
+  'ملف': ['ملف', 'اوراق'],
+  'حافظه اوراق': ['حافظة', 'مستندات'],
+  'كيس نايلون': ['كيس', 'بلاستيك'],
+  'نايلون': ['بلاستيك'],
+  'مشمع': ['غطاء', 'بلاستيكي'],
+  'كتر كبير': ['مشرط', 'كبير'],
+  'كتر صغير': ['مشرط', 'صغير'],
+  'سكينه': ['سكين'],
+  'سكين مطبخ': ['سكين', 'مطبخ'],
+  'لوح تقطيع': ['لوح', 'تقطيع'],
+  'مدقه': ['مدقة'],
+  'هاون': ['هاون'],
+  'مقشه': ['مكنسة', 'يدوية'],
+  'كيس غسيل': ['كيس', 'غسيل'],
+  'رف': ['رف'],
+  'رف حديد': ['رف', 'معدني'],
+  'رف جدار': ['رف', 'جداري'],
+  'برواز': ['اطار', 'صورة'],
+  'لوحه حايط': ['لوحة', 'جدارية'],
+  'مخده سفر': ['وسادة', 'سفر'],
+  'قنفة سرير': ['اريكة', 'سرير'],
+  'مخده ارضيه': ['وسادة', 'ارضية'],
+  'دواشك ارضي': ['مرتبة', 'ارضية'],
+  'مفرش طاوله': ['غطاء', 'طاولة'],
+  'سجاده': ['سجادة'],
+  'دعاسه': ['بساط', 'باب'],
+  'ممسحه ارض': ['ممسحة', 'ارضية'],
+  'مساحه زجاج': ['ممسحة', 'زجاج'],
+  'بخاخ': ['بخاخ'],
+  'قنينة بخاخ': ['زجاجة', 'رش'],
+  'مبيد': ['مبيد', 'حشرات'],
+  'مصيده': ['مصيدة'],
+  'مصيده فئران': ['مصيدة', 'فئران'],
+  'مصيده حشرات': ['مصيدة', 'حشرات'],
+  'كاشف دخان': ['جهاز', 'كشف', 'الدخان'],
+  'كاشف غاز': ['جهاز', 'كشف', 'الغاز'],
+  'كامره مراقبه': ['كاميرا', 'مراقبة'],
+  'جهاز تسجيل كامرات': ['مسجل', 'كاميرات'],
+  'شاشه كمبيوتر': ['شاشة', 'حاسوب'],
+  'شاشه تلفزيون': ['شاشة', 'تلفاز'],
+  'ريموت': ['جهاز', 'تحكم'],
+  'ستلايت': ['جهاز', 'استقبال', 'فضائي'],
+  'دش': ['طبق', 'استقبال', 'فضائي'],
+  'راس دش': ['راس', 'طبق', 'فضائي'],
+  'سلك دش': ['كابل', 'فضائي'],
+  'سماعه بلوتوث': ['سماعة', 'بلوتوث'],
+  'مكبر صوت': ['مكبر', 'صوت'],
+  'حامل تلفزيون': ['حامل', 'تلفاز'],
+  'حامل جدار': ['حامل', 'جداري'],
+  'مبرد لابتوب': ['مبرد', 'حاسوب', 'محمول'],
+  'طابعه': ['طابعة'],
+  'حبر طابعه': ['حبر', 'طابعة'],
+  'ورق طابعه': ['ورق', 'طباعة'],
+  'كابل طابعه': ['كابل', 'طابعة'],
+  'موزع نت': ['موزع', 'انترنت'],
+  'مقوي واي فاي': ['مقوي', 'اشارة'],
+  'حامل كامره': ['حامل', 'كاميرا'],
+  'ستاند اضاءة': ['حامل', 'اضاءة'],
+  'لمبه طوارئ': ['مصباح', 'طوارئ'],
+  'كشاف يدوي': ['مصباح', 'يدوي'],
+  'كشاف راس': ['مصباح', 'راس'],
+  'حبل': ['حبل'],
+  'جنزير': ['سلسلة', 'معدنية'],
+  'قفل باب': ['قفل', 'باب'],
+  'مقبض باب': ['مقبض', 'باب'],
+  'مفصل باب': ['مفصل', 'باب'],
+  'مسمار تثبيت': ['مسمار', 'تثبيت'],
+  'مسمار جدار': ['مسمار', 'جدار'],
+  'مسامير خشب': ['مسامير', 'خشب'],
+  'مسامير حديد': ['مسامير', 'معدنية'],
+  'لاصق': ['مادة', 'لاصقة'],
+  'غرا': ['غراء'],
+  'غرا قوي': ['غراء', 'قوي'],
+  'سيليكون': ['سيليكون'],
+  'مسدس سيليكون': ['مسدس', 'سيليكون'],
+  'بخاخ صبغ': ['بخاخ', 'طلاء'],
+  'رول صبغ': ['اسطوانة', 'طلاء'],
+  'سطل صبغ': ['دلو', 'طلاء']
+});
 
 function expandIraqiKeywords(list) {
   const extras = [];
   list.forEach((entry) => {
     const normalized = normalizeArabicKeyword(entry);
     if (!normalized) return;
+    const wholeMapped = IRAQI_SYNONYMS[normalized];
+    if (Array.isArray(wholeMapped)) {
+      wholeMapped.forEach((m) => extras.push(m));
+    }
     const tokens = normalized.split(/\s+/).filter(Boolean);
     tokens.forEach((token) => {
       const mapped = IRAQI_SYNONYMS[token];
@@ -246,13 +598,80 @@ function expandIraqiKeywords(list) {
 }
 
 function buildKeywordCandidatesFromText(text) {
-  const clean = cleanAiText(sanitizeTranslationText(text));
-  if (!clean) return [];
-  const words = clean
-    .split(/\s+/)
-    .map((word) => normalizeArabicKeyword(word))
-    .filter((word) => word && word.length >= 2);
-  return [...new Set(words)];
+  return normalizeKeywordList(text);
+}
+
+const ARABIC_IRREGULAR_PLURAL_MAP = {
+  'مصباح': ['مصابيح'],
+  'مصابيح': ['مصباح'],
+  'مفتاح': ['مفاتيح'],
+  'مفاتيح': ['مفتاح'],
+  'كتاب': ['كتب'],
+  'كتب': ['كتاب'],
+  'قلم': ['اقلام'],
+  'اقلام': ['قلم'],
+  'هاتف': ['هواتف'],
+  'هواتف': ['هاتف'],
+  'حاسوب': ['حواسيب'],
+  'حواسيب': ['حاسوب'],
+  'حقيبة': ['حقائب'],
+  'حقائب': ['حقيبة'],
+  'حذاء': ['احذية'],
+  'احذية': ['حذاء'],
+  'ساعة': ['ساعات'],
+  'ساعات': ['ساعة'],
+  'سماعة': ['سماعات'],
+  'سماعات': ['سماعة']
+};
+
+function expandArabicSingularPlural(list) {
+  const extras = [];
+  list.forEach((entry) => {
+    const token = normalizeArabicKeyword(entry);
+    if (!token || token.length < 2 || token.includes(' ')) return;
+    const irregular = ARABIC_IRREGULAR_PLURAL_MAP[token];
+    if (Array.isArray(irregular)) extras.push(...irregular);
+    if (token.endsWith('ات') && token.length > 3) {
+      const stem = token.slice(0, -2);
+      extras.push(`${stem}ة`, `${stem}ه`);
+    } else if ((token.endsWith('ون') || token.endsWith('ين')) && token.length > 4) {
+      extras.push(token.slice(0, -2));
+    } else if ((token.endsWith('ة') || token.endsWith('ه')) && token.length > 3) {
+      const stem = token.slice(0, -1);
+      extras.push(`${stem}ات`);
+      extras.push(stem);
+    } else if (token.endsWith('ي') && token.length > 3) {
+      extras.push(`${token}ة`, `${token}ات`);
+    }
+  });
+  return dedupeKeywordsByShape(extras);
+}
+
+const CATEGORY_KEYWORD_RULES = [
+  { signals: ['مصباح', 'اضاءة', 'إنارة', 'نور', 'ليد', 'LED', 'كشاف', 'فانوس'], keywords: ['انارة', 'مصابيح', 'لمبات', 'كشافات', 'مصباح'] },
+  { signals: ['تخييم', 'رحلات', 'مخيم', 'بر', 'كشتة'], keywords: ['تخييم', 'رحلات', 'معدات تخييم', 'لوازم بر', 'ادوات رحلات'] },
+  { signals: ['حذاء', 'احذية', 'قندرة', 'جواتي', 'شوز'], keywords: ['احذية', 'حذاء رجالي', 'حذاء نسائي', 'احذية رياضية', 'احذية كاجوال'] },
+  { signals: ['شنطة', 'جنطة', 'حقيبة', 'باك'], keywords: ['حقائب', 'شنط', 'حقيبة يد', 'شنطة كتف', 'حقيبة ظهر'] },
+  { signals: ['هاتف', 'موبايل', 'جوال', 'تلفون'], keywords: ['الكترونيات', 'هواتف', 'اكسسوارات موبايل', 'تقنية', 'اتصالات'] },
+  { signals: ['سماعة', 'سماعات', 'سبيكر', 'بلوتوث'], keywords: ['اكسسوارات صوت', 'سماعات', 'الكترونيات', 'بلوتوث', 'صوتيات'] },
+  { signals: ['ساعة', 'ساعات', 'ذكية'], keywords: ['ساعات', 'اكسسوارات', 'ساعة ذكية', 'ساعة يد', 'اكسسوارات الكترونية'] },
+  { signals: ['قميص', 'تيشيرت', 'بلوزة', 'بنطلون', 'فستان', 'عباية', 'ملابس'], keywords: ['ملابس', 'ازياء', 'ملابس رجالية', 'ملابس نسائية', 'ملابس اطفال'] },
+  { signals: ['كنبة', 'اريكة', 'طاولة', 'كرسي', 'خزانة', 'سرير', 'مطبخ'], keywords: ['اثاث', 'منزل', 'ديكور', 'غرفة نوم', 'مطبخ'] },
+  { signals: ['عطر', 'كريم', 'سيروم', 'مكياج', 'ميك اب'], keywords: ['عناية', 'جمال', 'مستحضرات تجميل', 'عطور', 'العناية بالبشرة'] },
+  { signals: ['لعبة', 'العاب', 'اطفال', 'بيبي', 'رضيع'], keywords: ['اطفال', 'العاب', 'مستلزمات اطفال', 'هدايا اطفال', 'ترفيه'] },
+  { signals: ['سيارة', 'سيارات', 'عدة', 'ادوات', 'ورشة'], keywords: ['سيارات', 'اكسسوارات سيارات', 'ادوات', 'معدات', 'ورشة'] }
+];
+
+function inferCategoryKeywords(seedText, list = []) {
+  const haystack = normalizeArabicKeyword(`${seedText || ''} ${(Array.isArray(list) ? list.join(' ') : '')}`);
+  if (!haystack) return [];
+  const matched = [];
+  CATEGORY_KEYWORD_RULES.forEach((rule) => {
+    const hasSignal = rule.signals.some((signal) => haystack.includes(normalizeArabicKeyword(signal)));
+    if (hasSignal) matched.push(...rule.keywords);
+  });
+  if (matched.length > 0) return dedupeKeywordsByShape(matched);
+  return ['منتجات', 'تسوق', 'متجر', 'فئة', 'تصنيف'];
 }
 
 function ensureKeywordList(value, seedText = '') {
@@ -261,7 +680,9 @@ function ensureKeywordList(value, seedText = '') {
     .slice(0, KEYWORDS_PER_PRODUCT);
   const extras = dedupeKeywordsByShape(buildKeywordCandidatesFromText(seedText));
   const iraqiExtras = expandIraqiKeywords([...normalized, ...extras]);
-  const merged = dedupeKeywordsByShape([...normalized, ...extras, ...iraqiExtras])
+  const singularPluralExtras = expandArabicSingularPlural([...normalized, ...extras, ...iraqiExtras]);
+  const categoryExtras = inferCategoryKeywords(seedText, [...normalized, ...extras, ...iraqiExtras, ...singularPluralExtras]);
+  const merged = dedupeKeywordsByShape([...normalized, ...extras, ...iraqiExtras, ...singularPluralExtras, ...categoryExtras])
     .filter((k) => k.length >= 2)
     .slice(0, KEYWORDS_PER_PRODUCT);
   if (merged.length >= KEYWORDS_PER_PRODUCT) return merged.slice(0, KEYWORDS_PER_PRODUCT);
@@ -329,8 +750,8 @@ function parseAiTranslationPayload(rawValue) {
       } catch {}
     }
   }
-  const titleLine = normalized.match(/(?:^|\n)\s*title_ar\s*[:：]\s*(.+)/i)?.[1]?.trim();
-  const descriptionLine = normalized.match(/(?:^|\n)\s*(?:description_ar|full_description_ar)\s*[:：]\s*(.+)/i)?.[1]?.trim();
+  const titleLine = normalized.match(/(?:^|\n|[{,]\s*)["']?(?:title_ar|titleAr|title)["']?\s*[:：]\s*["']?([^,"\n}]+)["']?/i)?.[1]?.trim();
+  const descriptionLine = normalized.match(/(?:^|\n|[{,]\s*)["']?(?:description_ar|descriptionAr|full_description_ar|fullDescriptionAr)["']?\s*[:：]\s*["']?([^}\n]+)["']?/i)?.[1]?.trim();
   const keywordLine = normalized.match(/(?:^|\n)\s*keywords?\s*[:：]\s*(.+)/i)?.[1]?.trim();
   if (!parsed && !titleLine && !descriptionLine && !keywordLine) return null;
   return {
@@ -424,6 +845,45 @@ const humanDelay = (min = 1000, max = 3000) => delay(Math.floor(Math.random() * 
 function ask(question) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   return new Promise((resolve) => rl.question(question, ans => { rl.close(); resolve(ans); }));
+}
+
+function loadUpdateExistingProgress() {
+  if (!fs.existsSync(UPDATE_PROGRESS_PATH)) return null;
+  try {
+    const raw = fs.readFileSync(UPDATE_PROGRESS_PATH, 'utf8');
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+    return {
+      lastId: Math.max(0, Number(parsed.lastId || 0) || 0),
+      scanned: Math.max(0, Number(parsed.scanned || 0) || 0),
+      updatedCount: Math.max(0, Number(parsed.updatedCount || 0) || 0),
+      updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : null
+    };
+  } catch {
+    return null;
+  }
+}
+
+function saveUpdateExistingProgress(progress) {
+  try {
+    const payload = {
+      lastId: Math.max(0, Number(progress?.lastId || 0) || 0),
+      scanned: Math.max(0, Number(progress?.scanned || 0) || 0),
+      updatedCount: Math.max(0, Number(progress?.updatedCount || 0) || 0),
+      updatedAt: new Date().toISOString()
+    };
+    fs.writeFileSync(UPDATE_PROGRESS_PATH, JSON.stringify(payload, null, 2), 'utf8');
+  } catch (error) {
+    console.warn('Failed to save update progress:', error?.message || error);
+  }
+}
+
+function clearUpdateExistingProgress() {
+  try {
+    if (fs.existsSync(UPDATE_PROGRESS_PATH)) fs.unlinkSync(UPDATE_PROGRESS_PATH);
+  } catch (error) {
+    console.warn('Failed to clear update progress:', error?.message || error);
+  }
 }
 
 function loadSearchTermHistory() {
@@ -673,6 +1133,8 @@ Return valid JSON only with this shape:
 "title_ar" must be short and suitable as ecommerce card title.
 "description_ar" must be a fuller natural Arabic rendering of the full title text.
 Keywords must be single words only (no spaces). Make them diverse and non-redundant (avoid near-duplicates). Use only nouns and adjectives; do NOT include verbs or marketing/offer words. Include category and subcategory terms, broad category words, material, season, style, target audience, and Iraqi dialect synonyms users might search (e.g., قندرة, جواتي, جنطة, قنفه, دوشك, تلفون, شحاطة). 
+For important product nouns in the title, include both singular and plural Arabic forms in keywords when possible (example: مصباح + مصابيح, حقيبة + حقائب, حذاء + احذية).
+Always include the main category name and a relevant subcategory name as keywords.
 Infer the most likely category from the title and add category-specific variations:
 - Clothing: ملابس، ملابس رجالية/نسائية/اطفال، ملابس صيفية/شتوية، خامات (قطن/بوليستر/حرير)، ستايل (كاجوال/رسمي/رياضي)
 - Shoes: احذية، احذية رياضية/كلاسيك، مقاسات، خامات، استخدام (مشاية/جيم)
@@ -1336,21 +1798,34 @@ async function run() {
 
 async function updateExistingGoofishProducts() {
   await ensureDbReady();
+  if (UPDATE_RESET_PROGRESS) {
+    clearUpdateExistingProgress();
+  }
+  const resumeProgress = loadUpdateExistingProgress();
   const translationCache = loadTranslationCache();
   const limit = Number.isFinite(UPDATE_LIMIT) && UPDATE_LIMIT > 0 ? UPDATE_LIMIT : Number.POSITIVE_INFINITY;
-  let updatedCount = 0;
-  let scanned = 0;
-  let lastId = 0;
+  let updatedCount = resumeProgress ? resumeProgress.updatedCount : 0;
+  let scanned = resumeProgress ? resumeProgress.scanned : 0;
+  let lastId = Math.max(UPDATE_START_ID, resumeProgress ? resumeProgress.lastId : 0);
   let batchIndex = 0;
   const updatedLog = [];
   console.log('Starting Goofish keyword update for existing products...');
   console.log('Update settings:', {
+    startId: lastId,
     limit: Number.isFinite(limit) ? limit : 'all',
     batchSize: UPDATE_BATCH_SIZE,
     delayMin: UPDATE_DELAY_MIN,
     delayMax: UPDATE_DELAY_MAX,
     progressEvery: UPDATE_PROGRESS_EVERY
   });
+  if (resumeProgress) {
+    console.log('Resuming update progress:', {
+      lastId: resumeProgress.lastId,
+      scanned: resumeProgress.scanned,
+      updatedCount: resumeProgress.updatedCount,
+      updatedAt: resumeProgress.updatedAt
+    });
+  }
 
   const safeReconnect = async () => {
     try {
@@ -1471,15 +1946,18 @@ async function updateExistingGoofishProducts() {
       if (updatedCount % UPDATE_PROGRESS_EVERY === 0) {
         console.log(`Progress: updated ${updatedCount}, scanned ${scanned}`);
       }
+      saveUpdateExistingProgress({ lastId, scanned, updatedCount });
       await humanDelay(UPDATE_DELAY_MIN, UPDATE_DELAY_MAX);
     }
     batchIndex += 1;
+    saveUpdateExistingProgress({ lastId, scanned, updatedCount });
     if (batchIndex % 4 === 0) {
       await safeReconnect();
     }
   }
 
   saveTranslationCache(translationCache);
+  clearUpdateExistingProgress();
   console.log(`Existing Goofish products update completed. Updated: ${updatedCount}, Scanned: ${scanned}`);
   if (updatedLog.length > 0) {
     console.log('Updated keyword samples:', updatedLog.slice(0, 20));

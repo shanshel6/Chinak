@@ -6,6 +6,7 @@ import path from 'path';
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import axios from 'axios';
+import readline from 'readline';
 
 // Setup environment
 const __filename = fileURLToPath(import.meta.url);
@@ -55,25 +56,58 @@ async function callDeepInfra(messages, temperature = 0.3, maxTokens = 500) {
   }
 }
 
+function askQuestion(query) {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout
+  });
+  return new Promise((resolve) => rl.question(query, (answer) => {
+    rl.close();
+    resolve(answer);
+  }));
+}
+
 async function checkGoofishLinks() {
   console.log('Starting Goofish link checker & image updater...');
 
-  // 1. Get all active Goofish/Xianyu products (excluding Taobao)
+  const startInput = String(await askQuestion('Start from product number (1-based, press Enter for 1): ')).trim();
+  const parsedStart = Number.parseInt(startInput || '1', 10);
+  const startNumber = Number.isFinite(parsedStart) && parsedStart > 0 ? parsedStart : 1;
+  const startOffset = startNumber - 1;
+
+  const goofishWhere = {
+    isActive: true,
+    AND: [
+      {
+        OR: [
+          { purchaseUrl: { contains: 'goofish.com' } },
+          { purchaseUrl: { contains: 'xianyu.com' } }
+        ]
+      },
+      {
+        NOT: { purchaseUrl: { contains: 'taobao.com' } }
+      }
+    ]
+  };
+
+  const totalProducts = await prisma.product.count({ where: goofishWhere });
+  if (totalProducts === 0) {
+    console.log('No products to check.');
+    await prisma.$disconnect();
+    return;
+  }
+
+  if (startOffset >= totalProducts) {
+    console.log(`Start number ${startNumber} is beyond total products (${totalProducts}).`);
+    await prisma.$disconnect();
+    return;
+  }
+
+  // 1. Get active Goofish/Xianyu products from selected row number (excluding Taobao)
   const products = await prisma.product.findMany({
-    where: {
-      isActive: true,
-      AND: [
-        {
-          OR: [
-            { purchaseUrl: { contains: 'goofish.com' } },
-            { purchaseUrl: { contains: 'xianyu.com' } }
-          ]
-        },
-        {
-          NOT: { purchaseUrl: { contains: 'taobao.com' } }
-        }
-      ]
-    },
+    where: goofishWhere,
+    orderBy: { id: 'asc' },
+    skip: startOffset,
     select: {
       id: true,
       name: true,
@@ -82,7 +116,8 @@ async function checkGoofishLinks() {
     }
   });
 
-  console.log(`Found ${products.length} active Goofish/Xianyu products to check.`);
+  console.log(`Found ${totalProducts} active Goofish/Xianyu products.`);
+  console.log(`Starting from product number ${startNumber}. Products to check now: ${products.length}.`);
 
   if (products.length === 0) {
     console.log('No products to check.');
@@ -143,7 +178,7 @@ async function checkGoofishLinks() {
   for (const product of products) {
     if (!product.purchaseUrl) continue;
     
-    console.log(`\n[${checkedCount + 1}/${products.length}] Checking Product ID ${product.id}: ${product.name}`);
+    console.log(`\n[${startOffset + checkedCount + 1}/${totalProducts}] Checking Product ID ${product.id}: ${product.name}`);
     console.log(`URL: ${product.purchaseUrl}`);
 
     try {

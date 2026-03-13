@@ -3,7 +3,7 @@ import prisma from '../prismaClient.js';
 async function main() {
   try {
     console.log('Syncing `price` column using `basePriceRMB` as IQD source...');
-    console.log('Formula: (basePriceRMB + domesticShippingFee) * 1.15 [Rounded to nearest 250]');
+    console.log('Formula: (basePriceRMB + domesticShippingFee) * 1.25 [Rounded to nearest 250]');
 
     const products = await prisma.product.findMany({
       include: { variants: true }
@@ -21,7 +21,7 @@ async function main() {
       // --- PRODUCT LEVEL ---
       if (product.basePriceRMB && product.basePriceRMB > 0) {
         const rawCost = product.basePriceRMB;
-        const calculated = (rawCost + domesticFee) * 1.15;
+        const calculated = (rawCost + domesticFee) * 1.25;
         const newPrice = Math.ceil(calculated / 250) * 250;
 
         if (newPrice !== product.price) {
@@ -37,7 +37,7 @@ async function main() {
       for (const variant of product.variants) {
         if (variant.basePriceRMB && variant.basePriceRMB > 0) {
            const rawCost = variant.basePriceRMB;
-           const calculated = (rawCost + domesticFee) * 1.15;
+           const calculated = (rawCost + domesticFee) * 1.25;
            const newPrice = Math.ceil(calculated / 250) * 250;
            
            if (newPrice !== variant.price) {

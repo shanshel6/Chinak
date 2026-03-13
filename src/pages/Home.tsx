@@ -7,6 +7,8 @@ import { usePageCacheStore } from '../store/usePageCacheStore';
 import Skeleton from '../components/Skeleton';
 import { useTranslation } from 'react-i18next';
 import SearchBar from '../components/home/SearchBar';
+import FilterBar from '../components/home/FilterBar';
+import type { ConditionFilter, PriceFilter } from '../components/home/FilterBar';
 import ProductCard from '../components/home/ProductCard';
 import { Grid2X2, Smartphone, Shirt, Sparkles, Banknote, AlertCircle, PackageSearch } from 'lucide-react';
 import type { Product } from '../types/product';
@@ -50,6 +52,10 @@ const Home: React.FC = () => {
   // Infinite Scroll & Categories State
   const [hasMore, setHasMore] = useState(true);
   const [selectedCategoryId, setSelectedCategoryId] = useState(homeCategoryId);
+  const [conditionFilter, setConditionFilter] = useState<ConditionFilter>(null);
+  const [priceFilter, setPriceFilter] = useState<PriceFilter>(null);
+  const [draftConditionFilter, setDraftConditionFilter] = useState<ConditionFilter>(null);
+  const [draftPriceFilter, setDraftPriceFilter] = useState<PriceFilter>(null);
   const scrollTargetRef = useRef<HTMLElement[]>([]);
   const observer = useRef<IntersectionObserver | null>(null);
   const autoLoadGuardRef = useRef({ categoryId: homeCategoryId, lastCount: 0, stagnantAttempts: 0 });
@@ -215,26 +221,35 @@ const Home: React.FC = () => {
     try {
       setError(null);
       const searchTerm = categoryToSearchTerm[categoryId] || '';
-      const maxPrice = categoryId === 'under5k' ? 5000 : undefined;
-      const historyTerms = categoryId === 'all' ? getHistoryTerms() : [];
+      const maxPrice = categoryId === 'under5k' ? 5000 : (priceFilter === '1k' ? 1000 : priceFilter === '5k' ? 5000 : priceFilter === '10k' ? 10000 : priceFilter === '25k' ? 25000 : undefined);
+      const condition = conditionFilter === 'new' ? 'new' : conditionFilter === 'used' ? 'used' : undefined;
+
       let prodsRes: any = null;
-      if (categoryId === 'all' && historyTerms.length > 0) {
-        const termBatch = shuffleTerms(historyTerms).slice(0, isInitial ? 3 : Math.min(2, historyTerms.length));
-        const perTermLimit = isInitial ? 6 : 8;
-        const termResponses = await Promise.all(
-          termBatch.map((term) => fetchProducts(pageNum, perTermLimit, term))
-        );
-        const baseResponse = await fetchProducts(pageNum, Math.max(4, 10 - termBatch.length * 2), '');
-        const termProducts = termResponses.flatMap((r) => Array.isArray(r?.products) ? r.products : []);
-        const baseProducts = Array.isArray(baseResponse?.products) ? baseResponse.products : [];
-        const combined = mergeUniqueProducts(termProducts, baseProducts);
-        const shuffled = shuffleProducts(combined);
-        prodsRes = {
-          products: shuffled,
-          hasMore: termResponses.some((r) => r?.hasMore) || Boolean(baseResponse?.hasMore)
-        };
+      if (categoryId === 'all' && getHistoryTerms().length > 0) {
+        // ... (existing logic for history terms, but pass maxPrice and condition if API supports it)
+        // For simplicity, we'll just fetch standard products with filters if filters are active
+        if (condition || maxPrice) {
+             prodsRes = await fetchProducts(pageNum, 10, searchTerm, maxPrice, condition);
+        } else {
+            // Existing history logic
+            const historyTerms = getHistoryTerms();
+            const termBatch = shuffleTerms(historyTerms).slice(0, isInitial ? 3 : Math.min(2, historyTerms.length));
+            const perTermLimit = isInitial ? 6 : 8;
+            const termResponses = await Promise.all(
+              termBatch.map((term) => fetchProducts(pageNum, perTermLimit, term))
+            );
+            const baseResponse = await fetchProducts(pageNum, Math.max(4, 10 - termBatch.length * 2), '');
+            const termProducts = termResponses.flatMap((r) => Array.isArray(r?.products) ? r.products : []);
+            const baseProducts = Array.isArray(baseResponse?.products) ? baseResponse.products : [];
+            const combined = mergeUniqueProducts(termProducts, baseProducts);
+            const shuffled = shuffleProducts(combined);
+            prodsRes = {
+              products: shuffled,
+              hasMore: termResponses.some((r) => r?.hasMore) || Boolean(baseResponse?.hasMore)
+            };
+        }
       } else {
-        prodsRes = await fetchProducts(pageNum, 10, searchTerm, maxPrice);
+        prodsRes = await fetchProducts(pageNum, 10, searchTerm, maxPrice, condition);
       }
 
       // Only proceed if this is still the active request for this category
@@ -310,19 +325,25 @@ const Home: React.FC = () => {
         setLoadingMore(false);
       }
     }
-  }, [mergeUniqueProducts, normalizeProductId, setHomeData, t, readCategoryCachedProducts, writeCategoryCachedProducts, readGlobalCachedProducts, getHistoryTerms, shuffleTerms, shuffleProducts]);
+  }, [mergeUniqueProducts, normalizeProductId, setHomeData, t, readCategoryCachedProducts, writeCategoryCachedProducts, readGlobalCachedProducts, getHistoryTerms, shuffleTerms, shuffleProducts, conditionFilter, priceFilter]);
 
   useEffect(() => {
-    // Only load if we don't have products or if the category has changed
-    if (selectedCategoryId !== homeCategoryId) {
-      setProducts([]); 
-      setHasMore(true);
-      loadData(1, selectedCategoryId, true);
-      setPage(1);
-    } else if (products.length === 0 && !error) {
-      loadData(1, selectedCategoryId, true);
-    }
-  }, [selectedCategoryId, homeCategoryId, loadData, error, products.length]);
+    // Reload when filters change
+    setProducts([]);
+    setHasMore(true);
+    setPage(1);
+    loadData(1, selectedCategoryId, true);
+  }, [selectedCategoryId, conditionFilter, priceFilter, loadData]);
+
+  const applyFilters = useCallback(() => {
+    setConditionFilter(draftConditionFilter);
+    setPriceFilter(draftPriceFilter);
+  }, [draftConditionFilter, draftPriceFilter]);
+
+  useEffect(() => {
+    setDraftConditionFilter(conditionFilter);
+    setDraftPriceFilter(priceFilter);
+  }, [conditionFilter, priceFilter]);
 
   // Restore scroll position only on mount if we have data
   useEffect(() => {
@@ -525,10 +546,25 @@ const Home: React.FC = () => {
 
   return (
     <div className="relative flex min-h-screen w-full flex-col pb-28 pb-safe bg-background-light dark:bg-background-dark font-display text-slate-900 dark:text-white antialiased selection:bg-primary/30 rtl" dir="rtl">
-      {/* Search Bar */}
-          <SearchBar onNavigate={(path: string, state?: any) => navigate(path, { state })} />
-
-      <div className="transition-all duration-300"></div>
+      <div className="sticky top-0 z-40 bg-white dark:bg-gray-900 shadow-sm transition-transform duration-300" id="home-header">
+        <SearchBar
+          onNavigate={(path: string, state?: any) => navigate(path, { state })}
+          navigationState={{
+            conditionFilter: draftConditionFilter,
+            priceFilter: draftPriceFilter
+          }}
+        />
+        <FilterBar 
+          condition={draftConditionFilter}
+          price={draftPriceFilter}
+          onConditionChange={setDraftConditionFilter}
+          onPriceChange={setDraftPriceFilter}
+          appliedCondition={conditionFilter}
+          appliedPrice={priceFilter}
+          onApply={applyFilters}
+          className="border-t border-slate-100 dark:border-slate-800"
+        />
+      </div>
 
         {error && (
           <div className="mx-4 mt-4 p-4 rounded-2xl bg-red-50 dark:bg-red-900/20 border border-red-100 dark:border-red-900/30 text-red-600 dark:text-red-400 text-sm flex items-center gap-3">

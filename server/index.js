@@ -271,13 +271,13 @@ const calculateBulkImportPrice = (rawPrice, domesticFee, weight, length, width, 
     // Treat rawPrice as IQD (no heuristic conversion)
     const basePrice = rawPrice;
     
-    // Formula: (Base + Domestic) * 1.15
-    const finalPrice = (basePrice + domestic) * 1.15;
+    // Formula: (Base + Domestic) * 1.25
+    const finalPrice = (basePrice + domestic) * 1.25;
     return Math.ceil(finalPrice / 250) * 250;
   } else {
     // Sea logic matches Air now
     const basePrice = rawPrice;
-    const finalPrice = (basePrice + domestic) * 1.15;
+    const finalPrice = (basePrice + domestic) * 1.25;
     return Math.ceil(finalPrice / 250) * 250;
   }
 };
@@ -288,11 +288,11 @@ const estimateRawPriceFromStoredPrice = (storedPrice, domesticFee, weight, lengt
 
   const domestic = Number(domesticFee) || 0;
   
-  // Inverse of (Base + Domestic) * 1.15 = Stored
-  // Base + Domestic = Stored / 1.15
-  // Base = (Stored / 1.15) - Domestic
+  // Inverse of (Base + Domestic) * 1.25 = Stored
+  // Base + Domestic = Stored / 1.25
+  // Base = (Stored / 1.25) - Domestic
   
-  const raw = (stored / 1.15) - domestic;
+  const raw = (stored / 1.25) - domestic;
   return raw > 0 ? raw : 0;
 };
 
@@ -4319,8 +4319,8 @@ app.get('/api/products', async (req, res) => {
     const limit = parseInt(req.query.limit) || 20;
     const skip = (page - 1) * limit;
     const search = req.query.search || '';
-    const isArabicSearch = typeof search === 'string' && /[\u0600-\u06FF]/.test(search);
     const maxPrice = req.query.maxPrice ? parseFloat(req.query.maxPrice) : null;
+    const condition = req.query.condition || '';
 
     // Cache Store Settings for 60 seconds to reduce DB round-trips
     if (!cachedStoreSettings || (Date.now() - cachedStoreSettingsTime > 60000)) {
@@ -4335,29 +4335,6 @@ app.get('/api/products', async (req, res) => {
       airShippingMinFloor: storeSettings?.airShippingMinFloor
     };
 
-    // Use AI Hybrid Search if searching and keys are available
-    if (search && (process.env.DEEPINFRA_API_KEY || process.env.HUGGINGFACE_API_KEY)) {
-      try {
-        console.log(`[AI Search] Hybrid search for: "${search}" (page ${page})`);
-        const products = await hybridSearch(search, limit, skip, maxPrice);
-        
-        // Since hybrid search is dynamic, we estimate total for pagination or just return results
-        // For better UX, we can return a large total if there are results
-        if (products && products.length > 0) {
-          return res.json({
-            products: Array.isArray(products) ? products.map(p => applyDynamicPricingToProduct(p, shippingRates)) : products,
-            total: products.length === limit ? page * limit + limit : (page - 1) * limit + products.length,
-            page,
-            totalPages: products.length === limit ? page + 1 : page,
-            engine: 'hybrid'
-          });
-        }
-        console.log('[AI Search] No results found, falling back to database search');
-      } catch (aiError) {
-        console.error('AI Search failed in products route, falling back:', aiError);
-      }
-    }
-
     const where = { 
       isActive: true,
       status: 'PUBLISHED'
@@ -4365,13 +4342,29 @@ app.get('/api/products', async (req, res) => {
 
     if (search) {
       where.OR = [
-        { name: { contains: search } },
-        { purchaseUrl: { contains: search } }
+        { name: { contains: search, mode: 'insensitive' } },
+        { purchaseUrl: { contains: search, mode: 'insensitive' } }
       ];
     }
 
-    if (maxPrice !== null) {
+    if (maxPrice !== null && !isNaN(maxPrice)) {
       where.price = { lte: maxPrice };
+    }
+    
+    if (condition) {
+      if (condition === 'new') {
+        where.neworold = true;
+      } else if (condition === 'used') {
+        where.AND = [
+          ...(Array.isArray(where.AND) ? where.AND : []),
+          {
+            OR: [
+              { neworold: false },
+              { neworold: null }
+            ]
+          }
+        ];
+      }
     }
 
     const [products, total] = await Promise.all([
@@ -4384,7 +4377,7 @@ app.get('/api/products', async (req, res) => {
           basePriceIQD: true,
           image: true,
           aiMetadata: true,
-          // neworold: true, // Temporarily disabled to fix 500 error
+          neworold: true,
           isFeatured: true,
           domesticShippingFee: true,
           deliveryTime: true,
@@ -5130,9 +5123,9 @@ async function runBulkProductsImport(products, { onProgress } = {}) {
         finalPrice = rawPrice;
       } else if (!shippingPriceIncluded) {
         // Exclude shipping cost but keep markup and domestic fee
-        // Formula: (Base + Domestic) * 1.20
+        // Formula: (Base + Domestic) * 1.25
         const domestic = domesticShippingFee || 0;
-        const price = (finalPriceInput + domestic) * 1.20;
+        const price = (finalPriceInput + domestic) * 1.25;
         finalPrice = Math.ceil(price / 250) * 250;
       } else {
         finalPrice = calculateBulkImportPrice(finalPriceInput, domesticShippingFee, weight, length, width, height, effectiveMethod, shippingRates);
@@ -5190,7 +5183,7 @@ async function runBulkProductsImport(products, { onProgress } = {}) {
                  vPrice = finalBasePrice;
               } else if (!shippingPriceIncluded) {
                  const domestic = domesticShippingFee || 0;
-                 const price = (finalBasePrice + domestic) * 1.20;
+                 const price = (finalBasePrice + domestic) * 1.25;
                  vPrice = Math.ceil(price / 250) * 250;
               } else {
                  vPrice = calculateBulkImportPrice(finalBasePrice, domesticShippingFee, variantWeight, v.length || length, v.width || width, v.height || height, v.shippingMethod || effectiveMethod, shippingRates);
@@ -5521,9 +5514,9 @@ app.post('/api/products', authenticateToken, isAdmin, hasPermission('manage_prod
       finalPrice = rawPrice;
     } else if (!shippingPriceIncluded) {
       // Exclude shipping cost but keep markup and domestic fee
-      // Formula: (Base + Domestic) * 1.20
+      // Formula: (Base + Domestic) * 1.25
       const domestic = domesticFee || 0;
-      const calculatedPrice = (rawPrice + domestic) * 1.20;
+      const calculatedPrice = (rawPrice + domestic) * 1.25;
       finalPrice = Math.ceil(calculatedPrice / 250) * 250;
     } else {
       finalPrice = calculateBulkImportPrice(rawPrice, domesticFee, weight, length, width, height, req.body.shippingMethod, shippingRates);
@@ -5595,7 +5588,7 @@ app.post('/api/products', authenticateToken, isAdmin, hasPermission('manage_prod
                vPrice = variantRawPrice;
             } else if (!shippingPriceIncluded) {
                const domestic = domesticFee || 0;
-               const calculatedPrice = (variantRawPrice + domestic) * 1.20;
+               const calculatedPrice = (variantRawPrice + domestic) * 1.25;
                vPrice = Math.ceil(calculatedPrice / 250) * 250;
             } else {
                vPrice = calculateBulkImportPrice(variantRawPrice, domesticFee, v.weight || weight, v.length || length, v.width || width, v.height || height, v.shippingMethod, shippingRates);
@@ -5776,7 +5769,7 @@ app.post('/api/admin/products/bulk-import', authenticateToken, isAdmin, hasPermi
           const shippingPriceIncluded = p.shipping_price_included !== undefined ? (p.shipping_price_included === true || String(p.shipping_price_included) === 'true') : true;
           const estimatedShippingCost = p.estimated_shipping_cost ? parseFloat(p.estimated_shipping_cost) : null;
 
-           // Use the new calculation logic with 20% markup
+           // Use the new calculation logic with 25% markup
           // WARNING: rawPrice is typically RMB from 1688. calculateBulkImportPrice expects IQD if we want to add IQD shipping.
           // But calculateBulkImportPrice adds domestic (IQD) and shipping (IQD) to rawPrice.
           // So rawPrice MUST be converted to IQD before passing if it is RMB.
@@ -5789,7 +5782,7 @@ app.post('/api/admin/products/bulk-import', authenticateToken, isAdmin, hasPermi
             price = rawPrice;
           } else if (!shippingPriceIncluded) {
             const domestic = domesticFee || 0;
-            const calculatedPrice = (priceInput + domestic) * 1.20;
+            const calculatedPrice = (priceInput + domestic) * 1.25;
             price = Math.ceil(calculatedPrice / 250) * 250;
           } else {
             price = calculateBulkImportPrice(priceInput, domesticFee, p.weight, p.length, p.width, p.height, p.shippingMethod, shippingRates);
@@ -6182,7 +6175,7 @@ app.post('/api/admin/products/bulk-import', authenticateToken, isAdmin, hasPermi
                  vPrice = finalBasePrice;
               } else if (!shippingPriceIncluded) {
                  const domestic = domesticFee || 0;
-                 const calculatedPrice = (finalBasePrice + domestic) * 1.20;
+                 const calculatedPrice = (finalBasePrice + domestic) * 1.25;
                  vPrice = Math.ceil(calculatedPrice / 250) * 250;
               } else {
                  vPrice = calculateBulkImportPrice(finalBasePrice, domesticFee, variantWeight || productWeight, v.length || p.length, v.width || p.width, v.height || p.height, v.shippingMethod || p.shippingMethod, shippingRates);
@@ -7357,8 +7350,10 @@ app.get('/api/search', async (req, res) => {
       });
     }
 
+    const shouldPreferKeywordEngine = isArabicQuery && normalizedKeywords.length >= 2;
+
     // Use AI Hybrid Search if API keys are available
-    if (process.env.DEEPINFRA_API_KEY || process.env.HUGGINGFACE_API_KEY) {
+    if (!shouldPreferKeywordEngine && (process.env.DEEPINFRA_API_KEY || process.env.HUGGINGFACE_API_KEY)) {
       try {
         log('hybrid_start', {});
         const hybridStart = Date.now();
@@ -7734,33 +7729,6 @@ app.get('/api/search', async (req, res) => {
       return Array.from(variations).filter(v => v && v.length > 1);
     }
 
-    const useReducedSearch = isArabicQuery || baseKeywords.length > 3 || cleanQuery.length > 24;
-    
-    const allSearchTerms = new Set();
-    [q, cleanQuery, normalizedArabicString].filter(Boolean).forEach((term) => {
-      if (useReducedSearch) {
-        simpleArabicVariants(term).forEach(v => allSearchTerms.add(v));
-      } else {
-        getVariations(term).forEach(v => allSearchTerms.add(v));
-      }
-    });
-    baseKeywords.forEach(k => {
-      if (useReducedSearch) {
-        simpleArabicVariants(k).forEach(v => allSearchTerms.add(v));
-      } else {
-        getVariations(k).forEach(v => allSearchTerms.add(v));
-      }
-    });
-
-    let searchTermsArray = Array.from(allSearchTerms);
-    const maxTerms = useReducedSearch ? (isArabicQuery ? 30 : 40) : 120;
-    if (searchTermsArray.length > maxTerms) {
-      searchTermsArray = searchTermsArray.slice(0, maxTerms);
-    }
-    log('keyword_terms_ready', { useReducedSearch, termsCount: searchTermsArray.length });
-
-    const normalizedQ = normalizeForSearch(q);
-    const compactNormalizedQ = normalizedQ.replace(/\s+/g, '');
     const stopWords = ['ال', 'في', 'من', 'على', 'مع', 'لـ', 'بـ', 'و', 'عن', 'الى', 'او'];
     const normalizedKeywords = Array.from(new Set(baseKeywords
       .map(k => normalizeForSearch(k))
@@ -7768,6 +7736,51 @@ app.get('/api/search', async (req, res) => {
       .map(k => k.trim())
       .filter(k => k.length > 1 && !stopWords.includes(k))
     ));
+    const primaryKeyword = normalizedKeywords[0] || '';
+    const useReducedSearch = isArabicQuery || baseKeywords.length > 3 || cleanQuery.length > 24;
+    const primaryKeywordVariants = Array.from(new Set(
+      (primaryKeyword
+        ? (isArabicQuery ? simpleArabicVariants(primaryKeyword) : getVariations(primaryKeyword))
+        : []
+      )
+        .map(v => normalizeForSearch(v))
+        .filter(v => v && v.length > 1)
+    )).slice(0, 24);
+    
+    const allSearchTerms = new Set();
+    normalizedKeywords.forEach((k) => allSearchTerms.add(k));
+    primaryKeywordVariants.forEach((k) => allSearchTerms.add(k));
+    baseKeywords.forEach(k => {
+      if (useReducedSearch) {
+        simpleArabicVariants(k).forEach(v => allSearchTerms.add(v));
+      } else {
+        getVariations(k).forEach(v => allSearchTerms.add(v));
+      }
+    });
+    [q, cleanQuery, normalizedArabicString].filter(Boolean).forEach((term) => {
+      if (useReducedSearch) {
+        simpleArabicVariants(term).forEach(v => allSearchTerms.add(v));
+      } else {
+        getVariations(term).forEach(v => allSearchTerms.add(v));
+      }
+    });
+
+    let searchTermsArray = Array.from(allSearchTerms);
+    const maxTerms = useReducedSearch ? (isArabicQuery ? 30 : 40) : 120;
+    if (searchTermsArray.length > maxTerms) {
+      const prioritized = Array.from(new Set([
+        ...normalizedKeywords,
+        primaryKeyword,
+        ...primaryKeywordVariants
+      ].filter(Boolean)));
+      const prioritizedSet = new Set(prioritized);
+      const remainder = searchTermsArray.filter(term => !prioritizedSet.has(term));
+      searchTermsArray = [...prioritized, ...remainder].slice(0, maxTerms);
+    }
+    log('keyword_terms_ready', { useReducedSearch, termsCount: searchTermsArray.length, primaryKeyword });
+
+    const normalizedQ = normalizeForSearch(q);
+    const compactNormalizedQ = normalizedQ.replace(/\s+/g, '');
 
     const scoreAndSortProducts = (products) => {
       const scoringStart = Date.now();
@@ -7789,6 +7802,30 @@ app.get('/api/search', async (req, res) => {
         if (specs && specs.includes(normalizedQ)) score += 1500;
         if (productKeywords.some(k => k.includes(normalizedQ))) score += 3000;
         if (aiText && aiText.includes(normalizedQ)) score += 1200;
+
+        if (primaryKeyword) {
+          if (name.startsWith(primaryKeyword)) score += 4200;
+          if (name.includes(primaryKeyword)) score += 2600;
+          if (specs && specs.includes(primaryKeyword)) score += 600;
+          if (productKeywordsSet.has(primaryKeyword) || productKeywords.some(kw => kw.includes(primaryKeyword))) score += 1500;
+        }
+
+        if (primaryKeywordVariants.length > 0) {
+          let primaryVariantMatched = false;
+          for (const variant of primaryKeywordVariants) {
+            if (!variant || variant === primaryKeyword) continue;
+            if (name.startsWith(variant)) score += 800;
+            if (name.includes(variant)) {
+              score += 500;
+              primaryVariantMatched = true;
+            }
+            if (productKeywordsSet.has(variant) || productKeywords.some(kw => kw.includes(variant))) {
+              score += 240;
+              primaryVariantMatched = true;
+            }
+          }
+          if (primaryVariantMatched) score += 300;
+        }
         
         let nameMatches = 0;
         
@@ -7875,9 +7912,9 @@ app.get('/api/search', async (req, res) => {
         return Array.from(variations).filter(v => v.length > 1);
       };
 
-      const seedTerms = Array.from(new Set([cleanQuery, normalizedArabicString, ...baseKeywords]))
+      const seedTerms = Array.from(new Set([primaryKeyword, cleanQuery, normalizedArabicString, ...baseKeywords]))
         .filter(t => t && t.length > 1)
-        .slice(0, 2);
+        .slice(0, 3);
       const prefixTerms = Array.from(new Set(seedTerms.flatMap(buildArabicVariants))).slice(0, 6);
       if (prefixTerms.length > 0) {
         const prefixWhere = {
@@ -7973,6 +8010,12 @@ app.get('/api/search', async (req, res) => {
         { name: { contains: q, mode: 'insensitive' } },
         { keywords: { has: q } },
         ...(normalizedArabicString ? [{ name: { contains: normalizedArabicString, mode: 'insensitive' } }] : []),
+        ...(primaryKeyword ? [{ name: { contains: primaryKeyword, mode: 'insensitive' } }] : []),
+        ...(primaryKeyword ? [{ specs: { contains: primaryKeyword, mode: 'insensitive' } }] : []),
+        ...primaryKeywordVariants.flatMap(term => ([
+          { name: { contains: term, mode: 'insensitive' } },
+          { keywords: { has: term } }
+        ])),
         ...searchTermsArray.flatMap(term =>
           [
             ...searchFields.map(field => ({ [field]: { contains: term, mode: 'insensitive' } })),
