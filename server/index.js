@@ -7264,12 +7264,12 @@ app.get('/api/search', async (req, res) => {
     const normalizedArabicString = typeof normalizeArabicResult === 'string'
       ? normalizeArabicResult
       : String(normalizeArabicResult?.fullString || '').trim();
-    const normalizedArabicKeywords = normalizedArabicString
+    const normalizedKeywords = normalizedArabicString
       .split(/\s+/)
       .map(k => k.trim())
       .filter(k => k.length > 1);
     const keywords = cleanQuery.split(/\s+/).filter(k => k.length > 1);
-    const baseKeywords = Array.from(new Set([...keywords, ...normalizedArabicKeywords]));
+    const baseKeywords = Array.from(new Set([...keywords, ...normalizedKeywords]));
     log('start', { qLength: q.length, page: pageNum, limit: limitNum, isArabicQuery, keywordsCount: keywords.length });
 
     const storeSettings = await prisma.storeSettings.findUnique({ where: { id: 1 } });
