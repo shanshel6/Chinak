@@ -7730,13 +7730,13 @@ app.get('/api/search', async (req, res) => {
     }
 
     const stopWords = ['ال', 'في', 'من', 'على', 'مع', 'لـ', 'بـ', 'و', 'عن', 'الى', 'او'];
-    const normalizedKeywords = Array.from(new Set(baseKeywords
+    const searchKeywords = Array.from(new Set(baseKeywords
       .map(k => normalizeForSearch(k))
       .flatMap(k => k.split(/\s+/))
       .map(k => k.trim())
       .filter(k => k.length > 1 && !stopWords.includes(k))
     ));
-    const primaryKeyword = normalizedKeywords[0] || '';
+    const primaryKeyword = searchKeywords[0] || '';
     const useReducedSearch = isArabicQuery || baseKeywords.length > 3 || cleanQuery.length > 24;
     const primaryKeywordVariants = Array.from(new Set(
       (primaryKeyword
@@ -7748,7 +7748,7 @@ app.get('/api/search', async (req, res) => {
     )).slice(0, 24);
     
     const allSearchTerms = new Set();
-    normalizedKeywords.forEach((k) => allSearchTerms.add(k));
+    searchKeywords.forEach((k) => allSearchTerms.add(k));
     primaryKeywordVariants.forEach((k) => allSearchTerms.add(k));
     baseKeywords.forEach(k => {
       if (useReducedSearch) {
@@ -7769,7 +7769,7 @@ app.get('/api/search', async (req, res) => {
     const maxTerms = useReducedSearch ? (isArabicQuery ? 30 : 40) : 120;
     if (searchTermsArray.length > maxTerms) {
       const prioritized = Array.from(new Set([
-        ...normalizedKeywords,
+        ...searchKeywords,
         primaryKeyword,
         ...primaryKeywordVariants
       ].filter(Boolean)));
