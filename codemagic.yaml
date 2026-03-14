@@ -51,9 +51,26 @@ workflows:
             --issuer-id "$APP_STORE_CONNECT_ISSUER_ID" \
             --key-id "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
             --private-key "$APP_STORE_CONNECT_PRIVATE_KEY" || echo "Device might already exist, continuing..."
+            
+          # 4. Force Creation of a NEW Development Certificate
+          # Since Xcode is complaining about a missing private key for an existing cert,
+          # we will manually create a NEW one and import it into the keychain.
+          # This gives Xcode a valid certificate + private key pair to use.
+          
+          echo "Fetching/Creating iOS Development Certificate..."
+          app-store-connect fetch-signing-files "$BUNDLE_ID" \
+            --type IOS_APP_DEVELOPMENT \
+            --create \
+            --issuer-id "$APP_STORE_CONNECT_ISSUER_ID" \
+            --key-id "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
+            --private-key "$APP_STORE_CONNECT_PRIVATE_KEY"
+            
+          # Import the downloaded certificate (and its generated private key) into keychain
+          # 'app-store-connect' saves the private key locally when it creates a new cert.
+          # keychain add-certificates will find it in the default location.
+          keychain add-certificates
 
-          # 4. Create ExportOptions.plist
-          # This is required for xcodebuild -exportArchive when using automatic signing
+          # 5. Create ExportOptions.plist
           cat > "$CM_BUILD_DIR/export_options.plist" <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -71,30 +88,18 @@ workflows:
           </plist>
           EOF
           
-          echo "Device registered. Proceeding with Xcode Automatic Signing."
+          echo "Device registered & Cert created. Proceeding with Xcode Automatic Signing."
           
       - name: Build IPA for distribution
         script: |
           # Note: When using -authenticationKeyID, xcodebuild looks for the key file in specific locations.
           AUTH_KEY_PATH=~/private_keys/AuthKey_$APP_STORE_CONNECT_KEY_IDENTIFIER.p8
           
-          # Clean up any existing certificates that might confuse Xcode
-          # The error "Your account already has an Apple Development signing certificate... but its private key is not installed"
-          # suggests Xcode sees a cert on the Apple Developer Portal but doesn't have the key for it.
-          # Since we are using Automatic Signing with an API Key, we can try to let Xcode "nuke and pave"
-          # by revoking certificates if necessary, OR we can explicitly ask it to create a new one.
-          
-          # Unfortunately, xcodebuild doesn't have a simple flag to "force revoke".
-          # However, by not providing any other keychain items and using -allowProvisioningUpdates,
-          # Xcode SHOULD try to create a new one if it can't find a matching local one.
-          
-          # Attempt 1: Just run archive. If it fails with "Revoke certificate", we might need manual intervention
-          # or use a specific "manual" provisioning profile strategy.
-          
-          # BUT, let's try to clear the DerivedData first to ensure no stale state.
           rm -rf ~/Library/Developer/Xcode/DerivedData
           
           # 1. Archive
+          # We still use Automatic Signing, but now Xcode should find the valid cert we just put in the keychain
+          # and use it instead of complaining about the missing one.
           xcodebuild archive \
             -project "$XCODE_PROJECT" \
             -scheme "$XCODE_SCHEME" \
