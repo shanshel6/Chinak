@@ -33,6 +33,9 @@ workflows:
           keychain initialize
       - name: Set up code signing settings on Xcode project
         script: |
+          # Clean derived data to remove stale signing info
+          rm -rf ~/Library/Developer/Xcode/DerivedData
+          
           # STRATEGY CHANGE: Manual Signing with "xcode-project use-profiles"
           # Since Automatic Signing is persistently failing with "Communication with Apple failed: Your team has no devices",
           # even though we registered one, we will switch to MANUAL signing.
@@ -57,12 +60,6 @@ workflows:
           # This bypasses xcodebuild trying to talk to Apple during the build.
           echo "Applying profiles to Xcode project..."
           xcode-project use-profiles
-          
-          # 4. Create ExportOptions.plist
-          # For manual signing export, we need to specify the provisioning profile name/UUID mapping
-          # But xcode-project build-ipa handles this easier usually.
-          # However, let's keep our export_options just in case, but updated for manual?
-          # Actually, we will rely on xcode-project build-ipa wrapper again, as it handles manual signing details well.
           
       - name: Build IPA for distribution
         script: |
