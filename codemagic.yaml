@@ -12,6 +12,8 @@ workflows:
         XCODE_SCHEME: "App"
         BUNDLE_ID: "com.chinak.app"
         DEVELOPMENT_TEAM: "3GF82YPKY5" # Your Apple Team ID
+        TEST_DEVICE_UDID: "00008150-001C5C4C36D9401C"
+        TEST_DEVICE_NAME: "Chinak iPhone"
     triggering:
       events:
         - push
@@ -40,7 +42,18 @@ workflows:
           # 2. Write the API Key to a file that Xcode can find
           echo "$APP_STORE_CONNECT_PRIVATE_KEY" > ~/private_keys/AuthKey_$APP_STORE_CONNECT_KEY_IDENTIFIER.p8
           
-          # 3. Create ExportOptions.plist
+          # 3. Register the user's device (REQUIRED for Automatic Signing)
+          # We use the app-store-connect CLI tool to register the device if not already present.
+          echo "Registering device: $TEST_DEVICE_NAME ($TEST_DEVICE_UDID)"
+          app-store-connect devices create \
+            --name "$TEST_DEVICE_NAME" \
+            --udid "$TEST_DEVICE_UDID" \
+            --platform IOS \
+            --issuer-id "$APP_STORE_CONNECT_ISSUER_ID" \
+            --key-id "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
+            --private-key "$APP_STORE_CONNECT_PRIVATE_KEY" || echo "Device might already exist, continuing..."
+
+          # 4. Create ExportOptions.plist
           # This is required for xcodebuild -exportArchive when using automatic signing
           cat > "$CM_BUILD_DIR/export_options.plist" <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
@@ -59,7 +72,7 @@ workflows:
           </plist>
           EOF
           
-          echo "Skipping manual certificate fetch. Relying on Xcode Automatic Signing."
+          echo "Device registered. Proceeding with Xcode Automatic Signing."
           
       - name: Build IPA for distribution
         script: |
