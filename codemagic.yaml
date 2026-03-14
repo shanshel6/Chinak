@@ -31,15 +31,16 @@ workflows:
       - name: Set up code signing settings on Xcode project
         script: |
           # Fetch signing files from App Store Connect
+          # Explicitly passing API credentials to ensure they are picked up
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
             --type IOS_APP_STORE \
-            --create
+            --create \
+            --issuer-id "$APP_STORE_CONNECT_ISSUER_ID" \
+            --key-id "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
+            --private-key "$APP_STORE_CONNECT_PRIVATE_KEY"
             
           # Apply profiles to Xcode project
           keychain add-certificates
-          
-          # We are skipping 'xcode-project use-profiles' to let Xcode handle Automatic Signing
-          # with the profiles we just fetched/created.
       - name: Build IPA for distribution
         script: |
           xcode-project build-ipa \
