@@ -43,7 +43,6 @@ workflows:
           echo "$APP_STORE_CONNECT_PRIVATE_KEY" > ~/private_keys/AuthKey_$APP_STORE_CONNECT_KEY_IDENTIFIER.p8
           
           # 3. Register the user's device (REQUIRED for Automatic Signing)
-          # We use the app-store-connect CLI tool to register the device if not already present.
           echo "Registering device: $TEST_DEVICE_NAME ($TEST_DEVICE_UDID)"
           app-store-connect devices create \
             --name "$TEST_DEVICE_NAME" \
@@ -76,14 +75,24 @@ workflows:
           
       - name: Build IPA for distribution
         script: |
-          # Use direct xcodebuild commands to avoid 'xcode-project' forcing Manual signing
-          
           # Note: When using -authenticationKeyID, xcodebuild looks for the key file in specific locations.
-          # One of them is ~/private_keys/AuthKey_<KeyID>.p8, which we created above.
-          # HOWEVER, xcodebuild might also require -authenticationKeyPath if it can't find it.
-          
-          # Let's explicitly point to the key path to be safe.
           AUTH_KEY_PATH=~/private_keys/AuthKey_$APP_STORE_CONNECT_KEY_IDENTIFIER.p8
+          
+          # Clean up any existing certificates that might confuse Xcode
+          # The error "Your account already has an Apple Development signing certificate... but its private key is not installed"
+          # suggests Xcode sees a cert on the Apple Developer Portal but doesn't have the key for it.
+          # Since we are using Automatic Signing with an API Key, we can try to let Xcode "nuke and pave"
+          # by revoking certificates if necessary, OR we can explicitly ask it to create a new one.
+          
+          # Unfortunately, xcodebuild doesn't have a simple flag to "force revoke".
+          # However, by not providing any other keychain items and using -allowProvisioningUpdates,
+          # Xcode SHOULD try to create a new one if it can't find a matching local one.
+          
+          # Attempt 1: Just run archive. If it fails with "Revoke certificate", we might need manual intervention
+          # or use a specific "manual" provisioning profile strategy.
+          
+          # BUT, let's try to clear the DerivedData first to ensure no stale state.
+          rm -rf ~/Library/Developer/Xcode/DerivedData
           
           # 1. Archive
           xcodebuild archive \
