@@ -147,6 +147,7 @@ const embeddingJobQueue = [];
 const embeddingJobSet = new Set();
 const embeddingJobAttempts = new Map();
 let embeddingJobRunning = false;
+const ENABLE_SEMANTIC_SEARCH = process.env.ENABLE_SEMANTIC_SEARCH === 'true';
 
 const bulkImportJobQueue = [];
 const bulkImportJobs = new Map();
@@ -3836,8 +3837,7 @@ app.get('/api/tools/rapid/search', async (req, res) => {
       OR: terms.flatMap((term) => ([
         { name: { contains: term, mode: 'insensitive' } },
         { specs: { contains: term, mode: 'insensitive' } },
-        { purchaseUrl: { contains: term, mode: 'insensitive' } },
-        { keywords: { has: term } }
+        { purchaseUrl: { contains: term, mode: 'insensitive' } }
       ]))
     });
     let dbItems = [];
@@ -4212,7 +4212,7 @@ app.get('/api/products/search', async (req, res) => {
       airShippingMinFloor: storeSettings?.airShippingMinFloor
     };
 
-    if (process.env.DEEPINFRA_API_KEY || process.env.HUGGINGFACE_API_KEY) {
+    if (ENABLE_SEMANTIC_SEARCH && (process.env.DEEPINFRA_API_KEY || process.env.HUGGINGFACE_API_KEY)) {
       try {
         console.log(`[AI Search] Hybrid search for: "${search}" (page ${page})`);
         const products = await hybridSearch(search, limit, skip, maxPrice);
@@ -7244,7 +7244,7 @@ app.get('/api/search', async (req, res) => {
     res.set('Pragma', 'no-cache');
     res.set('Expires', '0');
     res.set('Surrogate-Control', 'no-store');
-    const { q, page = 1, limit = 20 } = req.query;
+    const { q, page = 1, limit = 20, condition = '' } = req.query;
     const pageNum = parseInt(page);
     const limitNum = parseInt(limit);
     const skip = (pageNum - 1) * limitNum;
@@ -7279,7 +7279,7 @@ app.get('/api/search', async (req, res) => {
       airShippingMinFloor: storeSettings?.airShippingMinFloor
     };
 
-    const useFastArabicSearch = isArabicQuery && (baseKeywords.length > 3 || cleanQuery.length > 24);
+    const useFastArabicSearch = false;
     const searchProductSelect = {
       id: true,
       name: true,
@@ -7291,12 +7291,11 @@ app.get('/api/search', async (req, res) => {
       status: true,
       isFeatured: true,
       isActive: true,
-      // neworold: true, // Temporarily disabled to fix 500 error
+      neworold: true,
       aiMetadata: true,
       domesticShippingFee: true,
       deliveryTime: true,
       isAirRestricted: true,
-      keywords: true,
       variants: { select: productVariantSelect },
       images: {
         take: 1,
@@ -7305,6 +7304,308 @@ app.get('/api/search', async (req, res) => {
     };
     delete searchProductSelect.chineseName;
     delete searchProductSelect.description;
+
+    const keywordTokens = Array.from(new Set(
+      keywords
+        .map((token) => String(token || '').trim().toLowerCase())
+        .map((token) => token
+          .replace(/[أإآ]/g, 'ا')
+          .replace(/ٱ/g, 'ا')
+          .replace(/ء/g, '')
+          .replace(/ؤ/g, 'و')
+          .replace(/ئ/g, 'ي')
+          .replace(/ة/g, 'ه')
+          .replace(/ى/g, 'ي')
+          .replace(/تيشريت/g, 'تيشيرت')
+          .replace(/تيشرت/g, 'تيشيرت')
+          .replace(/تشيرت/g, 'تيشيرت')
+          .replace(/[\u064B-\u0652]/g, '')
+          .replace(/ـ/g, '')
+          .replace(/\s+/g, '')
+          .trim()
+        )
+        .filter((token) => token.length > 1)
+    )).slice(0, 8);
+
+    if (keywordTokens.length === 0) {
+      return res.json({ products: [], total: 0, hasMore: false, engine: 'keywords_only' });
+    }
+
+    const keywordOnlyStart = Date.now();
+    const singleTokenMode = keywordTokens.length === 1;
+    const keywordCompactExpr = `lower(regexp_replace(kw, '\\s+', '', 'g'))`;
+    const keywordSpacedExpr = `lower(trim(regexp_replace(kw, '\\s+', ' ', 'g')))`;
+    const tokenMatchCondition = singleTokenMode
+      ? `(${keywordSpacedExpr} = t.token OR ${keywordCompactExpr} = t.token)`
+      : `(${keywordSpacedExpr} = t.token OR ${keywordSpacedExpr} LIKE t.token || ' %' OR ${keywordSpacedExpr} LIKE '% ' || t.token || ' %' OR ${keywordSpacedExpr} LIKE '% ' || t.token OR ${keywordCompactExpr} = t.token)`;
+    const tokenExactCondition = singleTokenMode
+      ? `(${keywordSpacedExpr} = t.token OR ${keywordCompactExpr} = t.token)`
+      : `${keywordCompactExpr} = t.token`;
+    const compactKeywordQuery = String(cleanQuery || '')
+      .toLowerCase()
+      .replace(/[أإآ]/g, 'ا')
+      .replace(/ٱ/g, 'ا')
+      .replace(/ء/g, '')
+      .replace(/ؤ/g, 'و')
+      .replace(/ئ/g, 'ي')
+      .replace(/ة/g, 'ه')
+      .replace(/ى/g, 'ي')
+      .replace(/تيشريت/g, 'تيشيرت')
+      .replace(/تيشرت/g, 'تيشيرت')
+      .replace(/تشيرت/g, 'تيشيرت')
+      .replace(/[\u064B-\u0652]/g, '')
+      .replace(/ـ/g, '')
+      .replace(/\s+/g, '')
+      .trim();
+    const primaryKeywordTokens = keywordTokens.length > 0 ? [keywordTokens[0]] : keywordTokens;
+    const secondaryKeywordTokens = keywordTokens.length > 1 ? keywordTokens.slice(1) : [];
+    const requireAllTokens = false;
+    const hasMaleIntent = keywordTokens.some((token) =>
+      token.includes('رجال') || token.includes('رجالي') || token === 'men' || token === 'male' || token === 'man'
+    );
+    const hasFemaleIntent = keywordTokens.some((token) =>
+      token.includes('نسائ') || token.includes('نساء') || token.includes('بنات') || token.includes('حريمي') || token === 'women' || token === 'female' || token === 'girl'
+    );
+    const hasFurnitureIntent = singleTokenMode && keywordTokens.some((token) =>
+      token === 'اثاث' || token === 'عفش' || token.includes('مفروش')
+    );
+    const genderConflictClause = hasMaleIntent && !hasFemaleIntent
+      ? `
+      AND NOT EXISTS (
+        SELECT 1
+        FROM unnest(COALESCE(p."keywords", ARRAY[]::text[])) AS kw
+        WHERE lower(regexp_replace(kw, '\\s+', '', 'g')) LIKE '%نسائي%'
+           OR lower(regexp_replace(kw, '\\s+', '', 'g')) LIKE '%نسائيه%'
+           OR lower(regexp_replace(kw, '\\s+', '', 'g')) LIKE '%نساء%'
+           OR lower(regexp_replace(kw, '\\s+', '', 'g')) LIKE '%بنات%'
+           OR lower(regexp_replace(kw, '\\s+', '', 'g')) LIKE '%حريمي%'
+           OR lower(regexp_replace(kw, '\\s+', '', 'g')) LIKE '%women%'
+           OR lower(regexp_replace(kw, '\\s+', '', 'g')) LIKE '%female%'
+           OR lower(regexp_replace(kw, '\\s+', '', 'g')) LIKE '%girl%'
+      )`
+      : (hasFemaleIntent && !hasMaleIntent
+        ? `
+      AND NOT EXISTS (
+        SELECT 1
+        FROM unnest(COALESCE(p."keywords", ARRAY[]::text[])) AS kw
+        WHERE lower(regexp_replace(kw, '\\s+', '', 'g')) LIKE '%رجالي%'
+           OR lower(regexp_replace(kw, '\\s+', '', 'g')) LIKE '%رجال%'
+           OR lower(regexp_replace(kw, '\\s+', '', 'g')) LIKE '%للرجال%'
+           OR lower(regexp_replace(kw, '\\s+', '', 'g')) LIKE '%men%'
+           OR lower(regexp_replace(kw, '\\s+', '', 'g')) LIKE '%male%'
+           OR lower(regexp_replace(kw, '\\s+', '', 'g')) LIKE '%man%'
+      )`
+        : '');
+    const furnitureIntentClause = hasFurnitureIntent
+      ? `
+      AND (
+        EXISTS (
+          SELECT 1
+          FROM unnest(COALESCE(p."keywords", ARRAY[]::text[])) AS kw
+          WHERE lower(regexp_replace(kw, '\\s+', '', 'g')) LIKE '%كنب%'
+             OR lower(regexp_replace(kw, '\\s+', '', 'g')) LIKE '%سرير%'
+             OR lower(regexp_replace(kw, '\\s+', '', 'g')) LIKE '%طاوله%'
+             OR lower(regexp_replace(kw, '\\s+', '', 'g')) LIKE '%طاولة%'
+             OR lower(regexp_replace(kw, '\\s+', '', 'g')) LIKE '%كرسي%'
+             OR lower(regexp_replace(kw, '\\s+', '', 'g')) LIKE '%خزانه%'
+             OR lower(regexp_replace(kw, '\\s+', '', 'g')) LIKE '%خزانة%'
+             OR lower(regexp_replace(kw, '\\s+', '', 'g')) LIKE '%دولاب%'
+             OR lower(regexp_replace(kw, '\\s+', '', 'g')) LIKE '%مكتب%'
+             OR lower(regexp_replace(kw, '\\s+', '', 'g')) LIKE '%رف%'
+             OR lower(regexp_replace(kw, '\\s+', '', 'g')) LIKE '%تسريحه%'
+             OR lower(regexp_replace(kw, '\\s+', '', 'g')) LIKE '%تسريحة%'
+             OR lower(regexp_replace(kw, '\\s+', '', 'g')) LIKE '%كومدينه%'
+             OR lower(regexp_replace(kw, '\\s+', '', 'g')) LIKE '%كومودينه%'
+             OR lower(regexp_replace(kw, '\\s+', '', 'g')) LIKE '%انتريه%'
+             OR lower(regexp_replace(kw, '\\s+', '', 'g')) LIKE '%مجلس%'
+             OR lower(regexp_replace(kw, '\\s+', '', 'g')) LIKE '%مرتبه%'
+             OR lower(regexp_replace(kw, '\\s+', '', 'g')) LIKE '%مرتبة%'
+             OR lower(regexp_replace(kw, '\\s+', '', 'g')) LIKE '%مخده%'
+             OR lower(regexp_replace(kw, '\\s+', '', 'g')) LIKE '%مخدة%'
+             OR lower(regexp_replace(kw, '\\s+', '', 'g')) LIKE '%وساده%'
+             OR lower(regexp_replace(kw, '\\s+', '', 'g')) LIKE '%وسادة%'
+             OR lower(regexp_replace(kw, '\\s+', '', 'g')) LIKE '%سجاد%'
+             OR lower(regexp_replace(kw, '\\s+', '', 'g')) LIKE '%ستاره%'
+             OR lower(regexp_replace(kw, '\\s+', '', 'g')) LIKE '%ستارة%'
+             OR lower(regexp_replace(kw, '\\s+', '', 'g')) LIKE '%مفروش%'
+        )
+      )
+      AND NOT (
+        EXISTS (
+          SELECT 1
+          FROM unnest(COALESCE(p."keywords", ARRAY[]::text[])) AS kw
+          WHERE lower(regexp_replace(kw, '\\s+', '', 'g')) LIKE '%تنس%'
+             OR lower(regexp_replace(kw, '\\s+', '', 'g')) LIKE '%pingpong%'
+             OR lower(regexp_replace(kw, '\\s+', '', 'g')) LIKE '%tabletennis%'
+             OR lower(regexp_replace(kw, '\\s+', '', 'g')) LIKE '%كره%'
+             OR lower(regexp_replace(kw, '\\s+', '', 'g')) LIKE '%كرة%'
+             OR lower(regexp_replace(kw, '\\s+', '', 'g')) LIKE '%مضرب%'
+        )
+      )`
+      : '';
+    const conditionClause = String(condition || '').trim() === 'new'
+      ? `
+      AND (
+        p.neworold = true
+        OR (
+          p.neworold IS NULL
+          AND (
+            lower(COALESCE(p."aiMetadata"::text, '')) LIKE '%"neworold":true%'
+            OR lower(COALESCE(p."aiMetadata"::text, '')) LIKE '%"neworold": true%'
+            OR lower(COALESCE(p."aiMetadata"::text, '')) LIKE '%"condition":"new"%'
+            OR lower(COALESCE(p."aiMetadata"::text, '')) LIKE '%"condition": "new"%'
+          )
+        )
+      )`
+      : (String(condition || '').trim() === 'used'
+        ? `
+      AND (
+        p.neworold = false
+        OR p.neworold IS NULL
+        OR (
+          p.neworold IS NULL
+          AND (
+            lower(COALESCE(p."aiMetadata"::text, '')) LIKE '%"neworold":false%'
+            OR lower(COALESCE(p."aiMetadata"::text, '')) LIKE '%"neworold": false%'
+            OR lower(COALESCE(p."aiMetadata"::text, '')) LIKE '%"condition":"used"%'
+            OR lower(COALESCE(p."aiMetadata"::text, '')) LIKE '%"condition": "used"%'
+          )
+        )
+      )`
+        : '');
+    const allTokensClause = '';
+    const keywordWhereSql = `
+      p.status = 'PUBLISHED'
+      AND p."isActive" = true
+      AND EXISTS (
+        SELECT 1
+        FROM unnest($5::text[]) AS t(token)
+        WHERE EXISTS (
+          SELECT 1
+          FROM unnest(COALESCE(p."keywords", ARRAY[]::text[])) AS kw
+          WHERE ${tokenMatchCondition}
+        )
+      )
+      ${allTokensClause}
+      ${genderConflictClause}
+      ${furnitureIntentClause}
+      ${conditionClause}
+    `;
+
+    const rows = await prisma.$queryRawUnsafe(`
+      SELECT
+        p.id,
+        CASE
+          WHEN $4 <> '' AND EXISTS (
+            SELECT 1
+            FROM unnest(COALESCE(p."keywords", ARRAY[]::text[])) AS kw
+            WHERE lower(regexp_replace(kw, '\\s+', '', 'g')) LIKE '%' || $4 || '%'
+          )
+          THEN 1
+          ELSE 0
+        END AS phrase_match,
+        (
+          SELECT count(*)
+          FROM unnest(COALESCE(p."keywords", ARRAY[]::text[])) AS kw
+          WHERE NOT EXISTS (
+            SELECT 1
+            FROM unnest($1::text[]) AS t(token)
+            WHERE lower(regexp_replace(kw, '\\s+', '', 'g')) NOT LIKE '%' || t.token || '%'
+          )
+        ) AS keyword_combo_matches,
+        (
+          SELECT count(*)
+          FROM unnest($1::text[]) AS t(token)
+          WHERE EXISTS (
+            SELECT 1
+            FROM unnest(COALESCE(p."keywords", ARRAY[]::text[])) AS kw
+            WHERE ${tokenExactCondition}
+          )
+        ) AS exact_token_matches,
+        (
+          SELECT count(*)
+          FROM unnest($6::text[]) AS t(token)
+          WHERE EXISTS (
+            SELECT 1
+            FROM unnest(COALESCE(p."keywords", ARRAY[]::text[])) AS kw
+            WHERE ${tokenMatchCondition}
+          )
+        ) AS secondary_token_matches,
+        (
+          SELECT count(*)
+          FROM unnest($1::text[]) AS t(token)
+          WHERE EXISTS (
+            SELECT 1
+            FROM unnest(COALESCE(p."keywords", ARRAY[]::text[])) AS kw
+            WHERE ${tokenMatchCondition}
+          )
+        ) AS partial_token_matches
+      FROM "Product" p
+      WHERE ${keywordWhereSql}
+      ORDER BY phrase_match DESC, secondary_token_matches DESC, keyword_combo_matches DESC, exact_token_matches DESC, partial_token_matches DESC, p.id DESC
+      LIMIT $2 OFFSET $3
+    `, keywordTokens, limitNum, skip, compactKeywordQuery, primaryKeywordTokens, secondaryKeywordTokens);
+
+    const totalRows = await prisma.$queryRawUnsafe(`
+      SELECT count(*)::int AS total
+      FROM "Product" p
+      WHERE ${keywordWhereSql}
+    `, keywordTokens, limitNum, skip, compactKeywordQuery, primaryKeywordTokens);
+
+    const keywordOnlyTotal = Number(Array.isArray(totalRows) && totalRows[0]?.total ? totalRows[0].total : 0);
+    const orderedIds = (Array.isArray(rows) ? rows : [])
+      .map((row) => Number(row?.id))
+      .filter((id) => Number.isFinite(id));
+
+    if (orderedIds.length === 0) {
+      log('keywords_only_done', { total: keywordOnlyTotal, returned: 0, dbMs: Date.now() - keywordOnlyStart, tokens: keywordTokens });
+      return res.json({ products: [], total: keywordOnlyTotal, hasMore: false, engine: 'keywords_only' });
+    }
+
+    const foundProducts = await prisma.product.findMany({
+      where: {
+        id: { in: orderedIds },
+        status: 'PUBLISHED',
+        isActive: true
+      },
+      select: searchProductSelect
+    });
+
+    const byId = new Map(foundProducts.map((p) => [p.id, p]));
+    const keywordOnlyProducts = orderedIds
+      .map((id) => byId.get(id))
+      .filter(Boolean)
+      .map((p) => {
+        const processed = applyDynamicPricingToProduct(p, shippingRates);
+        const aiMetadata = parseAiMetadata(p.aiMetadata);
+        const neworold = (p.neworold !== null && p.neworold !== undefined) ? p.neworold : extractNewOrOld(aiMetadata);
+        return { ...processed, neworold };
+      });
+
+    log('keywords_only_done', {
+      total: keywordOnlyTotal,
+      returned: keywordOnlyProducts.length,
+      dbMs: Date.now() - keywordOnlyStart,
+      tokens: keywordTokens,
+      primaryToken: primaryKeywordTokens[0] || null,
+      requireAllTokens,
+      hasMaleIntent,
+      hasFemaleIntent,
+      hasFurnitureIntent,
+      condition: String(condition || '').trim() || null,
+      singleTokenMode,
+      returnedProductPreview: keywordOnlyProducts.slice(0, 20).map((p) => ({
+        id: p.id,
+        name: p.name
+      }))
+    });
+    return res.json({
+      products: keywordOnlyProducts,
+      total: keywordOnlyTotal,
+      hasMore: skip + limitNum < keywordOnlyTotal,
+      engine: 'keywords_only'
+    });
+
     if (useFastArabicSearch) {
       log('fast_arabic_start', { cleanQueryLength: cleanQuery.length, keywordsCount: keywords.length });
       const where = {
@@ -7313,16 +7614,13 @@ app.get('/api/search', async (req, res) => {
         OR: [
           { name: { contains: cleanQuery, mode: 'insensitive' } },
           { specs: { contains: cleanQuery, mode: 'insensitive' } },
-          { keywords: { has: cleanQuery } },
           ...(normalizedArabicString ? [
             { name: { contains: normalizedArabicString, mode: 'insensitive' } },
-            { specs: { contains: normalizedArabicString, mode: 'insensitive' } },
-            { keywords: { has: normalizedArabicString } }
+            { specs: { contains: normalizedArabicString, mode: 'insensitive' } }
           ] : []),
           ...baseKeywords.flatMap(term => [
             { name: { contains: term, mode: 'insensitive' } },
-            { specs: { contains: term, mode: 'insensitive' } },
-            { keywords: { has: term } }
+            { specs: { contains: term, mode: 'insensitive' } }
           ])
         ]
       };
@@ -7353,7 +7651,7 @@ app.get('/api/search', async (req, res) => {
     const shouldPreferKeywordEngine = isArabicQuery && normalizedKeywords.length >= 2;
 
     // Use AI Hybrid Search if API keys are available
-    if (!shouldPreferKeywordEngine && (process.env.DEEPINFRA_API_KEY || process.env.HUGGINGFACE_API_KEY)) {
+    if (ENABLE_SEMANTIC_SEARCH && !shouldPreferKeywordEngine && (process.env.DEEPINFRA_API_KEY || process.env.HUGGINGFACE_API_KEY)) {
       try {
         log('hybrid_start', {});
         const hybridStart = Date.now();
@@ -7766,7 +8064,11 @@ app.get('/api/search', async (req, res) => {
     });
 
     let searchTermsArray = Array.from(allSearchTerms);
-    const maxTerms = useReducedSearch ? (isArabicQuery ? 30 : 40) : 120;
+    const compactArabicQueryLength = normalizedArabicString.replace(/\s+/g, '').length;
+    const isShortArabicQuery = isArabicQuery && compactArabicQueryLength <= 5;
+    const maxTerms = useReducedSearch
+      ? (isArabicQuery ? (isShortArabicQuery ? 12 : 20) : 40)
+      : 120;
     if (searchTermsArray.length > maxTerms) {
       const prioritized = Array.from(new Set([
         ...searchKeywords,
@@ -7777,7 +8079,8 @@ app.get('/api/search', async (req, res) => {
       const remainder = searchTermsArray.filter(term => !prioritizedSet.has(term));
       searchTermsArray = [...prioritized, ...remainder].slice(0, maxTerms);
     }
-    log('keyword_terms_ready', { useReducedSearch, termsCount: searchTermsArray.length, primaryKeyword });
+    const queryTokensForCoverage = Array.from(new Set(normalizedKeywords.filter(Boolean)));
+    log('keyword_terms_ready', { useReducedSearch, termsCount: searchTermsArray.length, queryTokens: queryTokensForCoverage });
 
     const normalizedQ = normalizeForSearch(q);
     const compactNormalizedQ = normalizedQ.replace(/\s+/g, '');
@@ -7787,13 +8090,26 @@ app.get('/api/search', async (req, res) => {
       const scoredProducts = products.map(product => {
         let score = 0;
         const name = normalizeForSearch(product.name);
-        const productKeywords = Array.isArray(product.keywords)
-          ? product.keywords.flatMap(k => normalizeForSearch(k).split(/\s+/)).filter(Boolean)
+        const compactName = name.replace(/\s+/g, '');
+        const aiMetadata = parseAiMetadata(product.aiMetadata);
+        const productKeywords = Array.isArray(aiMetadata?.keywords)
+          ? aiMetadata.keywords.flatMap(k => normalizeForSearch(k).split(/\s+/)).filter(Boolean)
           : [];
+        const productKeywordsCompact = productKeywords.map((kw) => kw.replace(/\s+/g, ''));
         const productKeywordsSet = new Set(productKeywords);
         const specs = normalizeForSearch(product.specs);
-        const aiTextRaw = product.aiMetadata ? JSON.stringify(product.aiMetadata) : '';
+        const compactSpecs = specs.replace(/\s+/g, '');
+        const aiTextRaw = aiMetadata ? JSON.stringify(aiMetadata) : '';
         const aiText = normalizeForSearch(aiTextRaw);
+        const keywordExactMatchCount = queryTokensForCoverage.filter((k) => {
+          const compactToken = k.replace(/\s+/g, '');
+          return productKeywordsSet.has(k) || productKeywordsCompact.includes(compactToken);
+        }).length;
+        const keywordPartialMatchCount = queryTokensForCoverage.filter((k) => {
+          const compactToken = k.replace(/\s+/g, '');
+          return productKeywords.some((kw) => kw.includes(k)) || productKeywordsCompact.some((kw) => kw.includes(compactToken));
+        }).length;
+        const fullKeywordCoverage = queryTokensForCoverage.length > 0 && keywordExactMatchCount >= queryTokensForCoverage.length;
         
         if (name === normalizedQ) score += 10000;
         
@@ -7803,30 +8119,6 @@ app.get('/api/search', async (req, res) => {
         if (productKeywords.some(k => k.includes(normalizedQ))) score += 3000;
         if (aiText && aiText.includes(normalizedQ)) score += 1200;
 
-        if (primaryKeyword) {
-          if (name.startsWith(primaryKeyword)) score += 4200;
-          if (name.includes(primaryKeyword)) score += 2600;
-          if (specs && specs.includes(primaryKeyword)) score += 600;
-          if (productKeywordsSet.has(primaryKeyword) || productKeywords.some(kw => kw.includes(primaryKeyword))) score += 1500;
-        }
-
-        if (primaryKeywordVariants.length > 0) {
-          let primaryVariantMatched = false;
-          for (const variant of primaryKeywordVariants) {
-            if (!variant || variant === primaryKeyword) continue;
-            if (name.startsWith(variant)) score += 800;
-            if (name.includes(variant)) {
-              score += 500;
-              primaryVariantMatched = true;
-            }
-            if (productKeywordsSet.has(variant) || productKeywords.some(kw => kw.includes(variant))) {
-              score += 240;
-              primaryVariantMatched = true;
-            }
-          }
-          if (primaryVariantMatched) score += 300;
-        }
-        
         let nameMatches = 0;
         
         normalizedKeywords.forEach((k, idx) => {
@@ -7872,13 +8164,53 @@ app.get('/api/search', async (req, res) => {
         }
 
         if (product.id.toString() === q.trim()) score += 15000;
+        const tokenMatchCount = queryTokensForCoverage.filter((k) => {
+          const compactToken = k.replace(/\s+/g, '');
+          return name.includes(k)
+            || compactName.includes(compactToken)
+            || (specs && specs.includes(k))
+            || (compactSpecs && compactSpecs.includes(compactToken))
+            || productKeywordsSet.has(k)
+            || productKeywords.some((kw) => kw.includes(k))
+            || productKeywordsCompact.includes(compactToken)
+            || productKeywordsCompact.some((kw) => kw.includes(compactToken));
+        }).length;
+        const fullTokenCoverage = queryTokensForCoverage.length > 0 && tokenMatchCount >= queryTokensForCoverage.length;
+        if (queryTokensForCoverage.length >= 2) {
+          if (fullKeywordCoverage) score += 12000;
+          if (keywordPartialMatchCount >= queryTokensForCoverage.length) score += 2800;
+          if (queryTokensForCoverage.every((k) => name.includes(k))) score += 4200;
+          score += tokenMatchCount * 1800;
+          if (fullTokenCoverage) score += 9000;
+        } else if (queryTokensForCoverage.length === 1 && keywordExactMatchCount > 0) {
+          score += 2400;
+        }
 
-        return { ...product, searchScore: score, matchCount };
+        return {
+          ...product,
+          searchScore: score,
+          matchCount,
+          keywordExactMatchCount,
+          fullKeywordCoverage,
+          tokenMatchCount,
+          fullTokenCoverage
+        };
       });
-      log('keyword_scoring_done', { scored: scoredProducts.length, scoringMs: Date.now() - scoringStart });
-      return scoredProducts
+      const sortedProducts = scoredProducts
         .filter(p => p.searchScore > 0)
         .sort((a, b) => {
+          if (Number(Boolean(b.fullTokenCoverage)) !== Number(Boolean(a.fullTokenCoverage))) {
+            return Number(Boolean(b.fullTokenCoverage)) - Number(Boolean(a.fullTokenCoverage));
+          }
+          if ((b.tokenMatchCount || 0) !== (a.tokenMatchCount || 0)) {
+            return (b.tokenMatchCount || 0) - (a.tokenMatchCount || 0);
+          }
+          if (Number(Boolean(b.fullKeywordCoverage)) !== Number(Boolean(a.fullKeywordCoverage))) {
+            return Number(Boolean(b.fullKeywordCoverage)) - Number(Boolean(a.fullKeywordCoverage));
+          }
+          if ((b.keywordExactMatchCount || 0) !== (a.keywordExactMatchCount || 0)) {
+            return (b.keywordExactMatchCount || 0) - (a.keywordExactMatchCount || 0);
+          }
           if (b.matchCount !== a.matchCount) {
             return b.matchCount - a.matchCount;
           }
@@ -7887,6 +8219,23 @@ app.get('/api/search', async (req, res) => {
           }
           return b.id - a.id;
         });
+      const topRankingPreview = sortedProducts.slice(0, 5).map((p) => ({
+        id: p.id,
+        score: p.searchScore,
+        matchCount: p.matchCount,
+        tokenMatchCount: p.tokenMatchCount || 0,
+        fullTokenCoverage: Boolean(p.fullTokenCoverage),
+        keywordExactMatchCount: p.keywordExactMatchCount || 0,
+        fullKeywordCoverage: Boolean(p.fullKeywordCoverage),
+        name: String(p.name || '').slice(0, 80)
+      }));
+      log('keyword_scoring_done', {
+        scored: scoredProducts.length,
+        kept: sortedProducts.length,
+        scoringMs: Date.now() - scoringStart,
+        topRankingPreview
+      });
+      return sortedProducts;
     };
 
     if (isArabicQuery && useReducedSearch) {
@@ -7912,10 +8261,11 @@ app.get('/api/search', async (req, res) => {
         return Array.from(variations).filter(v => v.length > 1);
       };
 
-      const seedTerms = Array.from(new Set([primaryKeyword, cleanQuery, normalizedArabicString, ...baseKeywords]))
+      const seedTerms = Array.from(new Set([cleanQuery, normalizedArabicString, ...normalizedKeywords]))
         .filter(t => t && t.length > 1)
         .slice(0, 3);
-      const prefixTerms = Array.from(new Set(seedTerms.flatMap(buildArabicVariants))).slice(0, 6);
+      const prefixTermLimit = isShortArabicQuery ? 4 : 6;
+      const prefixTerms = Array.from(new Set(seedTerms.flatMap(buildArabicVariants))).slice(0, prefixTermLimit);
       if (prefixTerms.length > 0) {
         const prefixWhere = {
           status: 'PUBLISHED',
@@ -7923,42 +8273,34 @@ app.get('/api/search', async (req, res) => {
           OR: prefixTerms.map(term => ({ name: { startsWith: term, mode: 'insensitive' } }))
         };
         const prefixStart = Date.now();
-        const prefixTake = Math.max(skip + limitNum, limitNum * 3, 60);
-        const [prefixTotal, prefixProducts] = await Promise.all([
-          prisma.product.count({ where: prefixWhere }),
-          prisma.product.findMany({
-            where: prefixWhere,
-            select: searchProductSelect,
-            take: prefixTake
-          })
-        ]);
+        const prefixTake = Math.max(skip + limitNum, limitNum * 2, isShortArabicQuery ? 40 : 60);
+        const prefixProducts = await prisma.product.findMany({
+          where: prefixWhere,
+          select: searchProductSelect,
+          take: prefixTake
+        });
         log('arabic_prefix_done', { returned: prefixProducts.length, dbMs: Date.now() - prefixStart, termsCount: prefixTerms.length });
 
-        const shouldBroaden = prefixTotal < Math.max(200, limitNum * 6);
+        const shouldBroaden = prefixProducts.length < Math.max(skip + limitNum, limitNum * (isShortArabicQuery ? 2 : 3));
         let combinedProducts = prefixProducts;
-        let combinedTotal = prefixTotal;
 
         if (shouldBroaden) {
-          const broadenTerms = Array.from(new Set(searchTermsArray.filter(Boolean)));
+          const broadenTerms = Array.from(new Set(searchTermsArray.filter(Boolean))).slice(0, isShortArabicQuery ? 5 : 8);
           const containsWhere = {
             status: 'PUBLISHED',
             isActive: true,
             OR: broadenTerms.flatMap(term => ([
               { name: { contains: term, mode: 'insensitive' } },
-              { specs: { contains: term, mode: 'insensitive' } },
-              { keywords: { has: term } }
+              { specs: { contains: term, mode: 'insensitive' } }
             ]))
           };
           const containsStart = Date.now();
-          const containsTake = Math.max(skip + limitNum, limitNum * 3, 60);
-          const [containsTotal, containsProducts] = await Promise.all([
-            prisma.product.count({ where: containsWhere }),
-            prisma.product.findMany({
-              where: containsWhere,
-              select: searchProductSelect,
-              take: containsTake
-            })
-          ]);
+          const containsTake = Math.max(skip + limitNum, limitNum * 2, isShortArabicQuery ? 40 : 60);
+          const containsProducts = await prisma.product.findMany({
+            where: containsWhere,
+            select: searchProductSelect,
+            take: containsTake
+          });
           log('arabic_contains_done', { returned: containsProducts.length, dbMs: Date.now() - containsStart, termsCount: prefixTerms.length });
           if (containsProducts.length > 0) {
             const seen = new Set(combinedProducts.map(p => String(p.id)));
@@ -7969,12 +8311,11 @@ app.get('/api/search', async (req, res) => {
               combinedProducts.push(p);
             });
           }
-          combinedTotal = Math.max(prefixTotal, containsTotal);
         }
 
         if (combinedProducts.length > 0) {
           const sortedProducts = scoreAndSortProducts(combinedProducts);
-          const total = combinedTotal;
+          const total = sortedProducts.length;
           if (total <= skip) {
             log('keyword_done', { total, returned: 0 });
             return res.json({
@@ -7994,7 +8335,7 @@ app.get('/api/search', async (req, res) => {
           return { ...processed, neworold };
         }), 
         total,
-        hasMore: skip + limitNum < total,
+        hasMore: sortedProducts.length > skip + limitNum,
         engine: 'db'
       });
         }
@@ -8002,44 +8343,35 @@ app.get('/api/search', async (req, res) => {
     }
 
     const searchFields = isArabicQuery ? ['name', 'specs'] : (useReducedSearch ? ['name'] : ['name', 'specs']);
+    const effectiveSearchTerms = isArabicQuery ? searchTermsArray.slice(0, 16) : searchTermsArray;
     const keywordFetchStart = Date.now();
     const keywordWhere = {
       status: 'PUBLISHED',
       isActive: true,
       OR: [
         { name: { contains: q, mode: 'insensitive' } },
-        { keywords: { has: q } },
         ...(normalizedArabicString ? [{ name: { contains: normalizedArabicString, mode: 'insensitive' } }] : []),
-        ...(primaryKeyword ? [{ name: { contains: primaryKeyword, mode: 'insensitive' } }] : []),
-        ...(primaryKeyword ? [{ specs: { contains: primaryKeyword, mode: 'insensitive' } }] : []),
-        ...primaryKeywordVariants.flatMap(term => ([
-          { name: { contains: term, mode: 'insensitive' } },
-          { keywords: { has: term } }
-        ])),
-        ...searchTermsArray.flatMap(term =>
+        ...effectiveSearchTerms.flatMap(term =>
           [
-            ...searchFields.map(field => ({ [field]: { contains: term, mode: 'insensitive' } })),
-            { keywords: { has: term } }
+            ...searchFields.map(field => ({ [field]: { contains: term, mode: 'insensitive' } }))
           ]
         )
       ]
     };
     const keywordTake = Math.max(
       skip + limitNum,
-      useReducedSearch ? (isArabicQuery ? 120 : 200) : 500
+      useReducedSearch ? (isArabicQuery ? 80 : 200) : 500
     );
-    const [keywordTotal, products] = await Promise.all([
-      prisma.product.count({ where: keywordWhere }),
-      prisma.product.findMany({
-        where: keywordWhere,
-        select: searchProductSelect,
-        take: keywordTake
-      })
-    ]);
+    const products = await prisma.product.findMany({
+      where: keywordWhere,
+      select: searchProductSelect,
+      take: keywordTake + 1
+    });
     log('keyword_products_done', { returned: products.length, dbMs: Date.now() - keywordFetchStart });
 
-    const sortedProducts = scoreAndSortProducts(products);
-    const total = keywordTotal;
+    const hasMoreCandidates = products.length > keywordTake;
+    const sortedProducts = scoreAndSortProducts(products.slice(0, keywordTake));
+    const total = sortedProducts.length + (hasMoreCandidates ? 1 : 0);
     if (total <= skip) {
       log('keyword_done', { total, returned: 0 });
       return res.json({

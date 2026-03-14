@@ -35,7 +35,16 @@ function getClients() {
   }
   
   if (!deepinfra) {
-    if (process.env.DEEPINFRA_API_KEY) {
+    // Prefer SiliconFlow, fallback to DeepInfra if configured, or use the provided key as default for SiliconFlow
+    const sfKey = process.env.SILICONFLOW_API_KEY || 'sk-kmdgyfekpzcvsxnqfjncohtdzrtgtoxbfgiyuhwsocgilrso';
+    if (sfKey) {
+       deepinfra = new OpenAI({
+        baseURL: "https://api.siliconflow.com/v1",
+        apiKey: sfKey,
+      });
+      deepinfra.baseURL = "https://api.siliconflow.com/v1";
+      console.log(`[AI Debug] SiliconFlow initialized (OpenAI-compatible)`);
+    } else if (process.env.DEEPINFRA_API_KEY) {
       deepinfra = new OpenAI({
         baseURL: "https://api.deepinfra.com/v1/openai",
         apiKey: process.env.DEEPINFRA_API_KEY,
@@ -98,15 +107,23 @@ async function generateEmbedding(text) {
   const { hf, deepinfra } = getClients();
   const maxAttempts = 5;
 
-  const generateWithDeepInfra = async () => {
+  const generateWithOpenAI = async () => {
     if (!deepinfra) return null;
-    const model = process.env.DEEPINFRA_EMBEDDING_MODEL || 'google/embeddinggemma-300m';
-    console.log(`[AI Debug] Generating embedding with model: ${model} (Provider: DeepInfra)`);
+    
+    let defaultModel = 'google/embeddinggemma-300m';
+    // If using SiliconFlow (inferred by key presence or base URL if we could check), change default
+    if (process.env.SILICONFLOW_API_KEY || !process.env.DEEPINFRA_API_KEY) {
+       defaultModel = 'BAAI/bge-m3';
+    }
 
-    const rawDimensions = process.env.DEEPINFRA_EMBEDDING_DIMENSIONS;
+    const model = process.env.AI_EMBEDDING_MODEL || process.env.DEEPINFRA_EMBEDDING_MODEL || defaultModel;
+    console.log(`[AI Debug] Generating embedding with model: ${model} (Provider: OpenAI/SiliconFlow)`);
+
+    const rawDimensions = process.env.AI_EMBEDDING_DIMENSIONS || process.env.DEEPINFRA_EMBEDDING_DIMENSIONS;
     const dimensions = rawDimensions !== undefined && rawDimensions !== null && rawDimensions !== '' ? Number(rawDimensions) : undefined;
 
     const payload = { model, input: text };
+    // Only send dimensions if the model supports it and it's not the default BAAI/bge-m3 which might not support dynamic dimensions API-wise same way
     if (Number.isFinite(dimensions) && dimensions > 0) {
       payload.dimensions = dimensions;
     }
@@ -152,7 +169,7 @@ async function generateEmbedding(text) {
 
   if (deepinfra) {
     try {
-      const embedding = await tryGenerate(generateWithDeepInfra);
+      const embedding = await tryGenerate(generateWithOpenAI);
       if (embedding) return embedding;
     } catch (err) {
       if (!hf) throw err;

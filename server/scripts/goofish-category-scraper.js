@@ -13,15 +13,99 @@ const __dirname = path.dirname(__filename);
 const envPath = path.join(__dirname, '..', '.env');
 dotenv.config({ path: envPath });
 
-const prisma = new PrismaClient();
+import { canonicalCategories, mapToCanonicalCategory, normalizeCategoryText } from '../services/categoryCanonicalService.js';
+
+const categoryBySlug = new Map(canonicalCategories.map((category) => [category.slug, category]));
+
+const buildCategoryMatchers = () => canonicalCategories.map((category) => {
+  const aliases = [category.name_ar, ...(Array.isArray(category.aliases) ? category.aliases : [])]
+    .map((value) => normalizeCategoryText(value))
+    .filter(Boolean);
+  const aliasSet = new Set(aliases);
+  const compactAliasSet = new Set(aliases.map((value) => value.replace(/\s+/g, '')).filter(Boolean));
+  return {
+    slug: category.slug,
+    name_ar: category.name_ar,
+    aliasSet,
+    compactAliasSet
+  };
+});
+
+const categoryMatchers = buildCategoryMatchers();
+
+const scoreFromKeyword = (normalizedKeyword, compactKeyword, scores) => {
+  // Direct match using the service's lookup
+  const direct = mapToCanonicalCategory(normalizedKeyword) || mapToCanonicalCategory(compactKeyword);
+  if (direct) {
+    scores.set(direct, (scores.get(direct) || 0) + 100);
+    return;
+  }
+
+  // Fallback: Check if any category alias is contained within the keyword (substring match)
+  for (const matcher of categoryMatchers) {
+    let score = scores.get(matcher.slug) || 0;
+    
+    // Strict inclusion: Check if alias is part of the keyword
+    for (const alias of matcher.aliasSet) {
+      if (alias.length < 3) continue; // Skip very short aliases
+      if (normalizedKeyword.includes(alias)) {
+        score += 20;
+      }
+    }
+    
+    if (score > (scores.get(matcher.slug) || 0)) {
+      scores.set(matcher.slug, score);
+    }
+  }
+};
+
+const classifyProduct = (keywords) => {
+  const rawKeywords = Array.isArray(keywords) ? keywords : [];
+  const normalizedKeywords = rawKeywords
+    .map((value) => normalizeCategoryText(value))
+    .filter(Boolean);
+  const scores = new Map();
+  for (const normalizedKeyword of normalizedKeywords) {
+    const compactKeyword = normalizedKeyword.replace(/\s+/g, '');
+    if (!compactKeyword) continue;
+    scoreFromKeyword(normalizedKeyword, compactKeyword, scores);
+  }
+  if (scores.size === 0) {
+    return { slug: 'other', score: 0 };
+  }
+  const ranked = Array.from(scores.entries()).sort((a, b) => b[1] - a[1]);
+  return { slug: ranked[0][0], score: ranked[0][1] };
+};
+
+const assignCategoryToProduct = async (productId, keywords) => {
+  const { slug, score } = classifyProduct(keywords);
+  const category = categoryBySlug.get(slug) || categoryBySlug.get('other');
+  const nextMetadata = {
+    categorySlug: category?.slug || 'other',
+    categoryNameAr: category?.name_ar || 'أخرى',
+    categoryScore: score,
+    categorySource: 'canonical_keywords',
+    categoryAssignedAt: new Date().toISOString()
+  };
+  const metadataPatch = JSON.stringify(nextMetadata);
+  await prisma.$executeRawUnsafe(`
+    UPDATE "Product"
+    SET "aiMetadata" = COALESCE("aiMetadata", '{}'::jsonb) || $2::jsonb
+    WHERE id = $1
+  `, productId, metadataPatch);
+  console.log(`[Category] Assigned product ${productId} to ${slug} (${category?.name_ar}) score=${score}`);
+};
 const CNY_TO_IQD_RATE = 200;
 
-// Dynamic Price Multiplier Logic
+const prisma = new PrismaClient();
 function calculatePriceMultiplier(basePriceIQD) {
   return 1.25;
 }
 
-const DEEPINFRA_API_KEY = process.env.DEEPINFRA_API_KEY;
+const SILICONFLOW_API_KEY = String(
+  process.env.SILICONFLOW_API_KEY
+  || 'sk-kmdgyfekpzcvsxnqfjncohtdzrtgtoxbfgiyuhwsocgilrso'
+).trim();
 const DISABLE_DB_WRITE = String(process.env.GOOFISH_DISABLE_DB_WRITE || '').toLowerCase() === 'true';
 const configuredMaxProducts = parseInt(process.env.GOOFISH_MAX_PRODUCTS || '', 10);
 const MAX_PRODUCTS_TO_PROCESS = Number.isFinite(configuredMaxProducts) && configuredMaxProducts > 0
@@ -32,7 +116,10 @@ const REQUIRE_DB_WRITE = String(process.env.GOOFISH_REQUIRE_DB_WRITE || 'true').
 const AI_ONLY_TERMS = String(process.env.GOOFISH_AI_ONLY_TERMS || '').toLowerCase() === 'true';
 const TRANSLATION_CACHE_PATH = path.join(__dirname, 'goofish-translation-cache.json');
 const ITEMS_PER_SEARCH = Math.max(1, parseInt(process.env.GOOFISH_ITEMS_PER_SEARCH || '90', 10) || 90);
-const KEYWORDS_PER_PRODUCT = 50;
+const KEYWORDS_PER_PRODUCT = Math.max(10, Math.min(50, parseInt(process.env.GOOFISH_KEYWORDS_PER_PRODUCT || '30', 10) || 30));
+const GOOFISH_AI_TITLE_MAX_CHARS = Math.max(40, parseInt(process.env.GOOFISH_AI_TITLE_MAX_CHARS || '140', 10) || 140);
+const GOOFISH_AI_SECOND_PASS_DESCRIPTION = String(process.env.GOOFISH_AI_SECOND_PASS_DESCRIPTION || 'false').toLowerCase() === 'true';
+const GOOFISH_TRANSLATION_CACHE_FLUSH_EVERY = Math.max(1, parseInt(process.env.GOOFISH_TRANSLATION_CACHE_FLUSH_EVERY || '20', 10) || 20);
 const UPDATE_EXISTING = String(process.env.GOOFISH_UPDATE_EXISTING || '').toLowerCase() === 'true';
 const UPDATE_LIMIT = parseInt(process.env.GOOFISH_UPDATE_LIMIT || '', 10);
 const UPDATE_START_ID = parseInt(process.env.GOOFISH_UPDATE_START_ID || '0', 10);
@@ -56,17 +143,11 @@ const FOOD_BLACKLIST = [
 ];
 
 const EXCLUDED_KEYWORDS = [
-  '黄金', '足金', '千足金', '万足金', '18K金', '24K金', 'Au999', 'Au750', // Gold
-  '白银', '纯银', '足银', 'S925', '925银', 'Ag999', 'Ag925', // Silver
-  '真金', '真银', 'Pt950', 'Pt990', '白金', // Real gold/silver/platinum
-  // Service Keywords (Excluded)
-  '安装', '上门', '服务', '维修', '定金', '订金', '补差价', '专拍', '运费', '链接', 
-  'installation', 'service', 'repair', 'deposit', 'freight', 'link',
-  '回收', '回收站', '上门回收', '回收服务', 'recycle', 'recycling',
-  '办理', '代办', '会员', '充值', '账号', '权益', 'membership', 'recharge', 'account',
-  '教程', '视频教程', 'tutorial', 'video tutorial',
-  '设计', 'design', '代做', '代写', '代跑', '代练'
+  '黄金', '足金', '千足金', '万足金', '18K金', '24K金', 'Au999', 'Au750', '真金', '赤金', '纯金', '金条', '金币', '金砖'
 ];
+
+// Silver and other metals are OKAY now.
+// Removed: '白银', '纯银', '足银', 'S925', '925银', 'Ag999', 'Ag925', '真银'
 
 function isExcludedProduct(title) {
   if (!title) return false;
@@ -89,21 +170,24 @@ if (process.env.NODE_ENV === 'production' && process.env.ALLOW_SCRAPER_IN_PROD !
   process.exit(1);
 }
 
-// Simple DeepInfra client using axios
-async function callDeepInfra(messages, temperature = 0.3, maxTokens = 100) {
-  if (!DEEPINFRA_API_KEY) return null;
+// Simple SiliconFlow client using axios
+async function callSiliconFlow(messages, temperature = 0.3, maxTokens = 100) {
+  const apiKey = SILICONFLOW_API_KEY;
+  if (!apiKey) return null;
   const maxAttempts = 5;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      const response = await axios.post('https://api.deepinfra.com/v1/openai/chat/completions', {
-        model: "google/gemma-3-12b-it",
+      const response = await axios.post('https://api.siliconflow.com/v1/chat/completions', {
+        model: "Qwen/Qwen3-8B",
         messages,
         temperature,
-        max_tokens: maxTokens
+        max_tokens: maxTokens,
+        stream: false,
+        enable_thinking: false
       }, {
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${DEEPINFRA_API_KEY}`
+          'Authorization': `Bearer ${apiKey}`
         },
         timeout: 45000
       });
@@ -111,16 +195,21 @@ async function callDeepInfra(messages, temperature = 0.3, maxTokens = 100) {
     } catch (error) {
       const status = error?.response?.status;
       const isTimeout = String(error?.message || '').includes('timeout');
-      if (status === 429 || status === 503 || isTimeout) {
+      // Retry on 429 (Rate Limit), 503 (Service Unavailable), and 500 (Internal Server Error)
+      if (status === 429 || status === 503 || status === 500 || isTimeout) {
+        console.warn(`SiliconFlow API Error (${status || 'timeout'}), retrying (attempt ${attempt}/${maxAttempts})...`);
         const waitMs = Math.min(30000, 2000 * attempt * attempt);
         await new Promise((resolve) => setTimeout(resolve, waitMs));
         continue;
       }
-      console.error('DeepInfra API Error:', error.message);
+      console.error('SiliconFlow API Error:', error.message);
+      if (error.response?.data) {
+        console.error('API Response Data:', JSON.stringify(error.response.data).slice(0, 200));
+      }
       return null;
     }
   }
-  console.error('DeepInfra API Error: rate limit');
+  console.error('SiliconFlow API Error: rate limit');
   return null;
 }
 
@@ -932,7 +1021,7 @@ async function generateSearchTermsWithAi(existingTerms) {
   let results = [];
   let usedAi = false;
   for (let attempt = 0; attempt < MAX_AI_ATTEMPTS && results.length < 50; attempt += 1) {
-    console.log(`[AI Term Gen] Requesting new terms from DeepInfra (attempt ${attempt + 1})...`);
+    console.log(`[AI Term Gen] Requesting new terms from SiliconFlow (attempt ${attempt + 1})...`);
     const prompt = [
       {
         role: 'system',
@@ -947,9 +1036,9 @@ IMPORTANT: Do NOT use any of the following terms: ${termsToAvoid}.
 Return a JSON array only, no other text or punctuation.`
       }
     ];
-    const raw = await callDeepInfra(prompt, 0.6, 500);
+    const raw = await callSiliconFlow(prompt, 0.6, 500);
     if (!raw) {
-      console.log('[AI Term Gen] DeepInfra returned empty or null response.');
+      console.log('[AI Term Gen] SiliconFlow returned empty or null response.');
       continue;
     }
     usedAi = true;
@@ -981,7 +1070,7 @@ Return a JSON array only, no other text or punctuation.`
   }
   
   if (results.length > 0) {
-    console.log(`[AI Term Gen] Successfully generated ${results.length} terms using DeepInfra:`);
+    console.log(`[AI Term Gen] Successfully generated ${results.length} terms using SiliconFlow:`);
     console.log(results.join(', '));
   } else {
     console.log('[AI Term Gen] Failed to generate terms or API returned empty list.');
@@ -995,8 +1084,8 @@ async function getSearchTermsForRun() {
   let activeBatch = history.activeBatch;
 
   // If we have an active batch that is a fallback, but we want AI terms and have a key, discard it.
-  if (activeBatch && activeBatch.source === 'fallback' && DEEPINFRA_API_KEY) {
-    console.log('Found active batch from fallback source, but DeepInfra Key is present. Discarding fallback batch to try AI generation.');
+  if (activeBatch && activeBatch.source === 'fallback' && SILICONFLOW_API_KEY) {
+    console.log('Found active batch from fallback source, but SiliconFlow Key is present. Discarding fallback batch to try AI generation.');
     activeBatch = null;
     clearActiveBatch(null); // Clear any active batch
   }
@@ -1018,8 +1107,8 @@ async function getSearchTermsForRun() {
   const aiResult = await generateSearchTermsWithAi(existing);
   let finalTerms = aiResult.terms;
   let source = aiResult.usedAi ? 'ai' : 'fallback';
-  if (AI_ONLY_TERMS && !DEEPINFRA_API_KEY) {
-    throw new Error('AI-only mode is enabled but DEEPINFRA_API_KEY is missing.');
+  if (AI_ONLY_TERMS && !SILICONFLOW_API_KEY) {
+    throw new Error('AI-only mode is enabled but SILICONFLOW_API_KEY is missing.');
   }
   if (AI_ONLY_TERMS && finalTerms.length < 50) {
     throw new Error('AI-only mode could not generate 50 unique terms.');
@@ -1107,13 +1196,11 @@ function parseCnyPrice(text) {
 }
 
 async function translateFullTitleToArabic(title, fallbackText = '') {
-  const source = String(title || '').trim();
-  if (!source || !DEEPINFRA_API_KEY) return fallbackText || source;
+  const source = String(title || '').trim().slice(0, GOOFISH_AI_TITLE_MAX_CHARS);
+  if (!source || !SILICONFLOW_API_KEY) return fallbackText || source;
   try {
-    const prompt = `Translate this full Chinese product title into natural Arabic while preserving all product attributes.
-Return only Arabic text. Do not include labels, keys, JSON, or explanations.
-Chinese title: "${source}"`;
-    const result = await callDeepInfra([{ role: "user", content: prompt }], 0.25, 220);
+    const prompt = `Translate this Chinese product title to Arabic. Return Arabic only.\n${source}`;
+    const result = await callSiliconFlow([{ role: "user", content: prompt }], 0.2, 120);
     const translated = cleanAiText(sanitizeTranslationText(result));
     return translated || fallbackText || source;
   } catch {
@@ -1122,33 +1209,18 @@ Chinese title: "${source}"`;
 }
 
 async function generateTitleAndKeywords(title) {
-  const fallback = String(title || '').trim();
-  if (!DEEPINFRA_API_KEY || !fallback) {
+  const fallback = String(title || '').trim().slice(0, GOOFISH_AI_TITLE_MAX_CHARS);
+  if (!SILICONFLOW_API_KEY || !fallback) {
     return { titleAr: fallback, descriptionAr: fallback, keywords: [] };
   }
   try {
-    const prompt = `Translate this Chinese product title into Arabic in two forms and generate exactly 50 Arabic search keywords (Iraqi-friendly, no diacritics).
-Return valid JSON only with this shape:
-{"title_ar":"...","description_ar":"...","keywords":["..."]}
-"title_ar" must be short and suitable as ecommerce card title.
-"description_ar" must be a fuller natural Arabic rendering of the full title text.
-Keywords must be single words only (no spaces). Make them diverse and non-redundant (avoid near-duplicates). Use only nouns and adjectives; do NOT include verbs or marketing/offer words. Include category and subcategory terms, broad category words, material, season, style, target audience, and Iraqi dialect synonyms users might search (e.g., قندرة, جواتي, جنطة, قنفه, دوشك, تلفون, شحاطة). 
-For important product nouns in the title, include both singular and plural Arabic forms in keywords when possible (example: مصباح + مصابيح, حقيبة + حقائب, حذاء + احذية).
-Always include the main category name and a relevant subcategory name as keywords.
-Infer the most likely category from the title and add category-specific variations:
-- Clothing: ملابس، ملابس رجالية/نسائية/اطفال، ملابس صيفية/شتوية، خامات (قطن/بوليستر/حرير)، ستايل (كاجوال/رسمي/رياضي)
-- Shoes: احذية، احذية رياضية/كلاسيك، مقاسات، خامات، استخدام (مشاية/جيم)
-- Bags: حقائب، شنط يد/كتف/ظهر، جلد/قماش، استخدام (مدرسة/سفر)
-- Electronics: الكترونيات، موبايل/اكسسوارات، سماعات/شاحن، مواصفات عامة (بلوتوث/لاسلكي)
-- Home/Furniture: اثاث/منزل/ديكور، مطبخ/غرفة نوم/معيشة، خامات (خشب/معدن/قماش)
-- Beauty: مكياج/عناية، عطر/كريم/سيروم، استخدام (ترطيب/تفتيح)
-- Kids/Toys: اطفال، العاب، لعب تعليمية/ترفيهية، هدايا، عمر مناسب
-- Sports/Fitness: رياضة، لياقة، جيم، تمارين، معدات رياضية
-- Auto/Tools: سيارات، اكسسوارات سيارات، ادوات، عدة، ورشة
-- Office/School: مكتبي، قرطاسية، مدرسة، دراسة، حقيبة مدرسية
-If the category is unclear, include broader shopping terms (منتج، بضاعة، متجر، تسوق).
+    const prompt = `Return JSON only: {"title_ar":"...","description_ar":"...","keywords":["..."]}.
+Translate Chinese title to Arabic.
+title_ar: short ecommerce title.
+description_ar: one natural sentence.
+keywords: exactly ${KEYWORDS_PER_PRODUCT} Arabic single-word search terms, no duplicates.
 Title: "${fallback}"`;
-    const result = await callDeepInfra([{ role: "user", content: prompt }], 0.35, 260);
+    const result = await callSiliconFlow([{ role: "user", content: prompt }], 0.25, 180);
     const raw = String(result || '').trim();
     if (!raw) return { titleAr: fallback, descriptionAr: fallback, keywords: [] };
     const parsed = parseAiTranslationPayload(raw);
@@ -1156,7 +1228,7 @@ Title: "${fallback}"`;
     let descriptionAr = cleanAiText(
       sanitizeTranslationText(parsed?.description_ar || titleAr || fallback)
     ) || titleAr || fallback;
-    if (!descriptionAr || descriptionAr.length < 24 || descriptionAr === titleAr) {
+    if (GOOFISH_AI_SECOND_PASS_DESCRIPTION && (!descriptionAr || descriptionAr.length < 24 || descriptionAr === titleAr)) {
       descriptionAr = await translateFullTitleToArabic(fallback, descriptionAr || titleAr || fallback);
     }
     const seedText = `${titleAr} ${descriptionAr}`.trim();
@@ -1287,9 +1359,15 @@ async function findExistingProductByUrl(url) {
 
 async function saveProductToDb(item, existingProductId = null) {
   try {
-    if (!item.url || item.url.includes('search?')) return; // Skip if invalid URL
+    if (!item.url || item.url.includes('search?')) {
+        console.warn('Skipping item with invalid URL:', item.url);
+        return; 
+    }
     const ready = await ensureDbReady();
-    if (!ready) return;
+    if (!ready) {
+        console.error('Database not ready, cannot save product.');
+        return;
+    }
 
     const existing = existingProductId
       ? { id: existingProductId }
@@ -1319,13 +1397,24 @@ async function saveProductToDb(item, existingProductId = null) {
             name: item.titleEn || item.title,
             price: priceIQD,
             basePriceIQD,
-            keywords: keywordsList,
+            // keywords: keywordsList, // Removing this because it causes "Unknown argument" error
             aiMetadata: metadata,
             updatedAt: new Date(),
             ...(hasDetectedCondition ? { neworold: newOrOldValue } : {})
           }
         });
+        // Update keywords using raw SQL to bypass Prisma schema mismatch
+        const keywordsSql = Prisma.join(keywordsList);
+        await prisma.$executeRaw`
+          UPDATE "Product"
+          SET "keywords" = ARRAY[${keywordsSql}]
+          WHERE "id" = ${existing.id}
+        `;
+        // Assign canonical category immediately
+        await assignCategoryToProduct(existing.id, keywordsList);
+        console.log(`Updated product: ${item.titleEn || item.title}`);
       } catch (updateError) {
+        console.error('Update failed, trying raw SQL fallback:', updateError.message);
         const keywordsSql = Prisma.join(keywordsList);
         if (hasDetectedCondition) {
           await prisma.$executeRaw`
@@ -1351,13 +1440,12 @@ async function saveProductToDb(item, existingProductId = null) {
             WHERE "id" = ${existing.id}
           `;
         }
+        console.log(`Updated product (raw SQL): ${item.titleEn || item.title}`);
       }
-      // console.log(`Updated product: ${item.titleEn}`);
     } else {
       let newProduct;
       try {
-        newProduct = await prisma.product.create({
-          data: {
+        const createData = {
             name: item.titleEn || item.title,
             price: priceIQD,
             basePriceIQD,
@@ -1365,12 +1453,26 @@ async function saveProductToDb(item, existingProductId = null) {
             purchaseUrl: item.url,
             status: 'PUBLISHED',
             isActive: true,
-            keywords: keywordsList,
+            // keywords: keywordsList, // Removed to avoid "Unknown argument"
             aiMetadata: metadata,
             ...(hasDetectedCondition ? { neworold: newOrOldValue } : {})
-          }
+        };
+        newProduct = await prisma.product.create({
+          data: createData
         });
+        // Update keywords using raw SQL
+        if (newProduct?.id) {
+            const keywordsSql = Prisma.join(keywordsList);
+            await prisma.$executeRaw`
+                UPDATE "Product"
+                SET "keywords" = ARRAY[${keywordsSql}]
+                WHERE "id" = ${newProduct.id}
+            `;
+            // Assign canonical category immediately
+            await assignCategoryToProduct(newProduct.id, keywordsList);
+        }
       } catch (createError) {
+        // console.error('Prisma create failed, trying raw SQL fallback:', createError.message);
         const keywordsSql = Prisma.join(keywordsList);
         const inserted = hasDetectedCondition
           ? await prisma.$queryRaw`
@@ -1406,6 +1508,8 @@ async function saveProductToDb(item, existingProductId = null) {
     }
   } catch (e) {
     console.error(`Failed to save product ${item.titleEn}:`, e.message);
+    // Print stack trace for debugging
+    if (e.stack) console.error(e.stack);
   }
 }
 
@@ -1413,6 +1517,16 @@ async function run() {
   const browser = await createBrowser();
   await ensureDbReady();
   const translationCache = loadTranslationCache();
+  let pendingCacheWrites = 0;
+  if (SILICONFLOW_API_KEY) {
+    if (!process.env.SILICONFLOW_API_KEY) {
+      console.log('Using default/fallback API key for translation.');
+    } else {
+      console.log('AI translation is enabled (using env key).');
+    }
+  } else {
+    console.warn('AI translation is disabled: missing SILICONFLOW_API_KEY.');
+  }
   // Ensure we use the incognito context (usually the first one for --incognito launch)
   // or explicitly create incognito context if browser isn't already one.
   // With --incognito arg, browser.newPage() typically opens incognito tab.
@@ -1688,14 +1802,14 @@ async function run() {
               needsDetailedDescription = !descriptionAr || descriptionAr.length < 20 || descriptionAr === titleEn;
             }
 
-            if (DEEPINFRA_API_KEY && (!existingProduct || needsDetailedDescription)) {
+            if (SILICONFLOW_API_KEY && (!existingProduct || needsDetailedDescription)) {
               const cachedTranslation = getCachedTranslation(translationCache, it.title);
               const canUseCachedDescription = cachedTranslation
                 && cachedTranslation.descriptionAr
                 && cachedTranslation.descriptionAr.length >= 24
                 && cachedTranslation.descriptionAr !== cachedTranslation.titleAr;
               if (canUseCachedDescription) {
-                console.log(`Using cached translation for: ${it.title.substring(0, 15)}...`);
+                console.log('AI translation cache hit.');
                 titleEn = cachedTranslation.titleAr;
                 descriptionAr = cachedTranslation.descriptionAr;
                 keywords = cachedTranslation.keywords;
@@ -1705,7 +1819,16 @@ async function run() {
                 descriptionAr = generated.descriptionAr;
                 keywords = generated.keywords;
                 setCachedTranslation(translationCache, it.title, generated);
-                console.log(`Translated: ${it.title.substring(0, 15)}... -> ${titleEn.substring(0, 20)}...`);
+                pendingCacheWrites += 1;
+                if (pendingCacheWrites >= GOOFISH_TRANSLATION_CACHE_FLUSH_EVERY) {
+                  saveTranslationCache(translationCache);
+                  pendingCacheWrites = 0;
+                }
+                if (titleEn && titleEn !== it.title) {
+                  console.log('AI translation successful.');
+                } else {
+                  console.warn('AI translation attempted but no translated output returned.');
+                }
                 await humanDelay(120, 260);
               }
             }
@@ -1729,6 +1852,8 @@ async function run() {
               allItems.push(itemData);
             }
             await saveProductToDb(itemData, existingProduct?.id || null);
+            // Log for debugging
+            // console.log(`Processed item: ${itemData.titleEn || itemData.title}`);
             processedCount += 1;
             // termProcessedCount += 1;
           }
@@ -1803,6 +1928,7 @@ async function updateExistingGoofishProducts() {
   }
   const resumeProgress = loadUpdateExistingProgress();
   const translationCache = loadTranslationCache();
+  let pendingCacheWrites = 0;
   const limit = Number.isFinite(UPDATE_LIMIT) && UPDATE_LIMIT > 0 ? UPDATE_LIMIT : Number.POSITIVE_INFINITY;
   let updatedCount = resumeProgress ? resumeProgress.updatedCount : 0;
   let scanned = resumeProgress ? resumeProgress.scanned : 0;
@@ -1871,13 +1997,22 @@ async function updateExistingGoofishProducts() {
       let titleAr = '';
       let descriptionAr = '';
       let keywords = [];
+      const existingDescription = cleanAiText(sanitizeTranslationText(String(aiMetadata?.translatedDescription || '').trim()));
+      const normalizedName = cleanAiText(sanitizeTranslationText(String(product.name || '').trim()));
+      const hasGoodExistingDescription = existingDescription.length >= 24;
+      const hasGoodExistingName = normalizedName && hasArabic(normalizedName);
+      const hasStrongExistingKeywords = Array.isArray(product.keywords) && product.keywords.length >= Math.max(10, Math.floor(KEYWORDS_PER_PRODUCT * 0.7));
 
-      if (DEEPINFRA_API_KEY) {
+      if (SILICONFLOW_API_KEY) {
         const cached = getCachedTranslation(translationCache, baseTitle);
         if (cached) {
           titleAr = cached.titleAr;
           descriptionAr = cached.descriptionAr;
           keywords = cached.keywords;
+        } else if (hasGoodExistingName && hasGoodExistingDescription && hasStrongExistingKeywords) {
+          titleAr = normalizedName;
+          descriptionAr = existingDescription;
+          keywords = ensureKeywordList(product.keywords, `${titleAr} ${descriptionAr}`.trim());
         } else {
           if (scanned % UPDATE_PROGRESS_EVERY === 0) {
             console.log(`Generating keywords for product ${product.id}...`);
@@ -1887,6 +2022,11 @@ async function updateExistingGoofishProducts() {
           descriptionAr = generated.descriptionAr;
           keywords = generated.keywords;
           setCachedTranslation(translationCache, baseTitle, generated);
+          pendingCacheWrites += 1;
+          if (pendingCacheWrites >= GOOFISH_TRANSLATION_CACHE_FLUSH_EVERY) {
+            saveTranslationCache(translationCache);
+            pendingCacheWrites = 0;
+          }
         }
       }
 

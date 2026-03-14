@@ -1132,8 +1132,9 @@ export async function rapidSearchItems(query: string, page = 1, limit: number | 
     .split(/\s+/)
     .map((w) => w.trim())
     .filter((w) => w.length > 1);
+  const allowTokenFanout = page === 1;
 
-  if (products.length === 0 && tokens.length > 1) {
+  if (allowTokenFanout && products.length === 0 && tokens.length > 1) {
     const uniqueTokens = Array.from(new Set(tokens));
     const tokenResponses = await Promise.all(
       uniqueTokens.map((token) =>
@@ -1153,7 +1154,7 @@ export async function rapidSearchItems(query: string, page = 1, limit: number | 
     ? products
     : (Array.isArray(fallback?.products) ? fallback.products : []);
 
-  if (finalProducts.length === 0 && tokens.length > 1) {
+  if (allowTokenFanout && finalProducts.length === 0 && tokens.length > 1) {
     const uniqueTokens = Array.from(new Set(tokens));
     const tokenFallbackResponses = await Promise.all(
       uniqueTokens.map((token) => fetchProducts(page, resolvedLimit, token, maxPrice, condition).catch(() => null))

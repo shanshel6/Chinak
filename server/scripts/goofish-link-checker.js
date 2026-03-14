@@ -8,6 +8,8 @@ import { fileURLToPath } from 'url';
 import axios from 'axios';
 import readline from 'readline';
 
+console.log('[DEBUG] goofish-link-checker.js: File loaded fresh from rebuild.');
+
 // Setup environment
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -18,7 +20,7 @@ dotenv.config({ path: envPath });
 puppeteer.use(StealthPlugin());
 
 const prisma = new PrismaClient();
-const DEEPINFRA_API_KEY = process.env.DEEPINFRA_API_KEY;
+const SILICONFLOW_API_KEY = String(process.env.SILICONFLOW_API_KEY || 'sk-kmdgyfekpzcvsxnqfjncohtdzrtgtoxbfgiyuhwsocgilrso').trim();
 
 // Indicators that a product is gone
 const UNAVAILABLE_KEYWORDS = [
@@ -33,25 +35,31 @@ const UNAVAILABLE_KEYWORDS = [
   '商品已失效' // Product invalid
 ];
 
-// Simple DeepInfra client using axios
-async function callDeepInfra(messages, temperature = 0.3, maxTokens = 500) {
-  if (!DEEPINFRA_API_KEY) return null;
+// Simple SiliconFlow client using axios
+async function callSiliconFlow(messages, temperature = 0.3, maxTokens = 500) {
+  const apiKey = SILICONFLOW_API_KEY;
+  if (!apiKey) return null;
   try {
-    const response = await axios.post('https://api.deepinfra.com/v1/openai/chat/completions', {
-      model: "google/gemma-3-12b-it",
+    const response = await axios.post('https://api.siliconflow.com/v1/chat/completions', {
+      model: "Qwen/Qwen3-8B",
       messages,
       temperature,
-      max_tokens: maxTokens
+      max_tokens: maxTokens,
+      stream: false,
+      enable_thinking: false
     }, {
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${DEEPINFRA_API_KEY}`
+        'Authorization': `Bearer ${apiKey}`
       },
       timeout: 30000
     });
     return response.data.choices[0].message.content.trim();
   } catch (error) {
-    console.error('DeepInfra API Error:', error.message);
+    console.error('SiliconFlow API Error:', error.message);
+    if (error.response) {
+        console.error('Response data:', error.response.data);
+    }
     return null;
   }
 }
@@ -69,6 +77,11 @@ function askQuestion(query) {
 
 async function checkGoofishLinks() {
   console.log('Starting Goofish link checker & image updater...');
+  if (SILICONFLOW_API_KEY) {
+      console.log('AI Translation Enabled. API Key present (ends with):', SILICONFLOW_API_KEY.slice(-4));
+  } else {
+      console.warn('AI Translation DISABLED. No API Key found.');
+  }
 
   const startInput = String(await askQuestion('Start from product number (1-based, press Enter for 1): ')).trim();
   const parsedStart = Number.parseInt(startInput || '1', 10);
@@ -112,7 +125,8 @@ async function checkGoofishLinks() {
       id: true,
       name: true,
       purchaseUrl: true,
-      imagesChecked: true
+      imagesChecked: true,
+      specs: true
     }
   });
 
@@ -141,107 +155,111 @@ async function checkGoofishLinks() {
     }
   }
 
+  if (!executablePath) {
+    console.error('Chrome/Edge executable not found on system.');
+    process.exit(1);
+  }
+
   const browser = await puppeteer.launch({
-    executablePath: executablePath || undefined,
+    executablePath,
     headless: false,
     defaultViewport: null,
     args: [
-      '--incognito',
       '--start-maximized',
       '--no-sandbox',
       '--disable-setuid-sandbox',
       '--disable-blink-features=AutomationControlled',
-      '--proxy-server=http://192.168.2.150:7890' // Use the same local proxy as the scraper
+      '--disable-infobars',
+      '--excludeSwitches=enable-automation',
+      '--disable-features=IsolateOrigins,site-per-process',
+      '--incognito'
     ]
   });
 
-  // Get all pages
   const pages = await browser.pages();
-  let page;
-
-  if (pages.length > 0) {
-      // Reuse the existing page instead of creating a new one
-      // Since we launched with --incognito, this page is already in the incognito context
-      page = pages[0];
-  } else {
-      // Should rare happen, but create one if none exist
-      page = await browser.newPage();
-  }
+  const page = pages.length > 0 ? pages[0] : await browser.newPage();
   
-  await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+  // Randomize Viewport slightly
+  const width = 1920 + Math.floor(Math.random() * 100) - 50;
+  const height = 1080 + Math.floor(Math.random() * 100) - 50;
+  await page.setViewport({ width, height });
 
-  let checkedCount = 0;
-  let deactivatedCount = 0;
+  // Rotate User Agent
+  await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
+
+  await page.setExtraHTTPHeaders({
+    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+    'Cache-Control': 'max-age=0',
+    'Upgrade-Insecure-Requests': '1'
+  });
+  await page.evaluateOnNewDocument(() => {
+    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+    Object.defineProperty(navigator, 'language', { get: () => 'zh-CN' });
+    Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh', 'en'] });
+    Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
+    window.chrome = { runtime: {} };
+  });
+
+  console.log('Browser launched. Processing products...');
+
+  let processedCount = 0;
   let updatedCount = 0;
+  let unavailableCount = 0;
 
-  // 3. Loop through products
-  for (const product of products) {
-    if (!product.purchaseUrl) continue;
-    
-    console.log(`\n[${startOffset + checkedCount + 1}/${totalProducts}] Checking Product ID ${product.id}: ${product.name}`);
-    console.log(`URL: ${product.purchaseUrl}`);
+  try {
+    for (const product of products) {
+      processedCount++;
+      const currentIdx = startNumber + processedCount - 1;
+      console.log(`\n[${currentIdx}/${totalProducts}] Checking Product ID ${product.id}: ${product.name},`);
+      console.log(`URL: \`${product.purchaseUrl}\``);
 
-    try {
-      const response = await page.goto(product.purchaseUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-      await new Promise(r => setTimeout(r, 3000)); // Wait for dynamic content
-
-      const pageTitle = await page.title();
-      const pageContent = await page.evaluate(() => document.body.innerText);
-      const currentUrl = page.url();
-
-      let isUnavailable = false;
-      let reason = '';
-
-      // --- CHECK AVAILABILITY ---
-      
-      // 1. URL Check
-      if (currentUrl.includes('error') || (currentUrl.includes('s.taobao.com') && !product.purchaseUrl.includes('s.taobao.com'))) {
-        isUnavailable = true;
-        reason = 'Redirected to error/search page';
+      if (!product.purchaseUrl) {
+        console.log(`⚠️ No purchase URL for Product ${product.id}. Skipping.`);
+        continue;
       }
 
-      // 2. Keyword Check
-      if (!isUnavailable) {
-        // Specific check for the "Sold Out" button text provided by user
-        // Target: <div class="buttons--eV76FZ_U "><div class="banned--Uy6Se2D8">卖掉了</div></div>
-        const hasSoldOutButton = await page.evaluate(() => {
-            // Check specifically for the class 'banned--Uy6Se2D8' with text '卖掉了'
-            const bannedElement = document.querySelector('.banned--Uy6Se2D8');
-            if (bannedElement && bannedElement.innerText.trim() === '卖掉了') {
-                return true;
-            }
-            
-            // Fallback: Check broadly in buttons or similar elements if class changes
-            const elements = Array.from(document.querySelectorAll('button, div[role="button"], span, div'));
-            return elements.some(el => el.innerText && el.innerText.trim() === '卖掉了');
-        });
+      try {
+        await page.goto(product.purchaseUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+        
+        // Random delay to mimic human behavior
+        const delay = Math.floor(Math.random() * 1500) + 1000;
+        await new Promise(r => setTimeout(r, delay));
 
-        if (hasSoldOutButton) {
-           isUnavailable = true;
-           reason = 'Found "卖掉了" text';
-        } else {
-          for (const keyword of UNAVAILABLE_KEYWORDS) {
-            if (pageTitle.includes(keyword) || pageContent.includes(keyword)) {
-              isUnavailable = true;
-              reason = `Found keyword: ${keyword}`;
-              break;
-            }
+        // Check for unavailability keywords
+        const pageContent = await page.evaluate(() => document.body.innerText);
+        const title = await page.title();
+        
+        let isUnavailable = false;
+        let unavailableReason = '';
+
+        for (const keyword of UNAVAILABLE_KEYWORDS) {
+          if (pageContent.includes(keyword) || title.includes(keyword)) {
+            isUnavailable = true;
+            unavailableReason = keyword;
+            break;
           }
         }
-      }
 
-      // --- ACTION ---
-      if (isUnavailable) {
-        console.warn(`❌ Product ${product.id} is UNAVAILABLE. Reason: ${reason}`);
-        await prisma.product.update({
-          where: { id: product.id },
-          data: { isActive: false, status: 'ARCHIVED' }
-        });
-        deactivatedCount++;
-      } else {
-        console.log(`✅ Product ${product.id} is AVAILABLE.`);
+        // Also check if redirected to login or error page (simple check)
+        if (page.url().includes('login.taobao.com') || page.url().includes('login.tmall.com')) {
+           // Login required isn't necessarily unavailable, but we can't check it.
+           // For now, let's log a warning and skip updating status.
+           console.warn('⚠️ Redirected to login page. Cannot verify status accurately. Skipping.');
+           continue;
+        }
 
-        // --- NEW/USED DETECTION ---
+        if (isUnavailable) {
+          console.log(`❌ Product ${product.id} is UNAVAILABLE. Reason: Found keyword: ${unavailableReason}`);
+          
+          await prisma.product.update({
+            where: { id: product.id },
+            data: { isActive: false }
+          });
+          unavailableCount++;
+        } else {
+          console.log(`✅ Product ${product.id} is AVAILABLE.`);
+          
+          // --- NEW/USED DETECTION ---
         const newOrOldStatus = await page.evaluate(() => {
           try {
             // 1. Check for specific images indicating status
@@ -330,32 +348,58 @@ async function checkGoofishLinks() {
           if (rawSpecs) {
             console.log(`ℹ️ Found specs for Product ${product.id}:`, JSON.stringify(rawSpecs));
             
-            // Translate specs using DeepInfra
-            if (DEEPINFRA_API_KEY) {
-              try {
-                const prompt = `Translate the following product specifications from Chinese to Arabic.
-                IMPORTANT: You MUST translate BOTH the JSON keys AND the JSON values into Arabic.
-                Return ONLY a valid JSON object.
-                Do not include any explanations, markdown, or code blocks.
-                Input: ${JSON.stringify(rawSpecs)}`;
-                
-                const translatedJsonStr = await callDeepInfra([{ role: "user", content: prompt }], 0.2, 500);
-                
-                if (translatedJsonStr) {
-                  // Clean markdown if present
-                  const cleanJson = translatedJsonStr.replace(/```json/g, '').replace(/```/g, '').trim();
-                  const translatedSpecs = JSON.parse(cleanJson);
-                  
-                  console.log(`✅ Translated specs for Product ${product.id}:`, JSON.stringify(translatedSpecs));
-                  
-                  await prisma.product.update({
-                    where: { id: product.id },
-                    data: { specs: JSON.stringify(translatedSpecs) }
-                  });
-                }
-              } catch (err) {
-                console.error(`❌ Failed to translate specs for Product ${product.id}:`, err.message);
-              }
+            const rawSpecsText = JSON.stringify(rawSpecs);
+            // Relaxed check: always try to translate if key exists, or assume Chinese if unsure
+            // const containsChinese = /[\u4e00-\u9fff]/.test(rawSpecsText);
+            const containsChinese = true; // FORCE translation attempt for now to debug
+
+            // Debug log to confirm flow
+            console.log(`[DEBUG] Product ${product.id} - API Key Present: ${!!SILICONFLOW_API_KEY}, Contains Chinese: ${containsChinese}`);
+
+            if (SILICONFLOW_API_KEY) {
+                  console.log(`ℹ️ Product ${product.id} specs found. Attempting translation...`);
+                  try {
+                    const prompt = `Translate this JSON from Chinese to Arabic. Translate keys and values. Return JSON only.\n${JSON.stringify(rawSpecs)}`;
+                    
+                    // Increased tokens slightly
+                    const translatedJsonStr = await callSiliconFlow([{ role: "user", content: prompt }], 0.2, 350);
+                    
+                    if (translatedJsonStr) {
+                      const cleanJson = translatedJsonStr.replace(/```json/g, '').replace(/```/g, '').trim();
+                      let translatedSpecs;
+                      try {
+                        translatedSpecs = JSON.parse(cleanJson);
+                      } catch (parseErr) {
+                         console.error(`❌ Failed to parse translated specs JSON for Product ${product.id}:`, parseErr.message);
+                         translatedSpecs = rawSpecs;
+                      }
+                      
+                      console.log(`✅ Translated specs for Product ${product.id}:`, JSON.stringify(translatedSpecs));
+                      
+                      await prisma.product.update({
+                        where: { id: product.id },
+                        data: { specs: JSON.stringify(translatedSpecs) }
+                      });
+                    } else {
+                        console.warn(`⚠️ Translation returned empty for Product ${product.id}. Saving raw specs.`);
+                        await prisma.product.update({
+                            where: { id: product.id },
+                            data: { specs: rawSpecsText }
+                        });
+                    }
+                  } catch (err) {
+                    console.error(`❌ Failed to translate specs for Product ${product.id}:`, err.message);
+                    await prisma.product.update({
+                        where: { id: product.id },
+                        data: { specs: rawSpecsText }
+                    });
+                  }
+            } else {
+              console.warn(`⚠️ SILICONFLOW_API_KEY missing. Saving raw specs for Product ${product.id}.`);
+              await prisma.product.update({
+                where: { id: product.id },
+                data: { specs: rawSpecsText }
+              });
             }
           }
         }
@@ -437,33 +481,22 @@ async function checkGoofishLinks() {
       }
 
     } catch (error) {
-      console.error(`Error processing product ${product.id}:`, error.message);
-      if (error.message.includes('404')) {
-         console.warn(`❌ Product ${product.id} returned 404. Deactivating.`);
-         await prisma.product.update({
-          where: { id: product.id },
-          data: { isActive: false, status: 'ARCHIVED' }
-        });
-        deactivatedCount++;
-      }
+      console.error(`Error processing Product ${product.id}:`, error.message);
     }
-
-    checkedCount++;
-    // Delay to avoid blocking
-    await new Promise(r => setTimeout(r, 2000));
   }
-
-  console.log('\n------------------------------------------------');
-  console.log(`Finished checking ${checkedCount} products.`);
-  console.log(`Deactivated: ${deactivatedCount}`);
-  console.log(`Updated Images: ${updatedCount}`);
-
-  await browser.close();
-  await prisma.$disconnect();
+  } catch (err) {
+    console.error('Fatal error during processing:', err);
+  } finally {
+    console.log('\n--- Summary ---');
+    console.log(`Processed: ${processedCount}`);
+    console.log(`Unavailable/Removed: ${unavailableCount}`);
+    console.log(`Images Updated: ${updatedCount}`);
+    
+    await browser.close();
+    await prisma.$disconnect();
+    console.log('Done.');
+    process.exit(0);
+  }
 }
 
-checkGoofishLinks().catch(async (e) => {
-  console.error('Fatal Error:', e);
-  await prisma.$disconnect();
-  process.exit(1);
-});
+checkGoofishLinks().catch(console.error);

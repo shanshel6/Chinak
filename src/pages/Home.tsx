@@ -63,6 +63,7 @@ const Home: React.FC = () => {
   const productsRef = useRef<Product[]>(usePageCacheStore.getState().homeProducts);
 
   const activeRequestRef = useRef<string | null>(null);
+  const inFlightPageRequestsRef = useRef<Set<string>>(new Set());
   const normalizeProductId = useCallback((id: number | string | null | undefined) => {
     const raw = String(id ?? '').trim();
     if (!raw) return '';
@@ -212,6 +213,9 @@ const Home: React.FC = () => {
   }, [mergeUniqueProducts, normalizeProductId, readCategoryCachedProducts, readGlobalCachedProducts, setHomeData]);
 
   const loadData = useCallback(async (pageNum: number, categoryId: string, isInitial = false, retryCount = 0) => {
+    const pageRequestKey = `${categoryId}:${pageNum}:${conditionFilter || 'all'}:${priceFilter || 'all'}`;
+    if (inFlightPageRequestsRef.current.has(pageRequestKey)) return;
+    inFlightPageRequestsRef.current.add(pageRequestKey);
     const requestId = `${categoryId}-${pageNum}-${Date.now()}`;
     activeRequestRef.current = requestId;
 
@@ -225,7 +229,7 @@ const Home: React.FC = () => {
       const condition = conditionFilter === 'new' ? 'new' : conditionFilter === 'used' ? 'used' : undefined;
 
       let prodsRes: any = null;
-      if (categoryId === 'all' && getHistoryTerms().length > 0) {
+      if (categoryId === 'all' && pageNum === 1 && getHistoryTerms().length > 0) {
         // ... (existing logic for history terms, but pass maxPrice and condition if API supports it)
         // For simplicity, we'll just fetch standard products with filters if filters are active
         if (condition || maxPrice) {
@@ -233,12 +237,13 @@ const Home: React.FC = () => {
         } else {
             // Existing history logic
             const historyTerms = getHistoryTerms();
-            const termBatch = shuffleTerms(historyTerms).slice(0, isInitial ? 3 : Math.min(2, historyTerms.length));
-            const perTermLimit = isInitial ? 6 : 8;
+            const termBatchSize = isInitial ? 2 : Math.min(2, historyTerms.length);
+            const termBatch = shuffleTerms(historyTerms).slice(0, termBatchSize);
+            const perTermLimit = isInitial ? 5 : 8;
             const termResponses = await Promise.all(
               termBatch.map((term) => fetchProducts(pageNum, perTermLimit, term))
             );
-            const baseResponse = await fetchProducts(pageNum, Math.max(4, 10 - termBatch.length * 2), '');
+            const baseResponse = await fetchProducts(pageNum, Math.max(4, 10 - termBatch.length * perTermLimit), '');
             const termProducts = termResponses.flatMap((r) => Array.isArray(r?.products) ? r.products : []);
             const baseProducts = Array.isArray(baseResponse?.products) ? baseResponse.products : [];
             const combined = mergeUniqueProducts(termProducts, baseProducts);
@@ -320,6 +325,7 @@ const Home: React.FC = () => {
       }
       setError(err.message || t('common.error_loading'));
     } finally {
+      inFlightPageRequestsRef.current.delete(pageRequestKey);
       if (activeRequestRef.current === requestId) {
         setLoading(false);
         setLoadingMore(false);
