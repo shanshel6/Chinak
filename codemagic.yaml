@@ -68,6 +68,9 @@ workflows:
           # Import the downloaded certificate (and its generated private key) into keychain
           # 'app-store-connect' saves the private key locally when it creates a new cert.
           # keychain add-certificates will find it in the default location.
+          
+          # CRITICAL FIX: Ensure the keychain is clean and unlocked before adding
+          # Sometimes stale certs in login keychain conflict.
           keychain add-certificates
 
           # 5. Create ExportOptions.plist
