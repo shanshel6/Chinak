@@ -33,14 +33,18 @@ workflows:
           keychain initialize
       - name: Set up code signing settings on Xcode project
         script: |
-          # Clean derived data to remove stale signing info
+          # NUCLEAR OPTION: Clean keychain to remove stale certificates
+          # The error "Revoke certificate" persists because Xcode sees a cert in the keychain
+          # (likely the default 'login.keychain') that doesn't have a private key.
+          
+          # 1. Clean DerivedData
           rm -rf ~/Library/Developer/Xcode/DerivedData
           
-          # STRATEGY CHANGE: Manual Signing with "xcode-project use-profiles"
-          # Since Automatic Signing is persistently failing with "Communication with Apple failed: Your team has no devices",
-          # even though we registered one, we will switch to MANUAL signing.
+          # 2. Try to delete existing "Apple Development" certificates from the default keychain
+          # This might fail if locked, but it's worth a shot.
+          security delete-certificate -c "Apple Development" || echo "No existing Apple Development certs found or deletion failed"
           
-          # 1. Fetch Signing Files (Certificate & Profile)
+          # 3. Fetch Signing Files (Certificate & Profile)
           # We explicitly fetch the Development Certificate and a matching Provisioning Profile.
           # We use --create to ensure they exist.
           
@@ -52,10 +56,10 @@ workflows:
             --key-id "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
             --private-key "$APP_STORE_CONNECT_PRIVATE_KEY"
             
-          # 2. Add to Keychain
+          # 4. Add to Keychain
           keychain add-certificates
           
-          # 3. Apply Profiles to Xcode Project
+          # 5. Apply Profiles to Xcode Project
           # This command modifies the project file to use Manual signing and sets the profile UUIDs.
           # This bypasses xcodebuild trying to talk to Apple during the build.
           echo "Applying profiles to Xcode project..."
