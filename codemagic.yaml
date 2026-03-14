@@ -3,15 +3,12 @@ workflows:
     name: iOS Release CODEMAGIC_MANAGED_SIGNING_V1
     instance_type: mac_mini_m1
     max_build_duration: 60
+    integrations:
+      app_store_connect: Codemagic API Key
     environment:
       xcode: latest
       groups:
         - app_store_credentials
-      ios_signing:
-        certificates:
-          - $CM_CERTIFICATE_REFERENCE
-        provisioning_profiles:
-          - $CM_PROFILE_REFERENCE
       vars:
         XCODE_PROJECT: "ios/App/App.xcodeproj"
         XCODE_SCHEME: "App"
@@ -36,7 +33,10 @@ workflows:
       - name: Initialize Keychain
         script: |
           keychain initialize
-      - name: Add certificates to keychain (CODEMAGIC_MANAGED_SIGNING_V1)
+      - name: Fetch/create signing files from App Store Connect (CODEMAGIC_MANAGED_SIGNING_V1)
+        script: |
+          app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create
+      - name: Add fetched certificates to keychain (CODEMAGIC_MANAGED_SIGNING_V1)
         script: |
           keychain add-certificates
       - name: Set up code signing settings on Xcode project (CODEMAGIC_MANAGED_SIGNING_V1)
