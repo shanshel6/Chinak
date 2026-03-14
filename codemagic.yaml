@@ -8,7 +8,7 @@ workflows:
       groups:
         - app_store_credentials # Must match the group name in Codemagic UI
       vars:
-        XCODE_WORKSPACE: "ios/App/App.xcworkspace"
+        XCODE_PROJECT: "ios/App/App.xcodeproj"
         XCODE_SCHEME: "App"
         BUNDLE_ID: "com.chinak.app"
     triggering:
@@ -31,7 +31,7 @@ workflows:
       - name: Build IPA for distribution
         script: |
           xcode-project build-ipa \
-            --workspace "$XCODE_WORKSPACE" \
+            --project "$XCODE_PROJECT" \
             --scheme "$XCODE_SCHEME" \
             --config Release
     artifacts:
