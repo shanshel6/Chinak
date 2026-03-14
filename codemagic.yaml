@@ -30,9 +30,6 @@ workflows:
           keychain initialize
       - name: Set up code signing settings on Xcode project
         script: |
-          # The user has likely fixed the variable name in UI by now.
-          # We revert to the clean standard implementation.
-          
           # Fetch signing files from App Store Connect
           # We pass credentials explicitly just to be safe.
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
@@ -43,10 +40,25 @@ workflows:
             --private-key "$APP_STORE_CONNECT_PRIVATE_KEY"
             
           # Apply profiles to Xcode project
-          # IMPORTANT: We must pass the private key to 'keychain add-certificates' too
-          # so it can pair the certificate with the key!
-          keychain add-certificates \
-            --certificate-key "$APP_STORE_CONNECT_PRIVATE_KEY"
+          # Note: keychain add-certificates typically does not take --certificate-key argument
+          # It assumes the certificate file itself is present or passed as argument.
+          # However, app-store-connect fetch-signing-files downloads certs to a default location.
+          # We need to tell keychain add-certificates where to look or rely on default behavior.
+          # But the error "Cannot save Signing Certificates without certificate private key"
+          # suggests we might need to manually import the private key if it's not in the p12.
+          
+          # Usually, 'keychain add-certificates' automatically picks up files downloaded by 'fetch-signing-files'.
+          # Let's try the default invocation again, but ensure we aren't passing invalid flags.
+          keychain add-certificates
+          
+          # If that fails, we might need to manually add the private key to the keychain.
+          # The API Key is NOT the signing key. The signing key (p12) comes from Apple.
+          # If 'fetch-signing-files' created a new cert, it might not have the private key locally
+          # unless we provided one or it generated a CSR.
+          
+          # However, for cloud signing with API Key, we usually rely on Codemagic to handle this.
+          # Let's try simplifying to just 'keychain add-certificates' which is the standard command.
+          # The previous error "unrecognized arguments: --certificate-key" confirms the flag was wrong.
             
       - name: Build IPA for distribution
         script: |
