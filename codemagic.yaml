@@ -65,6 +65,13 @@ workflows:
         script: |
           # Use direct xcodebuild commands to avoid 'xcode-project' forcing Manual signing
           
+          # Note: When using -authenticationKeyID, xcodebuild looks for the key file in specific locations.
+          # One of them is ~/private_keys/AuthKey_<KeyID>.p8, which we created above.
+          # HOWEVER, xcodebuild might also require -authenticationKeyPath if it can't find it.
+          
+          # Let's explicitly point to the key path to be safe.
+          AUTH_KEY_PATH=~/private_keys/AuthKey_$APP_STORE_CONNECT_KEY_IDENTIFIER.p8
+          
           # 1. Archive
           xcodebuild archive \
             -project "$XCODE_PROJECT" \
@@ -74,6 +81,7 @@ workflows:
             -allowProvisioningUpdates \
             -authenticationKeyID "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
             -authenticationKeyIssuerID "$APP_STORE_CONNECT_ISSUER_ID" \
+            -authenticationKeyPath "$AUTH_KEY_PATH" \
             CODE_SIGN_STYLE=Automatic \
             DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM"
 
@@ -84,7 +92,8 @@ workflows:
             -exportPath "$CM_BUILD_DIR/build/ios/ipa" \
             -allowProvisioningUpdates \
             -authenticationKeyID "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
-            -authenticationKeyIssuerID "$APP_STORE_CONNECT_ISSUER_ID"
+            -authenticationKeyIssuerID "$APP_STORE_CONNECT_ISSUER_ID" \
+            -authenticationKeyPath "$AUTH_KEY_PATH"
 
     artifacts:
       - build/ios/ipa/*.ipa
