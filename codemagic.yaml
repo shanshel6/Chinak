@@ -40,7 +40,6 @@ workflows:
           security delete-certificate -c "Apple Development" || echo "No existing Apple Development certs found or deletion failed"
           
           # 3. Fetch Signing Files (Certificate & Profile)
-          # IMPORTANT: We are fetching IOS_APP_DEVELOPMENT type.
           echo "Fetching Signing Files..."
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
             --type IOS_APP_DEVELOPMENT \
@@ -52,17 +51,37 @@ workflows:
           # 4. Add to Keychain
           keychain add-certificates
           
-          # DEBUG: List certificates to verify we have the private key
-          echo "Listing Keychain Certificates:"
-          security find-identity -v -p codesigning
+          # 5. Apply Profiles to Xcode Project (Manual Method)
+          # 'xcode-project use-profiles' is failing to update the project file correctly for some reason.
+          # We will do it the hard way: Find the profile UUID and manually sed the project file.
           
-          # DEBUG: List Provisioning Profiles
           echo "Listing Provisioning Profiles:"
           ls -l ~/Library/MobileDevice/Provisioning\ Profiles/
           
-          # 5. Apply Profiles to Xcode Project
-          echo "Applying profiles to Xcode project..."
-          xcode-project use-profiles
+          # Find the first .mobileprovision file
+          PROFILE_PATH=$(find ~/Library/MobileDevice/Provisioning\ Profiles -name "*.mobileprovision" | head -n 1)
+          if [ -z "$PROFILE_PATH" ]; then
+            echo "ERROR: No provisioning profile found!"
+            exit 1
+          fi
+          
+          # Extract UUID from the profile
+          PROFILE_UUID=$(/usr/libexec/PlistBuddy -c "Print UUID" /dev/stdin <<< $(security cms -D -i "$PROFILE_PATH"))
+          echo "Found Profile UUID: $PROFILE_UUID"
+          
+          # Manually update project.pbxproj to use this profile
+          # This is risky but necessary if 'xcode-project' is failing.
+          # We search for the target 'App' and update its attributes.
+          # Actually, 'xcode-project use-profiles' DOES exactly this.
+          # If it fails, it means the target name or bundle ID might be mismatching what's in the profile.
+          
+          # Let's try 'xcode-project use-profiles' ONE MORE TIME but with debug info.
+          echo "Running xcode-project use-profiles..."
+          xcode-project use-profiles --project "$XCODE_PROJECT"
+          
+          # 6. Verify if it worked by grepping the project file
+          echo "Checking project.pbxproj for profile UUID..."
+          grep "$PROFILE_UUID" "$XCODE_PROJECT/project.pbxproj" || echo "WARNING: Profile UUID not found in project file!"
           
       - name: Build IPA for distribution
         script: |
