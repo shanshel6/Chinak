@@ -39,13 +39,24 @@ workflows:
           # 2. Write the API Key to a file that Xcode can find
           echo "$APP_STORE_CONNECT_PRIVATE_KEY" > ~/private_keys/AuthKey_$APP_STORE_CONNECT_KEY_IDENTIFIER.p8
           
-          # 3. Configure Xcode to use this key (via Codemagic environment or manual placement)
-          # Note: Codemagic's VM usually handles this if we use the 'app-store-connect' tool,
-          # but since that tool is failing to pair keys, we will skip the explicit fetch.
-          
-          # Instead, we just ensure the keychain exists (done above) and proceed to build.
-          # The 'ALLOW_PROVISIONING_UPDATES=YES' flag in the next step is the real magic.
-          # It tells Xcode: "Use the credentials I gave you to talk to Apple and fix signing."
+          # 3. Create ExportOptions.plist
+          # This is required for xcodebuild -exportArchive when using automatic signing
+          cat > "$CM_BUILD_DIR/export_options.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>method</key>
+              <string>app-store</string>
+              <key>teamID</key>
+              <string>$APP_STORE_CONNECT_ISSUER_ID</string>
+              <key>destination</key>
+              <string>export</string>
+              <key>signingStyle</key>
+              <string>automatic</string>
+          </dict>
+          </plist>
+          EOF
           
           echo "Skipping manual certificate fetch. Relying on Xcode Automatic Signing."
           
@@ -63,7 +74,8 @@ workflows:
             --project "$XCODE_PROJECT" \
             --scheme "$XCODE_SCHEME" \
             --config Release \
-            --archive-xcargs "ALLOW_PROVISIONING_UPDATES=YES CODE_SIGN_STYLE=Automatic DEVELOPMENT_TEAM=$APP_STORE_CONNECT_ISSUER_ID"
+            --archive-xcargs "ALLOW_PROVISIONING_UPDATES=YES CODE_SIGN_STYLE=Automatic DEVELOPMENT_TEAM=$APP_STORE_CONNECT_ISSUER_ID" \
+            --export-options-plist "$CM_BUILD_DIR/export_options.plist"
             
     artifacts:
       - build/ios/ipa/*.ipa
