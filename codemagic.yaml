@@ -37,13 +37,19 @@ workflows:
             
           # Apply profiles to Xcode project
           keychain add-certificates
-          xcode-project use-profiles
+          
+          # Force Manual signing for the Release configuration
+          xcode-project use-profiles --project "$XCODE_PROJECT"
+          
+          # Explicitly set the Code Signing Identity and Provisioning Profile if needed (optional backup)
+          # sed -i '' 's/CODE_SIGN_STYLE = Automatic;/CODE_SIGN_STYLE = Manual;/g' ios/App/App.xcodeproj/project.pbxproj
       - name: Build IPA for distribution
         script: |
           xcode-project build-ipa \
             --project "$XCODE_PROJECT" \
             --scheme "$XCODE_SCHEME" \
-            --config Release
+            --config Release \
+            --archive-flags "-allowProvisioningUpdates"
     artifacts:
       - build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log
