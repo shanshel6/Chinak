@@ -52,8 +52,8 @@ workflows:
           keychain add-certificates
           
           # 5. Apply Profiles to Xcode Project (Manual Method)
-          # 'xcode-project use-profiles' is failing to update the project file correctly for some reason.
-          # We will do it the hard way: Find the profile UUID and manually sed the project file.
+          # 'xcode-project use-profiles' is seemingly failing to apply the profile correctly.
+          # We will force-inject the Provisioning Profile UUID into the project.pbxproj file using sed.
           
           echo "Listing Provisioning Profiles:"
           ls -l ~/Library/MobileDevice/Provisioning\ Profiles/
@@ -65,23 +65,47 @@ workflows:
             exit 1
           fi
           
-          # Extract UUID from the profile
+          # Extract UUID and Name from the profile
           PROFILE_UUID=$(/usr/libexec/PlistBuddy -c "Print UUID" /dev/stdin <<< $(security cms -D -i "$PROFILE_PATH"))
+          PROFILE_NAME=$(/usr/libexec/PlistBuddy -c "Print Name" /dev/stdin <<< $(security cms -D -i "$PROFILE_PATH"))
           echo "Found Profile UUID: $PROFILE_UUID"
+          echo "Found Profile Name: $PROFILE_NAME"
           
-          # Manually update project.pbxproj to use this profile
-          # This is risky but necessary if 'xcode-project' is failing.
-          # We search for the target 'App' and update its attributes.
-          # Actually, 'xcode-project use-profiles' DOES exactly this.
-          # If it fails, it means the target name or bundle ID might be mismatching what's in the profile.
+          # Use sed to update project.pbxproj
+          # We look for the 'App' target configuration section and inject the PROVISIONING_PROFILE_SPECIFIER
+          # Note: This is a bit brittle, but 'xcode-project' wrapper seems to be failing us.
           
-          # Let's try 'xcode-project use-profiles' ONE MORE TIME but with debug info.
+          PROJECT_FILE="$XCODE_PROJECT/project.pbxproj"
+          
+          # Disable Automatic Signing
+          sed -i '' 's/ProvisioningStyle = Automatic;/ProvisioningStyle = Manual;/g' "$PROJECT_FILE"
+          
+          # Set Development Team
+          sed -i '' "s/DEVELOPMENT_TEAM = .*/DEVELOPMENT_TEAM = $DEVELOPMENT_TEAM;/g" "$PROJECT_FILE"
+          
+          # Set Provisioning Profile Specifier (UUID) for Release configuration
+          # We'll just replace it globally or append it if missing. 
+          # Simplest hack: Replace any existing specifier or insert it.
+          # However, inserting into pbxproj with sed is hard.
+          
+          # Better approach: Use 'xcode-project use-profiles' but verifying why it failed.
+          # It might be because the target name 'App' matches multiple things or it's confused.
+          
           echo "Running xcode-project use-profiles..."
           xcode-project use-profiles --project "$XCODE_PROJECT"
           
-          # 6. Verify if it worked by grepping the project file
-          echo "Checking project.pbxproj for profile UUID..."
-          grep "$PROFILE_UUID" "$XCODE_PROJECT/project.pbxproj" || echo "WARNING: Profile UUID not found in project file!"
+          # FORCE VERIFICATION: If grep fails, we fail the build here to know immediately
+          if grep -q "$PROFILE_UUID" "$PROJECT_FILE"; then
+             echo "SUCCESS: Profile UUID found in project file."
+          else
+             echo "ERROR: Profile UUID NOT found in project file. 'xcode-project' failed."
+             echo "Attempting crude sed injection..."
+             # Replace "CODE_SIGN_STYLE = Manual;" with "CODE_SIGN_STYLE = Manual; PROVISIONING_PROFILE_SPECIFIER = \"$PROFILE_UUID\";"
+             sed -i '' "s/CODE_SIGN_STYLE = Manual;/CODE_SIGN_STYLE = Manual; PROVISIONING_PROFILE_SPECIFIER = \"$PROFILE_UUID\";/g" "$PROJECT_FILE"
+             
+             # Also explicit PROVISIONING_PROFILE key
+             sed -i '' "s/CODE_SIGN_STYLE = Manual;/CODE_SIGN_STYLE = Manual; PROVISIONING_PROFILE = \"$PROFILE_UUID\";/g" "$PROJECT_FILE"
+          fi
           
       - name: Build IPA for distribution
         script: |
