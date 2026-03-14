@@ -30,12 +30,20 @@ workflows:
           keychain initialize
       - name: Set up code signing settings on Xcode project
         script: |
-          # Debug: Check if env vars are present (only printing first few chars for security)
-          echo "Issuer ID length: ${#APP_STORE_CONNECT_ISSUER_ID}"
-          echo "Key ID length: ${#APP_STORE_CONNECT_KEY_IDENTIFIER}"
+          # Debug: Print all environment variable names (keys only) to check for typos
+          echo "Available Environment Variables:"
+          printenv | cut -d= -f1 | sort
           
+          # Debug: Check specifically for our expected variables
+          if [ -z "$APP_STORE_CONNECT_ISSUER_ID" ]; then
+            echo "ERROR: APP_STORE_CONNECT_ISSUER_ID is missing or empty!"
+            echo "Please check Codemagic UI > Environment variables."
+            echo "Ensure the group name is exactly 'app_store_credentials' (no spaces)."
+            echo "Ensure the variable name is exactly 'APP_STORE_CONNECT_ISSUER_ID'."
+            exit 1
+          fi
+
           # Fetch signing files from App Store Connect
-          # Explicitly passing API credentials to ensure they are picked up
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
             --type IOS_APP_STORE \
             --create \
