@@ -10,10 +10,8 @@ workflows:
       groups:
         - app_store_credentials
       ios_signing:
-        certificates:
-          - $CM_CERTIFICATE_REFERENCE
-        provisioning_profiles:
-          - $CM_PROFILE_REFERENCE
+        distribution_type: app_store
+        bundle_identifier: com.chinak.app
       vars:
         XCODE_PROJECT: "ios/App/App.xcodeproj"
         XCODE_SCHEME: "App"
