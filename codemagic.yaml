@@ -33,21 +33,14 @@ workflows:
           keychain initialize
       - name: Set up code signing settings on Xcode project
         script: |
-          # NUCLEAR OPTION: Clean keychain to remove stale certificates
-          # The error "Revoke certificate" persists because Xcode sees a cert in the keychain
-          # (likely the default 'login.keychain') that doesn't have a private key.
-          
           # 1. Clean DerivedData
           rm -rf ~/Library/Developer/Xcode/DerivedData
           
           # 2. Try to delete existing "Apple Development" certificates from the default keychain
-          # This might fail if locked, but it's worth a shot.
           security delete-certificate -c "Apple Development" || echo "No existing Apple Development certs found or deletion failed"
           
           # 3. Fetch Signing Files (Certificate & Profile)
-          # We explicitly fetch the Development Certificate and a matching Provisioning Profile.
-          # We use --create to ensure they exist.
-          
+          # IMPORTANT: We are fetching IOS_APP_DEVELOPMENT type.
           echo "Fetching Signing Files..."
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
             --type IOS_APP_DEVELOPMENT \
@@ -59,16 +52,21 @@ workflows:
           # 4. Add to Keychain
           keychain add-certificates
           
+          # DEBUG: List certificates to verify we have the private key
+          echo "Listing Keychain Certificates:"
+          security find-identity -v -p codesigning
+          
+          # DEBUG: List Provisioning Profiles
+          echo "Listing Provisioning Profiles:"
+          ls -l ~/Library/MobileDevice/Provisioning\ Profiles/
+          
           # 5. Apply Profiles to Xcode Project
-          # This command modifies the project file to use Manual signing and sets the profile UUIDs.
-          # This bypasses xcodebuild trying to talk to Apple during the build.
           echo "Applying profiles to Xcode project..."
           xcode-project use-profiles
           
       - name: Build IPA for distribution
         script: |
           # Reverting to 'xcode-project build-ipa' which is robust for Manual Signing
-          # It automatically detects the profile we just applied with 'use-profiles'.
           
           xcode-project build-ipa \
             --project "$XCODE_PROJECT" \
