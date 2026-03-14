@@ -1,6 +1,6 @@
 workflows:
   ios-release:
-    name: iOS Release
+    name: iOS Release DIRECT_XCODEBUILD_V4
     instance_type: mac_mini_m1
     max_build_duration: 60
     environment:
@@ -31,11 +31,11 @@ workflows:
       - name: Initialize Keychain
         script: |
           keychain initialize
-      - name: Set up code signing settings on Xcode project
+      - name: Set up code signing settings on Xcode project (DIRECT_XCODEBUILD_V4)
         script: |
           rm -rf ~/Library/Developer/Xcode/DerivedData
 
-          echo "DIRECT_XCODEBUILD_V3"
+          echo "DIRECT_XCODEBUILD_V4"
 
           security delete-certificate -c "Apple Development" || true
           security delete-certificate -c "Apple Distribution" || true
@@ -81,7 +81,7 @@ workflows:
           echo "PROFILE_UUID=$PROFILE_UUID" > "$CM_BUILD_DIR/signing.env"
           echo "PROFILE_NAME=$PROFILE_NAME" >> "$CM_BUILD_DIR/signing.env"
           
-      - name: Build IPA for distribution
+      - name: Build IPA for distribution (DIRECT_XCODEBUILD_V4)
         script: |
           source "$CM_BUILD_DIR/signing.env"
 
