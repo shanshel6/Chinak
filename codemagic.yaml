@@ -9,9 +9,6 @@ workflows:
       xcode: latest
       groups:
         - app_store_credentials
-      ios_signing:
-        distribution_type: app_store
-        bundle_identifier: com.chinak.app
       vars:
         XCODE_PROJECT: "ios/App/App.xcodeproj"
         XCODE_SCHEME: "App"
@@ -36,6 +33,9 @@ workflows:
       - name: Initialize Keychain
         script: |
           keychain initialize
+      - name: Fetch/create signing files from App Store Connect (CODEMAGIC_MANAGED_SIGNING_V1)
+        script: |
+          app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create
       - name: Add certificates to keychain (CODEMAGIC_MANAGED_SIGNING_V1)
         script: |
           keychain add-certificates
