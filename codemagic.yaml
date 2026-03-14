@@ -1,12 +1,21 @@
 workflows:
   ios-release:
-    name: iOS Release DIRECT_XCODEBUILD_V4
+    name: iOS Release CODEMAGIC_MANAGED_SIGNING_V1
     instance_type: mac_mini_m1
     max_build_duration: 60
+    integrations:
+      app_store_connect: Codemagic API key
     environment:
       xcode: latest
       groups:
         - app_store_credentials # Must match the group name in Codemagic UI
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.chinak.app
+        certificates:
+          - $CM_CERTIFICATE_REFERENCE
+        provisioning_profiles:
+          - $CM_PROFILE_REFERENCE
       vars:
         XCODE_PROJECT: "ios/App/App.xcodeproj"
         XCODE_SCHEME: "App"
@@ -31,75 +40,17 @@ workflows:
       - name: Initialize Keychain
         script: |
           keychain initialize
-      - name: Set up code signing settings on Xcode project (DIRECT_XCODEBUILD_V4)
+      - name: Set up code signing settings on Xcode project (CODEMAGIC_MANAGED_SIGNING_V1)
         script: |
-          rm -rf ~/Library/Developer/Xcode/DerivedData
-
-          echo "DIRECT_XCODEBUILD_V4"
-
-          security delete-certificate -c "Apple Development" || true
-          security delete-certificate -c "Apple Distribution" || true
-
-          app-store-connect fetch-signing-files "$BUNDLE_ID" \
-            --type IOS_APP_STORE \
-            --create \
-            --issuer-id "$APP_STORE_CONNECT_ISSUER_ID" \
-            --key-id "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
-            --private-key "$APP_STORE_CONNECT_PRIVATE_KEY"
-
-          keychain add-certificates
-
-          PROFILE_PATH=$(find ~/Library/MobileDevice/Provisioning\ Profiles -name "*.mobileprovision" | head -n 1)
-          if [ -z "$PROFILE_PATH" ]; then
-            echo "No provisioning profile found"
-            exit 1
-          fi
-
-          PROFILE_UUID=$(security cms -D -i "$PROFILE_PATH" | /usr/libexec/PlistBuddy -c "Print :UUID" /dev/stdin)
-          PROFILE_NAME=$(security cms -D -i "$PROFILE_PATH" | /usr/libexec/PlistBuddy -c "Print :Name" /dev/stdin)
-
-          cat > "$CM_BUILD_DIR/export_options.plist" <<EOF
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>method</key>
-            <string>app-store</string>
-            <key>signingStyle</key>
-            <string>manual</string>
-            <key>teamID</key>
-            <string>$DEVELOPMENT_TEAM</string>
-            <key>provisioningProfiles</key>
-            <dict>
-              <key>$BUNDLE_ID</key>
-              <string>$PROFILE_NAME</string>
-            </dict>
-          </dict>
-          </plist>
-          EOF
-
-          echo "PROFILE_UUID=$PROFILE_UUID" > "$CM_BUILD_DIR/signing.env"
-          echo "PROFILE_NAME=$PROFILE_NAME" >> "$CM_BUILD_DIR/signing.env"
+          echo "CODEMAGIC_MANAGED_SIGNING_V1"
+          xcode-project use-profiles
           
-      - name: Build IPA for distribution (DIRECT_XCODEBUILD_V4)
+      - name: Build IPA for distribution (CODEMAGIC_MANAGED_SIGNING_V1)
         script: |
-          source "$CM_BUILD_DIR/signing.env"
-
-          xcodebuild archive \
+          xcode-project build-ipa \
             -project "$XCODE_PROJECT" \
             -scheme "$XCODE_SCHEME" \
-            -config Release \
-            -archivePath "$CM_BUILD_DIR/App.xcarchive" \
-            CODE_SIGN_STYLE=Manual \
-            DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM" \
-            PROVISIONING_PROFILE="$PROFILE_UUID" \
-            PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME" \
-            CODE_SIGN_IDENTITY="Apple Distribution"
-
-          xcodebuild -exportArchive \
-            -archivePath "$CM_BUILD_DIR/App.xcarchive" \
-            -exportOptionsPlist "$CM_BUILD_DIR/export_options.plist" \
-            -exportPath "$CM_BUILD_DIR/build/ios/ipa"
+            -config Release
             
     artifacts:
       - build/ios/ipa/*.ipa
