@@ -25,8 +25,18 @@ workflows:
       - name: Build web assets and sync Capacitor
         script: |
           npm run build:ios
+      - name: Initialize Keychain
+        script: |
+          keychain initialize
       - name: Set up code signing settings on Xcode project
         script: |
+          # Fetch signing files from App Store Connect
+          app-store-connect fetch-signing-files "$BUNDLE_ID" \
+            --type IOS_APP_STORE \
+            --create
+            
+          # Apply profiles to Xcode project
+          keychain add-certificates
           xcode-project use-profiles
       - name: Build IPA for distribution
         script: |
