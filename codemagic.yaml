@@ -33,31 +33,15 @@ workflows:
           keychain initialize
       - name: Set up code signing settings on Xcode project
         script: |
-          # SIMPLIFIED STRATEGY: Rely purely on Xcode Automatic Signing
-          # We authenticate with the API Key, and Xcode will download/create what it needs.
+          # STRATEGY CHANGE: Manual Signing with "xcode-project use-profiles"
+          # Since Automatic Signing is persistently failing with "Communication with Apple failed: Your team has no devices",
+          # even though we registered one, we will switch to MANUAL signing.
           
-          # 1. Create a directory for authentication
-          mkdir -p ~/private_keys
+          # 1. Fetch Signing Files (Certificate & Profile)
+          # We explicitly fetch the Development Certificate and a matching Provisioning Profile.
+          # We use --create to ensure they exist.
           
-          # 2. Write the API Key to a file that Xcode can find
-          echo "$APP_STORE_CONNECT_PRIVATE_KEY" > ~/private_keys/AuthKey_$APP_STORE_CONNECT_KEY_IDENTIFIER.p8
-          
-          # 3. Register the user's device (REQUIRED for Automatic Signing)
-          echo "Registering device: $TEST_DEVICE_NAME ($TEST_DEVICE_UDID)"
-          app-store-connect devices create \
-            --name "$TEST_DEVICE_NAME" \
-            --udid "$TEST_DEVICE_UDID" \
-            --platform IOS \
-            --issuer-id "$APP_STORE_CONNECT_ISSUER_ID" \
-            --key-id "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
-            --private-key "$APP_STORE_CONNECT_PRIVATE_KEY" || echo "Device might already exist, continuing..."
-            
-          # 4. Force Creation of a NEW Development Certificate
-          # Since Xcode is complaining about a missing private key for an existing cert,
-          # we will manually create a NEW one and import it into the keychain.
-          # This gives Xcode a valid certificate + private key pair to use.
-          
-          echo "Fetching/Creating iOS Development Certificate..."
+          echo "Fetching Signing Files..."
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
             --type IOS_APP_DEVELOPMENT \
             --create \
@@ -65,66 +49,31 @@ workflows:
             --key-id "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
             --private-key "$APP_STORE_CONNECT_PRIVATE_KEY"
             
-          # Import the downloaded certificate (and its generated private key) into keychain
-          # 'app-store-connect' saves the private key locally when it creates a new cert.
-          # keychain add-certificates will find it in the default location.
-          
-          # CRITICAL FIX: Ensure the keychain is clean and unlocked before adding
-          # Sometimes stale certs in login keychain conflict.
+          # 2. Add to Keychain
           keychain add-certificates
-
-          # 5. Create ExportOptions.plist
-          cat > "$CM_BUILD_DIR/export_options.plist" <<EOF
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>method</key>
-              <string>app-store</string>
-              <key>teamID</key>
-              <string>$DEVELOPMENT_TEAM</string>
-              <key>destination</key>
-              <string>export</string>
-              <key>signingStyle</key>
-              <string>automatic</string>
-          </dict>
-          </plist>
-          EOF
           
-          echo "Device registered & Cert created. Proceeding with Xcode Automatic Signing."
+          # 3. Apply Profiles to Xcode Project
+          # This command modifies the project file to use Manual signing and sets the profile UUIDs.
+          # This bypasses xcodebuild trying to talk to Apple during the build.
+          echo "Applying profiles to Xcode project..."
+          xcode-project use-profiles
+          
+          # 4. Create ExportOptions.plist
+          # For manual signing export, we need to specify the provisioning profile name/UUID mapping
+          # But xcode-project build-ipa handles this easier usually.
+          # However, let's keep our export_options just in case, but updated for manual?
+          # Actually, we will rely on xcode-project build-ipa wrapper again, as it handles manual signing details well.
           
       - name: Build IPA for distribution
         script: |
-          # Note: When using -authenticationKeyID, xcodebuild looks for the key file in specific locations.
-          AUTH_KEY_PATH=~/private_keys/AuthKey_$APP_STORE_CONNECT_KEY_IDENTIFIER.p8
+          # Reverting to 'xcode-project build-ipa' which is robust for Manual Signing
+          # It automatically detects the profile we just applied with 'use-profiles'.
           
-          rm -rf ~/Library/Developer/Xcode/DerivedData
-          
-          # 1. Archive
-          # We still use Automatic Signing, but now Xcode should find the valid cert we just put in the keychain
-          # and use it instead of complaining about the missing one.
-          xcodebuild archive \
-            -project "$XCODE_PROJECT" \
-            -scheme "$XCODE_SCHEME" \
-            -configuration Release \
-            -archivePath "$CM_BUILD_DIR/App.xcarchive" \
-            -allowProvisioningUpdates \
-            -authenticationKeyID "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
-            -authenticationKeyIssuerID "$APP_STORE_CONNECT_ISSUER_ID" \
-            -authenticationKeyPath "$AUTH_KEY_PATH" \
-            CODE_SIGN_STYLE=Automatic \
-            DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM"
-
-          # 2. Export IPA
-          xcodebuild -exportArchive \
-            -archivePath "$CM_BUILD_DIR/App.xcarchive" \
-            -exportOptionsPlist "$CM_BUILD_DIR/export_options.plist" \
-            -exportPath "$CM_BUILD_DIR/build/ios/ipa" \
-            -allowProvisioningUpdates \
-            -authenticationKeyID "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
-            -authenticationKeyIssuerID "$APP_STORE_CONNECT_ISSUER_ID" \
-            -authenticationKeyPath "$AUTH_KEY_PATH"
-
+          xcode-project build-ipa \
+            --project "$XCODE_PROJECT" \
+            --scheme "$XCODE_SCHEME" \
+            --config Release
+            
     artifacts:
       - build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log
