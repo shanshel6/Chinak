@@ -7,6 +7,11 @@ workflows:
       xcode: latest
       groups:
         - app_store_credentials
+      ios_signing:
+        certificates:
+          - $CM_CERTIFICATE_REFERENCE
+        provisioning_profiles:
+          - $CM_PROFILE_REFERENCE
       vars:
         XCODE_PROJECT: "ios/App/App.xcodeproj"
         XCODE_SCHEME: "App"
@@ -31,12 +36,6 @@ workflows:
       - name: Initialize Keychain
         script: |
           keychain initialize
-      - name: Fetch signing files from App Store Connect (CODEMAGIC_MANAGED_SIGNING_V1)
-        script: |
-          app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create
-      - name: Add certificates to keychain (CODEMAGIC_MANAGED_SIGNING_V1)
-        script: |
-          keychain add-certificates
       - name: Set up code signing settings on Xcode project (CODEMAGIC_MANAGED_SIGNING_V1)
         script: |
           echo "CODEMAGIC_MANAGED_SIGNING_V1"
