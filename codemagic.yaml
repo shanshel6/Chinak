@@ -52,8 +52,6 @@ workflows:
           keychain add-certificates
           
           # 5. Apply Profiles to Xcode Project (Manual Method)
-          # 'xcode-project use-profiles' is seemingly failing to apply the profile correctly.
-          # We will force-inject the Provisioning Profile UUID into the project.pbxproj file using sed.
           
           echo "Listing Provisioning Profiles:"
           ls -l ~/Library/MobileDevice/Provisioning\ Profiles/
@@ -65,56 +63,72 @@ workflows:
             exit 1
           fi
           
-          # Extract UUID and Name from the profile
+          # Extract UUID
           PROFILE_UUID=$(/usr/libexec/PlistBuddy -c "Print UUID" /dev/stdin <<< $(security cms -D -i "$PROFILE_PATH"))
-          PROFILE_NAME=$(/usr/libexec/PlistBuddy -c "Print Name" /dev/stdin <<< $(security cms -D -i "$PROFILE_PATH"))
           echo "Found Profile UUID: $PROFILE_UUID"
-          echo "Found Profile Name: $PROFILE_NAME"
           
-          # Use sed to update project.pbxproj
-          # We look for the 'App' target configuration section and inject the PROVISIONING_PROFILE_SPECIFIER
-          # Note: This is a bit brittle, but 'xcode-project' wrapper seems to be failing us.
+          # DEBUG: Check project targets
+          echo "Listing project targets:"
+          xcodebuild -project "$XCODE_PROJECT" -list
           
+          # Manually update project.pbxproj to use this profile
           PROJECT_FILE="$XCODE_PROJECT/project.pbxproj"
           
-          # Disable Automatic Signing
+          # Disable Automatic Signing and set Team
           sed -i '' 's/ProvisioningStyle = Automatic;/ProvisioningStyle = Manual;/g' "$PROJECT_FILE"
-          
-          # Set Development Team
           sed -i '' "s/DEVELOPMENT_TEAM = .*/DEVELOPMENT_TEAM = $DEVELOPMENT_TEAM;/g" "$PROJECT_FILE"
           
-          # Set Provisioning Profile Specifier (UUID) for Release configuration
-          # We'll just replace it globally or append it if missing. 
-          # Simplest hack: Replace any existing specifier or insert it.
-          # However, inserting into pbxproj with sed is hard.
+          # CRITICAL: We need to set the PROVISIONING_PROFILE_SPECIFIER for the correct target.
+          # The sed command below tries to replace existing manual signing keys.
+          # If they don't exist (because the project was previously set to Automatic), sed might miss them.
+          # So we use a more aggressive approach: We use xcodebuild to set the build settings directly in the archive command.
           
-          # Better approach: Use 'xcode-project use-profiles' but verifying why it failed.
-          # It might be because the target name 'App' matches multiple things or it's confused.
+          # But we will still try to patch the project file for good measure.
+          # We look for the buildSettings block and try to insert the profile specifier.
           
+          # Use 'xcode-project use-profiles' again, but we assume it might be missing the target if the scheme name != target name.
           echo "Running xcode-project use-profiles..."
-          xcode-project use-profiles --project "$XCODE_PROJECT"
+          xcode-project use-profiles --project "$XCODE_PROJECT" --target "App"
           
           # FORCE VERIFICATION: If grep fails, we fail the build here to know immediately
           if grep -q "$PROFILE_UUID" "$PROJECT_FILE"; then
              echo "SUCCESS: Profile UUID found in project file."
           else
-             echo "ERROR: Profile UUID NOT found in project file. 'xcode-project' failed."
-             echo "Attempting crude sed injection..."
-             # Replace "CODE_SIGN_STYLE = Manual;" with "CODE_SIGN_STYLE = Manual; PROVISIONING_PROFILE_SPECIFIER = \"$PROFILE_UUID\";"
-             sed -i '' "s/CODE_SIGN_STYLE = Manual;/CODE_SIGN_STYLE = Manual; PROVISIONING_PROFILE_SPECIFIER = \"$PROFILE_UUID\";/g" "$PROJECT_FILE"
-             
-             # Also explicit PROVISIONING_PROFILE key
-             sed -i '' "s/CODE_SIGN_STYLE = Manual;/CODE_SIGN_STYLE = Manual; PROVISIONING_PROFILE = \"$PROFILE_UUID\";/g" "$PROJECT_FILE"
+             echo "WARNING: Profile UUID NOT found in project file."
           fi
           
       - name: Build IPA for distribution
         script: |
-          # Reverting to 'xcode-project build-ipa' which is robust for Manual Signing
+          # Retrieve the profile UUID again
+          PROFILE_PATH=$(find ~/Library/MobileDevice/Provisioning\ Profiles -name "*.mobileprovision" | head -n 1)
+          PROFILE_UUID=$(/usr/libexec/PlistBuddy -c "Print UUID" /dev/stdin <<< $(security cms -D -i "$PROFILE_PATH"))
           
-          xcode-project build-ipa \
-            --project "$XCODE_PROJECT" \
-            --scheme "$XCODE_SCHEME" \
-            --config Release
+          # PASS SIGNING SETTINGS DIRECTLY TO XCODEBUILD
+          # This overrides whatever is in the project file.
+          # This is the most reliable way to force manual signing in CI.
+          
+          echo "Forcing build with Profile: $PROFILE_UUID"
+          
+          xcodebuild archive \
+            -project "$XCODE_PROJECT" \
+            -scheme "$XCODE_SCHEME" \
+            -config Release \
+            -archivePath "$CM_BUILD_DIR/App.xcarchive" \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM" \
+            PROVISIONING_PROFILE="$PROFILE_UUID" \
+            PROVISIONING_PROFILE_SPECIFIER="$PROFILE_UUID" \
+            CODE_SIGN_IDENTITY="Apple Development"
+
+          # Export IPA
+          xcodebuild -exportArchive \
+            -archivePath "$CM_BUILD_DIR/App.xcarchive" \
+            -exportOptionsPlist "$CM_BUILD_DIR/export_options.plist" \
+            -exportPath "$CM_BUILD_DIR/build/ios/ipa" \
+            PROVISIONING_PROFILE="$PROFILE_UUID" \
+            PROVISIONING_PROFILE_SPECIFIER="$PROFILE_UUID" \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM"
             
     artifacts:
       - build/ios/ipa/*.ipa
