@@ -38,15 +38,15 @@ workflows:
           # Apply profiles to Xcode project
           keychain add-certificates
           
-          # Force Manual signing for the Release configuration
-          xcode-project use-profiles --project "$XCODE_PROJECT"
+          # We are skipping 'xcode-project use-profiles' to let Xcode handle Automatic Signing
+          # with the profiles we just fetched/created.
       - name: Build IPA for distribution
         script: |
           xcode-project build-ipa \
             --project "$XCODE_PROJECT" \
             --scheme "$XCODE_SCHEME" \
             --config Release \
-            --archive-xcargs "ALLOW_PROVISIONING_UPDATES=YES"
+            --archive-xcargs "ALLOW_PROVISIONING_UPDATES=YES CODE_SIGN_STYLE=Automatic"
     artifacts:
       - build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log
