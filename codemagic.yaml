@@ -11,6 +11,7 @@ workflows:
         XCODE_PROJECT: "ios/App/App.xcodeproj"
         XCODE_SCHEME: "App"
         BUNDLE_ID: "com.chinak.app"
+        DEVELOPMENT_TEAM: "3GF82YPKY5" # Your Apple Team ID
     triggering:
       events:
         - push
@@ -49,7 +50,7 @@ workflows:
               <key>method</key>
               <string>app-store</string>
               <key>teamID</key>
-              <string>$APP_STORE_CONNECT_ISSUER_ID</string>
+              <string>$DEVELOPMENT_TEAM</string>
               <key>destination</key>
               <string>export</string>
               <key>signingStyle</key>
@@ -62,21 +63,29 @@ workflows:
           
       - name: Build IPA for distribution
         script: |
-          # We need to pass the authentication details to xcodebuild.
-          # Since we can't easily pass the key file path to standard xcodebuild without a custom plist,
-          # we will try the Codemagic way one last time but WITHOUT 'keychain add-certificates'.
+          # Use direct xcodebuild commands to avoid 'xcode-project' forcing Manual signing
           
-          # Alternative: Use 'xcode-project build-ipa' which wraps xcodebuild.
-          # We add -authenticationKeyID, -authenticationKeyIssuerID, etc. if supported,
-          # OR we rely on the environment variables being present.
-          
-          xcode-project build-ipa \
-            --project "$XCODE_PROJECT" \
-            --scheme "$XCODE_SCHEME" \
-            --config Release \
-            --archive-xcargs "ALLOW_PROVISIONING_UPDATES=YES CODE_SIGN_STYLE=Automatic DEVELOPMENT_TEAM=$APP_STORE_CONNECT_ISSUER_ID" \
-            --export-options-plist "$CM_BUILD_DIR/export_options.plist"
-            
+          # 1. Archive
+          xcodebuild archive \
+            -project "$XCODE_PROJECT" \
+            -scheme "$XCODE_SCHEME" \
+            -configuration Release \
+            -archivePath "$CM_BUILD_DIR/App.xcarchive" \
+            -allowProvisioningUpdates \
+            -authenticationKeyID "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
+            -authenticationKeyIssuerID "$APP_STORE_CONNECT_ISSUER_ID" \
+            CODE_SIGN_STYLE=Automatic \
+            DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM"
+
+          # 2. Export IPA
+          xcodebuild -exportArchive \
+            -archivePath "$CM_BUILD_DIR/App.xcarchive" \
+            -exportOptionsPlist "$CM_BUILD_DIR/export_options.plist" \
+            -exportPath "$CM_BUILD_DIR/build/ios/ipa" \
+            -allowProvisioningUpdates \
+            -authenticationKeyID "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
+            -authenticationKeyIssuerID "$APP_STORE_CONNECT_ISSUER_ID"
+
     artifacts:
       - build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log
