@@ -30,41 +30,11 @@ workflows:
           keychain initialize
       - name: Set up code signing settings on Xcode project
         script: |
-          # Detect the strangely named variable from logs and alias it
-          # The logs showed "APP_STORAPP_STORE_CONNECT_ISSUER_IDE_CONNECT_ISSUER_ID"
-          # This looks like a copy-paste error in the Codemagic UI variable name itself!
+          # The user has likely fixed the variable name in UI by now.
+          # We revert to the clean standard implementation.
           
-          # Try to find the variable if the standard one is missing
-          if [ -z "$APP_STORE_CONNECT_ISSUER_ID" ]; then
-             echo "Standard ISSUER_ID variable not found, looking for misnamed one..."
-             # We can't easily guess the typo, but based on the logs:
-             # APP_STORAPP_STORE_CONNECT_ISSUER_IDE_CONNECT_ISSUER_ID
-             
-             # Fallback: Check if user pasted the key content into the variable name?
-             # Or if the variable name in UI is corrupted.
-             
-             # But wait, looking at the logs:
-             # "APP_STORAPP_STORE_CONNECT_ISSUER_IDE_CONNECT_ISSUER_ID" appeared in the output list.
-             # This suggests the variable NAME in Codemagic UI is literally:
-             # "APP_STORAPP_STORE_CONNECT_ISSUER_IDE_CONNECT_ISSUER_ID"
-             
-             if [ -n "$APP_STORAPP_STORE_CONNECT_ISSUER_IDE_CONNECT_ISSUER_ID" ]; then
-                export APP_STORE_CONNECT_ISSUER_ID="$APP_STORAPP_STORE_CONNECT_ISSUER_IDE_CONNECT_ISSUER_ID"
-                echo "Recovered ISSUER_ID from misnamed variable."
-             fi
-          fi
-
-          # Debug: Check specifically for our expected variables
-          if [ -z "$APP_STORE_CONNECT_ISSUER_ID" ]; then
-            echo "ERROR: APP_STORE_CONNECT_ISSUER_ID is missing or empty!"
-            echo "It seems the variable name in Codemagic UI might be corrupted."
-            echo "Saw 'APP_STORAPP_STORE_CONNECT_ISSUER_IDE_CONNECT_ISSUER_ID' in env vars."
-            echo "Please DELETE the variable in Codemagic UI and re-add it carefully as:"
-            echo "APP_STORE_CONNECT_ISSUER_ID"
-            exit 1
-          fi
-
           # Fetch signing files from App Store Connect
+          # We pass credentials explicitly just to be safe.
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
             --type IOS_APP_STORE \
             --create \
@@ -73,7 +43,11 @@ workflows:
             --private-key "$APP_STORE_CONNECT_PRIVATE_KEY"
             
           # Apply profiles to Xcode project
-          keychain add-certificates
+          # IMPORTANT: We must pass the private key to 'keychain add-certificates' too
+          # so it can pair the certificate with the key!
+          keychain add-certificates \
+            --certificate-key "$APP_STORE_CONNECT_PRIVATE_KEY"
+            
       - name: Build IPA for distribution
         script: |
           xcode-project build-ipa \
