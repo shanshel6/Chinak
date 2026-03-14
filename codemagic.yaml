@@ -4,14 +4,13 @@ workflows:
     instance_type: mac_mini_m1
     max_build_duration: 60
     environment:
+      xcode: latest
       groups:
-        - app_store_credentials # Create this group in Codemagic UI (API Key, Issuer ID, Key ID)
-        - ios_signing # Create this group in Codemagic UI (Certificate + Provisioning Profile)
+        - app_store_credentials # Must match the group name in Codemagic UI
       vars:
         XCODE_WORKSPACE: "ios/App/App.xcworkspace"
         XCODE_SCHEME: "App"
         BUNDLE_ID: "com.chinak.app"
-      node: latest
     triggering:
       events:
         - push
@@ -23,12 +22,9 @@ workflows:
       - name: Install npm dependencies
         script: |
           npm install
-      - name: Build web assets
+      - name: Build web assets and sync Capacitor
         script: |
-          npm run build
-      - name: Sync Capacitor
-        script: |
-          npx cap sync ios
+          npm run build:ios
       - name: Set up code signing settings on Xcode project
         script: |
           xcode-project use-profiles
@@ -36,16 +32,16 @@ workflows:
         script: |
           xcode-project build-ipa \
             --workspace "$XCODE_WORKSPACE" \
-            --scheme "$XCODE_SCHEME"
+            --scheme "$XCODE_SCHEME" \
+            --config Release
     artifacts:
       - build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log
       - "*.dSYM.zip"
     publishing:
       app_store_connect:
-        api_key: $APP_STORE_CONNECT_PRIVATE_KEY # Set in UI
-        key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER # Set in UI
-        issuer_id: $APP_STORE_CONNECT_ISSUER_ID # Set in UI
+        api_key: $APP_STORE_CONNECT_PRIVATE_KEY
+        key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
+        issuer_id: $APP_STORE_CONNECT_ISSUER_ID
         submit_to_testflight: true
-        beta_groups: # Optional: specify beta groups
-          - "Testers"
+        submit_to_app_store: false
