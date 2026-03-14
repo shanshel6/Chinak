@@ -33,82 +33,58 @@ workflows:
           keychain initialize
       - name: Set up code signing settings on Xcode project
         script: |
-          # 1. Clean DerivedData
           rm -rf ~/Library/Developer/Xcode/DerivedData
-          
-          # 2. Try to delete existing "Apple Development" certificates from the default keychain
-          security delete-certificate -c "Apple Development" || echo "No existing Apple Development certs found or deletion failed"
-          
-          # 3. Fetch Signing Files (Certificate & Profile)
-          echo "Fetching Signing Files..."
+
+          echo "DIRECT_XCODEBUILD_V3"
+
+          security delete-certificate -c "Apple Development" || true
+          security delete-certificate -c "Apple Distribution" || true
+
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
-            --type IOS_APP_DEVELOPMENT \
+            --type IOS_APP_STORE \
             --create \
             --issuer-id "$APP_STORE_CONNECT_ISSUER_ID" \
             --key-id "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
             --private-key "$APP_STORE_CONNECT_PRIVATE_KEY"
-            
-          # 4. Add to Keychain
+
           keychain add-certificates
-          
-          # 5. Apply Profiles to Xcode Project (Manual Method)
-          
-          echo "Listing Provisioning Profiles:"
-          ls -l ~/Library/MobileDevice/Provisioning\ Profiles/
-          
-          # Find the first .mobileprovision file
+
           PROFILE_PATH=$(find ~/Library/MobileDevice/Provisioning\ Profiles -name "*.mobileprovision" | head -n 1)
           if [ -z "$PROFILE_PATH" ]; then
-            echo "ERROR: No provisioning profile found!"
+            echo "No provisioning profile found"
             exit 1
           fi
-          
-          # Extract UUID
-          PROFILE_UUID=$(/usr/libexec/PlistBuddy -c "Print UUID" /dev/stdin <<< $(security cms -D -i "$PROFILE_PATH"))
-          echo "Found Profile UUID: $PROFILE_UUID"
-          
-          # DEBUG: Check project targets
-          echo "Listing project targets:"
-          xcodebuild -project "$XCODE_PROJECT" -list
-          
-          # Manually update project.pbxproj to use this profile
-          PROJECT_FILE="$XCODE_PROJECT/project.pbxproj"
-          
-          # Disable Automatic Signing and set Team
-          sed -i '' 's/ProvisioningStyle = Automatic;/ProvisioningStyle = Manual;/g' "$PROJECT_FILE"
-          sed -i '' "s/DEVELOPMENT_TEAM = .*/DEVELOPMENT_TEAM = $DEVELOPMENT_TEAM;/g" "$PROJECT_FILE"
-          
-          # CRITICAL: We need to set the PROVISIONING_PROFILE_SPECIFIER for the correct target.
-          # The sed command below tries to replace existing manual signing keys.
-          # If they don't exist (because the project was previously set to Automatic), sed might miss them.
-          # So we use a more aggressive approach: We use xcodebuild to set the build settings directly in the archive command.
-          
-          # But we will still try to patch the project file for good measure.
-          # We look for the buildSettings block and try to insert the profile specifier.
-          
-          # Use 'xcode-project use-profiles' again, but we assume it might be missing the target if the scheme name != target name.
-          echo "Running xcode-project use-profiles..."
-          xcode-project use-profiles --project "$XCODE_PROJECT" --target "App"
-          
-          # FORCE VERIFICATION: If grep fails, we fail the build here to know immediately
-          if grep -q "$PROFILE_UUID" "$PROJECT_FILE"; then
-             echo "SUCCESS: Profile UUID found in project file."
-          else
-             echo "WARNING: Profile UUID NOT found in project file."
-          fi
+
+          PROFILE_UUID=$(security cms -D -i "$PROFILE_PATH" | /usr/libexec/PlistBuddy -c "Print :UUID" /dev/stdin)
+          PROFILE_NAME=$(security cms -D -i "$PROFILE_PATH" | /usr/libexec/PlistBuddy -c "Print :Name" /dev/stdin)
+
+          cat > "$CM_BUILD_DIR/export_options.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>app-store</string>
+            <key>signingStyle</key>
+            <string>manual</string>
+            <key>teamID</key>
+            <string>$DEVELOPMENT_TEAM</string>
+            <key>provisioningProfiles</key>
+            <dict>
+              <key>$BUNDLE_ID</key>
+              <string>$PROFILE_NAME</string>
+            </dict>
+          </dict>
+          </plist>
+          EOF
+
+          echo "PROFILE_UUID=$PROFILE_UUID" > "$CM_BUILD_DIR/signing.env"
+          echo "PROFILE_NAME=$PROFILE_NAME" >> "$CM_BUILD_DIR/signing.env"
           
       - name: Build IPA for distribution
         script: |
-          # Retrieve the profile UUID again
-          PROFILE_PATH=$(find ~/Library/MobileDevice/Provisioning\ Profiles -name "*.mobileprovision" | head -n 1)
-          PROFILE_UUID=$(/usr/libexec/PlistBuddy -c "Print UUID" /dev/stdin <<< $(security cms -D -i "$PROFILE_PATH"))
-          
-          # PASS SIGNING SETTINGS DIRECTLY TO XCODEBUILD
-          # This overrides whatever is in the project file.
-          # This is the most reliable way to force manual signing in CI.
-          
-          echo "Forcing build with Profile: $PROFILE_UUID"
-          
+          source "$CM_BUILD_DIR/signing.env"
+
           xcodebuild archive \
             -project "$XCODE_PROJECT" \
             -scheme "$XCODE_SCHEME" \
@@ -117,18 +93,13 @@ workflows:
             CODE_SIGN_STYLE=Manual \
             DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM" \
             PROVISIONING_PROFILE="$PROFILE_UUID" \
-            PROVISIONING_PROFILE_SPECIFIER="$PROFILE_UUID" \
-            CODE_SIGN_IDENTITY="Apple Development"
+            PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME" \
+            CODE_SIGN_IDENTITY="Apple Distribution"
 
-          # Export IPA
           xcodebuild -exportArchive \
             -archivePath "$CM_BUILD_DIR/App.xcarchive" \
             -exportOptionsPlist "$CM_BUILD_DIR/export_options.plist" \
-            -exportPath "$CM_BUILD_DIR/build/ios/ipa" \
-            PROVISIONING_PROFILE="$PROFILE_UUID" \
-            PROVISIONING_PROFILE_SPECIFIER="$PROFILE_UUID" \
-            CODE_SIGN_STYLE=Manual \
-            DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM"
+            -exportPath "$CM_BUILD_DIR/build/ios/ipa"
             
     artifacts:
       - build/ios/ipa/*.ipa
