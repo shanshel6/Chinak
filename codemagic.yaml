@@ -48,10 +48,7 @@ workflows:
           
       - name: Build IPA for distribution (CODEMAGIC_MANAGED_SIGNING_V1)
         script: |
-          xcode-project build-ipa \
-            -project "$XCODE_PROJECT" \
-            -scheme "$XCODE_SCHEME" \
-            -config Release
+          xcode-project build-ipa --project "$XCODE_PROJECT" --scheme "$XCODE_SCHEME" --config Release
             
     artifacts:
       - build/ios/ipa/*.ipa
