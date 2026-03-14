@@ -30,43 +30,41 @@ workflows:
           keychain initialize
       - name: Set up code signing settings on Xcode project
         script: |
-          # Fetch signing files from App Store Connect
-          # We pass credentials explicitly just to be safe.
-          app-store-connect fetch-signing-files "$BUNDLE_ID" \
-            --type IOS_APP_STORE \
-            --create \
-            --issuer-id "$APP_STORE_CONNECT_ISSUER_ID" \
-            --key-id "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
-            --private-key "$APP_STORE_CONNECT_PRIVATE_KEY"
-            
-          # Apply profiles to Xcode project
-          # Note: keychain add-certificates typically does not take --certificate-key argument
-          # It assumes the certificate file itself is present or passed as argument.
-          # However, app-store-connect fetch-signing-files downloads certs to a default location.
-          # We need to tell keychain add-certificates where to look or rely on default behavior.
-          # But the error "Cannot save Signing Certificates without certificate private key"
-          # suggests we might need to manually import the private key if it's not in the p12.
+          # SIMPLIFIED STRATEGY: Rely purely on Xcode Automatic Signing
+          # We authenticate with the API Key, and Xcode will download/create what it needs.
           
-          # Usually, 'keychain add-certificates' automatically picks up files downloaded by 'fetch-signing-files'.
-          # Let's try the default invocation again, but ensure we aren't passing invalid flags.
-          keychain add-certificates
+          # 1. Create a directory for authentication
+          mkdir -p ~/private_keys
           
-          # If that fails, we might need to manually add the private key to the keychain.
-          # The API Key is NOT the signing key. The signing key (p12) comes from Apple.
-          # If 'fetch-signing-files' created a new cert, it might not have the private key locally
-          # unless we provided one or it generated a CSR.
+          # 2. Write the API Key to a file that Xcode can find
+          echo "$APP_STORE_CONNECT_PRIVATE_KEY" > ~/private_keys/AuthKey_$APP_STORE_CONNECT_KEY_IDENTIFIER.p8
           
-          # However, for cloud signing with API Key, we usually rely on Codemagic to handle this.
-          # Let's try simplifying to just 'keychain add-certificates' which is the standard command.
-          # The previous error "unrecognized arguments: --certificate-key" confirms the flag was wrong.
-            
+          # 3. Configure Xcode to use this key (via Codemagic environment or manual placement)
+          # Note: Codemagic's VM usually handles this if we use the 'app-store-connect' tool,
+          # but since that tool is failing to pair keys, we will skip the explicit fetch.
+          
+          # Instead, we just ensure the keychain exists (done above) and proceed to build.
+          # The 'ALLOW_PROVISIONING_UPDATES=YES' flag in the next step is the real magic.
+          # It tells Xcode: "Use the credentials I gave you to talk to Apple and fix signing."
+          
+          echo "Skipping manual certificate fetch. Relying on Xcode Automatic Signing."
+          
       - name: Build IPA for distribution
         script: |
+          # We need to pass the authentication details to xcodebuild.
+          # Since we can't easily pass the key file path to standard xcodebuild without a custom plist,
+          # we will try the Codemagic way one last time but WITHOUT 'keychain add-certificates'.
+          
+          # Alternative: Use 'xcode-project build-ipa' which wraps xcodebuild.
+          # We add -authenticationKeyID, -authenticationKeyIssuerID, etc. if supported,
+          # OR we rely on the environment variables being present.
+          
           xcode-project build-ipa \
             --project "$XCODE_PROJECT" \
             --scheme "$XCODE_SCHEME" \
             --config Release \
-            --archive-xcargs "ALLOW_PROVISIONING_UPDATES=YES CODE_SIGN_STYLE=Automatic"
+            --archive-xcargs "ALLOW_PROVISIONING_UPDATES=YES CODE_SIGN_STYLE=Automatic DEVELOPMENT_TEAM=$APP_STORE_CONNECT_ISSUER_ID"
+            
     artifacts:
       - build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log
