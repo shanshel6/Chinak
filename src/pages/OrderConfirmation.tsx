@@ -35,7 +35,7 @@ const OrderConfirmation: React.FC = () => {
   // but for now we'll just handle the display.
 
   return (
-    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden bg-background-light dark:bg-background-dark shadow-2xl font-display text-slate-900 dark:text-white antialiased selection:bg-primary/30 rtl pb-safe pt-safe" dir="rtl">
+    <div className="relative flex min-h-screen w-full flex-col bg-background-light dark:bg-background-dark shadow-2xl font-display text-slate-900 dark:text-white antialiased selection:bg-primary/30 rtl pb-safe" dir="rtl">
       {/* TopAppBar */}
       <div className="sticky top-0 z-50 bg-background-light/90 dark:bg-background-dark/90 backdrop-blur-md border-b border-slate-100 dark:border-slate-800 pt-safe">
         <div className="flex items-center px-4 py-3 justify-between">

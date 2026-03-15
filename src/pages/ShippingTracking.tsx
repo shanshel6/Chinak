@@ -287,7 +287,7 @@ const ShippingTracking: React.FC = () => {
   );
 
   return (
-    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden bg-background-light dark:bg-background-dark shadow-2xl font-display text-slate-900 dark:text-slate-100 antialiased selection:bg-primary/30 rtl pb-safe pt-safe" dir="rtl">
+    <div className="relative flex min-h-screen w-full flex-col bg-background-light dark:bg-background-dark shadow-2xl font-display text-slate-900 dark:text-slate-100 antialiased selection:bg-primary/30 rtl pb-safe" dir="rtl">
       <style>{`
         @keyframes pulse-ring {
             0% { transform: scale(0.33); }

@@ -147,7 +147,7 @@ const MyOrders: React.FC = () => {
   );
 
   return (
-    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden bg-background-light dark:bg-background-dark shadow-2xl font-display pb-24 pb-safe pt-safe" dir="rtl">
+    <div className="relative flex min-h-screen w-full flex-col bg-background-light dark:bg-background-dark shadow-2xl font-display pb-24 pb-safe" dir="rtl">
       {/* Payment Modal */}
       {showPaymentModal && selectedOrder && (
         <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/60 backdrop-blur-sm">
@@ -279,7 +279,7 @@ const MyOrders: React.FC = () => {
       {/* Scrollable Area */}
       <div className="flex-1 flex flex-col">
         {/* Header Section */}
-        <div className="sticky top-0 z-50 bg-background-light/95 dark:bg-background-dark/95 backdrop-blur-md transition-colors border-b border-slate-100 dark:border-slate-800 pt-[calc(env(safe-area-inset-top)+0.5rem)]">
+        <div className="sticky top-0 z-50 bg-background-light/95 dark:bg-background-dark/95 backdrop-blur-md transition-colors border-b border-slate-100 dark:border-slate-800 pt-safe">
           <div className="flex items-center justify-between px-4 h-16">
             <button 
               onClick={() => navigate(-1)}
@@ -319,7 +319,7 @@ const MyOrders: React.FC = () => {
         </div>
 
         {/* Search Bar */}
-        <div className="px-4 py-2 sticky top-[128px] z-40 bg-background-light/95 dark:bg-background-dark/95 backdrop-blur-sm transition-colors border-b border-slate-100 dark:border-slate-800 space-y-2">
+        <div className="px-4 py-2 sticky top-[calc(env(safe-area-inset-top)+128px)] z-40 bg-background-light/95 dark:bg-background-dark/95 backdrop-blur-sm transition-colors border-b border-slate-100 dark:border-slate-800 space-y-2">
           {/* Price Change Notification */}
           <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800/50 rounded-xl p-3 flex items-start gap-3">
             <div className="text-blue-600 dark:text-blue-400 shrink-0 mt-0.5">

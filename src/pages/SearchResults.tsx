@@ -46,7 +46,7 @@ const SearchResults: React.FC = () => {
   const setSearchData = usePageCacheStore((state) => state.setSearchData);
   const setSearchScrollPos = usePageCacheStore((state) => state.setSearchScrollPos);
 
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState(initialQuery || cachedQuery);
   const [draftQuery, setDraftQuery] = useState(initialQuery || cachedQuery);
   const [imageSearchUrl, setImageSearchUrl] = useState<string>(initialImageSearchUrl);
   
@@ -76,6 +76,12 @@ const SearchResults: React.FC = () => {
   const suppressInitialFocusRef = useRef(false);
   const filterDirtyRef = useRef(false);
   const searchQueryRef = useRef(searchQuery);
+
+  useEffect(() => {
+    if (initialQuery) {
+      suppressInitialFocusRef.current = true;
+    }
+  }, [initialQuery]);
 
   useEffect(() => {
     filterDirtyRef.current = draftConditionFilter !== conditionFilter || draftPriceFilter !== priceFilter;
@@ -158,6 +164,7 @@ const SearchResults: React.FC = () => {
       setDraftQuery(q);
       setSearchQuery(q);
       setIsTyping(false);
+      if (q.trim()) suppressInitialFocusRef.current = true;
     } else if (q === null && currentSearchQuery) {
       setDraftQuery('');
       setSearchQuery('');

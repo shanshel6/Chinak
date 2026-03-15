@@ -44,7 +44,7 @@ const Favorites: React.FC = () => {
   };
 
   return (
-    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden bg-background-light dark:bg-background-dark shadow-2xl pb-28 pb-safe rtl pt-safe" dir="rtl">
+    <div className="relative flex min-h-screen w-full flex-col bg-background-light dark:bg-background-dark shadow-2xl pb-28 pb-safe rtl" dir="rtl">
       {/* Header */}
       <header className="sticky top-0 z-30 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-100 dark:border-slate-800 px-4 py-4 pt-[calc(env(safe-area-inset-top)+0.5rem)]">
         <div className="flex items-center justify-between mb-4">

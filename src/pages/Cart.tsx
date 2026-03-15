@@ -182,7 +182,7 @@ const Cart: React.FC = () => {
 
   if (error) {
     return (
-      <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden bg-background-light dark:bg-background-dark items-center justify-center p-4 text-text-primary-light dark:text-text-primary-dark font-display antialiased pt-safe" dir="rtl">
+      <div className="relative flex min-h-screen w-full flex-col bg-background-light dark:bg-background-dark items-center justify-center p-4 text-text-primary-light dark:text-text-primary-dark font-display antialiased pt-safe" dir="rtl">
         <AlertCircle size={80} className="text-red-500 mb-4" />
         <h2 className="text-xl font-bold mb-2">عذراً، حدث خطأ</h2>
         <p className="text-slate-500 text-center mb-8">{error}</p>
@@ -198,9 +198,9 @@ const Cart: React.FC = () => {
 
   if (cartItems.length === 0) {
     return (
-      <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden bg-background-light dark:bg-background-dark items-center justify-center p-6 text-center pt-safe" dir="rtl">
-        <header className="absolute top-0 left-0 right-0 z-50 bg-transparent">
-          <div className="flex items-center p-4 pt-safe-top">
+      <div className="relative flex min-h-screen w-full flex-col bg-background-light dark:bg-background-dark items-center justify-center p-6 text-center pt-safe" dir="rtl">
+        <header className="absolute top-0 left-0 right-0 z-50 bg-transparent pt-safe">
+          <div className="flex items-center p-4">
             <button 
               onClick={() => navigate(-1)}
               className="size-11 rounded-2xl bg-white dark:bg-slate-800 shadow-sm flex items-center justify-center text-slate-600 dark:text-slate-300 active:scale-95 transition-all border border-slate-100 dark:border-white/5"
@@ -227,9 +227,9 @@ const Cart: React.FC = () => {
   }
 
   return (
-    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden bg-background-light dark:bg-background-dark font-display text-text-primary-light dark:text-text-primary-dark antialiased pb-32 pt-safe" dir="rtl">
+    <div className="relative flex min-h-screen w-full flex-col bg-background-light dark:bg-background-dark font-display text-text-primary-light dark:text-text-primary-dark antialiased pb-32 pt-safe" dir="rtl">
       {/* Top App Bar */}
-      <header className="sticky top-0 z-50 bg-background-light/90 dark:bg-background-dark/90 backdrop-blur-md border-b border-gray-100 dark:border-gray-800 pt-[calc(env(safe-area-inset-top)+0.5rem)]">
+      <header className="sticky top-0 z-50 bg-background-light/90 dark:bg-background-dark/90 backdrop-blur-md border-b border-gray-100 dark:border-gray-800 pt-safe">
         <div className="flex items-center justify-between p-4">
           <div className="flex items-center gap-2">
             <button 

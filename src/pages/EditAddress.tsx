@@ -218,10 +218,10 @@ const EditAddress: React.FC = () => {
   );
 
   return (
-    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden bg-background-light dark:bg-background-dark font-display text-text-primary-light dark:text-text-primary-dark antialiased pb-10 pb-safe pt-safe" dir="rtl">
+    <div className="relative flex min-h-screen w-full flex-col bg-background-light dark:bg-background-dark font-display text-text-primary-light dark:text-text-primary-dark antialiased pb-10 pb-safe" dir="rtl">
       {/* Header */}
-      <header className="sticky top-0 z-50 bg-surface-light/90 dark:bg-surface-dark/90 backdrop-blur-md border-b border-border-light dark:border-border-dark transition-colors duration-300">
-        <div className="flex items-center justify-between p-4 h-16 pt-safe">
+      <header className="sticky top-0 z-50 bg-surface-light/90 dark:bg-surface-dark/90 backdrop-blur-md border-b border-border-light dark:border-border-dark transition-colors duration-300 pt-safe">
+        <div className="flex items-center justify-between p-4 h-16">
           <button 
             onClick={() => navigate(-1)}
             className="flex items-center justify-center w-10 h-10 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors text-text-primary-light dark:text-text-primary-dark"
