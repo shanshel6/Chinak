@@ -252,13 +252,7 @@ const Categories: React.FC = () => {
           {categories.map((cat) => (
             <div
               key={cat.id}
-              onClick={() => {
-                if (selectedMainCategory === cat.id) {
-                  handleSearch(cat.name_ar);
-                } else {
-                  setSelectedMainCategory(cat.id);
-                }
-              }}
+              onClick={() => handleSearch(cat.name_ar || cat.name_en)}
               className={`relative flex flex-col items-center justify-center py-4 px-1 gap-1 transition-all cursor-pointer ${
                 selectedMainCategory === cat.id
                   ? 'bg-white dark:bg-slate-900 text-primary font-bold'
