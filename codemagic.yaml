@@ -39,8 +39,11 @@ workflows:
         script: |
           BUILD_NUMBER="${CM_BUILD_ID:-$(date +%s)}"
           cd ios/App
-          agvtool new-version -all "$BUILD_NUMBER"
+          xcrun agvtool new-version -all "$BUILD_NUMBER"
           cd ../..
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" ios/App/App/Info.plist
+          echo "CFBundleVersion set to:"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" ios/App/App/Info.plist
       - name: Initialize Keychain
         script: |
           keychain initialize
