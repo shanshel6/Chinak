@@ -28,7 +28,7 @@ const BottomNav: React.FC<BottomNavProps> = ({ className = '' }) => {
 
   return (
     <nav 
-      className={`fixed bottom-0 left-0 right-0 z-50 bg-white border-t border-slate-100 shadow-[0_-2px_10px_rgba(0,0,0,0.03)] pb-[calc(env(safe-area-inset-bottom))] transition-transform duration-300 dark:bg-slate-900 dark:border-slate-800 ${className}`}
+      className={`fixed inset-x-0 bottom-0 z-50 bg-white border-t border-slate-100 shadow-[0_-2px_10px_rgba(0,0,0,0.03)] pb-safe transition-transform duration-300 dark:bg-slate-900 dark:border-slate-800 ${className}`}
     >
       <div className="mx-auto w-full max-w-md h-[60px] flex items-center justify-between px-2">
         {navItems.map((item) => {
