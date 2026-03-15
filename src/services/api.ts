@@ -6,10 +6,18 @@ export const getBaseDomain = () => {
   const hostname = window.location.hostname;
   const isPrivateIp = (value: string) => /^(10|192\.168|172\.(1[6-9]|2\d|3[0-1]))\./.test(value);
   const isLocalHost = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '0.0.0.0' || hostname === '::1';
+  const isCapacitorRuntime = Boolean((window as any)?.Capacitor) || window.location.protocol === 'capacitor:';
 
   // 0. Manual Override (Useful for testing production builds against local backends)
-  const manualOverride = localStorage.getItem('api_url_override');
-  if (manualOverride) return manualOverride;
+  const manualOverrideRaw = localStorage.getItem('api_url_override');
+  if (manualOverrideRaw) {
+    const manualOverride = manualOverrideRaw.trim().replace(/\/+$/, '');
+    const isLocalOverride = /^http:\/\/(localhost|127\.0\.0\.1|10\.|192\.168|172\.(1[6-9]|2\d|3[0-1]))/i.test(manualOverride);
+    if (!(import.meta.env.PROD && isCapacitorRuntime && isLocalOverride)) {
+      return manualOverride;
+    }
+    localStorage.removeItem('api_url_override');
+  }
 
   // 1. Priority: Environment variable
   const envApiUrl = import.meta.env.VITE_API_URL;
@@ -575,6 +583,11 @@ export async function request(endpoint: string, options: any = {}, retries = 2) 
             console.warn(`[API Fallback] 192.168.2.228 failed, trying localhost...`);
             currentBaseUrl = 'http://localhost:5001/api';
           }
+        }
+        
+        if (!currentBaseUrl.includes('railway.app')) {
+          console.warn(`[API Fallback] Switching to production backend...`);
+          currentBaseUrl = 'https://chinak-production.up.railway.app/api';
         }
 
         const delay = Math.pow(2, attempt) * 1000;

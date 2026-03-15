@@ -393,7 +393,7 @@ const Login: React.FC = () => {
   return (
     <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden bg-background-light dark:bg-background-dark shadow-2xl font-display text-slate-900 dark:text-white antialiased selection:bg-primary/30 rtl pb-safe pt-safe" dir="rtl">
       {/* Home Navigation Icon */}
-        <div className="absolute top-6 left-6 z-10">
+        <div className="absolute left-6 z-10 top-[calc(env(safe-area-inset-top)+1.5rem)]">
           <button 
             onClick={() => navigate('/')}
             className="p-2.5 rounded-full bg-white/80 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-800 transition-all active:scale-90 shadow-sm"
@@ -404,7 +404,7 @@ const Login: React.FC = () => {
         </div>
 
         {/* Header Section */}
-        <div className="flex flex-col items-center pt-12 pb-6 px-6">
+        <div className="flex flex-col items-center pt-[calc(env(safe-area-inset-top)+3rem)] pb-6 px-6">
           {/* Logo */}
           <Logo size="lg" className="mb-6" />
           {/* Headline */}
