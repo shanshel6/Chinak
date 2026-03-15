@@ -30,7 +30,7 @@ const SearchHeader: React.FC<SearchHeaderProps> = ({
   }, []);
 
   return (
-    <div className="sticky top-0 z-40 bg-white shadow-sm transition-all duration-300 dark:bg-slate-900 px-3 py-2">
+    <div className="bg-white shadow-sm transition-all duration-300 dark:bg-slate-900 px-3 py-2">
       <div className="flex items-center gap-2">
         <button 
           onClick={onBack}

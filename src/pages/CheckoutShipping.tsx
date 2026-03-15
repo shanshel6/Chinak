@@ -149,7 +149,7 @@ const CheckoutShipping: React.FC = () => {
   return (
     <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden bg-background-light dark:bg-background-dark shadow-2xl font-display text-text-primary-light dark:text-text-primary-dark antialiased pb-32 pt-safe" dir="rtl">
       {/* Header */}
-      <header className="px-4 pt-4 pb-2 flex items-center justify-between sticky top-0 bg-background-light/80 dark:bg-background-dark/80 backdrop-blur-md z-10">
+      <header className="px-4 pt-[calc(env(safe-area-inset-top)+1rem)] pb-2 flex items-center justify-between sticky top-0 bg-background-light/80 dark:bg-background-dark/80 backdrop-blur-md z-10">
         <div className="flex items-center gap-3">
           <button 
             onClick={() => navigate('/cart')}

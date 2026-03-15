@@ -79,7 +79,7 @@ const SavedAddresses: React.FC = () => {
 
   if (loading) return (
     <div className="relative flex min-h-screen w-full flex-col bg-background-light dark:bg-background-dark font-display antialiased" dir="rtl">
-      <header className="sticky top-0 z-50 bg-surface-light dark:bg-surface-dark border-b border-border-light dark:border-border-dark px-4 h-16 flex items-center justify-between">
+      <header className="sticky top-0 z-50 pt-safe bg-surface-light dark:bg-surface-dark border-b border-border-light dark:border-border-dark px-4 h-[calc(4rem+env(safe-area-inset-top))] flex items-center justify-between">
         <Skeleton variant="circle" className="w-10 h-10" />
         <Skeleton variant="text" className="w-32 h-6" />
         <Skeleton variant="circle" className="w-10 h-10" />

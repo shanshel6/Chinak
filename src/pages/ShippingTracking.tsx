@@ -321,7 +321,7 @@ const ShippingTracking: React.FC = () => {
       `}</style>
       
       {/* Header */}
-      <header className="sticky top-0 z-50 flex items-center bg-background-light/80 dark:bg-background-dark/80 backdrop-blur-md px-4 py-4 justify-between border-b border-slate-200 dark:border-slate-800 transition-colors">
+      <header className="sticky top-0 z-50 pt-safe flex items-center bg-background-light/80 dark:bg-background-dark/80 backdrop-blur-md px-4 py-4 justify-between border-b border-slate-200 dark:border-slate-800 transition-colors">
           <button 
             onClick={() => navigate(-1)}
             className="text-slate-900 dark:text-white flex size-10 shrink-0 items-center justify-center rounded-full active:bg-slate-200 dark:active:bg-slate-700 transition-colors cursor-pointer"

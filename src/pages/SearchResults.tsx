@@ -447,7 +447,7 @@ const SearchResults: React.FC = () => {
 
   return (
     <div className="relative flex min-h-screen w-full flex-col bg-background-light dark:bg-background-dark font-display text-slate-900 dark:text-white antialiased selection:bg-primary/30 rtl overflow-visible" dir="rtl">
-      <div className="sticky top-0 z-40 bg-white dark:bg-slate-900 shadow-sm transition-transform duration-300" id="search-header">
+      <div className="sticky top-0 z-40 pt-safe bg-white dark:bg-slate-900 shadow-sm transition-transform duration-300" id="search-header">
           <SearchHeader 
            query={draftQuery}
            onQueryChange={(q) => {

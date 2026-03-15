@@ -21,7 +21,7 @@ const CustomerSupport: React.FC = () => {
   return (
     <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden bg-background-light dark:bg-background-dark font-display text-slate-900 dark:text-white antialiased selection:bg-primary/30 rtl pb-10 pb-safe pt-safe" dir="rtl">
         {/* Header / Navigation Bar */}
-        <nav className="sticky top-0 z-50 bg-background-light/90 dark:bg-background-dark/90 backdrop-blur-md border-b border-slate-200/50 dark:border-slate-800/50 px-4 py-3">
+        <nav className="sticky top-0 z-50 pt-safe bg-background-light/90 dark:bg-background-dark/90 backdrop-blur-md border-b border-slate-200/50 dark:border-slate-800/50 px-4 py-3">
           <div className="flex items-center justify-between">
             {/* Back Button */}
             <button 
