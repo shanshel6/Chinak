@@ -282,6 +282,7 @@ export async function request(endpoint: string, options: any = {}, retries = 2) 
   let currentBaseUrl = API_BASE_URL;
 
   const executeRequest = async (attempt: number, authRetry = 0): Promise<any> => {
+    const allowReviewerBypass = import.meta.env.DEV || import.meta.env.VITE_ENABLE_REVIEWER_BYPASS === 'true';
     const storedToken = localStorage.getItem('auth_token')?.trim();
     const providedToken = typeof options.token === 'string' ? options.token.trim() : null;
 
@@ -294,7 +295,7 @@ export async function request(endpoint: string, options: any = {}, retries = 2) 
     }
 
     // Handle test tokens for Google Play reviewers
-    if (token?.startsWith('test-token-')) {
+    if (allowReviewerBypass && token?.startsWith('test-token-')) {
       const isReviewer2 = token.includes('1987654321');
       const isAdmin = false; // Disable admin access for test tokens as requested
       
@@ -460,7 +461,7 @@ export async function request(endpoint: string, options: any = {}, retries = 2) 
           const requestToken = headers['Authorization']?.replace('Bearer ', '')?.trim();
           
           // Don't log out if it's a test token
-          if (requestToken?.startsWith('test-token-')) {
+          if (allowReviewerBypass && requestToken?.startsWith('test-token-')) {
             console.warn('[API] 401 from test token, ignoring logout');
             throw new Error(`Test token unauthorized: ${endpoint}`);
           }

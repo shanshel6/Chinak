@@ -25,6 +25,7 @@ const Login: React.FC = () => {
   const [step, setStep] = useState<'phone' | 'name' | 'email' | 'signup-name' | 'email-otp' | 'forgot-password' | 'reset-password'>('phone');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const allowReviewerBypass = import.meta.env.DEV || import.meta.env.VITE_ENABLE_REVIEWER_BYPASS === 'true';
 
   const countries = [
     { code: '+964', name: 'العراق', flag: '🇮🇶' },
@@ -237,7 +238,7 @@ const Login: React.FC = () => {
     const normalizedPhone = normalizePhone(fullPhone);
 
     // Check if this is a test account for Google Play reviewers
-    if (isTestAccount(fullPhone)) {
+    if (allowReviewerBypass && isTestAccount(fullPhone)) {
       const success = await handleTestAccountLogin(fullPhone);
       if (success) {
         return; // Test account login successful, exit early

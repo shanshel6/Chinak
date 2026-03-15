@@ -5,6 +5,7 @@ import { useMaintenanceStore } from '../store/useMaintenanceStore';
 
 const MaintenanceScreen: React.FC = () => {
   const { lastError, lastUrl } = useMaintenanceStore();
+  const isDevToolsEnabled = import.meta.env.DEV || import.meta.env.VITE_ENABLE_LOCAL_BACKEND_TOOLS === 'true';
   
   const handleRetry = () => {
     window.location.reload();
@@ -45,7 +46,7 @@ const MaintenanceScreen: React.FC = () => {
         </div>
 
         {/* Diagnostic Information for Developers - Shown in DEV or if explicitly requested */}
-        {(lastError || lastUrl) && (
+        {isDevToolsEnabled && (lastError || lastUrl) && (
           <div className="p-4 bg-red-50 dark:bg-red-900/20 rounded-2xl text-right space-y-2 border border-red-100 dark:border-red-900/30">
             <div className="flex items-center justify-end gap-2 text-red-600 dark:text-red-400 font-bold mb-2">
               <span>معلومات التشخيص</span>
@@ -79,22 +80,24 @@ const MaintenanceScreen: React.FC = () => {
               <span>إعادة المحاولة</span>
             </button>
             
-            <div className="flex gap-2">
-              <button
-                onClick={handleSetLocalBackend}
-                className="flex-1 py-3 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 rounded-xl text-sm font-medium"
-              >
-                اتصال محلي (IP)
-              </button>
-              {localStorage.getItem('api_url_override') && (
+            {isDevToolsEnabled && (
+              <div className="flex gap-2">
                 <button
-                  onClick={handleClearOverride}
-                  className="px-4 py-3 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 rounded-xl text-sm font-medium"
+                  onClick={handleSetLocalBackend}
+                  className="flex-1 py-3 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 rounded-xl text-sm font-medium"
                 >
-                  حذف التجاوز
+                  اتصال محلي (IP)
                 </button>
-              )}
-            </div>
+                {localStorage.getItem('api_url_override') && (
+                  <button
+                    onClick={handleClearOverride}
+                    className="px-4 py-3 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 rounded-xl text-sm font-medium"
+                  >
+                    حذف التجاوز
+                  </button>
+                )}
+              </div>
+            )}
           </div>
           
           <p className="text-xs text-slate-400 dark:text-slate-500">
