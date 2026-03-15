@@ -37,11 +37,14 @@ workflows:
           npm run build:ios
       - name: Set unique iOS build number
         script: |
-          BUILD_NUMBER="${CM_BUILD_ID:-$(date +%s)}"
+          BUILD_NUMBER="$(date +%s)"
           cd ios/App
-          xcrun agvtool new-version -all "$BUILD_NUMBER"
+          xcrun agvtool new-version -all "$BUILD_NUMBER" || true
           cd ../..
+          perl -0777 -i -pe "s/CURRENT_PROJECT_VERSION = \d+;/CURRENT_PROJECT_VERSION = $BUILD_NUMBER;/g" ios/App/App.xcodeproj/project.pbxproj
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" ios/App/App/Info.plist
+          echo "CURRENT_PROJECT_VERSION in project:"
+          grep "CURRENT_PROJECT_VERSION =" ios/App/App.xcodeproj/project.pbxproj
           echo "CFBundleVersion set to:"
           /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" ios/App/App/Info.plist
       - name: Initialize Keychain
