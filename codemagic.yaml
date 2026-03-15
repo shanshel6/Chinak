@@ -35,6 +35,12 @@ workflows:
       - name: Build web assets and sync Capacitor
         script: |
           npm run build:ios
+      - name: Set unique iOS build number
+        script: |
+          BUILD_NUMBER="${CM_BUILD_ID:-$(date +%s)}"
+          cd ios/App
+          agvtool new-version -all "$BUILD_NUMBER"
+          cd ../..
       - name: Initialize Keychain
         script: |
           keychain initialize
