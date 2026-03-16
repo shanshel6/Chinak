@@ -71,6 +71,10 @@ android/app/build/
 android/local.properties
 android/.idea/
 android/app/*.jks
+android/keystore.properties
+*.jks
+*.pem
+server/meili_data/
 server/cookies/
 server/data/
 server/pdd_login_session/

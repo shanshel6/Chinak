@@ -225,6 +225,22 @@ function cleanAiText(value) {
     .trim();
 }
 
+function cleanDescriptionText(value) {
+  const raw = cleanAiText(sanitizeTranslationText(value));
+  if (!raw) return '';
+  const priceTokenRegex = /[¥￥]\s*\d+(?:[.,]\d+)?|\b(?:CNY|RMB)\b\s*\d+(?:[.,]\d+)?|\d+(?:[.,]\d+)?\s*(?:元|人民币)\b/gi;
+  const keywordLineRegex = /(关键词|关键字|keywords?\b|tags?\b|الكلمات\s*المفتاحية|كلمات\s*مفتاحية)/i;
+  const priceLineRegex = /(\bprice\b|السعر|السعر:|price_rmb|rmb|cny|¥|￥|元|人民币)/i;
+  const lines = raw
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => !keywordLineRegex.test(line))
+    .map((line) => line.replace(priceTokenRegex, '').trim())
+    .filter((line) => !(priceLineRegex.test(line) && /\d/.test(line)));
+  return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
 function normalizeArabicKeyword(value) {
   return cleanAiText(value)
     .replace(/[\u0610-\u061A\u0640\u064B-\u065F\u0670\u06D6-\u06ED]/g, '')
@@ -883,7 +899,7 @@ function getCachedTranslation(cache, title) {
   const entry = cache[key];
   if (!entry || typeof entry !== 'object') return null;
   const titleAr = normalizeTranslatedTitle(entry.titleAr, title);
-  const descriptionAr = cleanAiText(sanitizeTranslationText(entry.descriptionAr || entry.translatedDescription || titleAr || title)) || titleAr || title;
+  const descriptionAr = cleanDescriptionText(entry.descriptionAr || entry.translatedDescription || titleAr || title) || titleAr || title;
   const seedText = `${titleAr} ${descriptionAr}`.trim();
   const keywords = ensureKeywordList(entry.keywords, seedText);
   return { titleAr, descriptionAr, keywords };
@@ -893,7 +909,7 @@ function setCachedTranslation(cache, title, data) {
   const key = normalizeTranslationCacheKey(title);
   if (!key) return;
   const normalizedTitleAr = normalizeTranslatedTitle(data?.titleAr, title);
-  const descriptionAr = cleanAiText(sanitizeTranslationText(data?.descriptionAr || data?.translatedDescription || normalizedTitleAr || title));
+  const descriptionAr = cleanDescriptionText(data?.descriptionAr || data?.translatedDescription || normalizedTitleAr || title);
   const seedText = `${normalizedTitleAr} ${descriptionAr}`.trim();
   cache[key] = {
     titleAr: normalizedTitleAr,
@@ -1225,12 +1241,11 @@ Title: "${fallback}"`;
     if (!raw) return { titleAr: fallback, descriptionAr: fallback, keywords: [] };
     const parsed = parseAiTranslationPayload(raw);
     const titleAr = normalizeTranslatedTitle(parsed?.title_ar || raw, fallback);
-    let descriptionAr = cleanAiText(
-      sanitizeTranslationText(parsed?.description_ar || titleAr || fallback)
-    ) || titleAr || fallback;
+    let descriptionAr = cleanDescriptionText(parsed?.description_ar || titleAr || fallback) || titleAr || fallback;
     if (GOOFISH_AI_SECOND_PASS_DESCRIPTION && (!descriptionAr || descriptionAr.length < 24 || descriptionAr === titleAr)) {
-      descriptionAr = await translateFullTitleToArabic(fallback, descriptionAr || titleAr || fallback);
+      descriptionAr = cleanDescriptionText(await translateFullTitleToArabic(fallback, descriptionAr || titleAr || fallback)) || titleAr || fallback;
     }
+    descriptionAr = cleanDescriptionText(descriptionAr) || titleAr || fallback;
     const seedText = `${titleAr} ${descriptionAr}`.trim();
     const keywords = ensureKeywordList(
       Array.isArray(parsed?.keywords)
@@ -1797,7 +1812,7 @@ async function run() {
 
             if (existingProduct) {
               titleEn = String(existingProduct.name || titleEn).trim();
-              descriptionAr = cleanAiText(sanitizeTranslationText(String(existingProduct?.aiMetadata?.translatedDescription || titleEn).trim())) || titleEn;
+              descriptionAr = cleanDescriptionText(String(existingProduct?.aiMetadata?.translatedDescription || titleEn).trim()) || titleEn;
               keywords = ensureKeywordList(existingProduct.keywords, titleEn || it.title);
               needsDetailedDescription = !descriptionAr || descriptionAr.length < 20 || descriptionAr === titleEn;
             }
@@ -1834,7 +1849,7 @@ async function run() {
             }
 
             titleEn = sanitizeTranslationText(titleEn);
-            descriptionAr = sanitizeTranslationText(descriptionAr);
+            descriptionAr = cleanDescriptionText(descriptionAr);
 
             const itemData = {
               title: it.title || '',

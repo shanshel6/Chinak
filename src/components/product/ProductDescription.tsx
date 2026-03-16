@@ -12,6 +12,21 @@ const ProductDescription: React.FC<ProductDescriptionProps> = ({
   description,
   specs,
 }) => {
+  const cleanedDescription = React.useMemo(() => {
+    const raw = fixMojibake(description || '');
+    if (!raw) return '';
+    const priceTokenRegex = /[¥￥]\s*\d+(?:[.,]\d+)?|\b(?:CNY|RMB|IQD)\b\s*\d+(?:[.,]\d+)?|\d+(?:[.,]\d+)?\s*(?:元|人民币|د\.?\s*ع)\b/gi;
+    const keywordLineRegex = /(关键词|关键字|keywords?\b|tags?\b|الكلمات\s*المفتاحية|كلمات\s*مفتاحية)/i;
+    const priceLineRegex = /(\bprice\b|السعر|السعر:|price_rmb|rmb|cny|¥|￥|元|人民币|د\.?\s*ع)/i;
+    const lines = raw
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .filter((line) => !keywordLineRegex.test(line))
+      .map((line) => line.replace(priceTokenRegex, '').trim())
+      .filter((line) => !(priceLineRegex.test(line) && /\d/.test(line)));
+    return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  }, [description]);
   const hasSpecs = !!specs && (
     (typeof specs === 'string' && specs.trim().length > 0) ||
     (Array.isArray(specs) && specs.length > 0) ||
@@ -37,7 +52,7 @@ const ProductDescription: React.FC<ProductDescriptionProps> = ({
   };
   
   const normalizedSpecs = hasSpecs ? normalize(specs!) : '';
-  const normalizedDescription = normalize(description || '');
+  const normalizedDescription = normalize(cleanedDescription || '');
   const normalizedProductName = productName ? normalize(productName) : '';
 
   // Parse specs logic (similar to ProductSpecs)
@@ -95,7 +110,7 @@ const ProductDescription: React.FC<ProductDescriptionProps> = ({
     normalizedSpecs.includes(normalizedDescription)
   )) || (!!productName && normalizedDescription === normalizedProductName);
 
-  const showDescription = !!description && !isDescriptionRedundant;
+  const showDescription = !!cleanedDescription && !isDescriptionRedundant;
   const showSpecsInDesc = parsedSpecs.length > 0;
 
   if (!showDescription && !showSpecsInDesc) return null;
@@ -111,7 +126,7 @@ const ProductDescription: React.FC<ProductDescriptionProps> = ({
         <div className="bg-white dark:bg-slate-900/40 rounded-3xl p-6 border border-slate-200/70 dark:border-white/10 shadow-sm">
           {showDescription && (
             <div className="text-slate-700 dark:text-slate-200 text-[16.5px] leading-8 whitespace-pre-line font-semibold mb-6 last:mb-0">
-              {fixMojibake(description)}
+              {cleanedDescription}
             </div>
           )}
           

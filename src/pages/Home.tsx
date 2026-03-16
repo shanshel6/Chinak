@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { fetchProducts, searchProducts } from '../services/api';
 import { useAuthStore } from '../store/useAuthStore';
 import { useWishlistStore } from '../store/useWishlistStore';
@@ -29,6 +29,7 @@ const Home: React.FC = () => {
   ], [t]);
 
   const navigate = useNavigate();
+  const location = useLocation();
   const wishlistItems = useWishlistStore((state) => state.items);
   const toggleWishlist = useWishlistStore((state) => state.toggleWishlist);
 
@@ -198,18 +199,25 @@ const Home: React.FC = () => {
 
       const shouldUseRecentFeed = categoryId === 'all' && !maxPrice && !condition;
       if (shouldUseRecentFeed) {
-        const readRecentFeed = (): Product[] => {
+        const FEED_EXPIRY_MS = 10 * 60 * 1000;
+        const readRecentFeed = (): { items: Product[]; createdAt: number; termsHash: string } => {
           try {
             const raw = localStorage.getItem(HOME_RECENT_FEED_KEY);
-            const parsed = raw ? JSON.parse(raw) : [];
-            return Array.isArray(parsed) ? parsed : [];
+            const parsed = raw ? JSON.parse(raw) : null;
+            if (Array.isArray(parsed)) {
+              return { items: parsed, createdAt: 0, termsHash: '' };
+            }
+            const items = Array.isArray(parsed?.items) ? parsed.items : [];
+            const createdAt = typeof parsed?.createdAt === 'number' ? parsed.createdAt : 0;
+            const termsHash = typeof parsed?.termsHash === 'string' ? parsed.termsHash : '';
+            return { items, createdAt, termsHash };
           } catch {
-            return [];
+            return { items: [], createdAt: 0, termsHash: '' };
           }
         };
-        const writeRecentFeed = (items: Product[]) => {
+        const writeRecentFeed = (items: Product[], termsHash: string) => {
           try {
-            localStorage.setItem(HOME_RECENT_FEED_KEY, JSON.stringify(items));
+            localStorage.setItem(HOME_RECENT_FEED_KEY, JSON.stringify({ items, createdAt: Date.now(), termsHash }));
           } catch {}
         };
 
@@ -222,8 +230,23 @@ const Home: React.FC = () => {
           return a;
         };
 
-        let personalizedPool = readRecentFeed();
-        if (pageNum === 1 || personalizedPool.length === 0) {
+        const cached = readRecentFeed();
+        let personalizedPool = cached.items;
+        const recentTermsHashForFeed = (() => {
+          try {
+            const raw = localStorage.getItem(RECENT_SEARCH_TERMS_KEY);
+            const parsed = raw ? JSON.parse(raw) : [];
+            const terms = Array.isArray(parsed) ? parsed.map((t) => String(t).trim()).filter(Boolean).slice(0, 30) : [];
+            const authKey = isAuthenticated ? 'auth' : 'guest';
+            return `${authKey}:${terms.join('|')}`;
+          } catch {
+            return isAuthenticated ? 'auth:' : 'guest:';
+          }
+        })();
+        const cacheExpired = !cached.createdAt || (Date.now() - cached.createdAt) > FEED_EXPIRY_MS;
+        const termsChanged = cached.termsHash !== recentTermsHashForFeed;
+
+        if (pageNum === 1 && (personalizedPool.length === 0 || cacheExpired || termsChanged)) {
           let recentTerms: string[] = [];
           try {
             const raw = localStorage.getItem(RECENT_SEARCH_TERMS_KEY);
@@ -241,9 +264,9 @@ const Home: React.FC = () => {
               })
             );
             const mergedRecent = batches.flatMap((batch) => (Array.isArray(batch.products) ? batch.products : []));
-            personalizedPool = shuffle(mergeUniqueProducts(mergedRecent, personalizedPool));
+            personalizedPool = shuffle(mergeUniqueProducts(mergedRecent, []));
             if (personalizedPool.length > 0) {
-              writeRecentFeed(personalizedPool);
+              writeRecentFeed(personalizedPool, recentTermsHashForFeed);
             }
           } else {
             const randomPages = Array.from({ length: 4 }, () => Math.floor(Math.random() * 12) + 1);
@@ -251,9 +274,9 @@ const Home: React.FC = () => {
               randomPages.map((p) => fetchProducts(p, 20).then((res) => (Array.isArray(res.products) ? res.products : [])).catch(() => [] as Product[]))
             );
             const randomPool = randomBatches.flat();
-            personalizedPool = shuffle(mergeUniqueProducts(randomPool, personalizedPool));
+            personalizedPool = shuffle(mergeUniqueProducts(randomPool, []));
             if (personalizedPool.length > 0) {
-              writeRecentFeed(personalizedPool);
+              writeRecentFeed(personalizedPool, recentTermsHashForFeed);
             }
           }
         }
@@ -364,7 +387,8 @@ const Home: React.FC = () => {
     const isInitialMount = !initializedRef.current;
     if (isInitialMount) {
       initializedRef.current = true;
-      if (productsRef.current.length > 0) {
+      const cachedScroll = usePageCacheStore.getState().homeScrollPos;
+      if (productsRef.current.length > 0 && cachedScroll > 0) {
         return;
       }
     }
@@ -588,6 +612,10 @@ const Home: React.FC = () => {
 
   const handleAddToWishlist = (e: React.MouseEvent, product: Product) => {
     e.stopPropagation();
+    if (!isAuthenticated) {
+      navigate('/login', { state: { from: `${location.pathname}${location.search}` } });
+      return;
+    }
     toggleWishlist(product.id, product);
   };
 

@@ -5,6 +5,7 @@ import { searchProducts } from '../services/api';
 import FilterBar from '../components/home/FilterBar';
 import ProductCard from '../components/home/ProductCard';
 import { useWishlistStore } from '../store/useWishlistStore';
+import { useAuthStore } from '../store/useAuthStore';
 import type { ConditionFilter, PriceFilter } from '../components/home/FilterBar';
 import type { Product } from '../types/product';
 import { usePageCacheStore } from '../store/usePageCacheStore';
@@ -12,6 +13,7 @@ import { usePageCacheStore } from '../store/usePageCacheStore';
 const SearchResults: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
   const wishlistItems = useWishlistStore((state) => state.items);
   const toggleWishlist = useWishlistStore((state) => state.toggleWishlist);
   const initialQuery = useMemo(() => new URLSearchParams(location.search).get('q') || '', [location.search]);
@@ -43,6 +45,7 @@ const SearchResults: React.FC = () => {
   const scrollRatioRef = useRef(0);
   const LIMIT = 30;
   const RECENT_SEARCH_TERMS_KEY = 'recent_search_terms_v1';
+  const [isInputFocused, setIsInputFocused] = useState(false);
 
   const rememberSearchTerm = useCallback((term: string) => {
     const clean = term.trim();
@@ -55,6 +58,31 @@ const SearchResults: React.FC = () => {
       localStorage.setItem(RECENT_SEARCH_TERMS_KEY, JSON.stringify(next));
     } catch {}
   }, []);
+
+  const readRecentTerms = useCallback((): string[] => {
+    try {
+      const raw = localStorage.getItem(RECENT_SEARCH_TERMS_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      const list = Array.isArray(parsed) ? parsed : [];
+      return list.map((item) => String(item).trim()).filter(Boolean).slice(0, 30);
+    } catch {
+      return [];
+    }
+  }, []);
+
+  const [recentTerms, setRecentTerms] = useState<string[]>(() => readRecentTerms());
+
+  useEffect(() => {
+    if (!isInputFocused) return;
+    setRecentTerms(readRecentTerms());
+  }, [isInputFocused, readRecentTerms]);
+
+  useEffect(() => {
+    if (initialQuery.trim()) return;
+    setTimeout(() => {
+      if (inputRef.current) inputRef.current.focus();
+    }, 50);
+  }, [initialQuery]);
 
   useEffect(() => {
     setQueryInput(initialQuery);
@@ -141,6 +169,12 @@ const SearchResults: React.FC = () => {
     setConditionFilter(draftConditionFilter);
     setPriceFilter(draftPriceFilter);
   }, [draftConditionFilter, draftPriceFilter]);
+
+  const filteredRecentTerms = useMemo(() => {
+    const q = queryInput.trim().toLowerCase();
+    if (!q) return recentTerms;
+    return recentTerms.filter((term) => term.toLowerCase().includes(q));
+  }, [queryInput, recentTerms]);
 
   useEffect(() => {
     const query = activeQuery.trim();
@@ -334,11 +368,17 @@ const SearchResults: React.FC = () => {
     setSearchVersion((v) => v + 1);
     rememberSearchTerm(q);
     if (inputRef.current) inputRef.current.blur();
+    setRecentTerms(readRecentTerms());
     navigate(`/search${q ? `?q=${encodeURIComponent(q)}` : ''}`, { replace: true });
   };
 
+
   const onAddToWishlist = (e: React.MouseEvent, product: Product) => {
     e.stopPropagation();
+    if (!isAuthenticated) {
+      navigate('/login', { state: { from: `${location.pathname}${location.search}` } });
+      return;
+    }
     toggleWishlist(product.id, product);
   };
 
@@ -377,6 +417,8 @@ const SearchResults: React.FC = () => {
               ref={inputRef}
               value={queryInput}
               onChange={(event) => setQueryInput(event.target.value)}
+              onFocus={() => setIsInputFocused(true)}
+              onBlur={() => setIsInputFocused(false)}
               onKeyDown={(event) => {
                 if (event.key === 'Enter') submitSearch();
               }}
@@ -403,6 +445,57 @@ const SearchResults: React.FC = () => {
           className="border-t border-slate-100 dark:border-slate-800"
         />
       </div>
+
+      {isInputFocused && filteredRecentTerms.length > 0 && (
+        <div className="px-4 pt-3">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 p-3">
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-xs font-black text-slate-700 dark:text-slate-200">عمليات البحث الأخيرة</div>
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  try {
+                    localStorage.removeItem(RECENT_SEARCH_TERMS_KEY);
+                  } catch {}
+                  setRecentTerms([]);
+                }}
+                className="text-[11px] font-bold text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+              >
+                مسح
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {filteredRecentTerms.slice(0, 12).map((term) => (
+                <button
+                  key={term}
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => {
+                    setQueryInput(term);
+                    restoredFromCacheRef.current = false;
+                    randomStartPageRef.current = Math.floor(Math.random() * 3) + 1;
+                    setRestored(false);
+                    setResults([]);
+                    setHasMore(false);
+                    setPage(1);
+                    setError(null);
+                    setLoading(true);
+                    setSearchVersion((prev) => prev + 1);
+                    setActiveQuery(term);
+                    rememberSearchTerm(term);
+                    navigate(`/search?q=${encodeURIComponent(term)}`, { replace: true });
+                    if (inputRef.current) inputRef.current.blur();
+                  }}
+                  className="px-3 py-1.5 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-100 text-xs font-bold"
+                >
+                  {term}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {error && (
         <div className="mx-4 mt-4 rounded-2xl border border-red-200 dark:border-red-900/40 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 p-4 flex items-start gap-3">
