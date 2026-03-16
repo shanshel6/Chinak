@@ -277,8 +277,8 @@ const SearchResults: React.FC = () => {
       )}
 
       {loading && (
-        <div className="mx-4 mt-10 text-center text-slate-500 dark:text-slate-400 font-semibold">
-          جاري البحث عبر Meilisearch...
+        <div className="mx-4 mt-10 flex items-center justify-center">
+          <div className="h-8 w-8 border-2 border-t-transparent border-primary rounded-full animate-spin"></div>
         </div>
       )}
 
