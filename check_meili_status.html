@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Meilisearch Index Status</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; max-width: 800px; margin: 0 auto; }
+        .card { border: 1px solid #ddd; padding: 15px; border-radius: 8px; margin-bottom: 20px; background: #f9f9f9; }
+        h2 { margin-top: 0; }
+        pre { background: #eee; padding: 10px; overflow-x: auto; border-radius: 4px; }
+        .success { color: green; font-weight: bold; }
+        .error { color: red; font-weight: bold; }
+        button { padding: 8px 16px; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 4px; }
+        button:hover { background: #0056b3; }
+        input { padding: 8px; width: 300px; border: 1px solid #ccc; border-radius: 4px; }
+    </style>
+</head>
+<body>
+    <h1>Meilisearch Status Dashboard</h1>
+
+    <div class="card">
+        <h2>Index Stats (products)</h2>
+        <div id="stats">Loading...</div>
+        <button onclick="checkStats()">Refresh Stats</button>
+    </div>
+
+    <div class="card">
+        <h2>Test Search</h2>
+        <input type="text" id="searchInput" placeholder="Enter search term (e.g., ملابس or Skolca)" value="ملابس">
+        <button onclick="testSearch()">Search</button>
+        <div id="searchResults" style="margin-top: 10px;"></div>
+    </div>
+
+    <script>
+        const MEILI_HOST = 'http://127.0.0.1:7700';
+        const API_KEY = 'c7ac73cf448a4058a7c72565a1d1f6f8f409722563844c9582485c81bdecabd2';
+
+        async function checkStats() {
+            const statsDiv = document.getElementById('stats');
+            try {
+                const res = await fetch(`${MEILI_HOST}/indexes/products/stats`, {
+                    headers: { 'Authorization': `Bearer ${API_KEY}` }
+                });
+                const data = await res.json();
+                
+                const tasksRes = await fetch(`${MEILI_HOST}/tasks?statuses=processing,enqueued`, {
+                    headers: { 'Authorization': `Bearer ${API_KEY}` }
+                });
+                const tasks = await tasksRes.json();
+                
+                const isIndexing = tasks.results.length > 0;
+                
+                let html = `<p><strong>Total Documents:</strong> ${data.numberOfDocuments}</p>`;
+                html += `<p><strong>Is Indexing?</strong> ${isIndexing ? '<span class="error">YES (Processing...)</span>' : '<span class="success">NO (Idle)</span>'}</p>`;
+                
+                if (isIndexing) {
+                    html += `<p>Pending Tasks: ${tasks.results.length}</p>`;
+                }
+                
+                html += `<p>Last Updated: ${new Date().toLocaleTimeString()}</p>`;
+                statsDiv.innerHTML = html;
+            } catch (err) {
+                statsDiv.innerHTML = `<p class="error">Error: ${err.message}</p><p>Make sure Meilisearch is running on port 7700.</p>`;
+            }
+        }
+
+        async function testSearch() {
+            const query = document.getElementById('searchInput').value;
+            const resultsDiv = document.getElementById('searchResults');
+            resultsDiv.innerHTML = 'Searching...';
+            
+            try {
+                const res = await fetch(`${MEILI_HOST}/indexes/products/search`, {
+                    method: 'POST',
+                    headers: { 
+                        'Authorization': `Bearer ${API_KEY}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ q: query, limit: 5 })
+                });
+                const data = await res.json();
+                
+                let html = `<p><strong>Found ${data.estimatedTotalHits} hits</strong></p>`;
+                if (data.hits.length > 0) {
+                    html += '<ul>';
+                    data.hits.forEach(hit => {
+                        html += `<li><strong>${hit.name}</strong> (ID: ${hit.id}) - Price: ${hit.price}</li>`;
+                    });
+                    html += '</ul>';
+                } else {
+                    html += '<p>No results found.</p>';
+                }
+                resultsDiv.innerHTML = html;
+            } catch (err) {
+                resultsDiv.innerHTML = `<p class="error">Search Error: ${err.message}</p>`;
+            }
+        }
+
+        // Initial check
+        checkStats();
+        // Auto-refresh every 5 seconds
+        setInterval(checkStats, 5000);
+    </script>
+</body>
+</html>

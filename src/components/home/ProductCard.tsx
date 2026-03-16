@@ -190,17 +190,6 @@ const ProductCard: React.FC<ProductCardProps> = React.memo(({
             }`}>
               {product.neworold === true ? 'جديد' : 'مستعمل'}
             </div>
-
-            {/* Brand Tag */}
-            {product.aiMetadata?.isRealBrand !== null && product.aiMetadata?.isRealBrand !== undefined && (
-              <div className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                product.aiMetadata.isRealBrand 
-                  ? 'bg-purple-100 text-purple-700 dark:bg-purple-500/20 dark:text-purple-300' 
-                  : 'bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300'
-              }`}>
-                {product.aiMetadata.isRealBrand ? 'أصلي' : 'تقليد'}
-              </div>
-            )}
           </div>
         </div>
       </div>

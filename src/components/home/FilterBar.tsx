@@ -1,6 +1,7 @@
 import React from 'react';
-import { Tag, Banknote } from 'lucide-react';
+import { Tag, Banknote, Search } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { useNavigate } from 'react-router-dom';
 
 export type ConditionFilter = 'new' | 'used' | null;
 export type PriceFilter = '1k' | '5k' | '10k' | '25k' | null;
@@ -27,6 +28,7 @@ const FilterBar: React.FC<FilterBarProps> = ({
   className = '' 
 }) => {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const resolvedAppliedCondition = typeof appliedCondition === 'undefined' ? condition : appliedCondition;
   const resolvedAppliedPrice = typeof appliedPrice === 'undefined' ? price : appliedPrice;
   const isDirty = resolvedAppliedCondition !== condition || resolvedAppliedPrice !== price;
@@ -46,6 +48,15 @@ const FilterBar: React.FC<FilterBarProps> = ({
       )}
 
       <div className={`w-full overflow-x-auto no-scrollbar px-4 flex items-center gap-3 ${showApplyButton ? 'pl-24' : ''}`}>
+        
+        {/* Search Trigger */}
+        <button
+          onClick={() => navigate('/search')}
+          className="flex items-center justify-center size-8 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 shrink-0"
+        >
+          <Search size={16} />
+        </button>
+
         {/* Condition Filters */}
         <div className="flex items-center gap-2 border-r border-slate-200 dark:border-slate-700 pr-3 pl-1 shrink-0">
           <span className="text-xs font-medium text-slate-500 flex items-center gap-1">

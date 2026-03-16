@@ -2,24 +2,15 @@ import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { fetchProducts } from '../services/api';
 import { useWishlistStore } from '../store/useWishlistStore';
-import { useUserPreferencesStore } from '../store/useUserPreferencesStore';
 import { usePageCacheStore } from '../store/usePageCacheStore';
 import Skeleton from '../components/Skeleton';
 import { useTranslation } from 'react-i18next';
-import SearchBar from '../components/home/SearchBar';
 import FilterBar from '../components/home/FilterBar';
 import type { ConditionFilter, PriceFilter } from '../components/home/FilterBar';
 import ProductCard from '../components/home/ProductCard';
-import { Grid2X2, Smartphone, Shirt, Sparkles, Banknote, AlertCircle, PackageSearch } from 'lucide-react';
+import { Grid2X2, Smartphone, Shirt, Sparkles, Banknote, AlertCircle, PackageSearch, Search } from 'lucide-react';
 import type { Product } from '../types/product';
 
-const categoryToSearchTerm: Record<string, string> = {
-  all: '',
-  electronics: 'إلكترونيات أجهزة ذكية electronics tech',
-  fashion: 'ملابس أزياء موضة fashion clothes',
-  new: 'جديد وصل حديثاً new arrivals',
-  under5k: '', 
-};
 const HOME_CATEGORY_CACHE_KEY = 'home_category_cached_products_v1';
 
 const Home: React.FC = () => {
@@ -37,7 +28,6 @@ const Home: React.FC = () => {
   const navigate = useNavigate();
   const wishlistItems = useWishlistStore((state) => state.items);
   const toggleWishlist = useWishlistStore((state) => state.toggleWishlist);
-  const searchHistory = useUserPreferencesStore((state) => state.searchHistory);
 
   // Read initial state from store without subscribing to updates (except categoryId)
   const homeCategoryId = usePageCacheStore((state) => state.homeCategoryId);
@@ -70,32 +60,6 @@ const Home: React.FC = () => {
     return raw.replace(/^rapid-/i, '');
   }, []);
 
-  const getHistoryTerms = useCallback(() => {
-    const unique = new Set<string>();
-    (searchHistory || []).forEach((entry) => {
-      const term = String(entry || '').trim();
-      if (term) unique.add(term);
-    });
-    return Array.from(unique);
-  }, [searchHistory]);
-
-  const shuffleTerms = useCallback((terms: string[]) => {
-    const copy = [...terms];
-    for (let i = copy.length - 1; i > 0; i -= 1) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [copy[i], copy[j]] = [copy[j], copy[i]];
-    }
-    return copy;
-  }, []);
-
-  const shuffleProducts = useCallback((items: Product[]) => {
-    const copy = [...items];
-    for (let i = copy.length - 1; i > 0; i -= 1) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [copy[i], copy[j]] = [copy[j], copy[i]];
-    }
-    return copy;
-  }, []);
 
   const readCategoryCachedProducts = useCallback((categoryId: string): Product[] => {
     try {
@@ -161,7 +125,6 @@ const Home: React.FC = () => {
     };
     const stateSnapshot = usePageCacheStore.getState();
     pushMany(Array.isArray(stateSnapshot.homeProducts) ? stateSnapshot.homeProducts : []);
-    pushMany(Array.isArray(stateSnapshot.searchResults) ? stateSnapshot.searchResults : []);
     try {
       Object.keys(localStorage).forEach((key) => {
         if (!key.startsWith('app_cache_v5_')) return;
@@ -224,38 +187,10 @@ const Home: React.FC = () => {
 
     try {
       setError(null);
-      const searchTerm = categoryToSearchTerm[categoryId] || '';
       const maxPrice = categoryId === 'under5k' ? 5000 : (priceFilter === '1k' ? 1000 : priceFilter === '5k' ? 5000 : priceFilter === '10k' ? 10000 : priceFilter === '25k' ? 25000 : undefined);
       const condition = conditionFilter === 'new' ? 'new' : conditionFilter === 'used' ? 'used' : undefined;
 
-      let prodsRes: any = null;
-      if (categoryId === 'all' && pageNum === 1 && getHistoryTerms().length > 0) {
-        // ... (existing logic for history terms, but pass maxPrice and condition if API supports it)
-        // For simplicity, we'll just fetch standard products with filters if filters are active
-        if (condition || maxPrice) {
-             prodsRes = await fetchProducts(pageNum, 10, searchTerm, maxPrice, condition);
-        } else {
-            // Existing history logic
-            const historyTerms = getHistoryTerms();
-            const termBatchSize = isInitial ? 2 : Math.min(2, historyTerms.length);
-            const termBatch = shuffleTerms(historyTerms).slice(0, termBatchSize);
-            const perTermLimit = isInitial ? 5 : 8;
-            const termResponses = await Promise.all(
-              termBatch.map((term) => fetchProducts(pageNum, perTermLimit, term))
-            );
-            const baseResponse = await fetchProducts(pageNum, Math.max(4, 10 - termBatch.length * perTermLimit), '');
-            const termProducts = termResponses.flatMap((r) => Array.isArray(r?.products) ? r.products : []);
-            const baseProducts = Array.isArray(baseResponse?.products) ? baseResponse.products : [];
-            const combined = mergeUniqueProducts(termProducts, baseProducts);
-            const shuffled = shuffleProducts(combined);
-            prodsRes = {
-              products: shuffled,
-              hasMore: termResponses.some((r) => r?.hasMore) || Boolean(baseResponse?.hasMore)
-            };
-        }
-      } else {
-        prodsRes = await fetchProducts(pageNum, 10, searchTerm, maxPrice, condition);
-      }
+      const prodsRes = await fetchProducts(pageNum, 10, maxPrice, condition);
 
       // Only proceed if this is still the active request for this category
       if (activeRequestRef.current !== requestId) return;
@@ -331,7 +266,7 @@ const Home: React.FC = () => {
         setLoadingMore(false);
       }
     }
-  }, [mergeUniqueProducts, normalizeProductId, setHomeData, t, readCategoryCachedProducts, writeCategoryCachedProducts, readGlobalCachedProducts, getHistoryTerms, shuffleTerms, shuffleProducts, conditionFilter, priceFilter]);
+  }, [mergeUniqueProducts, normalizeProductId, setHomeData, t, readCategoryCachedProducts, writeCategoryCachedProducts, readGlobalCachedProducts, conditionFilter, priceFilter]);
 
   useEffect(() => {
     // Reload when filters change
@@ -553,13 +488,16 @@ const Home: React.FC = () => {
   return (
     <div className="relative flex min-h-screen w-full flex-col pb-28 pb-safe bg-background-light dark:bg-background-dark font-display text-slate-900 dark:text-white antialiased selection:bg-primary/30 rtl" dir="rtl">
       <div className="sticky top-0 z-40 pt-safe bg-white dark:bg-gray-900 shadow-sm transition-transform duration-300" id="home-header">
-        <SearchBar
-          onNavigate={(path: string, state?: any) => navigate(path, { state })}
-          navigationState={{
-            conditionFilter: draftConditionFilter,
-            priceFilter: draftPriceFilter
-          }}
-        />
+        <div className="px-4 py-3">
+          <button
+            type="button"
+            onClick={() => navigate('/search')}
+            className="w-full flex items-center gap-3 bg-slate-100 dark:bg-slate-800 rounded-xl px-3 py-2.5 text-right"
+          >
+            <Search size={18} className="text-slate-400" />
+            <span className="text-sm text-slate-500 font-medium">ابحث عن منتجات...</span>
+          </button>
+        </div>
         <FilterBar 
           condition={draftConditionFilter}
           price={draftPriceFilter}

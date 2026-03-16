@@ -84,6 +84,7 @@ model Message {
 model Product {
   id                Int                    @id @default(autoincrement())
   name              String
+  keywords          String[]               @default([])
   price             Float
   basePriceIQD      Float?
   image             String

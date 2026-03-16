@@ -204,11 +204,11 @@ function AnimatedRoutes() {
         } />
         <Route path="/cart/empty" element={<PageTransition><CartEmpty /></PageTransition>} />
         <Route path="/categories" element={<PageTransition><Categories /></PageTransition>} />
+        <Route path="/search" element={<PageTransition><SearchResults /></PageTransition>} />
         <Route path="/order-not-found" element={<PageTransition><OrderNotFound /></PageTransition>} />
         <Route path="/login" element={<PageTransition><Login /></PageTransition>} />
         <Route path="/verify-otp" element={<PageTransition><VerifyOTP /></PageTransition>} />
         <Route path="/product" element={<PageTransition><ProductDetails /></PageTransition>} />
-        <Route path="/search" element={<PageTransition><SearchResults /></PageTransition>} />
         <Route path="/about-us" element={<PageTransition><AboutUs /></PageTransition>} />
         <Route path="/faq" element={<PageTransition><FAQ /></PageTransition>} />
         <Route path="/shipping-tracking" element={

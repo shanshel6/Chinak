@@ -21,6 +21,7 @@ import { createServer } from 'http';
 import { Server } from 'socket.io';
 import path from 'path';
 import axios from 'axios';
+import { MeiliSearch } from 'meilisearch';
 import { fileURLToPath } from 'url';
 import prisma from './prismaClient.js';
 import { processProductAI, processProductEmbedding, hybridSearch, estimateProductPhysicals, normalizeArabic } from './services/aiService.js';
@@ -454,6 +455,266 @@ const extractNewOrOld = (aiMetadata) => {
     if (value === 0) return false;
   }
   return null;
+};
+
+const MEILI_INDEX_NAME = process.env.MEILI_INDEX_NAME || 'products';
+const MEILI_HOST = process.env.MEILI_HOST || '';
+const MEILI_ADMIN_API_KEY = process.env.MEILI_ADMIN_API_KEY || process.env.MEILI_MASTER_KEY || '';
+let meiliClientSingleton = null;
+
+const normalizeSearchText = (value) => {
+  if (!value) return '';
+  return String(value)
+    .toLowerCase()
+    .replace(/[أإآٱ]/g, 'ا')
+    .replace(/ى/g, 'ي')
+    .replace(/ة/g, 'ه')
+    .replace(/ؤ/g, 'و')
+    .replace(/ئ/g, 'ي')
+    .replace(/[\u064B-\u0652]/g, '')
+    .replace(/ـ/g, '')
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+};
+
+const ARABIC_SYNONYM_GROUPS = [
+  ['جوال', 'هاتف', 'موبايل', 'تلفون', 'محمول', 'موبيل', 'خلوي', 'موبايل فون'],
+  ['ايفون', 'آيفون', 'iphone', 'اىفون', 'اي فون'],
+  ['اندرويد', 'أندرويد', 'android'],
+  ['سماعه', 'سماعة', 'سماعات', 'هيدفون', 'هيدفوت', 'earbuds', 'headphones'],
+  ['شاحن', 'شواحن', 'charger'],
+  ['وصله', 'وصلة', 'كيبل', 'كابل', 'سلك شحن', 'usb cable', 'cable'],
+  ['باور بانك', 'بور بانك', 'power bank', 'بنك طاقة', 'بطارية متنقلة'],
+  ['غطاء', 'كفر', 'جراب', 'حافظة', 'case', 'cover'],
+  ['لابتوب', 'لاب توب', 'حاسوب محمول', 'كمبيوتر محمول', 'notebook'],
+  ['كمبيوتر', 'حاسوب', 'pc', 'computer', 'ديسكتوب', 'desktop'],
+  ['كيبورد', 'لوحة مفاتيح', 'keyboard'],
+  ['ماوس', 'فارة', 'فأرة', 'mouse'],
+  ['شاشه', 'شاشة', 'monitor', 'display'],
+  ['طابعه', 'طابعة', 'printer'],
+  ['تابلت', 'جهاز لوحي', 'tablet', 'ipad', 'ايباد'],
+  ['ساعة ذكية', 'سمارت واتش', 'smartwatch', 'ساعه ذكيه'],
+  ['كاميرا', 'camera', 'آلة تصوير', 'اله تصوير'],
+  ['تلفزيون', 'تلفاز', 'tv', 'شاشة تلفاز', 'سمارت تي في', 'smart tv'],
+  ['ثلاجه', 'ثلاجة', 'براد', 'refrigerator', 'fridge'],
+  ['غساله', 'غسالة', 'washing machine', 'ماكنة غسيل'],
+  ['مكيف', 'مكيّف', 'مبرد', 'air conditioner', 'ac'],
+  ['مكنسه', 'مكنسة', 'هوفر', 'vacuum', 'vacuum cleaner'],
+  ['مروحه', 'مروحة', 'fan'],
+  ['دفايه', 'دفاية', 'heater'],
+  ['خلاط', 'blender', 'mixer'],
+  ['فرن', 'oven'],
+  ['ميكرويف', 'مايكرويف', 'microwave'],
+  ['سماعه بلوتوث', 'سماعة بلوتوث', 'bluetooth speaker', 'مكبر صوت'],
+  ['بلايستيشن', 'بليستيشن', 'ps', 'playstation', 'سوني'],
+  ['اكس بوكس', 'xbox', 'اكسبوكس'],
+  ['يد تحكم', 'كنترولر', 'جويستك', 'controller', 'gamepad'],
+  ['لعبة', 'العاب', 'game', 'games'],
+  ['حذاء', 'حذا', 'جزمة', 'شحاطة', 'صندل', 'بوط', 'shoe', 'shoes', 'sneakers'],
+  ['ملابس', 'لبس', 'ثياب', 'clothes', 'apparel'],
+  ['قميص', 'تيشيرت', 'تي شيرت', 'shirt', 't shirt', 't-shirt'],
+  ['بنطلون', 'سروال', 'جينز', 'pants', 'trousers', 'jeans'],
+  ['فستان', 'دريس', 'dress'],
+  ['عباية', 'عبايه', 'abaya'],
+  ['عطر', 'برفيوم', 'perfume', 'fragrance'],
+  ['مكياج', 'مستحضرات تجميل', 'cosmetics', 'makeup'],
+  ['كريم', 'مرطب', 'moisturizer', 'cream'],
+  ['شامبو', 'شامبوو', 'shampoo'],
+  ['صابون', 'soap'],
+  ['شنطه', 'شنطة', 'حقيبة', 'bag', 'handbag'],
+  ['محفظه', 'محفظة', 'wallet'],
+  ['نظاره', 'نظارة', 'glasses', 'eyewear'],
+  ['كرسي', 'كرسيه', 'chair', 'seat'],
+  ['طاوله', 'طاولة', 'table', 'desk', 'مكتب'],
+  ['كنبه', 'كنبة', 'اريكة', 'أريكة', 'sofa', 'couch'],
+  ['سرير', 'bed'],
+  ['مرتبه', 'مرتبة', 'mattress'],
+  ['بطانيه', 'بطانية', 'blanket'],
+  ['مخده', 'مخدة', 'وسادة', 'pillow'],
+  ['مطبخ', 'ادوات مطبخ', 'أدوات مطبخ', 'kitchen', 'kitchenware'],
+  ['طفل', 'اطفال', 'أطفال', 'بيبي', 'baby', 'kids'],
+  ['عربيه', 'عربية', 'سياره', 'سيارة', 'car', 'vehicle', 'automobile'],
+  ['اطار', 'إطار', 'كوشوك', 'tire', 'tyre'],
+  ['زيت', 'زيت محرك', 'oil', 'engine oil'],
+  ['دراجه', 'دراجة', 'سيكل', 'bike', 'bicycle'],
+  ['ساعه', 'ساعة', 'watch'],
+  ['خاتم', 'دبله', 'دبلة', 'ring'],
+  ['قلاده', 'قلادة', 'سلسال', 'necklace'],
+  ['اسواره', 'اسوارة', 'إسوارة', 'bracelet'],
+  ['هديه', 'هدية', 'gift', 'present'],
+  ['توصيل', 'شحن', 'delivery', 'shipping'],
+  ['جديد', 'new'],
+  ['مستعمل', 'استخدام خفيف', 'used', 'second hand', 'secondhand']
+];
+
+const buildMeiliSynonyms = (groups) => {
+  const synonymMap = {};
+  for (const group of groups) {
+    const expanded = new Set();
+    for (const rawTerm of group) {
+      const term = String(rawTerm || '').trim().toLowerCase();
+      if (!term) continue;
+      expanded.add(term);
+      const normalized = normalizeSearchText(term);
+      if (normalized) expanded.add(normalized);
+    }
+    const allTerms = Array.from(expanded).filter(Boolean);
+    for (const term of allTerms) {
+      const alternatives = allTerms.filter((candidate) => candidate !== term);
+      if (alternatives.length > 0) synonymMap[term] = alternatives;
+    }
+  }
+  return synonymMap;
+};
+
+const MEILI_ARABIC_SYNONYMS = buildMeiliSynonyms(ARABIC_SYNONYM_GROUPS);
+
+const buildSearchDocument = (product) => {
+  const aiMetadata = parseAiMetadata(product?.aiMetadata);
+  const rawKeywords = Array.isArray(product?.keywords) ? product.keywords : [];
+  const keywordsJoined = rawKeywords.map((kw) => String(kw || '').trim()).filter(Boolean).join(' ');
+  const title = String(product?.name || '').trim();
+  const description = String(product?.description || '').trim();
+  const aiTitle = String(aiMetadata?.title_ar || aiMetadata?.title || '').trim();
+  const searchText = [title, aiTitle, keywordsJoined, description].filter(Boolean).join(' ');
+  const normalizedSearchText = normalizeSearchText(searchText);
+  return {
+    id: product.id,
+    name: title,
+    description,
+    keywords: rawKeywords,
+    searchText,
+    normalizedSearchText,
+    price: Number(product?.price || 0),
+    status: String(product?.status || ''),
+    isActive: Boolean(product?.isActive),
+    neworold: typeof product?.neworold === 'boolean' ? product.neworold : null,
+    updatedAt: product?.updatedAt ? new Date(product.updatedAt).getTime() : 0
+  };
+};
+
+const getMeiliClient = () => {
+  if (!MEILI_HOST || !MEILI_ADMIN_API_KEY) {
+    const configError = new Error('Meilisearch is not configured. Set MEILI_HOST and MEILI_ADMIN_API_KEY.');
+    configError.status = 503;
+    throw configError;
+  }
+  if (!meiliClientSingleton) {
+    meiliClientSingleton = new MeiliSearch({
+      host: MEILI_HOST,
+      apiKey: MEILI_ADMIN_API_KEY
+    });
+  }
+  return meiliClientSingleton;
+};
+
+const getMeiliIndex = async () => {
+  const client = getMeiliClient();
+  const index = client.index(MEILI_INDEX_NAME);
+  try {
+    await index.getRawInfo();
+  } catch (_error) {
+    await client.createIndex(MEILI_INDEX_NAME, { primaryKey: 'id' });
+  }
+  return client.index(MEILI_INDEX_NAME);
+};
+
+const ensureMeiliIndexSettings = async () => {
+  const index = await getMeiliIndex();
+  await index.updateSearchableAttributes(['name', 'keywords']);
+  await index.updateFilterableAttributes(['status', 'isActive', 'neworold', 'price']);
+  await index.updateSortableAttributes(['price', 'updatedAt']);
+  await index.updateSynonyms(MEILI_ARABIC_SYNONYMS);
+  await index.updateRankingRules([
+    'words',
+    'typo',
+    'proximity',
+    'attribute',
+    'sort',
+    'exactness'
+  ]);
+  return index;
+};
+
+const syncProductsToMeili = async () => {
+  const index = await ensureMeiliIndexSettings();
+  const pageSize = 500;
+  let lastId = 0;
+  let totalIndexed = 0;
+  while (true) {
+    const batch = await prisma.product.findMany({
+      where: { id: { gt: lastId }, status: { not: 'DELETED' } },
+      orderBy: { id: 'asc' },
+      take: pageSize,
+      select: {
+        id: true,
+        name: true,
+        keywords: true,
+        aiMetadata: true,
+        price: true,
+        status: true,
+        isActive: true,
+        neworold: true,
+        updatedAt: true
+      }
+    });
+    if (batch.length === 0) break;
+    lastId = batch[batch.length - 1].id;
+    const docs = batch.map(buildSearchDocument);
+    if (docs.length > 0) {
+      const task = await index.addDocuments(docs, { primaryKey: 'id' });
+      await index.waitForTask(task.taskUid);
+      totalIndexed += docs.length;
+    }
+  }
+  return { totalIndexed, indexName: MEILI_INDEX_NAME };
+};
+
+const syncProductToMeiliById = async (productId) => {
+  const normalizedId = safeParseId(productId);
+  if (!normalizedId) return;
+  const product = await prisma.product.findUnique({
+    where: { id: normalizedId },
+    select: {
+      id: true,
+      name: true,
+      keywords: true,
+      aiMetadata: true,
+      price: true,
+      status: true,
+      isActive: true,
+      neworold: true,
+      updatedAt: true
+    }
+  });
+  const index = await ensureMeiliIndexSettings();
+  if (!product || product.status === 'DELETED') {
+    await index.deleteDocument(normalizedId);
+    return;
+  }
+  const doc = buildSearchDocument(product);
+  const task = await index.addDocuments([doc], { primaryKey: 'id' });
+  await index.waitForTask(task.taskUid);
+};
+
+const deleteProductFromMeiliById = async (productId) => {
+  const normalizedId = safeParseId(productId);
+  if (!normalizedId) return;
+  const index = await ensureMeiliIndexSettings();
+  const task = await index.deleteDocument(normalizedId);
+  await index.waitForTask(task.taskUid);
+};
+
+const ensureMeiliIndexed = async () => {
+  try {
+    const index = await ensureMeiliIndexSettings();
+    const stats = await index.getStats();
+    if ((stats?.numberOfDocuments || 0) > 0) return;
+    await syncProductsToMeili();
+  } catch (error) {
+    console.error('[Meili] ensureMeiliIndexed failed:', error?.message || error);
+  }
 };
 
 const extractGeneratedOptionEntries = (opt) => {
@@ -3118,7 +3379,7 @@ const getLatencyBucket = (ms) => {
   if (ms < 8000) return '3s-8s';
   return '8s+';
 };
-const normalizeSearchText = (value) => String(value || '')
+const normalizeRapidSearchText = (value) => String(value || '')
   .toLowerCase()
   .replace(/[أإآ]/g, 'ا')
   .replace(/ة/g, 'ه')
@@ -3127,7 +3388,7 @@ const normalizeSearchText = (value) => String(value || '')
   .replace(/\s+/g, ' ')
   .trim();
 const buildSearchQueryVariants = (query) => {
-  const normalized = normalizeSearchText(query);
+  const normalized = normalizeRapidSearchText(query);
   const compact = normalized.replace(/\s+/g, '');
   const tokens = normalized.split(' ').filter(Boolean);
   const variants = [query, normalized, compact, ...tokens];
@@ -4184,133 +4445,6 @@ app.post('/api/tools/rapid/search-image', async (req, res) => {
   }
 });
 
-app.get('/api/products/search', async (req, res) => {
-  console.log('[Products] GET /api/products/search request received. Query:', req.query);
-  try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 20;
-    const skip = (page - 1) * limit;
-    const queryValue = typeof req.query.q === 'string' && req.query.q.trim()
-      ? req.query.q
-      : req.query.search;
-    const search = String(queryValue || '').trim();
-    const maxPrice = req.query.maxPrice ? parseFloat(req.query.maxPrice) : null;
-
-    if (!search) {
-      return res.status(400).json({ error: 'Query is required' });
-    }
-
-    if (!cachedStoreSettings || (Date.now() - cachedStoreSettingsTime > 60000)) {
-      cachedStoreSettings = await prisma.storeSettings.findUnique({ where: { id: 1 } });
-      cachedStoreSettingsTime = Date.now();
-    }
-    const storeSettings = cachedStoreSettings;
-
-    const shippingRates = {
-      airShippingRate: storeSettings?.airShippingRate,
-      seaShippingRate: storeSettings?.seaShippingRate,
-      airShippingMinFloor: storeSettings?.airShippingMinFloor
-    };
-
-    if (ENABLE_SEMANTIC_SEARCH && (process.env.DEEPINFRA_API_KEY || process.env.HUGGINGFACE_API_KEY)) {
-      try {
-        console.log(`[AI Search] Hybrid search for: "${search}" (page ${page})`);
-        const products = await hybridSearch(search, limit, skip, maxPrice);
-        if (products && products.length > 0) {
-          return res.json({
-            products: Array.isArray(products) ? products.map(p => applyDynamicPricingToProduct(p, shippingRates)) : products,
-            total: products.length === limit ? page * limit + limit : (page - 1) * limit + products.length,
-            page,
-            totalPages: products.length === limit ? page + 1 : page,
-            engine: 'hybrid'
-          });
-        }
-        console.log('[AI Search] No results found, falling back to database search');
-      } catch (aiError) {
-        console.error('AI Search failed in products search route, falling back:', aiError);
-      }
-    }
-
-    const where = { 
-      isActive: true,
-      status: 'PUBLISHED',
-      OR: [
-        { name: { contains: search } },
-        { purchaseUrl: { contains: search } }
-      ]
-    };
-
-    if (maxPrice !== null) {
-      where.price = { lte: maxPrice };
-    }
-
-    const [products, total] = await Promise.all([
-      prisma.product.findMany({
-        where,
-        select: {
-          id: true,
-          name: true,
-          price: true,
-          basePriceIQD: true,
-          image: true,
-          aiMetadata: true,
-          neworold: true,
-          isFeatured: true,
-          domesticShippingFee: true,
-          deliveryTime: true,
-          variants: {
-            select: {
-              id: true,
-              combination: true,
-              price: true,
-              basePriceIQD: true,
-              image: true,
-            }
-          }
-        },
-        skip,
-        take: limit,
-        orderBy: { updatedAt: 'desc' }
-      }),
-      prisma.product.count({ where })
-    ]);
-
-    if (!products || products.length === 0) {
-      return res.json({
-        products: [],
-        total: 0,
-        page,
-        totalPages: 0,
-        engine: 'db'
-      });
-    }
-
-    res.json({
-      products: products.map(p => {
-        const aiMetadata = parseAiMetadata(p.aiMetadata);
-        const processed = applyDynamicPricingToProduct(p, shippingRates);
-        const isRealBrand = typeof aiMetadata?.isRealBrand === 'boolean' ? aiMetadata.isRealBrand : null;
-        // Prefer DB value if present, otherwise extract from metadata
-        const neworold = (p.neworold !== null && p.neworold !== undefined) 
-          ? p.neworold 
-          : extractNewOrOld(aiMetadata);
-        return { ...processed, aiMetadata, isRealBrand, neworold };
-      }),
-      total,
-      page,
-      totalPages: Math.ceil(total / limit),
-      engine: 'db'
-    });
-  } catch (error) {
-    console.error('[Products] Failed to search products:', error);
-    res.status(500).json({ 
-      error: 'Failed to search products', 
-      details: error.message,
-      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
-    });
-  }
-});
-
 app.get('/api/products', async (req, res) => {
   const requestStart = Date.now();
   console.log(`[Products] GET /api/products request received. Query:`, req.query);
@@ -4318,7 +4452,6 @@ app.get('/api/products', async (req, res) => {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 20;
     const skip = (page - 1) * limit;
-    const search = req.query.search || '';
     const maxPrice = req.query.maxPrice ? parseFloat(req.query.maxPrice) : null;
     const condition = req.query.condition || '';
 
@@ -4339,13 +4472,6 @@ app.get('/api/products', async (req, res) => {
       isActive: true,
       status: 'PUBLISHED'
     };
-
-    if (search) {
-      where.OR = [
-        { name: { contains: search, mode: 'insensitive' } },
-        { purchaseUrl: { contains: search, mode: 'insensitive' } }
-      ];
-    }
 
     if (maxPrice !== null && !isNaN(maxPrice)) {
       where.price = { lte: maxPrice };
@@ -5215,6 +5341,9 @@ async function runBulkProductsImport(products, { onProgress } = {}) {
       });
 
       enqueueEmbeddingJob(product.id);
+      void syncProductToMeiliById(product.id).catch((meiliError) => {
+        console.error('[Meili] bulk product sync failed:', meiliError?.message || meiliError);
+      });
 
       results.imported++;
       maybeReportProgress();
@@ -5610,6 +5739,9 @@ app.post('/api/products', authenticateToken, isAdmin, hasPermission('manage_prod
     });
 
     enqueueEmbeddingJob(product.id);
+    void syncProductToMeiliById(product.id).catch((meiliError) => {
+      console.error('[Meili] create product sync failed:', meiliError?.message || meiliError);
+    });
 
     res.status(201).json(product);
   } catch (error) {
@@ -7236,18 +7368,207 @@ app.get('/api/products/:id/check-purchase', authenticateToken, async (req, res) 
   }
 });
 
-// Search products
+app.post('/api/admin/search/reindex', authenticateToken, isAdmin, hasPermission('manage_products'), async (_req, res) => {
+  try {
+    const result = await syncProductsToMeili();
+    return res.json({
+      ok: true,
+      engine: 'meili',
+      ...result
+    });
+  } catch (error) {
+    console.error('[Meili] reindex failed:', error);
+    return res.status(503).json({
+      error: 'Meilisearch reindex failed',
+      details: error?.message || 'Unknown error'
+    });
+  }
+});
+
 app.get('/api/search', async (req, res) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+    const offset = (page - 1) * limit;
+    const maxPrice = req.query.maxPrice ? Number.parseFloat(String(req.query.maxPrice)) : null;
+    const condition = String(req.query.condition || '').trim();
+
+    if (!q) {
+      return res.json({ products: [], total: 0, page, totalPages: 0, hasMore: false, engine: 'meili' });
+    }
+
+    const normalizedQuery = normalizeSearchText(q);
+    const productSelect = {
+      id: true,
+      name: true,
+      price: true,
+      basePriceIQD: true,
+      image: true,
+      aiMetadata: true,
+      neworold: true,
+      isFeatured: true,
+      domesticShippingFee: true,
+      deliveryTime: true,
+      variants: {
+        select: {
+          id: true,
+          combination: true,
+          price: true,
+          basePriceIQD: true,
+          image: true
+        }
+      }
+    };
+
+    if (!cachedStoreSettings || (Date.now() - cachedStoreSettingsTime > 60000)) {
+      cachedStoreSettings = await prisma.storeSettings.findUnique({ where: { id: 1 } });
+      cachedStoreSettingsTime = Date.now();
+    }
+    const storeSettings = cachedStoreSettings;
+    const shippingRates = {
+      airShippingRate: storeSettings?.airShippingRate,
+      seaShippingRate: storeSettings?.seaShippingRate,
+      airShippingMinFloor: storeSettings?.airShippingMinFloor
+    };
+
+    try {
+      const index = await ensureMeiliIndexSettings();
+      const filters = ['status = PUBLISHED', 'isActive = true'];
+      if (Number.isFinite(maxPrice) && maxPrice > 0) {
+        filters.push(`price <= ${maxPrice}`);
+      }
+      if (condition === 'new') {
+        filters.push('neworold = true');
+      } else if (condition === 'used') {
+        filters.push('(neworold = false OR neworold IS NULL)');
+      }
+
+      const searchResult = await index.search(normalizedQuery || q, {
+        limit,
+        offset,
+        filter: filters,
+        sort: ['updatedAt:desc']
+      });
+
+      const hitIds = Array.isArray(searchResult?.hits)
+        ? searchResult.hits.map((hit) => Number(hit?.id)).filter((id) => Number.isFinite(id))
+        : [];
+      if (hitIds.length === 0) {
+        return res.json({ products: [], total: 0, page, totalPages: 0, hasMore: false, engine: 'meili' });
+      }
+
+      const productsFromDb = await prisma.product.findMany({
+        where: {
+          id: { in: hitIds },
+          status: 'PUBLISHED',
+          isActive: true
+        },
+        select: productSelect
+      });
+
+      const rankIndex = new Map(hitIds.map((id, indexPosition) => [id, indexPosition]));
+      const rankedProducts = productsFromDb
+        .slice()
+        .sort((a, b) => (rankIndex.get(a.id) ?? 999999) - (rankIndex.get(b.id) ?? 999999))
+        .map((product) => {
+          const aiMetadata = parseAiMetadata(product.aiMetadata);
+          const processed = applyDynamicPricingToProduct(product, shippingRates);
+          const isRealBrand = typeof aiMetadata?.isRealBrand === 'boolean' ? aiMetadata.isRealBrand : null;
+          const neworold = (product.neworold !== null && product.neworold !== undefined)
+            ? product.neworold
+            : extractNewOrOld(aiMetadata);
+          return { ...processed, aiMetadata, isRealBrand, neworold };
+        });
+
+      const total = Number(searchResult?.estimatedTotalHits || 0);
+      return res.json({
+        products: rankedProducts,
+        total,
+        page,
+        totalPages: Math.ceil(total / limit),
+        hasMore: offset + rankedProducts.length < total,
+        engine: 'meili'
+      });
+    } catch (meiliError) {
+      console.warn('[Meili] search fallback to db:', meiliError?.message || meiliError);
+      const searchTerms = Array.from(new Set([q, normalizedQuery].map((v) => String(v || '').trim()).filter(Boolean)));
+      const andFilters = [];
+      if (searchTerms.length > 0) {
+        andFilters.push({
+          OR: searchTerms.map((term) => ({ name: { contains: term, mode: 'insensitive' } }))
+        });
+      }
+      if (Number.isFinite(maxPrice) && maxPrice > 0) {
+        andFilters.push({ price: { lte: maxPrice } });
+      }
+      if (condition === 'new') {
+        andFilters.push({ neworold: true });
+      } else if (condition === 'used') {
+        andFilters.push({ OR: [{ neworold: false }, { neworold: null }] });
+      }
+
+      const where = {
+        status: 'PUBLISHED',
+        isActive: true,
+        ...(andFilters.length > 0 ? { AND: andFilters } : {})
+      };
+
+      const total = await prisma.product.count({ where });
+      if (!total) {
+        return res.json({ products: [], total: 0, page, totalPages: 0, hasMore: false, engine: 'db' });
+      }
+
+      const productsFromDb = await prisma.product.findMany({
+        where,
+        skip: offset,
+        take: limit,
+        orderBy: { updatedAt: 'desc' },
+        select: productSelect
+      });
+
+      const processedProducts = productsFromDb.map((product) => {
+        const aiMetadata = parseAiMetadata(product.aiMetadata);
+        const processed = applyDynamicPricingToProduct(product, shippingRates);
+        const isRealBrand = typeof aiMetadata?.isRealBrand === 'boolean' ? aiMetadata.isRealBrand : null;
+        const neworold = (product.neworold !== null && product.neworold !== undefined)
+          ? product.neworold
+          : extractNewOrOld(aiMetadata);
+        return { ...processed, aiMetadata, isRealBrand, neworold };
+      });
+
+      return res.json({
+        products: processedProducts,
+        total,
+        page,
+        totalPages: Math.ceil(total / limit),
+        hasMore: offset + processedProducts.length < total,
+        engine: 'db'
+      });
+    }
+  } catch (error) {
+    console.error('[Meili] search failed:', error);
+    return res.status(503).json({
+      error: 'Meilisearch search failed',
+      details: error?.message || 'Unknown error'
+    });
+  }
+});
+
+// Search products
+app.get('/api/search-legacy-disabled', async (req, res) => {
   try {
     // Ensure fresh responses for search (avoid 304 Not Modified)
     res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     res.set('Pragma', 'no-cache');
     res.set('Expires', '0');
     res.set('Surrogate-Control', 'no-store');
-    const { q, page = 1, limit = 20, condition = '' } = req.query;
+    const { q, page = 1, limit = 20, condition = '', maxPrice } = req.query;
     const pageNum = parseInt(page);
     const limitNum = parseInt(limit);
     const skip = (pageNum - 1) * limitNum;
+    const parsedMaxPrice = typeof maxPrice === 'string' ? Number.parseFloat(maxPrice) : NaN;
+    const hasMaxPriceFilter = Number.isFinite(parsedMaxPrice) && parsedMaxPrice > 0;
     const requestId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
     const startTime = Date.now();
     const log = (stage, data = {}) => {
@@ -7270,7 +7591,14 @@ app.get('/api/search', async (req, res) => {
       .filter(k => k.length > 1);
     const keywords = cleanQuery.split(/\s+/).filter(k => k.length > 1);
     const baseKeywords = Array.from(new Set([...keywords, ...normalizedKeywords]));
-    log('start', { qLength: q.length, page: pageNum, limit: limitNum, isArabicQuery, keywordsCount: keywords.length });
+    log('start', {
+      qLength: q.length,
+      page: pageNum,
+      limit: limitNum,
+      isArabicQuery,
+      keywordsCount: keywords.length,
+      maxPrice: hasMaxPriceFilter ? parsedMaxPrice : null
+    });
 
     const storeSettings = await prisma.storeSettings.findUnique({ where: { id: 1 } });
     const shippingRates = {
@@ -7359,7 +7687,7 @@ app.get('/api/search', async (req, res) => {
       .trim();
     const primaryKeywordTokens = keywordTokens.length > 0 ? [keywordTokens[0]] : keywordTokens;
     const secondaryKeywordTokens = keywordTokens.length > 1 ? keywordTokens.slice(1) : [];
-    const requireAllTokens = false;
+    const requireAllTokens = keywordTokens.length > 1;
     const hasMaleIntent = keywordTokens.some((token) =>
       token.includes('رجال') || token.includes('رجالي') || token === 'men' || token === 'male' || token === 'man'
     );
@@ -7473,7 +7801,20 @@ app.get('/api/search', async (req, res) => {
         )
       )`
         : '');
-    const allTokensClause = '';
+    const allTokensClause = requireAllTokens
+      ? `
+      AND (
+        SELECT count(*)
+        FROM unnest($1::text[]) AS t(token)
+        WHERE EXISTS (
+          SELECT 1
+          FROM unnest(COALESCE(p."keywords", ARRAY[]::text[])) AS kw
+          WHERE ${tokenMatchCondition}
+        )
+      ) = ${keywordTokens.length}
+    `
+      : '';
+    const maxPriceClause = hasMaxPriceFilter ? `AND COALESCE(p.price, 0) <= ${parsedMaxPrice}` : '';
     const keywordWhereSql = `
       p.status = 'PUBLISHED'
       AND p."isActive" = true
@@ -7487,6 +7828,7 @@ app.get('/api/search', async (req, res) => {
         )
       )
       ${allTokensClause}
+      ${maxPriceClause}
       ${genderConflictClause}
       ${furnitureIntentClause}
       ${conditionClause}
@@ -8402,7 +8744,7 @@ app.get('/api/search', async (req, res) => {
   }
 });
 
-app.get('/api/search/suggestions', async (req, res) => {
+app.get('/api/search/suggestions-legacy-disabled', async (req, res) => {
   try {
     const q = String(req.query.q || '').trim();
     const limit = Math.min(300, Math.max(1, parseInt(String(req.query.limit || '120'), 10) || 120));
@@ -8572,6 +8914,9 @@ app.put('/api/products/:id', authenticateToken, isAdmin, hasPermission('manage_p
     });
 
     enqueueEmbeddingJob(product.id);
+    void syncProductToMeiliById(product.id).catch((meiliError) => {
+      console.error('[Meili] update product sync failed:', meiliError?.message || meiliError);
+    });
 
     res.json(product);
   } catch (error) {
@@ -8598,6 +8943,9 @@ app.delete('/api/products/:id', authenticateToken, isAdmin, hasPermission('manag
     ]);
 
     await prisma.product.delete({ where: { id: productId } });
+    void deleteProductFromMeiliById(productId).catch((meiliError) => {
+      console.error('[Meili] delete product sync failed:', meiliError?.message || meiliError);
+    });
 
     await logActivity(
       req.user.id,
