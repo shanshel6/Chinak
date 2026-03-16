@@ -31,6 +31,7 @@ const SearchResults: React.FC = () => {
   const [restored, setRestored] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const randomStartPageRef = useRef(1);
+  const restoredFromCacheRef = useRef(false);
   const activeQueryRef = useRef(activeQuery);
   const pageRef = useRef(page);
   const loadingRef = useRef(loading);
@@ -63,11 +64,13 @@ const SearchResults: React.FC = () => {
   useEffect(() => {
     const key = initialQuery.trim();
     if (!key) {
+      restoredFromCacheRef.current = false;
       setRestored(false);
       return;
     }
     const cached = usePageCacheStore.getState().getSearchData(key);
     if (cached && Array.isArray(cached.results) && cached.results.length > 0) {
+      restoredFromCacheRef.current = true;
       setConditionFilter(cached.condition as ConditionFilter);
       setPriceFilter(cached.price as PriceFilter);
       setDraftConditionFilter(cached.condition as ConditionFilter);
@@ -88,6 +91,7 @@ const SearchResults: React.FC = () => {
       }
       return;
     }
+    restoredFromCacheRef.current = false;
     setRestored(false);
   }, [initialQuery]);
 
@@ -141,6 +145,7 @@ const SearchResults: React.FC = () => {
   useEffect(() => {
     const query = activeQuery.trim();
     if (!query) {
+      restoredFromCacheRef.current = false;
       setResults([]);
       setHasMore(false);
       setPage(1);
@@ -149,6 +154,11 @@ const SearchResults: React.FC = () => {
       inFlightMoreRef.current = false;
       scrollRatioRef.current = 0;
       setError(null);
+      return;
+    }
+    if (restoredFromCacheRef.current) {
+      setLoading(false);
+      setLoadingMore(false);
       return;
     }
     if (restored) {
@@ -312,6 +322,7 @@ const SearchResults: React.FC = () => {
 
   const submitSearch = () => {
     const q = queryInput.trim();
+    restoredFromCacheRef.current = false;
     randomStartPageRef.current = Math.floor(Math.random() * 3) + 1;
     setRestored(false);
     setResults([]);
@@ -330,6 +341,22 @@ const SearchResults: React.FC = () => {
     e.stopPropagation();
     toggleWishlist(product.id, product);
   };
+
+  const handleNavigateToProduct = useCallback((id: number | string, product: Product) => {
+    const key = activeQueryRef.current.trim();
+    if (key) {
+      const scrollY = window.pageYOffset || window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0;
+      usePageCacheStore.getState().setSearchScrollPos(key, scrollY);
+      usePageCacheStore.getState().setSearchData(key, {
+        results,
+        page: pageRef.current,
+        hasMore: hasMoreRef.current,
+        condition: conditionFilterRef.current as any,
+        price: priceFilterRef.current as any,
+      });
+    }
+    navigate(`/product?id=${id}`, { state: { initialProduct: product } });
+  }, [navigate, results]);
 
   const isProductInWishlist = (productId: number | string) => wishlistItems.some(item => String(item.productId) === String(productId));
 
@@ -403,7 +430,7 @@ const SearchResults: React.FC = () => {
               <ProductCard
                 key={product.id}
                 product={product}
-                onNavigate={(id) => navigate(`/product?id=${id}`, { state: { initialProduct: product } })}
+                onNavigate={(id) => handleNavigateToProduct(id, product)}
                 onAddToWishlist={onAddToWishlist}
                 isProductInWishlist={isProductInWishlist}
               />
