@@ -273,13 +273,13 @@ const calculateBulkImportPrice = (rawPrice, domesticFee, weight, length, width, 
     // Treat rawPrice as IQD (no heuristic conversion)
     const basePrice = rawPrice;
     
-    // Formula: (Base + Domestic) * 1.25
-    const finalPrice = (basePrice + domestic) * 1.25;
+    // Formula: (Base + Domestic) * 1.2
+    const finalPrice = (basePrice + domestic) * 1.2;
     return Math.ceil(finalPrice / 250) * 250;
   } else {
     // Sea logic matches Air now
     const basePrice = rawPrice;
-    const finalPrice = (basePrice + domestic) * 1.25;
+    const finalPrice = (basePrice + domestic) * 1.2;
     return Math.ceil(finalPrice / 250) * 250;
   }
 };
@@ -290,11 +290,11 @@ const estimateRawPriceFromStoredPrice = (storedPrice, domesticFee, weight, lengt
 
   const domestic = Number(domesticFee) || 0;
   
-  // Inverse of (Base + Domestic) * 1.25 = Stored
-  // Base + Domestic = Stored / 1.25
-  // Base = (Stored / 1.25) - Domestic
+  // Inverse of (Base + Domestic) * 1.2 = Stored
+  // Base + Domestic = Stored / 1.2
+  // Base = (Stored / 1.2) - Domestic
   
-  const raw = (stored / 1.25) - domestic;
+  const raw = (stored / 1.2) - domestic;
   return raw > 0 ? raw : 0;
 };
 
@@ -5249,9 +5249,9 @@ async function runBulkProductsImport(products, { onProgress } = {}) {
         finalPrice = rawPrice;
       } else if (!shippingPriceIncluded) {
         // Exclude shipping cost but keep markup and domestic fee
-        // Formula: (Base + Domestic) * 1.25
+        // Formula: (Base + Domestic) * 1.2
         const domestic = domesticShippingFee || 0;
-        const price = (finalPriceInput + domestic) * 1.25;
+        const price = (finalPriceInput + domestic) * 1.2;
         finalPrice = Math.ceil(price / 250) * 250;
       } else {
         finalPrice = calculateBulkImportPrice(finalPriceInput, domesticShippingFee, weight, length, width, height, effectiveMethod, shippingRates);
@@ -5309,7 +5309,7 @@ async function runBulkProductsImport(products, { onProgress } = {}) {
                  vPrice = finalBasePrice;
               } else if (!shippingPriceIncluded) {
                  const domestic = domesticShippingFee || 0;
-                 const price = (finalBasePrice + domestic) * 1.25;
+                 const price = (finalBasePrice + domestic) * 1.2;
                  vPrice = Math.ceil(price / 250) * 250;
               } else {
                  vPrice = calculateBulkImportPrice(finalBasePrice, domesticShippingFee, variantWeight, v.length || length, v.width || width, v.height || height, v.shippingMethod || effectiveMethod, shippingRates);
@@ -5643,9 +5643,9 @@ app.post('/api/products', authenticateToken, isAdmin, hasPermission('manage_prod
       finalPrice = rawPrice;
     } else if (!shippingPriceIncluded) {
       // Exclude shipping cost but keep markup and domestic fee
-      // Formula: (Base + Domestic) * 1.25
+      // Formula: (Base + Domestic) * 1.2
       const domestic = domesticFee || 0;
-      const calculatedPrice = (rawPrice + domestic) * 1.25;
+      const calculatedPrice = (rawPrice + domestic) * 1.2;
       finalPrice = Math.ceil(calculatedPrice / 250) * 250;
     } else {
       finalPrice = calculateBulkImportPrice(rawPrice, domesticFee, weight, length, width, height, req.body.shippingMethod, shippingRates);
@@ -5717,7 +5717,7 @@ app.post('/api/products', authenticateToken, isAdmin, hasPermission('manage_prod
                vPrice = variantRawPrice;
             } else if (!shippingPriceIncluded) {
                const domestic = domesticFee || 0;
-               const calculatedPrice = (variantRawPrice + domestic) * 1.25;
+               const calculatedPrice = (variantRawPrice + domestic) * 1.2;
                vPrice = Math.ceil(calculatedPrice / 250) * 250;
             } else {
                vPrice = calculateBulkImportPrice(variantRawPrice, domesticFee, v.weight || weight, v.length || length, v.width || width, v.height || height, v.shippingMethod, shippingRates);
@@ -5914,7 +5914,7 @@ app.post('/api/admin/products/bulk-import', authenticateToken, isAdmin, hasPermi
             price = rawPrice;
           } else if (!shippingPriceIncluded) {
             const domestic = domesticFee || 0;
-            const calculatedPrice = (priceInput + domestic) * 1.25;
+            const calculatedPrice = (priceInput + domestic) * 1.2;
             price = Math.ceil(calculatedPrice / 250) * 250;
           } else {
             price = calculateBulkImportPrice(priceInput, domesticFee, p.weight, p.length, p.width, p.height, p.shippingMethod, shippingRates);
@@ -6307,7 +6307,7 @@ app.post('/api/admin/products/bulk-import', authenticateToken, isAdmin, hasPermi
                  vPrice = finalBasePrice;
               } else if (!shippingPriceIncluded) {
                  const domestic = domesticFee || 0;
-                 const calculatedPrice = (finalBasePrice + domestic) * 1.25;
+                 const calculatedPrice = (finalBasePrice + domestic) * 1.2;
                  vPrice = Math.ceil(calculatedPrice / 250) * 250;
               } else {
                  vPrice = calculateBulkImportPrice(finalBasePrice, domesticFee, variantWeight || productWeight, v.length || p.length, v.width || p.width, v.height || p.height, v.shippingMethod || p.shippingMethod, shippingRates);
