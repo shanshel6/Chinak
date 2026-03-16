@@ -7,6 +7,7 @@ import ProductCard from '../components/home/ProductCard';
 import { useWishlistStore } from '../store/useWishlistStore';
 import type { ConditionFilter, PriceFilter } from '../components/home/FilterBar';
 import type { Product } from '../types/product';
+import { usePageCacheStore } from '../store/usePageCacheStore';
 
 const SearchResults: React.FC = () => {
   const navigate = useNavigate();
@@ -26,6 +27,8 @@ const SearchResults: React.FC = () => {
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [restored, setRestored] = useState(false);
+  const inputRef = useRef<HTMLInputElement | null>(null);
   const activeQueryRef = useRef(activeQuery);
   const pageRef = useRef(page);
   const loadingRef = useRef(loading);
@@ -40,6 +43,37 @@ const SearchResults: React.FC = () => {
   useEffect(() => {
     setQueryInput(initialQuery);
     setActiveQuery(initialQuery);
+  }, [initialQuery]);
+
+  useEffect(() => {
+    const key = initialQuery.trim();
+    if (!key) {
+      setRestored(false);
+      return;
+    }
+    const cached = usePageCacheStore.getState().getSearchData(key);
+    if (cached && Array.isArray(cached.results) && cached.results.length > 0) {
+      setConditionFilter(cached.condition as ConditionFilter);
+      setPriceFilter(cached.price as PriceFilter);
+      setDraftConditionFilter(cached.condition as ConditionFilter);
+      setDraftPriceFilter(cached.price as PriceFilter);
+      setResults(cached.results);
+      setHasMore(cached.hasMore);
+      setPage(cached.page);
+      setError(null);
+      setRestored(true);
+      const pos = cached.scrollPos || 0;
+      if (pos > 0) {
+        setTimeout(() => {
+          window.scrollTo(0, pos);
+          if (document.scrollingElement) {
+            document.scrollingElement.scrollTop = pos;
+          }
+        }, 100);
+      }
+      return;
+    }
+    setRestored(false);
   }, [initialQuery]);
 
   useEffect(() => {
@@ -93,6 +127,7 @@ const SearchResults: React.FC = () => {
       setError(null);
       return;
     }
+    if (restored) return;
     let cancelled = false;
     const runSearch = async () => {
       setLoading(true);
@@ -125,7 +160,7 @@ const SearchResults: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [activeQuery, conditionFilter, priceFilter]);
+  }, [activeQuery, conditionFilter, priceFilter, restored]);
 
   const loadMore = useCallback(async () => {
     const query = activeQueryRef.current.trim();
@@ -207,9 +242,46 @@ const SearchResults: React.FC = () => {
     };
   }, [activeQuery, loadMore]);
 
+  useEffect(() => {
+    const key = activeQuery.trim();
+    if (!key) return;
+    usePageCacheStore.getState().setSearchData(key, {
+      results,
+      page,
+      hasMore,
+      condition: conditionFilter as any,
+      price: priceFilter as any,
+    });
+  }, [results, page, hasMore, activeQuery, conditionFilter, priceFilter]);
+
+  useEffect(() => {
+    const key = activeQuery.trim();
+    if (!key) return;
+    let timeoutId: any = null;
+    const getScrollY = () => {
+      const se = document.scrollingElement as null | { scrollTop?: unknown };
+      if (se && typeof se.scrollTop === 'number') return se.scrollTop as number;
+      return window.pageYOffset || window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0;
+    };
+    const handleScroll = () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => {
+        usePageCacheStore.getState().setSearchScrollPos(key, getScrollY());
+      }, 150);
+    };
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    window.addEventListener('touchmove', handleScroll, { passive: true });
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      window.removeEventListener('scroll', handleScroll);
+      window.removeEventListener('touchmove', handleScroll);
+    };
+  }, [activeQuery]);
+
   const submitSearch = () => {
     const q = queryInput.trim();
     setActiveQuery(q);
+    if (inputRef.current) inputRef.current.blur();
     navigate(`/search${q ? `?q=${encodeURIComponent(q)}` : ''}`, { replace: true });
   };
 
@@ -234,6 +306,7 @@ const SearchResults: React.FC = () => {
           <div className="flex-1 flex items-center gap-2 bg-slate-100 dark:bg-slate-800 rounded-xl px-3 py-2.5">
             <Search size={16} className="text-slate-500" />
             <input
+              ref={inputRef}
               value={queryInput}
               onChange={(event) => setQueryInput(event.target.value)}
               onKeyDown={(event) => {

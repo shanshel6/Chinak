@@ -53,7 +53,7 @@ const TermsOfService: React.FC = () => {
             </div>
             <h2 className="text-2xl font-black mb-2">اتفاقية الاستخدام</h2>
             <p className="text-slate-500 dark:text-slate-400">
-              يرجى قراءة هذه الشروط بعناية قبل البدء باستخدام تطبيق "صينك".
+              يرجى قراءة هذه الشروط بعناية قبل البدء باستخدام تطبيق "DFC".
             </p>
           </div>
 

@@ -53,7 +53,7 @@ const PrivacyPolicy: React.FC = () => {
             </div>
             <h2 className="text-2xl font-black mb-2">حماية خصوصيتك</h2>
             <p className="text-slate-500 dark:text-slate-400">
-              نحن في "صينك" نلتزم بأعلى معايير الخصوصية لحماية بياناتك الشخصية.
+              نحن في "DFC" نلتزم بأعلى معايير الخصوصية لحماية بياناتك الشخصية.
             </p>
           </div>
 

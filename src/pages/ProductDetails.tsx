@@ -824,7 +824,7 @@ const ProductDetails: React.FC = () => {
           </div>
         </div>
 
-        <div className="fixed left-0 right-0 bottom-[calc(env(safe-area-inset-bottom)+90px)] z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200/70 dark:border-white/10 px-4 pt-3 pb-2 transition-all duration-300">
+        <div className="fixed left-0 right-0 bottom-[calc(env(safe-area-inset-bottom)+86px)] z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200/70 dark:border-white/10 px-4 pt-3 pb-2 transition-all duration-300">
           <div className="mx-auto max-w-screen-lg">
             <div className="flex items-center gap-3">
               <button

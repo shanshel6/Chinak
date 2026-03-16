@@ -26,7 +26,7 @@ const Logo: React.FC<LogoProps> = ({ className = '', size = 'md', showText = fal
       <div className={`flex items-center justify-center overflow-hidden ${containerSizeClasses[size]} shrink-0`}>
         <img 
           src="/logo.png" 
-          alt="Chinak Logo" 
+          alt="DFC Logo" 
           className="w-full h-full object-contain"
           onError={(e) => {
             // Fallback to text if image fails to load
@@ -35,7 +35,7 @@ const Logo: React.FC<LogoProps> = ({ className = '', size = 'md', showText = fal
             if (parent) {
               const span = document.createElement('span');
               span.className = `text-primary font-bold ${sizeClasses[size].split(' ')[1]}`;
-              span.innerText = 'C';
+              span.innerText = 'D';
               parent.appendChild(span);
               parent.classList.add('bg-primary/10', 'dark:bg-primary/20');
             }
@@ -44,7 +44,7 @@ const Logo: React.FC<LogoProps> = ({ className = '', size = 'md', showText = fal
       </div>
       {showText && (
         <span className={`font-bold text-slate-900 dark:text-white ${size === 'xl' ? 'text-2xl' : 'text-xl'}`}>
-          Chinak
+          DFC
         </span>
       )}
     </div>
