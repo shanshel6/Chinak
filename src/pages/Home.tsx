@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { fetchProducts } from '../services/api';
+import { fetchProducts, searchProducts } from '../services/api';
+import { useAuthStore } from '../store/useAuthStore';
 import { useWishlistStore } from '../store/useWishlistStore';
 import { usePageCacheStore } from '../store/usePageCacheStore';
 import Skeleton from '../components/Skeleton';
@@ -12,6 +13,8 @@ import { Grid2X2, Smartphone, Shirt, Sparkles, Banknote, AlertCircle, PackageSea
 import type { Product } from '../types/product';
 
 const HOME_CATEGORY_CACHE_KEY = 'home_category_cached_products_v1';
+const RECENT_SEARCH_TERMS_KEY = 'recent_search_terms_v1';
+const HOME_RECENT_FEED_KEY = 'home_recent_feed_v1';
 
 const Home: React.FC = () => {
   const { t } = useTranslation();
@@ -51,6 +54,9 @@ const Home: React.FC = () => {
   const autoLoadGuardRef = useRef({ categoryId: homeCategoryId, lastCount: 0, stagnantAttempts: 0 });
   const [page, setPage] = useState(() => usePageCacheStore.getState().homePage);
   const productsRef = useRef<Product[]>(usePageCacheStore.getState().homeProducts);
+  const restoredHomeScrollRef = useRef(false);
+  const initializedRef = useRef(false);
+  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
 
   const activeRequestRef = useRef<string | null>(null);
   const inFlightPageRequestsRef = useRef<Set<string>>(new Set());
@@ -190,6 +196,92 @@ const Home: React.FC = () => {
       const maxPrice = categoryId === 'under5k' ? 5000 : (priceFilter === '1k' ? 1000 : priceFilter === '5k' ? 5000 : priceFilter === '10k' ? 10000 : priceFilter === '25k' ? 25000 : undefined);
       const condition = conditionFilter === 'new' ? 'new' : conditionFilter === 'used' ? 'used' : undefined;
 
+      const shouldUseRecentFeed = categoryId === 'all' && !maxPrice && !condition;
+      if (shouldUseRecentFeed) {
+        const readRecentFeed = (): Product[] => {
+          try {
+            const raw = localStorage.getItem(HOME_RECENT_FEED_KEY);
+            const parsed = raw ? JSON.parse(raw) : [];
+            return Array.isArray(parsed) ? parsed : [];
+          } catch {
+            return [];
+          }
+        };
+        const writeRecentFeed = (items: Product[]) => {
+          try {
+            localStorage.setItem(HOME_RECENT_FEED_KEY, JSON.stringify(items));
+          } catch {}
+        };
+
+        const shuffle = (arr: Product[]) => {
+          const a = [...arr];
+          for (let i = a.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [a[i], a[j]] = [a[j], a[i]];
+          }
+          return a;
+        };
+
+        let personalizedPool = readRecentFeed();
+        if (pageNum === 1 || personalizedPool.length === 0) {
+          let recentTerms: string[] = [];
+          try {
+            const raw = localStorage.getItem(RECENT_SEARCH_TERMS_KEY);
+            const parsed = raw ? JSON.parse(raw) : [];
+            recentTerms = Array.isArray(parsed) ? parsed.map((t) => String(t).trim()).filter(Boolean).slice(0, 30) : [];
+          } catch {
+            recentTerms = [];
+          }
+
+          if (isAuthenticated && recentTerms.length > 0) {
+            const batches = await Promise.all(
+              recentTerms.map((term) => {
+                const randomPage = Math.floor(Math.random() * 3) + 1;
+                return searchProducts(term, randomPage, 18).catch(() => ({ products: [] as Product[] }));
+              })
+            );
+            const mergedRecent = batches.flatMap((batch) => (Array.isArray(batch.products) ? batch.products : []));
+            personalizedPool = shuffle(mergeUniqueProducts(mergedRecent, personalizedPool));
+            if (personalizedPool.length > 0) {
+              writeRecentFeed(personalizedPool);
+            }
+          } else {
+            const randomPages = Array.from({ length: 4 }, () => Math.floor(Math.random() * 12) + 1);
+            const randomBatches = await Promise.all(
+              randomPages.map((p) => fetchProducts(p, 20).then((res) => (Array.isArray(res.products) ? res.products : [])).catch(() => [] as Product[]))
+            );
+            const randomPool = randomBatches.flat();
+            personalizedPool = shuffle(mergeUniqueProducts(randomPool, personalizedPool));
+            if (personalizedPool.length > 0) {
+              writeRecentFeed(personalizedPool);
+            }
+          }
+        }
+
+        if (personalizedPool.length > 0) {
+          const start = (pageNum - 1) * 10;
+          const end = start + 10;
+          const chunk = personalizedPool.slice(start, end);
+
+          if (isInitial) {
+            productsRef.current = chunk;
+            setProducts(chunk);
+            setHomeData(chunk, pageNum, categoryId);
+            writeCategoryCachedProducts(categoryId, chunk);
+          } else {
+            setProducts((prev) => {
+              const updated = mergeUniqueProducts(prev, chunk);
+              productsRef.current = updated;
+              setHomeData(updated, pageNum, categoryId);
+              return updated;
+            });
+          }
+
+          setHasMore(personalizedPool.length > end);
+          return;
+        }
+      }
+
       const prodsRes = await fetchProducts(pageNum, 10, maxPrice, condition);
 
       // Only proceed if this is still the active request for this category
@@ -266,10 +358,16 @@ const Home: React.FC = () => {
         setLoadingMore(false);
       }
     }
-  }, [mergeUniqueProducts, normalizeProductId, setHomeData, t, readCategoryCachedProducts, writeCategoryCachedProducts, readGlobalCachedProducts, conditionFilter, priceFilter]);
+  }, [mergeUniqueProducts, normalizeProductId, setHomeData, t, readCategoryCachedProducts, writeCategoryCachedProducts, readGlobalCachedProducts, conditionFilter, priceFilter, isAuthenticated]);
 
   useEffect(() => {
-    // Reload when filters change
+    const isInitialMount = !initializedRef.current;
+    if (isInitialMount) {
+      initializedRef.current = true;
+      if (productsRef.current.length > 0) {
+        return;
+      }
+    }
     setProducts([]);
     setHasMore(true);
     setPage(1);
@@ -286,19 +384,46 @@ const Home: React.FC = () => {
     setDraftPriceFilter(priceFilter);
   }, [conditionFilter, priceFilter]);
 
-  // Restore scroll position only on mount if we have data
-  useEffect(() => {
-    const homeScrollPos = usePageCacheStore.getState().homeScrollPos;
-    if (products.length > 0 && homeScrollPos > 0) {
-      setTimeout(() => {
-        window.scrollTo(0, homeScrollPos);
-        if (document.scrollingElement) {
-          document.scrollingElement.scrollTop = homeScrollPos;
-        }
-      }, 100);
+  const getCurrentScrollY = useCallback(() => {
+    const fixedTargets = scrollTargetRef.current;
+    for (const targetEl of fixedTargets) {
+      if (targetEl && typeof targetEl.scrollTop === 'number' && targetEl.scrollTop > 0) {
+        return targetEl.scrollTop;
+      }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const se = document.scrollingElement as null | { scrollTop?: unknown };
+    if (se && typeof se.scrollTop === 'number') return se.scrollTop;
+    return window.pageYOffset || window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0;
   }, []);
+
+  const handleNavigateToProduct = useCallback((id: number | string, product: Product) => {
+    const scrollPos = getCurrentScrollY();
+    setHomeScrollPos(scrollPos);
+    setHomeData(productsRef.current, page, selectedCategoryId);
+    navigate(`/product?id=${id}`, { state: { initialProduct: product } });
+  }, [getCurrentScrollY, navigate, page, selectedCategoryId, setHomeData, setHomeScrollPos]);
+
+  useEffect(() => {
+    if (restoredHomeScrollRef.current) return;
+    const homeScrollPos = usePageCacheStore.getState().homeScrollPos;
+    if (products.length === 0 || homeScrollPos <= 0) return;
+    restoredHomeScrollRef.current = true;
+    let attempts = 0;
+    const tryRestore = () => {
+      attempts += 1;
+      window.scrollTo(0, homeScrollPos);
+      if (document.scrollingElement) {
+        document.scrollingElement.scrollTop = homeScrollPos;
+      }
+      const now = getCurrentScrollY();
+      const reached = Math.abs(now - homeScrollPos) < 4;
+      if (reached || attempts >= 12) return;
+      setTimeout(tryRestore, 120);
+    };
+    requestAnimationFrame(() => {
+      requestAnimationFrame(tryRestore);
+    });
+  }, [products.length]);
 
   // Save scroll position and handle search bar visibility
   useEffect(() => {
@@ -543,7 +668,7 @@ const Home: React.FC = () => {
                   >
                     <ProductCard 
                       product={product}
-                      onNavigate={(id) => navigate(`/product?id=${id}`, { state: { initialProduct: product } })}
+                      onNavigate={(id) => handleNavigateToProduct(id, product)}
                       onAddToWishlist={handleAddToWishlist}
                       isProductInWishlist={isProductInWishlist}
                     />

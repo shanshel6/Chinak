@@ -27,8 +27,10 @@ const SearchResults: React.FC = () => {
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [searchVersion, setSearchVersion] = useState(0);
   const [restored, setRestored] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const randomStartPageRef = useRef(1);
   const activeQueryRef = useRef(activeQuery);
   const pageRef = useRef(page);
   const loadingRef = useRef(loading);
@@ -39,6 +41,19 @@ const SearchResults: React.FC = () => {
   const inFlightMoreRef = useRef(false);
   const scrollRatioRef = useRef(0);
   const LIMIT = 30;
+  const RECENT_SEARCH_TERMS_KEY = 'recent_search_terms_v1';
+
+  const rememberSearchTerm = useCallback((term: string) => {
+    const clean = term.trim();
+    if (!clean) return;
+    try {
+      const raw = localStorage.getItem(RECENT_SEARCH_TERMS_KEY);
+      const current = raw ? JSON.parse(raw) : [];
+      const list = Array.isArray(current) ? current : [];
+      const next = [clean, ...list.filter((item) => String(item).trim() !== clean)].slice(0, 30);
+      localStorage.setItem(RECENT_SEARCH_TERMS_KEY, JSON.stringify(next));
+    } catch {}
+  }, []);
 
   useEffect(() => {
     setQueryInput(initialQuery);
@@ -109,6 +124,15 @@ const SearchResults: React.FC = () => {
     setDraftPriceFilter(priceFilter);
   }, [conditionFilter, priceFilter]);
 
+  const shuffleProducts = useCallback((items: Product[]) => {
+    const shuffled = [...items];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    return shuffled;
+  }, []);
+
   const applyFilters = useCallback(() => {
     setConditionFilter(draftConditionFilter);
     setPriceFilter(draftPriceFilter);
@@ -127,14 +151,21 @@ const SearchResults: React.FC = () => {
       setError(null);
       return;
     }
-    if (restored) return;
+    if (restored) {
+      setLoading(false);
+      setLoadingMore(false);
+      return;
+    }
+    rememberSearchTerm(query);
     let cancelled = false;
     const runSearch = async () => {
       setLoading(true);
       setLoadingMore(false);
-      setPage(1);
+      setResults([]);
+      const initialPage = Math.max(1, randomStartPageRef.current || 1);
+      setPage(initialPage);
       setHasMore(false);
-      pageRef.current = 1;
+      pageRef.current = initialPage;
       hasMoreRef.current = false;
       inFlightMoreRef.current = false;
       scrollRatioRef.current = 0;
@@ -142,9 +173,10 @@ const SearchResults: React.FC = () => {
       try {
         const maxPrice = priceFilter === '1k' ? 1000 : priceFilter === '5k' ? 5000 : priceFilter === '10k' ? 10000 : priceFilter === '25k' ? 25000 : undefined;
         const condition = conditionFilter === 'new' ? 'new' : conditionFilter === 'used' ? 'used' : undefined;
-        const response = await searchProducts(query, 1, LIMIT, maxPrice, condition);
+        const response = await searchProducts(query, initialPage, LIMIT, maxPrice, condition);
         if (cancelled) return;
-        setResults(Array.isArray(response.products) ? response.products : []);
+        const randomized = Array.isArray(response.products) ? shuffleProducts(response.products) : [];
+        setResults(randomized);
         setHasMore(Boolean(response.hasMore));
       } catch (searchError: any) {
         if (cancelled) return;
@@ -160,7 +192,7 @@ const SearchResults: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [activeQuery, conditionFilter, priceFilter, restored]);
+  }, [activeQuery, conditionFilter, priceFilter, restored, rememberSearchTerm, shuffleProducts, searchVersion]);
 
   const loadMore = useCallback(async () => {
     const query = activeQueryRef.current.trim();
@@ -178,7 +210,7 @@ const SearchResults: React.FC = () => {
       const condition = cond === 'new' ? 'new' : cond === 'used' ? 'used' : undefined;
       const response = await searchProducts(query, nextPage, LIMIT, maxPrice, condition);
       if (activeQueryRef.current.trim() !== query) return;
-      const incoming = Array.isArray(response.products) ? response.products : [];
+      const incoming = Array.isArray(response.products) ? shuffleProducts(response.products) : [];
       setResults((prev) => {
         const merged = [...prev, ...incoming];
         const seen = new Set<string>();
@@ -200,7 +232,7 @@ const SearchResults: React.FC = () => {
       if (activeQueryRef.current.trim() === query) setLoadingMore(false);
       inFlightMoreRef.current = false;
     }
-  }, []);
+  }, [shuffleProducts]);
 
   useEffect(() => {
     const query = activeQuery.trim();
@@ -280,7 +312,16 @@ const SearchResults: React.FC = () => {
 
   const submitSearch = () => {
     const q = queryInput.trim();
+    randomStartPageRef.current = Math.floor(Math.random() * 3) + 1;
+    setRestored(false);
+    setResults([]);
+    setHasMore(false);
+    setPage(1);
+    setError(null);
+    setLoading(true);
     setActiveQuery(q);
+    setSearchVersion((v) => v + 1);
+    rememberSearchTerm(q);
     if (inputRef.current) inputRef.current.blur();
     navigate(`/search${q ? `?q=${encodeURIComponent(q)}` : ''}`, { replace: true });
   };

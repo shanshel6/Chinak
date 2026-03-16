@@ -25,6 +25,20 @@ interface PageCacheState {
 }
 
 export const usePageCacheStore = create<PageCacheState>((set, get) => {
+  const readHome = () => {
+    try {
+      const raw = localStorage.getItem('home_cache_v1');
+      if (!raw) return null;
+      return JSON.parse(raw) as { products: Product[]; page: number; scrollPos: number; categoryId: string };
+    } catch {
+      return null;
+    }
+  };
+  const writeHome = (data: { products: Product[]; page: number; scrollPos: number; categoryId: string }) => {
+    try {
+      localStorage.setItem('home_cache_v1', JSON.stringify(data));
+    } catch {}
+  };
   const readSearch = (key: string): SearchCacheEntry | undefined => {
     try {
       const raw = localStorage.getItem(`search_cache_v1:${key}`);
@@ -39,25 +53,48 @@ export const usePageCacheStore = create<PageCacheState>((set, get) => {
       localStorage.setItem(`search_cache_v1:${key}`, JSON.stringify(entry));
     } catch {}
   };
+  const initialHome = readHome();
   return ({
-    homeProducts: [],
-    homePage: 1,
-    homeScrollPos: 0,
-    homeCategoryId: 'all',
+    homeProducts: initialHome?.products ?? [],
+    homePage: initialHome?.page ?? 1,
+    homeScrollPos: initialHome?.scrollPos ?? 0,
+    homeCategoryId: initialHome?.categoryId ?? 'all',
 
-    setHomeData: (products, page, categoryId) => set({ 
-      homeProducts: products, 
-      homePage: page, 
-      homeCategoryId: categoryId 
+    setHomeData: (products, page, categoryId) => set((s) => {
+      const next = {
+        products,
+        page,
+        scrollPos: s.homeScrollPos,
+        categoryId,
+      };
+      writeHome(next);
+      return {
+        homeProducts: products,
+        homePage: page,
+        homeCategoryId: categoryId
+      };
     }),
-    setHomeScrollPos: (pos) => set({ homeScrollPos: pos }),
+    setHomeScrollPos: (pos) => set((s) => {
+      writeHome({
+        products: s.homeProducts,
+        page: s.homePage,
+        scrollPos: pos,
+        categoryId: s.homeCategoryId,
+      });
+      return { homeScrollPos: pos };
+    }),
 
-    clearCache: () => set({
-      homeProducts: [],
-      homePage: 1,
-      homeScrollPos: 0,
-      homeCategoryId: 'all',
-      searchCache: {},
+    clearCache: () => set(() => {
+      try {
+        localStorage.removeItem('home_cache_v1');
+      } catch {}
+      return {
+        homeProducts: [],
+        homePage: 1,
+        homeScrollPos: 0,
+        homeCategoryId: 'all',
+        searchCache: {},
+      };
     }),
 
     searchCache: {},
