@@ -47,5 +47,11 @@
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
+    <key>NSCameraUsageDescription</key>
+    <string>Used to take photos for searching products.</string>
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>Used to select photos for searching products.</string>
+    <key>NSPhotoLibraryAddUsageDescription</key>
+    <string>Used to save photos.</string>
 </dict>
 </plist>
