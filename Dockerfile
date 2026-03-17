@@ -37,4 +37,4 @@ ENV NODE_ENV=production
 EXPOSE 7860
 
 # Start the server
-CMD ["sh", "-c", "npm install --omit=dev --omit=optional --no-audit --no-fund --ignore-scripts --legacy-peer-deps --verbose && npm uninstall sharp && npm install --platform=linux --arch=x64 sharp && npx prisma generate && node index.js"]
+CMD ["sh", "-c", "npm install --omit=dev --omit=optional --no-audit --no-fund --ignore-scripts --legacy-peer-deps --verbose && npm rebuild sharp --verbose && npx prisma generate && node index.js"]
