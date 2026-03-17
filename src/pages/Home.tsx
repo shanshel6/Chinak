@@ -652,17 +652,30 @@ const Home: React.FC = () => {
           </button>
           <button 
             onClick={() => {
-              // Create a hidden file input and click it
               const input = document.createElement('input');
               input.type = 'file';
               input.accept = 'image/jpeg, image/png';
-              input.onchange = (e) => {
+              input.style.display = 'none';
+              document.body.appendChild(input);
+              const removeInput = () => {
+                if (input.parentNode) input.parentNode.removeChild(input);
+              };
+              input.onchange = async (e) => {
                 const file = (e.target as HTMLInputElement).files?.[0];
-                if (file) {
-                  // Convert to standard JPEG before sending
+                if (!file) {
+                  removeInput();
+                  return;
+                }
+                const fileToDataUrl = (selectedFile: File) => new Promise<string>((resolve, reject) => {
+                  const reader = new FileReader();
+                  reader.onload = () => resolve(String(reader.result || ''));
+                  reader.onerror = () => reject(new Error('read_failed'));
+                  reader.readAsDataURL(selectedFile);
+                });
+                const fileToJpegDataUrl = (selectedFile: File) => new Promise<string>((resolve, reject) => {
                   const img = new Image();
-                  const objectUrl = URL.createObjectURL(file);
-                  
+                  const objectUrl = URL.createObjectURL(selectedFile);
+                  const cleanup = () => URL.revokeObjectURL(objectUrl);
                   img.onload = () => {
                     const canvas = document.createElement('canvas');
                     canvas.width = img.width;
@@ -670,13 +683,32 @@ const Home: React.FC = () => {
                     const ctx = canvas.getContext('2d');
                     if (ctx) {
                       ctx.drawImage(img, 0, 0);
-                      const jpegBase64 = canvas.toDataURL('image/jpeg', 0.9);
-                      sessionStorage.setItem('pendingImageSearch', jpegBase64);
-                      URL.revokeObjectURL(objectUrl);
-                      navigate('/search');
+                      cleanup();
+                      resolve(canvas.toDataURL('image/jpeg', 0.9));
+                      return;
                     }
+                    cleanup();
+                    reject(new Error('canvas_failed'));
+                  };
+                  img.onerror = () => {
+                    cleanup();
+                    reject(new Error('decode_failed'));
                   };
                   img.src = objectUrl;
+                });
+                try {
+                  let payload = '';
+                  try {
+                    payload = await fileToJpegDataUrl(file);
+                  } catch {
+                    payload = await fileToDataUrl(file);
+                  }
+                  if (payload) {
+                    sessionStorage.setItem('pendingImageSearch', payload);
+                    navigate('/search');
+                  }
+                } finally {
+                  removeInput();
                 }
               };
               input.click();
