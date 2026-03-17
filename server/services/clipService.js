@@ -186,19 +186,36 @@ export async function embedImage(input) {
             // Sharp is better for this. Let's try sharp first, then fallback to Jimp.
             let processBuffer = input;
             try {
-                // In latest transformers.js, you can just pass a buffer directly to RawImage.read()
-                // Wait, if it fails on webp, it's because transformers.js doesn't bundle webp support.
-                // However, the base64 from the frontend might be JPEG/PNG if we ensure it.
-                // Let's try parsing it as a buffer directly without Blob
-                image = await RawImage.read(processBuffer);
+                // In latest transformers.js (v3+), RawImage.read() expects a Blob/File/URL, or an object with data/width/height.
+                // It does NOT support raw Buffer directly in Node.js environment easily without `sharp`.
+                // However, we can use `sharp` explicitly to convert Buffer to raw pixel data that RawImage accepts.
                 
-            } catch (canvasErr) {
-                console.warn('[CLIP Service] RawImage buffer fallback failed, trying Jimp:', canvasErr.message);
+                const sharpImport = await import('sharp');
+                const sharp = sharpImport.default || sharpImport;
+                
+                // Ensure it's a valid image and convert to RGBA raw pixel data
+                const { data, info } = await sharp(processBuffer)
+                  .ensureAlpha()
+                  .raw()
+                  .toBuffer({ resolveWithObject: true });
+                  
+                image = new RawImage(new Uint8Array(data), info.width, info.height, 4);
+                
+            } catch (sharpErr) {
+                console.warn('[CLIP Service] Sharp processing failed, falling back to Jimp:', sharpErr.message);
+                
+                // Fallback to Jimp
                 const jimpImport = await import('jimp');
                 const Jimp = jimpImport.default || jimpImport.Jimp;
                 const jimpImage = await Jimp.read(processBuffer);
+                
+                // Resize if too large to avoid memory issues with transformers.js
+                if (jimpImage.bitmap.width > 1024 || jimpImage.bitmap.height > 1024) {
+                   jimpImage.scaleToFit(1024, 1024);
+                }
+                
                 const { width, height, data } = jimpImage.bitmap;
-                image = new RawImage(data, width, height, 4);
+                image = new RawImage(new Uint8Array(data), width, height, 4);
             }
         } else {
             image = await RawImage.read(input);
