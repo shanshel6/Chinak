@@ -28,6 +28,7 @@ import { processProductAI, processProductEmbedding, hybridSearch, estimateProduc
 import { buildCategoryIndex } from './services/categoryService.js';
 import { calculateOrderShipping, calculateProductShipping, getAdjustedPrice } from './services/shippingService.js';
 import { setupLinkCheckerCron, checkAllProductLinks } from './services/linkCheckerService.js';
+import { embedImage } from './services/clipService.js';
 import { createClient } from '@supabase/supabase-js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -210,6 +211,79 @@ const runEmbeddingJobs = async () => {
     }
   } finally {
     embeddingJobRunning = false;
+  }
+};
+
+const imageEmbeddingJobQueue = [];
+const imageEmbeddingJobSet = new Set();
+const imageEmbeddingJobAttempts = new Map();
+let imageEmbeddingJobRunning = false;
+
+const enqueueImageEmbeddingJob = (productId) => {
+  const id = safeParseId(productId);
+  if (!id) return;
+  if (imageEmbeddingJobSet.has(id)) return;
+  imageEmbeddingJobQueue.push(id);
+  imageEmbeddingJobSet.add(id);
+  void runImageEmbeddingJobs();
+};
+
+const runImageEmbeddingJobs = async () => {
+  if (imageEmbeddingJobRunning) return;
+  imageEmbeddingJobRunning = true;
+  try {
+    while (imageEmbeddingJobQueue.length > 0) {
+      const productId = imageEmbeddingJobQueue.shift();
+      imageEmbeddingJobSet.delete(productId);
+
+      try {
+        const product = await prisma.product.findUnique({
+          where: { id: productId },
+          select: {
+            id: true,
+            image: true,
+            images: {
+              select: { url: true, order: true },
+              orderBy: { order: 'asc' },
+              take: 1
+            }
+          }
+        });
+
+        const imageUrl = String(product?.images?.[0]?.url || product?.image || '').trim();
+        if (!imageUrl) {
+          imageEmbeddingJobAttempts.delete(productId);
+          continue;
+        }
+
+        const embedding = await embedImage(imageUrl);
+        const vectorStr = `[${embedding.join(',')}]`;
+        await prisma.$executeRawUnsafe(
+          `UPDATE "Product" SET "imageEmbedding" = $1::vector WHERE "id" = $2`,
+          vectorStr,
+          productId
+        );
+        imageEmbeddingJobAttempts.delete(productId);
+        await sleep(150);
+      } catch (err) {
+        const prev = imageEmbeddingJobAttempts.get(productId) || 0;
+        const nextAttempt = prev + 1;
+        imageEmbeddingJobAttempts.set(productId, nextAttempt);
+
+        const waitMs = nextAttempt <= 3 ? 5000 : 20000;
+        if (nextAttempt <= 10) {
+          await sleep(waitMs);
+          if (!imageEmbeddingJobSet.has(productId)) {
+            imageEmbeddingJobQueue.push(productId);
+            imageEmbeddingJobSet.add(productId);
+          }
+        } else {
+          imageEmbeddingJobAttempts.delete(productId);
+        }
+      }
+    }
+  } finally {
+    imageEmbeddingJobRunning = false;
   }
 };
 
@@ -4445,6 +4519,135 @@ app.post('/api/tools/rapid/search-image', async (req, res) => {
   }
 });
 
+app.post('/api/search/image', async (req, res) => {
+  try {
+    const limit = Math.min(60, Math.max(1, parseInt(String(req.body?.limit || req.body?.pageSize || '20'), 10) || 20));
+    let input = req.body?.imageUrl || req.body?.imgUrl || req.body?.url || req.body?.image;
+    if (typeof input !== 'string') input = '';
+    input = input.trim();
+
+    let embedding = null;
+    if (input.startsWith('data:image/')) {
+      const match = input.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
+      if (!match) return res.status(400).json({ error: 'Invalid data URL' });
+      const data = match[2];
+      try {
+        embedding = await embedImage(Buffer.from(data, 'base64'));
+      } catch (err) {
+        console.error('embedImage buffer failed', err);
+        throw err;
+      }
+    } else if (input) {
+      try {
+        embedding = await embedImage(input);
+      } catch (err) {
+        console.error('embedImage input failed', err);
+        throw err;
+      }
+    } else {
+      return res.status(400).json({ error: 'Missing imageUrl (or data:image/... base64)' });
+    }
+
+    if (!embedding || !Array.isArray(embedding)) {
+      throw new Error('Failed to generate embedding array');
+    }
+
+    const vectorStr = `[${embedding.join(',')}]`;
+    console.log(`[CLIP] Vector generated. Querying similar products...`);
+    
+    // Fallback if cached settings aren't defined here
+    // Removed duplicate storeSettings declaration above
+    const rows = await prisma.$queryRawUnsafe(
+      `
+        SELECT "id", ("imageEmbedding" <=> $1::vector) AS distance
+        FROM "Product"
+        WHERE "imageEmbedding" IS NOT NULL
+          AND "status" = 'PUBLISHED'
+          AND "isActive" = true
+        ORDER BY "imageEmbedding" <=> $1::vector
+        LIMIT $2
+      `,
+      vectorStr,
+      limit
+    );
+
+    const ids = Array.isArray(rows)
+      ? rows.map((r) => Number(r?.id)).filter((id) => Number.isFinite(id))
+      : [];
+
+    if (ids.length === 0) {
+      return res.json({ products: [], total: 0, engine: 'clip' });
+    }
+
+    const shippingRates = {
+      airShippingRate: 15400,
+      seaShippingRate: 182000,
+      airShippingMinFloor: 0
+    };
+    try {
+      const storeSettings = await prisma.storeSettings.findUnique({ where: { id: 1 } });
+      if (storeSettings) {
+        shippingRates.airShippingRate = storeSettings.airShippingRate;
+        shippingRates.seaShippingRate = storeSettings.seaShippingRate;
+        shippingRates.airShippingMinFloor = storeSettings.airShippingMinFloor;
+      }
+    } catch (e) {
+      console.warn('Failed to fetch store settings in image search, using defaults');
+    }
+
+    const productSelect = {
+      id: true,
+      name: true,
+      price: true,
+      basePriceIQD: true,
+      image: true,
+      aiMetadata: true,
+      neworold: true,
+      isFeatured: true,
+      domesticShippingFee: true,
+      deliveryTime: true,
+      variants: {
+        select: {
+          id: true,
+          combination: true,
+          price: true,
+          basePriceIQD: true,
+          image: true
+        }
+      }
+    };
+
+    const productsFromDb = await prisma.product.findMany({
+      where: {
+        id: { in: ids },
+        status: 'PUBLISHED',
+        isActive: true
+      },
+      select: productSelect
+    });
+
+    const byId = new Map(productsFromDb.map((p) => [p.id, p]));
+    const ranked = ids
+      .map((id) => byId.get(id))
+      .filter(Boolean)
+      .map((product) => {
+        const aiMetadata = parseAiMetadata(product.aiMetadata);
+        const processed = applyDynamicPricingToProduct(product, shippingRates);
+        const isRealBrand = typeof aiMetadata?.isRealBrand === 'boolean' ? aiMetadata.isRealBrand : null;
+        const neworold = (product.neworold !== null && product.neworold !== undefined)
+          ? product.neworold
+          : extractNewOrOld(aiMetadata);
+        return { ...processed, aiMetadata, isRealBrand, neworold };
+      });
+
+    return res.json({ products: ranked, total: ranked.length, engine: 'clip' });
+  } catch (error) {
+    console.error('[CLIP image search] error details:', error);
+    console.error(error.stack);
+    return res.status(500).json({ error: 'Image search failed' });
+  }
+});
+
 app.get('/api/products', async (req, res) => {
   const requestStart = Date.now();
   console.log(`[Products] GET /api/products request received. Query:`, req.query);
@@ -4855,6 +5058,7 @@ async function runBulkProductsImport(products, { onProgress } = {}) {
       if (existingProduct) {
         results.skipped++;
         enqueueEmbeddingJob(existingProduct.id);
+        enqueueImageEmbeddingJob(existingProduct.id);
         results.requeued++;
         if (Array.isArray(results.skippedDetails) && results.skippedDetails.length < 25) {
           const matchedBy = [];
@@ -5341,6 +5545,7 @@ async function runBulkProductsImport(products, { onProgress } = {}) {
       });
 
       enqueueEmbeddingJob(product.id);
+      enqueueImageEmbeddingJob(product.id);
       void syncProductToMeiliById(product.id).catch((meiliError) => {
         console.error('[Meili] bulk product sync failed:', meiliError?.message || meiliError);
       });
@@ -5739,6 +5944,7 @@ app.post('/api/products', authenticateToken, isAdmin, hasPermission('manage_prod
     });
 
     enqueueEmbeddingJob(product.id);
+    enqueueImageEmbeddingJob(product.id);
     void syncProductToMeiliById(product.id).catch((meiliError) => {
       console.error('[Meili] create product sync failed:', meiliError?.message || meiliError);
     });
@@ -6729,6 +6935,7 @@ app.post('/api/admin/products/queue-missing-embeddings', authenticateToken, isAd
     );
     for (const row of rows || []) {
       enqueueEmbeddingJob(row.id);
+      enqueueImageEmbeddingJob(row.id);
     }
     res.json({ success: true, queued: (rows || []).length, running: embeddingJobRunning, queueSize: embeddingJobQueue.length });
   } catch (error) {
@@ -6759,6 +6966,7 @@ app.post('/api/admin/products/bulk-publish', authenticateToken, isAdmin, hasPerm
     });
 
     ids.forEach((id) => enqueueEmbeddingJob(id));
+    ids.forEach((id) => enqueueImageEmbeddingJob(id));
 
     await logActivity(
       req.user.id,
@@ -7261,6 +7469,7 @@ app.post('/api/admin/products/bulk-create', authenticateToken, isAdmin, hasPermi
     res.json({ success: true, count: createdResults.length, products: createdResults });
 
     createdResults.forEach((product) => enqueueEmbeddingJob(product.id));
+    createdResults.forEach((product) => enqueueImageEmbeddingJob(product.id));
   } catch (error) {
     console.error('Detailed Bulk Create Error:', error);
     res.status(500).json({ 
@@ -8914,6 +9123,7 @@ app.put('/api/products/:id', authenticateToken, isAdmin, hasPermission('manage_p
     });
 
     enqueueEmbeddingJob(product.id);
+    enqueueImageEmbeddingJob(product.id);
     void syncProductToMeiliById(product.id).catch((meiliError) => {
       console.error('[Meili] update product sync failed:', meiliError?.message || meiliError);
     });

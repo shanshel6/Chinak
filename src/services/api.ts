@@ -1032,6 +1032,20 @@ export async function searchProducts(query: string, page = 1, limit = 20, maxPri
   };
 }
 
+export async function searchProductsByImage(imageUrl: string, page = 1, limit = 20) {
+  const response = await request('/search/image', {
+    method: 'POST',
+    body: JSON.stringify({ imageUrl, page, limit }),
+    skipCache: true
+  });
+  return {
+    products: Array.isArray(response?.products) ? response.products : [],
+    total: Number(response?.total || 0),
+    hasMore: Boolean(response?.hasMore),
+    engine: response?.engine || 'clip'
+  };
+}
+
 export async function convertItemIdStr(itemIdStr: string) {
   return request('/tools/itemidstr-convert', {
     method: 'POST',

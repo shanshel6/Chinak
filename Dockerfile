@@ -24,6 +24,10 @@ ENV npm_config_timeout=600000
 ENV npm_config_loglevel=verbose
 ENV npm_config_cache=/data/.npm
 
+# Define a volume for persistent model storage
+# Railway will need a volume mounted at /app/models or /data
+ENV TRANSFORMERS_CACHE_DIR=/app/models
+
 # Copy backend source files
 COPY server/ .
 

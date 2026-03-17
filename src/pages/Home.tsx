@@ -9,7 +9,7 @@ import { useTranslation } from 'react-i18next';
 import FilterBar from '../components/home/FilterBar';
 import type { ConditionFilter, PriceFilter } from '../components/home/FilterBar';
 import ProductCard from '../components/home/ProductCard';
-import { Grid2X2, Smartphone, Shirt, Sparkles, Banknote, AlertCircle, PackageSearch, Search } from 'lucide-react';
+import { Grid2X2, Smartphone, Shirt, Sparkles, Banknote, AlertCircle, PackageSearch, Search, Camera } from 'lucide-react';
 import type { Product } from '../types/product';
 
 const HOME_CATEGORY_CACHE_KEY = 'home_category_cached_products_v1';
@@ -641,14 +641,50 @@ const Home: React.FC = () => {
   return (
     <div className="relative flex min-h-screen w-full flex-col pb-28 pb-safe bg-background-light dark:bg-background-dark font-display text-slate-900 dark:text-white antialiased selection:bg-primary/30 rtl" dir="rtl">
       <div className="sticky top-0 z-40 pt-safe bg-white dark:bg-gray-900 shadow-sm transition-transform duration-300" id="home-header">
-        <div className="px-4 py-3">
+        <div className="px-4 py-3 flex items-center gap-2">
           <button
             type="button"
             onClick={() => navigate('/search')}
-            className="w-full flex items-center gap-3 bg-slate-100 dark:bg-slate-800 rounded-xl px-3 py-2.5 text-right"
+            className="flex-1 flex items-center gap-3 bg-slate-100 dark:bg-slate-800 rounded-xl px-3 py-2.5 text-right"
           >
             <Search size={18} className="text-slate-400" />
             <span className="text-sm text-slate-500 font-medium">ابحث عن منتجات...</span>
+          </button>
+          <button 
+            onClick={() => {
+              // Create a hidden file input and click it
+              const input = document.createElement('input');
+              input.type = 'file';
+              input.accept = 'image/jpeg, image/png';
+              input.onchange = (e) => {
+                const file = (e.target as HTMLInputElement).files?.[0];
+                if (file) {
+                  // Convert to standard JPEG before sending
+                  const img = new Image();
+                  const objectUrl = URL.createObjectURL(file);
+                  
+                  img.onload = () => {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = img.width;
+                    canvas.height = img.height;
+                    const ctx = canvas.getContext('2d');
+                    if (ctx) {
+                      ctx.drawImage(img, 0, 0);
+                      const jpegBase64 = canvas.toDataURL('image/jpeg', 0.9);
+                      sessionStorage.setItem('pendingImageSearch', jpegBase64);
+                      URL.revokeObjectURL(objectUrl);
+                      navigate('/search');
+                    }
+                  };
+                  img.src = objectUrl;
+                }
+              };
+              input.click();
+            }}
+            className="p-2.5 bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-primary rounded-xl transition-colors shrink-0"
+            aria-label="بحث بالصورة"
+          >
+            <Camera size={18} />
           </button>
         </div>
         <FilterBar 

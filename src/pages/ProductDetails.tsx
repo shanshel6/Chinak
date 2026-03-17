@@ -733,7 +733,13 @@ const ProductDetails: React.FC = () => {
       <ProductHeader 
         onBack={() => navigate(-1)}
         onShare={handleShare}
-        onToggleWishlist={() => toggleWishlist(product.id, product)}
+        onToggleWishlist={() => {
+          if (!isAuthenticated) {
+            navigate('/login', { state: { from: `${location.pathname}${location.search}` } });
+            return;
+          }
+          toggleWishlist(product.id, product);
+        }}
         isWishlisted={isProductInWishlist(product.id)}
       />
       

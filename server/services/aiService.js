@@ -70,11 +70,11 @@ function getClients() {
 
 /**
  * Generate Embeddings using Hugging Face (Free Tier)
- * Model: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 (384 dimensions)
+ * Model: sentence-transformers/distiluse-base-multilingual-cased-v2 (512 dimensions)
  * This model is optimized for 50+ languages including Arabic.
  */
 async function generateEmbedding(text) {
-  const targetDim = 384;
+  const targetDim = 512;
   const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
   const getStatusCode = (err) => {
     if (!err) return null;
@@ -138,7 +138,7 @@ async function generateEmbedding(text) {
       throw new Error('HUGGINGFACE_API_KEY is not defined in environment variables');
     }
     const response = await hf.featureExtraction({
-      model: 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2',
+      model: 'sentence-transformers/distiluse-base-multilingual-cased-v2',
       inputs: text,
     });
 
@@ -432,7 +432,7 @@ export async function processProductAI(productId) {
       }
     }
 
-    // 2. Generate Embedding (384 dimensions) using Hugging Face
+    // 2. Generate Embedding (512 dimensions) using Hugging Face
     console.log(`[AI Debug] Generating embedding for product ${productId}...`);
     const embeddingContent = buildEmbeddingContent({
       ...product,
@@ -861,7 +861,7 @@ export async function hybridSearch(query, limit = 50, skip = 0, maxPrice = null,
     baseWords.forEach(w => extraWordsSet.delete(w));
     const extraWords = Array.from(extraWordsSet).filter(w => w.length > 1);
     
-    // 1. Generate query embedding (384 dimensions)
+    // 1. Generate query embedding (512 dimensions)
     const embeddingInputParts = [
       query,
       rewrittenQuery,

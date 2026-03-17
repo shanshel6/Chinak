@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { AlertCircle, Search, ArrowRight } from 'lucide-react';
-import { searchProducts } from '../services/api';
+import { AlertCircle, Search, ArrowRight, Camera, X } from 'lucide-react';
+import { searchProducts, searchProductsByImage } from '../services/api';
 import FilterBar from '../components/home/FilterBar';
 import ProductCard from '../components/home/ProductCard';
 import { useWishlistStore } from '../store/useWishlistStore';
@@ -17,8 +17,11 @@ const SearchResults: React.FC = () => {
   const wishlistItems = useWishlistStore((state) => state.items);
   const toggleWishlist = useWishlistStore((state) => state.toggleWishlist);
   const initialQuery = useMemo(() => new URLSearchParams(location.search).get('q') || '', [location.search]);
+  const IMAGE_QUERY_LABEL = 'بحث بالصورة';
   const [queryInput, setQueryInput] = useState(initialQuery);
   const [activeQuery, setActiveQuery] = useState(initialQuery);
+  const [imageSearchInput, setImageSearchInput] = useState<string | null>(null);
+  const [imageSearchPreview, setImageSearchPreview] = useState<string | null>(null);
   const [conditionFilter, setConditionFilter] = useState<ConditionFilter>(null);
   const [priceFilter, setPriceFilter] = useState<PriceFilter>(null);
   const [draftConditionFilter, setDraftConditionFilter] = useState<ConditionFilter>(null);
@@ -32,6 +35,7 @@ const SearchResults: React.FC = () => {
   const [searchVersion, setSearchVersion] = useState(0);
   const [restored, setRestored] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const randomStartPageRef = useRef(1);
   const restoredFromCacheRef = useRef(false);
   const activeQueryRef = useRef(activeQuery);
@@ -46,6 +50,7 @@ const SearchResults: React.FC = () => {
   const LIMIT = 30;
   const RECENT_SEARCH_TERMS_KEY = 'recent_search_terms_v1';
   const [isInputFocused, setIsInputFocused] = useState(false);
+  const isImageSearch = Boolean(imageSearchInput && imageSearchPreview);
 
   const rememberSearchTerm = useCallback((term: string) => {
     const clean = term.trim();
@@ -77,6 +82,70 @@ const SearchResults: React.FC = () => {
     setRecentTerms(readRecentTerms());
   }, [isInputFocused, readRecentTerms]);
 
+  const startImageSearch = useCallback(async (imageBase64: string) => {
+    restoredFromCacheRef.current = false;
+    setRestored(false);
+    setLoading(true);
+    setLoadingMore(false);
+    setResults([]);
+    setError(null);
+    setHasMore(false);
+    setPage(1);
+    pageRef.current = 1;
+    hasMoreRef.current = false;
+    inFlightMoreRef.current = false;
+    scrollRatioRef.current = 0;
+    setImageSearchInput(imageBase64);
+    setImageSearchPreview(imageBase64);
+    setActiveQuery(IMAGE_QUERY_LABEL);
+    setQueryInput(IMAGE_QUERY_LABEL);
+    if (inputRef.current) inputRef.current.blur();
+    setIsInputFocused(false);
+
+    try {
+      const data = await searchProductsByImage(imageBase64, 1, LIMIT);
+      setResults(Array.isArray(data.products) ? data.products : []);
+      setHasMore(Boolean(data.hasMore));
+      setPage(1);
+    } catch (err: any) {
+      setError(err.message || 'حدث خطأ أثناء البحث بالصورة');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const clearImageSearch = useCallback(() => {
+    restoredFromCacheRef.current = false;
+    setRestored(false);
+    setImageSearchInput(null);
+    setImageSearchPreview(null);
+    setResults([]);
+    setHasMore(false);
+    setPage(1);
+    pageRef.current = 1;
+    hasMoreRef.current = false;
+    inFlightMoreRef.current = false;
+    scrollRatioRef.current = 0;
+    setError(null);
+    setLoading(false);
+    setLoadingMore(false);
+    setQueryInput('');
+    setActiveQuery('');
+    navigate('/search', { replace: true });
+    setTimeout(() => {
+      if (inputRef.current) inputRef.current.focus();
+    }, 50);
+  }, [navigate]);
+
+  useEffect(() => {
+    // Check if we arrived here with a pending image search
+    const pendingImage = sessionStorage.getItem('pendingImageSearch');
+    if (pendingImage) {
+      sessionStorage.removeItem('pendingImageSearch');
+      void startImageSearch(pendingImage);
+    }
+  }, [startImageSearch]);
+
   useEffect(() => {
     if (initialQuery.trim()) return;
     setTimeout(() => {
@@ -85,11 +154,13 @@ const SearchResults: React.FC = () => {
   }, [initialQuery]);
 
   useEffect(() => {
+    if (imageSearchInput) return;
     setQueryInput(initialQuery);
     setActiveQuery(initialQuery);
-  }, [initialQuery]);
+  }, [initialQuery, imageSearchInput]);
 
   useEffect(() => {
+    if (imageSearchInput) return;
     const key = initialQuery.trim();
     if (!key) {
       restoredFromCacheRef.current = false;
@@ -121,7 +192,7 @@ const SearchResults: React.FC = () => {
     }
     restoredFromCacheRef.current = false;
     setRestored(false);
-  }, [initialQuery]);
+  }, [initialQuery, imageSearchInput]);
 
   useEffect(() => {
     activeQueryRef.current = activeQuery;
@@ -190,6 +261,7 @@ const SearchResults: React.FC = () => {
       setError(null);
       return;
     }
+    if (imageSearchInput) return;
     if (restoredFromCacheRef.current) {
       setLoading(false);
       setLoadingMore(false);
@@ -236,7 +308,7 @@ const SearchResults: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [activeQuery, conditionFilter, priceFilter, restored, rememberSearchTerm, shuffleProducts, searchVersion]);
+  }, [activeQuery, conditionFilter, priceFilter, restored, rememberSearchTerm, shuffleProducts, searchVersion, imageSearchInput]);
 
   const loadMore = useCallback(async () => {
     const query = activeQueryRef.current.trim();
@@ -248,6 +320,25 @@ const SearchResults: React.FC = () => {
     setLoadingMore(true);
     const nextPage = pageRef.current + 1;
     try {
+      if (imageSearchInput) {
+        const response = await searchProductsByImage(imageSearchInput, nextPage, LIMIT);
+        if (!activeQueryRef.current.trim()) return;
+        const incoming = Array.isArray(response.products) ? response.products : [];
+        setResults((prev) => {
+          const merged = [...prev, ...incoming];
+          const seen = new Set<string>();
+          return merged.filter((item) => {
+            const key = item?.id == null ? '' : String(item.id);
+            if (!key || seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          });
+        });
+        setHasMore(Boolean(response.hasMore));
+        setPage(nextPage);
+        pageRef.current = nextPage;
+        return;
+      }
       const price = priceFilterRef.current;
       const cond = conditionFilterRef.current;
       const maxPrice = price === '1k' ? 1000 : price === '5k' ? 5000 : price === '10k' ? 10000 : price === '25k' ? 25000 : undefined;
@@ -276,7 +367,7 @@ const SearchResults: React.FC = () => {
       if (activeQueryRef.current.trim() === query) setLoadingMore(false);
       inFlightMoreRef.current = false;
     }
-  }, [shuffleProducts]);
+  }, [shuffleProducts, imageSearchInput]);
 
   useEffect(() => {
     const query = activeQuery.trim();
@@ -321,6 +412,7 @@ const SearchResults: React.FC = () => {
   useEffect(() => {
     const key = activeQuery.trim();
     if (!key) return;
+    if (imageSearchInput) return;
     usePageCacheStore.getState().setSearchData(key, {
       results,
       page,
@@ -328,11 +420,12 @@ const SearchResults: React.FC = () => {
       condition: conditionFilter as any,
       price: priceFilter as any,
     });
-  }, [results, page, hasMore, activeQuery, conditionFilter, priceFilter]);
+  }, [results, page, hasMore, activeQuery, conditionFilter, priceFilter, imageSearchInput]);
 
   useEffect(() => {
     const key = activeQuery.trim();
     if (!key) return;
+    if (imageSearchInput) return;
     let timeoutId: any = null;
     const getScrollY = () => {
       const se = document.scrollingElement as null | { scrollTop?: unknown };
@@ -352,10 +445,12 @@ const SearchResults: React.FC = () => {
       window.removeEventListener('scroll', handleScroll);
       window.removeEventListener('touchmove', handleScroll);
     };
-  }, [activeQuery]);
+  }, [activeQuery, imageSearchInput]);
 
   const submitSearch = () => {
+    if (imageSearchInput) return;
     const q = queryInput.trim();
+    if (!q || q === IMAGE_QUERY_LABEL) return;
     restoredFromCacheRef.current = false;
     randomStartPageRef.current = Math.floor(Math.random() * 3) + 1;
     setRestored(false);
@@ -412,7 +507,7 @@ const SearchResults: React.FC = () => {
             <ArrowRight size={18} />
           </button>
           <div className="flex-1 flex items-center gap-2 bg-slate-100 dark:bg-slate-800 rounded-xl px-3 py-2.5">
-            <Search size={16} className="text-slate-500" />
+            {isImageSearch ? <Camera size={16} className="text-slate-500" /> : <Search size={16} className="text-slate-500" />}
             <input
               ref={inputRef}
               value={queryInput}
@@ -423,30 +518,114 @@ const SearchResults: React.FC = () => {
                 if (event.key === 'Enter') submitSearch();
               }}
               placeholder="ابحث عن منتج..."
+              readOnly={isImageSearch}
               className="flex-1 bg-transparent outline-none text-sm font-semibold text-slate-900 dark:text-white placeholder:text-slate-400"
             />
+            {queryInput && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (isImageSearch) {
+                    clearImageSearch();
+                    return;
+                  }
+                  setQueryInput('');
+                  if (inputRef.current) inputRef.current.focus();
+                }}
+                className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+              >
+                <X size={14} />
+              </button>
+            )}
+            <div className="w-px h-4 bg-slate-200 dark:bg-slate-700 mx-1"></div>
+            <label className="p-1 cursor-pointer text-slate-500 hover:text-primary transition-colors">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/jpeg, image/png"
+                capture="environment"
+                className="hidden"
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  
+                  // Convert to standard JPEG before sending
+                  const img = new Image();
+                  const objectUrl = URL.createObjectURL(file);
+                  
+                  img.onload = () => {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = img.width;
+                    canvas.height = img.height;
+                    const ctx = canvas.getContext('2d');
+                    if (ctx) {
+                      ctx.drawImage(img, 0, 0);
+                      const jpegBase64 = canvas.toDataURL('image/jpeg', 0.9);
+                      void startImageSearch(jpegBase64);
+                      URL.revokeObjectURL(objectUrl);
+                    }
+                  };
+                  img.src = objectUrl;
+                  e.target.value = '';
+                }}
+              />
+              <Camera size={18} />
+            </label>
             <button
               type="button"
               onClick={submitSearch}
-              className="text-xs font-bold text-primary"
+              className="text-xs font-bold text-primary mr-1"
             >
               بحث
             </button>
           </div>
         </div>
-        <FilterBar
-          condition={draftConditionFilter}
-          price={draftPriceFilter}
-          onConditionChange={setDraftConditionFilter}
-          onPriceChange={setDraftPriceFilter}
-          appliedCondition={conditionFilter}
-          appliedPrice={priceFilter}
-          onApply={applyFilters}
-          className="border-t border-slate-100 dark:border-slate-800"
-        />
+        {!isImageSearch && (
+          <FilterBar
+            condition={draftConditionFilter}
+            price={draftPriceFilter}
+            onConditionChange={setDraftConditionFilter}
+            onPriceChange={setDraftPriceFilter}
+            appliedCondition={conditionFilter}
+            appliedPrice={priceFilter}
+            onApply={applyFilters}
+            className="border-t border-slate-100 dark:border-slate-800"
+          />
+        )}
       </div>
 
-      {isInputFocused && filteredRecentTerms.length > 0 && (
+      {isImageSearch && imageSearchPreview && (
+        <div className="px-4 pt-3">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 p-3 flex items-center gap-3">
+            <img
+              src={imageSearchPreview}
+              alt="بحث بالصورة"
+              className="h-14 w-14 rounded-xl object-cover border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-900"
+            />
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-black text-slate-900 dark:text-white">بحث بالصورة</div>
+              <div className="text-xs font-semibold text-slate-500 dark:text-slate-400 truncate">عرض النتائج المشابهة للصورة</div>
+            </div>
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-100 text-xs font-black"
+            >
+              تغيير الصورة
+            </button>
+            <button
+              type="button"
+              onClick={clearImageSearch}
+              className="p-2 rounded-xl bg-slate-100 dark:bg-slate-700 text-slate-500 hover:text-slate-700 dark:text-slate-300 dark:hover:text-white"
+              aria-label="مسح البحث بالصورة"
+            >
+              <X size={16} />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!isImageSearch && isInputFocused && filteredRecentTerms.length > 0 && (
         <div className="px-4 pt-3">
           <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 p-3">
             <div className="flex items-center justify-between mb-2">
