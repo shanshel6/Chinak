@@ -2,6 +2,9 @@ import { AutoProcessor, CLIPVisionModelWithProjection, RawImage, env } from '@xe
 import { Agent, ProxyAgent, setGlobalDispatcher } from 'undici';
 import axios from 'axios';
 import dns from 'node:dns';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 
 // Force IPv4 first to avoid IPv6 timeouts with AliCDN
 dns.setDefaultResultOrder('ipv4first');
@@ -81,6 +84,26 @@ const toNumberArray = (tensorLike) => {
 };
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+async function readRawImageFromBuffer(buffer) {
+  try {
+    return await RawImage.read(new Blob([buffer], { type: 'image/jpeg' }));
+  } catch (blobErr) {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clip-'));
+    const tempFilePath = path.join(tempDir, 'input.jpg');
+    try {
+      await fs.writeFile(tempFilePath, buffer);
+      return await RawImage.read(tempFilePath);
+    } finally {
+      try {
+        await fs.unlink(tempFilePath);
+      } catch {}
+      try {
+        await fs.rmdir(tempDir);
+      } catch {}
+    }
+  }
+}
 
 async function fetchWithRetry(url, options = {}, retries = 3) {
   // Use axios first
@@ -166,51 +189,12 @@ export async function embedImage(input) {
       const arrayBuffer = await response.arrayBuffer();
       const buffer = Buffer.from(arrayBuffer);
       
-      try {
-        const jimpImport = await import('jimp');
-        const Jimp = jimpImport.default || jimpImport.Jimp;
-        const jimpImage = await Jimp.read(buffer);
-        const { width, height, data } = jimpImage.bitmap;
-        image = new RawImage(new Uint8Array(data), width, height, 4);
-      } catch (err) {
-        console.error('[CLIP Service] Jimp failed:', err.message);
-        // Retry logic: If fetch failed or image invalid, try one more time with a slightly different UA or delay?
-        // For now, let's just log detailed error.
-        throw new Error(`Image processing failed: ${err.message}`);
-      }
+      image = await readRawImageFromBuffer(buffer);
     } else {
       // Input is likely a Buffer (from base64 upload) or a local file path
       try {
         if (Buffer.isBuffer(input)) {
-            // Jimp doesn't support WebP, and often uploaded images might be WebP or HEIC.
-            // Sharp is better for this. Let's try sharp first, then fallback to Jimp.
-            let processBuffer = input;
-            try {
-                image = await RawImage.read(new Blob([processBuffer]));
-            } catch (blobErr) {
-                try {
-                  const sharpImport = await import('sharp');
-                  const sharp = sharpImport.default || sharpImport;
-                  const { data, info } = await sharp(processBuffer)
-                    .ensureAlpha()
-                    .raw()
-                    .toBuffer({ resolveWithObject: true });
-                  image = new RawImage(new Uint8Array(data), info.width, info.height, 4);
-                } catch (sharpErr) {
-                  console.warn('[CLIP Service] Blob and Sharp processing failed, falling back to Jimp:', sharpErr.message || blobErr.message);
-                
-                  const jimpImport = await import('jimp');
-                  const Jimp = jimpImport.default || jimpImport.Jimp;
-                  const jimpImage = await Jimp.read(processBuffer);
-                
-                  if (jimpImage.bitmap.width > 1024 || jimpImage.bitmap.height > 1024) {
-                    jimpImage.scaleToFit(1024, 1024);
-                  }
-                
-                  const { width, height, data } = jimpImage.bitmap;
-                  image = new RawImage(new Uint8Array(data), width, height, 4);
-                }
-            }
+            image = await readRawImageFromBuffer(input);
         } else {
             image = await RawImage.read(input);
         }
