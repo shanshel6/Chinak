@@ -101,6 +101,26 @@ async function readRawImageFromBuffer(buffer) {
   }
 }
 
+function normalizeImageForProcessor(image) {
+  if (!image || typeof image.width !== 'number' || typeof image.height !== 'number' || !Number.isFinite(image.width) || !Number.isFinite(image.height)) {
+    throw new Error('Invalid image dimensions');
+  }
+  if (!image.data || typeof image.data.length !== 'number') {
+    throw new Error('Invalid image pixel buffer');
+  }
+
+  if (image.channels !== 3 && image.channels !== 4) {
+    throw new Error(`Unsupported image channels: ${image.channels}`);
+  }
+
+  const normalized = image.channels === 4 ? image.rgb() : image;
+  const data = normalized.data instanceof Uint8ClampedArray
+    ? normalized.data
+    : new Uint8ClampedArray(normalized.data);
+
+  return new RawImage(data, normalized.width, normalized.height, 3);
+}
+
 async function fetchWithRetry(url, options = {}, retries = 3) {
   // Use axios first
   try {
@@ -200,7 +220,8 @@ export async function embedImage(input) {
       }
     }
 
-    const { pixel_values } = await processor(image);
+    const normalizedImage = normalizeImageForProcessor(image);
+    const { pixel_values } = await processor(normalizedImage);
     const output = await model({ pixel_values });
     const imageEmbeds = output?.image_embeds;
     if (!imageEmbeds) throw new Error('CLIP model did not return image_embeds');
