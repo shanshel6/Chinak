@@ -86,22 +86,18 @@ const toNumberArray = (tensorLike) => {
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 async function readRawImageFromBuffer(buffer) {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clip-'));
+  const tempFilePath = path.join(tempDir, 'input.jpg');
   try {
-    return await RawImage.read(new Blob([buffer], { type: 'image/jpeg' }));
-  } catch (blobErr) {
-    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clip-'));
-    const tempFilePath = path.join(tempDir, 'input.jpg');
+    await fs.writeFile(tempFilePath, buffer);
+    return await RawImage.read(tempFilePath);
+  } finally {
     try {
-      await fs.writeFile(tempFilePath, buffer);
-      return await RawImage.read(tempFilePath);
-    } finally {
-      try {
-        await fs.unlink(tempFilePath);
-      } catch {}
-      try {
-        await fs.rmdir(tempDir);
-      } catch {}
-    }
+      await fs.unlink(tempFilePath);
+    } catch {}
+    try {
+      await fs.rmdir(tempDir);
+    } catch {}
   }
 }
 
