@@ -543,7 +543,6 @@ const SearchResults: React.FC = () => {
                 ref={fileInputRef}
                 type="file"
                 accept="image/jpeg, image/png"
-                capture="environment"
                 className="hidden"
                 onChange={async (e) => {
                   const file = e.target.files?.[0];
