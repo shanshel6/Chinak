@@ -1012,10 +1012,6 @@ function saveSearchTermHistory(history) {
   fs.writeFileSync(SEARCH_TERMS_PATH, JSON.stringify(history, null, 2));
 }
 
-function isChineseTerm(term) {
-  return /[\u4e00-\u9fff]/.test(term);
-}
-
 function isFoodTerm(term) {
   return FOOD_BLACKLIST.some((word) => term.includes(word));
 }
