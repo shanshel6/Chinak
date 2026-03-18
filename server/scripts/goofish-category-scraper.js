@@ -1240,14 +1240,17 @@ keywords: exactly ${KEYWORDS_PER_PRODUCT} Arabic single-word search terms, no du
 Title: "${fallback}"`;
     const result = await callSiliconFlow([{ role: "user", content: prompt }], 0.25, 300);
     const raw = String(result || '').trim();
-    if (!raw) return { titleAr: fallback, descriptionAr: fallback, keywords: [] };
+    if (!raw) {
+        console.warn(`[AI Debug] generateTitleAndKeywords returned empty for title: ${fallback}`);
+        return { titleAr: fallback, descriptionAr: fallback, keywords: [] };
+    }
     const parsed = parseAiTranslationPayload(raw);
     const titleAr = normalizeTranslatedTitle(parsed?.title_ar || raw, fallback);
     let descriptionAr = cleanDescriptionText(parsed?.description_ar || titleAr || fallback) || titleAr || fallback;
     
     // Log for debugging
-    // console.log(`[AI Debug] Raw:`, raw);
-    // console.log(`[AI Debug] Parsed:`, parsed);
+    console.log(`[AI Debug] Translating: ${fallback.substring(0, 20)}...`);
+    console.log(`[AI Debug] Title: ${titleAr.substring(0, 30)}...`);
     // console.log(`[AI Debug] Desc:`, descriptionAr);
     
     if (GOOFISH_AI_SECOND_PASS_DESCRIPTION && (!descriptionAr || descriptionAr.length < 15 || descriptionAr === titleAr)) {
@@ -1822,6 +1825,7 @@ async function run() {
             }
 
             if (SILICONFLOW_API_KEY && (!existingProduct || needsDetailedDescription)) {
+              console.log(`[AI Translation] Attempting for: ${it.title.substring(0, 30)}...`);
               const cachedTranslation = getCachedTranslation(translationCache, it.title);
               const canUseCachedDescription = cachedTranslation
                 && cachedTranslation.descriptionAr
