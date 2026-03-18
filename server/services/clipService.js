@@ -111,7 +111,25 @@ const getZSModel = async () => {
 };
 
 export async function warmupClipService() {
-  await Promise.allSettled([getProcessor(), getVisionModel(), getODProcessor(), getODModel()]);
+  if (String(process.env.CLIP_WARMUP || 'true').toLowerCase() === 'false') return;
+
+  try {
+    await getODProcessor();
+  } catch {}
+
+  try {
+    await getODModel();
+  } catch {}
+
+  if (String(process.env.CLIP_WARMUP_VISION || 'false').toLowerCase() === 'true') {
+    try {
+      await getProcessor();
+    } catch {}
+
+    try {
+      await getVisionModel();
+    } catch {}
+  }
 }
 
 function cropRawImage(rawImage, box) {

@@ -33,7 +33,51 @@ import { createClient } from '@supabase/supabase-js';
 import multer from 'multer';
 
 // Setup multer for memory storage (for image uploads)
-const upload = multer({ storage: multer.memoryStorage() });
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: Math.max(1, Number.parseInt(String(process.env.MAX_IMAGE_UPLOAD_BYTES || ''), 10) || 6 * 1024 * 1024)
+  }
+});
+
+const MAX_IMAGE_BASE64_CHARS = Math.max(
+  1,
+  Number.parseInt(String(process.env.MAX_IMAGE_BASE64_CHARS || ''), 10) || 10 * 1024 * 1024
+);
+
+const createTaskQueue = (maxQueued = 1) => {
+  let running = false;
+  const queue = [];
+  const runNext = async () => {
+    if (running) return;
+    const next = queue.shift();
+    if (!next) return;
+    running = true;
+    try {
+      const result = await next.task();
+      next.resolve(result);
+    } catch (err) {
+      next.reject(err);
+    } finally {
+      running = false;
+      runNext();
+    }
+  };
+
+  return (task) => {
+    if (queue.length >= maxQueued) {
+      const err = new Error('Server is busy. Please try again.');
+      err.statusCode = 503;
+      throw err;
+    }
+    return new Promise((resolve, reject) => {
+      queue.push({ task, resolve, reject });
+      runNext();
+    });
+  };
+};
+
+const runClipTask = createTaskQueue(Math.max(1, Number.parseInt(String(process.env.CLIP_MAX_QUEUE || ''), 10) || 1));
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -4632,15 +4676,19 @@ app.post('/api/search/image', async (req, res) => {
       const match = input.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
       if (!match) return res.status(400).json({ error: 'Invalid data URL' });
       const data = match[2];
+      if (!data) return res.status(400).json({ error: 'Invalid data URL' });
+      if (data.length > MAX_IMAGE_BASE64_CHARS) {
+        return res.status(413).json({ error: 'Image too large' });
+      }
       try {
-        embedding = await embedImage(Buffer.from(data, 'base64'));
+        embedding = await runClipTask(() => embedImage(Buffer.from(data, 'base64')));
       } catch (err) {
         console.error('embedImage buffer failed', err);
         throw err;
       }
     } else if (input) {
       try {
-        embedding = await embedImage(input);
+        embedding = await runClipTask(() => embedImage(input));
       } catch (err) {
         console.error('embedImage input failed', err);
         throw err;
@@ -4759,12 +4807,19 @@ app.post('/api/search/analyze-image', upload.single('image'), async (req, res) =
     } else if (req.body.imageUrl) {
       input = req.body.imageUrl;
     } else if (req.body.imageBase64) {
-      input = Buffer.from(req.body.imageBase64.split(',')[1], 'base64');
+      const raw = String(req.body.imageBase64 || '');
+      const commaIndex = raw.indexOf(',');
+      const base64Data = commaIndex >= 0 ? raw.slice(commaIndex + 1) : raw;
+      if (!base64Data) return res.status(400).json({ error: 'Invalid imageBase64' });
+      if (base64Data.length > MAX_IMAGE_BASE64_CHARS) {
+        return res.status(413).json({ error: 'Image too large' });
+      }
+      input = Buffer.from(base64Data, 'base64');
     } else {
       return res.status(400).json({ error: 'No image provided' });
     }
 
-    const objects = await analyzeImageObjects(input);
+    const objects = await runClipTask(() => analyzeImageObjects(input));
     res.json({ objects });
   } catch (error) {
     console.error('Analyze image error:', error);
@@ -4780,7 +4835,14 @@ app.post('/api/search/image-crop', upload.single('image'), async (req, res) => {
     } else if (req.body.imageUrl) {
       input = req.body.imageUrl;
     } else if (req.body.imageBase64) {
-      input = Buffer.from(req.body.imageBase64.split(',')[1], 'base64');
+      const raw = String(req.body.imageBase64 || '');
+      const commaIndex = raw.indexOf(',');
+      const base64Data = commaIndex >= 0 ? raw.slice(commaIndex + 1) : raw;
+      if (!base64Data) return res.status(400).json({ error: 'Invalid imageBase64' });
+      if (base64Data.length > MAX_IMAGE_BASE64_CHARS) {
+        return res.status(413).json({ error: 'Image too large' });
+      }
+      input = Buffer.from(base64Data, 'base64');
     } else {
       return res.status(400).json({ error: 'No image provided' });
     }
@@ -4795,7 +4857,7 @@ app.post('/api/search/image-crop', upload.single('image'), async (req, res) => {
       return res.status(400).json({ error: 'Invalid box format' });
     }
 
-    const embedding = await embedImageCrop(input, cropBox);
+    const embedding = await runClipTask(() => embedImageCrop(input, cropBox));
     
     // Perform vector search using the embedding
     // Re-using the vector search logic from existing endpoint
