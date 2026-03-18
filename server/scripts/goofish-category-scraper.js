@@ -185,8 +185,7 @@ async function callSiliconFlow(messages, temperature = 0.3, maxTokens = 100) {
         messages,
         temperature,
         max_tokens: maxTokens,
-        stream: false,
-        enable_thinking: false
+        stream: false
       }, {
         headers: {
           'Content-Type': 'application/json',
