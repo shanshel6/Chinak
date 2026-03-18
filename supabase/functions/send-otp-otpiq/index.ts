@@ -61,7 +61,7 @@ Deno.serve(async (req) => {
       body: JSON.stringify({
         "phoneNumber": phone.replace('+', ''),
         "smsType": "verification",
-        "provider": "whatsapp",
+        "provider": "whatsapp-sms",
         "verificationCode": otpCode
       })
     })

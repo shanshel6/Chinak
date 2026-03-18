@@ -83,10 +83,10 @@ async function checkGoofishLinks() {
       console.warn('AI Translation DISABLED. No API Key found.');
   }
 
-  const startInput = String(await askQuestion('Start from product number (1-based, press Enter for 1): ')).trim();
-  const parsedStart = Number.parseInt(startInput || '1', 10);
-  const startNumber = Number.isFinite(parsedStart) && parsedStart > 0 ? parsedStart : 1;
-  const startOffset = startNumber - 1;
+  const startInput = await askQuestion('Start from Product ID (press Enter for beginning): ');
+  const startId = startInput ? parseInt(startInput.trim(), 10) : 0;
+
+  console.log(`Starting check from Product ID: ${startId || 'Beginning'}`);
 
   const goofishWhere = {
     isActive: true,
@@ -103,24 +103,22 @@ async function checkGoofishLinks() {
     ]
   };
 
+  if (startId > 0) {
+    goofishWhere.id = { gte: startId };
+  }
+
   const totalProducts = await prisma.product.count({ where: goofishWhere });
+  
   if (totalProducts === 0) {
-    console.log('No products to check.');
+    console.log('No products found to check.');
     await prisma.$disconnect();
     return;
   }
 
-  if (startOffset >= totalProducts) {
-    console.log(`Start number ${startNumber} is beyond total products (${totalProducts}).`);
-    await prisma.$disconnect();
-    return;
-  }
-
-  // 1. Get active Goofish/Xianyu products from selected row number (excluding Taobao)
+  // 1. Get active Goofish/Xianyu products starting from startId
   const products = await prisma.product.findMany({
     where: goofishWhere,
     orderBy: { id: 'asc' },
-    skip: startOffset,
     select: {
       id: true,
       name: true,
@@ -130,8 +128,7 @@ async function checkGoofishLinks() {
     }
   });
 
-  console.log(`Found ${totalProducts} active Goofish/Xianyu products.`);
-  console.log(`Starting from product number ${startNumber}. Products to check now: ${products.length}.`);
+  console.log(`Found ${products.length} active Goofish/Xianyu products to check.`);
 
   if (products.length === 0) {
     console.log('No products to check.');
@@ -209,8 +206,7 @@ async function checkGoofishLinks() {
   try {
     for (const product of products) {
       processedCount++;
-      const currentIdx = startNumber + processedCount - 1;
-      console.log(`\n[${currentIdx}/${totalProducts}] Checking Product ID ${product.id}: ${product.name},`);
+      console.log(`\n[${processedCount}/${totalProducts}] Checking Product ID ${product.id}: ${product.name},`);
       console.log(`URL: \`${product.purchaseUrl}\``);
 
       if (!product.purchaseUrl) {

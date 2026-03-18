@@ -65,6 +65,17 @@ export const useAuthStore = create<AuthState>((set) => ({
         return;
       }
 
+      if (token.startsWith('test-token-') || token.startsWith('demo-token-')) {
+        const user = await fetchMe();
+        if (user) {
+          set({ user, token, isAuthenticated: true, isLoading: false });
+        } else {
+          localStorage.removeItem('auth_token');
+          set({ user: null, token: null, isAuthenticated: false, isLoading: false });
+        }
+        return;
+      }
+
       const user = await fetchMe();
       
       if (!user) {

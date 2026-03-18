@@ -1637,9 +1637,70 @@ app.post('/api/auth/reset-password', async (req, res) => {
   }
 });
 
+app.post('/api/auth/phone-login', async (req, res) => {
+  const phone = normalizePhone(req.body.phone);
+  const { password } = req.body;
+  if (!phone || !password) return res.status(400).json({ error: 'Phone and password are required' });
+  const email = `${phone}@whatsapp.user`;
+
+  try {
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) return res.status(400).json({ error: 'User not found' });
+    if (!user.password) return res.status(400).json({ error: 'No password set for this account. Please reset your password.' });
+
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+    if (!isPasswordValid) return res.status(400).json({ error: 'Invalid password' });
+
+    const token = jwt.sign(
+      { id: user.id, role: user.role, email: user.email },
+      JWT_SECRET,
+      { expiresIn: '36500d' }
+    );
+
+    res.json({
+      token,
+      user: {
+        id: user.id.toString(),
+        name: user.name,
+        phone: user.email.split('@')[0],
+        email: user.email,
+        role: user.role
+      }
+    });
+  } catch (error) {
+    console.error('Phone login error:', error);
+    res.status(500).json({ error: 'Login failed' });
+  }
+});
+
+app.post('/api/auth/phone-reset-password', async (req, res) => {
+  const phone = normalizePhone(req.body.phone);
+  const { otpCode, newPassword } = req.body;
+  if (!phone || !otpCode || !newPassword) return res.status(400).json({ error: 'Missing fields' });
+  const email = `${phone}@whatsapp.user`;
+
+  try {
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user || user.otpCode !== otpCode || new Date() > user.otpExpires) {
+      return res.status(400).json({ error: 'Invalid or expired OTP' });
+    }
+
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    await prisma.user.update({
+      where: { email },
+      data: { password: hashedPassword, otpCode: null, otpExpires: null, isVerified: true }
+    });
+
+    res.json({ message: 'Password reset successful' });
+  } catch (error) {
+    console.error('Phone reset password error:', error);
+    res.status(500).json({ error: 'Password reset failed' });
+  }
+});
+
 app.post('/api/auth/send-otp', async (req, res) => {
   const phone = normalizePhone(req.body.phone);
-  const { name } = req.body;
+  const { name, isResetPassword } = req.body;
   if (!phone) return res.status(400).json({ error: 'Phone number is required' });
 
   // --- Google Play Test Account Logic ---
@@ -1648,19 +1709,24 @@ app.post('/api/auth/send-otp', async (req, res) => {
   
   if (phone === TEST_PHONE) {
     console.log(`[TEST MODE] OTP requested for test account ${TEST_PHONE}`);
-    const email = `${phone}@whatsapp.user`;
+    const email = `demo_phone@example.com`;
     const otpExpires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour for test account
+    
+    // Hash the default test password "123456"
+    const hashedTestPassword = await bcrypt.hash('123456', 10);
     
     await prisma.user.upsert({
       where: { email },
-      update: { otpCode: TEST_OTP, otpExpires },
+      update: { otpCode: TEST_OTP, otpExpires, phone: TEST_PHONE, password: hashedTestPassword },
       create: { 
         email, 
+        phone: TEST_PHONE,
         otpCode: TEST_OTP, 
         otpExpires,
+        password: hashedTestPassword,
         role: 'USER',
-        isVerified: false,
-        name: name || 'Google Reviewer'
+        isVerified: true,
+        name: name || 'Demo Phone User'
       }
     });
     
@@ -1671,27 +1737,48 @@ app.post('/api/auth/send-otp', async (req, res) => {
   const email = `${phone.replace('+', '')}@whatsapp.user`;
 
   try {
-    // ... (Limit logic remains same) ...
     const user = await prisma.user.findUnique({ where: { email } });
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const now = new Date();
 
     if (user) {
       const lastDate = user.lastWhatsappOtpDate ? new Date(user.lastWhatsappOtpDate) : null;
-      if (lastDate) lastDate.setHours(0, 0, 0, 0);
-
-      const isSameDay = lastDate && lastDate.getTime() === today.getTime();
       
-      if (isSameDay && user.whatsappOtpCount >= 3) {
-        return res.status(429).json({ error: 'لقد تجاوزت الحد الأقصى لطلبات الكود لهذا اليوم. يرجى المحاولة غداً.' });
+      // Calculate hours difference
+      let hoursDiff = 24; // Default to a large number if no last date
+      if (lastDate) {
+        hoursDiff = (now.getTime() - lastDate.getTime()) / (1000 * 60 * 60);
       }
 
-      // Update count
+      // Check if it's a new hour window
+      const isNewHourWindow = hoursDiff >= 1;
+      
+      let newCount = user.whatsappOtpCount || 0;
+      
+      if (isNewHourWindow) {
+        newCount = 1; // Reset count for the new hour
+      } else {
+        newCount += 1;
+      }
+
+      // Check limits based on the request type
+      if (isResetPassword) {
+        // Limit: 1 OTP per hour for password reset
+        if (!isNewHourWindow && user.whatsappOtpCount >= 1) {
+          return res.status(429).json({ error: 'لقد طلبت كود إعادة تعيين كلمة المرور مؤخراً. يرجى الانتظار لمدة ساعة قبل المحاولة مرة أخرى.' });
+        }
+      } else {
+        // Limit: 2 OTPs per hour for signup/general
+        if (!isNewHourWindow && user.whatsappOtpCount >= 2) {
+          return res.status(429).json({ error: 'لقد تجاوزت الحد الأقصى لطلبات الكود (مرتين في الساعة). يرجى المحاولة بعد ساعة.' });
+        }
+      }
+
+      // Update count and last date
       await prisma.user.update({
         where: { email },
         data: {
-          whatsappOtpCount: isSameDay ? { increment: 1 } : 1,
-          lastWhatsappOtpDate: new Date()
+          whatsappOtpCount: newCount,
+          lastWhatsappOtpDate: now
         }
       });
     }
@@ -1710,7 +1797,9 @@ app.post('/api/auth/send-otp', async (req, res) => {
         otpExpires,
         role: 'USER',
         isVerified: false,
-        name: name || phone
+        name: name || phone,
+        whatsappOtpCount: 1,
+        lastWhatsappOtpDate: now
       }
     });
 
@@ -1719,7 +1808,7 @@ app.post('/api/auth/send-otp', async (req, res) => {
       const otpiqResponse = await axios.post('https://api.otpiq.com/api/sms', { 
         "phoneNumber": phone.replace('+', ''), 
         "smsType": "verification", 
-        "provider": "whatsapp", 
+        "provider": "whatsapp-sms", 
         "verificationCode": otpCode 
       }, { 
         headers: { 
@@ -1744,7 +1833,7 @@ app.post('/api/auth/send-otp', async (req, res) => {
 
 app.post('/api/auth/verify-otp', async (req, res) => {
   const phone = normalizePhone(req.body.phone);
-  const { code, fullName } = req.body;
+  const { code, fullName, password } = req.body;
   if (!phone || !code) return res.status(400).json({ error: 'Phone and code are required' });
   const email = `${phone}@whatsapp.user`;
 
@@ -1757,15 +1846,21 @@ app.post('/api/auth/verify-otp', async (req, res) => {
       return res.status(400).json({ error: 'Invalid or expired OTP' });
     }
 
+    const dataToUpdate = { 
+      otpCode: null, 
+      otpExpires: null, 
+      isVerified: true,
+      name: fullName || user.name || 'User'
+    };
+
+    if (password) {
+      dataToUpdate.password = await bcrypt.hash(password, 10);
+    }
+
     // Clear OTP and verify user
     const updatedUser = await prisma.user.update({
       where: { email },
-      data: { 
-        otpCode: null, 
-        otpExpires: null, 
-        isVerified: true,
-        name: fullName || user.name || 'User'
-      }
+      data: dataToUpdate
     });
 
     // --- Supabase Sync (Optional but recommended) ---

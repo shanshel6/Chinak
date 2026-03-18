@@ -70,6 +70,7 @@ const VerifyOTP: React.FC = () => {
     const state = location.state as { 
       phone?: string; 
       fullName?: string; 
+      password?: string;
       type?: 'login' | 'signup';
       isTestAccount?: boolean;
       testUser?: any;
@@ -93,7 +94,7 @@ const VerifyOTP: React.FC = () => {
 
     setLoading(true);
     try {
-      const { token, user } = await verifyWhatsAppOTP(phone, otpCode, state?.fullName);
+      const { token, user } = await verifyWhatsAppOTP(phone, otpCode, state?.fullName, state?.password);
 
       if (token && user) {
         setAuth(token, user);
@@ -112,7 +113,7 @@ const VerifyOTP: React.FC = () => {
     
     setResending(true);
     try {
-      await sendWhatsAppOTP(phone);
+      await sendWhatsAppOTP(phone, state?.fullName, state?.type !== 'signup');
       showToast('تم إعادة إرسال الكود بنجاح', 'success');
       setTimer(60);
     } catch (err: any) {
@@ -136,7 +137,7 @@ const VerifyOTP: React.FC = () => {
             تحقق من رقمك
           </h1>
           <p className="text-slate-500 dark:text-slate-400 text-base font-normal text-center max-w-[80%]">
-            لقد أرسلنا كود التحقق إلى <br />
+            أدخل الكود المكون من 6 أرقام المرسل إلى <br />
             <span className="font-bold text-slate-900 dark:text-white" dir="ltr">{phone}</span>
           </p>
           {(location.state as any)?.isTestAccount && (

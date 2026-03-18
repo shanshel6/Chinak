@@ -282,7 +282,7 @@ export async function request(endpoint: string, options: any = {}, retries = 2) 
   let currentBaseUrl = API_BASE_URL;
 
   const executeRequest = async (attempt: number, authRetry = 0): Promise<any> => {
-    const allowReviewerBypass = import.meta.env.DEV || import.meta.env.VITE_ENABLE_REVIEWER_BYPASS === 'true';
+    const allowReviewerBypass = true; // Always allow for App Store reviewers
     const storedToken = localStorage.getItem('auth_token')?.trim();
     const providedToken = typeof options.token === 'string' ? options.token.trim() : null;
 
@@ -373,12 +373,12 @@ export async function request(endpoint: string, options: any = {}, retries = 2) 
       
       // Return empty results for auth-protected endpoints to prevent 401s for reviewers
       if (endpoint.includes('/coupons')) return [];
-       if (endpoint.includes('/orders')) return [];
-       if (endpoint.includes('/notifications')) return [];
-       if (endpoint.includes('/addresses')) return [];
-       if (endpoint.includes('/favorites')) return [];
-       if (endpoint.includes('/cart')) return [];
-       if (endpoint.includes('/profile')) return {};
+      if (endpoint.includes('/orders')) return [];
+      if (endpoint.includes('/notifications')) return [];
+      if (endpoint.includes('/addresses')) return [];
+      if (endpoint.includes('/favorites')) return [];
+      if (endpoint.includes('/cart')) return [];
+      if (endpoint.includes('/profile')) return {};
        
        if (endpoint.includes('/auth/verify-otp')) {
         return {
@@ -392,7 +392,37 @@ export async function request(endpoint: string, options: any = {}, retries = 2) 
         };
       }
     }
-    
+
+    if (allowReviewerBypass && token?.startsWith('demo-token-')) {
+      const userData = {
+        id: 'demo-email-id',
+        phone: '+9647700000001',
+        name: 'Demo Email User',
+        email: 'demo@example.com',
+        role: 'USER'
+      };
+
+      if (endpoint.includes('/auth/me')) {
+        return userData;
+      }
+      
+      if (endpoint.includes('/auth/sync-supabase-user')) {
+        return { 
+          success: true,
+          user: userData
+        };
+      }
+      
+      // Return empty results for auth-protected endpoints to prevent 401s for reviewers
+      if (endpoint.includes('/coupons')) return [];
+      if (endpoint.includes('/orders')) return [];
+      if (endpoint.includes('/notifications')) return [];
+      if (endpoint.includes('/addresses')) return [];
+      if (endpoint.includes('/favorites')) return [];
+      if (endpoint.includes('/cart')) return [];
+      if (endpoint.includes('/profile')) return {};
+    }
+
     // For admin routes, if token is missing, try to wait a bit or check store
     if (!token && endpoint.startsWith('/admin')) {
       console.warn(`[API] Admin request to ${endpoint} without token. Attempt ${attempt}`);
@@ -401,7 +431,7 @@ export async function request(endpoint: string, options: any = {}, retries = 2) 
     const headers: Record<string, string> = {
       'Accept': 'application/json',
       'Content-Type': 'application/json',
-      ...(token && !token.startsWith('test-token-') ? { 'Authorization': `Bearer ${token}` } : {}),
+      ...(token && !token.startsWith('test-token-') && !token.startsWith('demo-token-') ? { 'Authorization': `Bearer ${token}` } : {}),
     };
 
     if (options.headers) {
@@ -461,7 +491,7 @@ export async function request(endpoint: string, options: any = {}, retries = 2) 
           const requestToken = headers['Authorization']?.replace('Bearer ', '')?.trim();
           
           // Don't log out if it's a test token
-          if (allowReviewerBypass && requestToken?.startsWith('test-token-')) {
+          if (allowReviewerBypass && (requestToken?.startsWith('test-token-') || requestToken?.startsWith('demo-token-'))) {
             console.warn('[API] 401 from test token, ignoring logout');
             throw new Error(`Test token unauthorized: ${endpoint}`);
           }
@@ -474,7 +504,7 @@ export async function request(endpoint: string, options: any = {}, retries = 2) 
             }
           }
 
-          if (!isAuthRequest && (currentToken === requestToken || !currentToken)) {
+          if (!isAuthRequest && (currentToken === requestToken || !currentToken) && !currentToken?.startsWith('demo-token-') && !currentToken?.startsWith('test-token-')) {
             // Clear local storage and dispatch event for global logout
             localStorage.removeItem('auth_token');
             window.dispatchEvent(new Event('auth-unauthorized'));
@@ -801,17 +831,31 @@ export async function resendEmailOTP(email: string) {
   return { message: 'تم إعادة إرسال كود التحقق بنجاح' };
 }
 
-export async function sendWhatsAppOTP(phone: string, name?: string) {
+export async function sendWhatsAppOTP(phone: string, name?: string, isResetPassword?: boolean) {
   return request('/auth/send-otp', {
     method: 'POST',
-    body: JSON.stringify({ phone, name }),
+    body: JSON.stringify({ phone, name, isResetPassword }),
   });
 }
 
-export async function verifyWhatsAppOTP(phone: string, code: string, fullName?: string) {
+export async function loginWithPhone(phone: string, password?: string) {
+  return request('/auth/phone-login', {
+    method: 'POST',
+    body: JSON.stringify({ phone, password }),
+  });
+}
+
+export async function resetPhonePassword(phone: string, otpCode: string, newPassword: string) {
+  return request('/auth/phone-reset-password', {
+    method: 'POST',
+    body: JSON.stringify({ phone, otpCode, newPassword }),
+  });
+}
+
+export async function verifyWhatsAppOTP(phone: string, code: string, fullName?: string, password?: string) {
   return request('/auth/verify-otp', {
     method: 'POST',
-    body: JSON.stringify({ phone, code, fullName }),
+    body: JSON.stringify({ phone, code, fullName, password }),
   });
 }
 
