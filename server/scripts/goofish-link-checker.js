@@ -20,7 +20,7 @@ dotenv.config({ path: envPath });
 puppeteer.use(StealthPlugin());
 
 const prisma = new PrismaClient();
-const SILICONFLOW_API_KEY = String(process.env.SILICONFLOW_API_KEY || 'sk-kmdgyfekpzcvsxnqfjncohtdzrtgtoxbfgiyuhwsocgilrso').trim();
+const SILICONFLOW_API_KEY = String(process.env.SILICONFLOW_API_KEY || '').trim();
 
 // Indicators that a product is gone
 const UNAVAILABLE_KEYWORDS = [
@@ -40,8 +40,8 @@ async function callSiliconFlow(messages, temperature = 0.3, maxTokens = 500) {
   const apiKey = SILICONFLOW_API_KEY;
   if (!apiKey) return null;
   try {
-    const response = await axios.post('https://api.siliconflow.com/v1/chat/completions', {
-      model: "Qwen/Qwen3-8B",
+    const response = await axios.post('https://api.siliconflow.cn/v1/chat/completions', {
+      model: "Qwen/Qwen2.5-7B-Instruct",
       messages,
       temperature,
       max_tokens: maxTokens,
@@ -78,7 +78,7 @@ function askQuestion(query) {
 async function checkGoofishLinks() {
   console.log('Starting Goofish link checker & image updater...');
   if (SILICONFLOW_API_KEY) {
-      console.log('AI Translation Enabled. API Key present (ends with):', SILICONFLOW_API_KEY.slice(-4));
+      console.log('AI Translation Enabled.');
   } else {
       console.warn('AI Translation DISABLED. No API Key found.');
   }

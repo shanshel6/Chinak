@@ -102,10 +102,7 @@ function calculatePriceMultiplier(basePriceIQD) {
   return 1.25;
 }
 
-const SILICONFLOW_API_KEY = String(
-  process.env.SILICONFLOW_API_KEY
-  || 'sk-kmdgyfekpzcvsxnqfjncohtdzrtgtoxbfgiyuhwsocgilrso'
-).trim();
+const SILICONFLOW_API_KEY = String(process.env.SILICONFLOW_API_KEY || '').trim();
 const DISABLE_DB_WRITE = String(process.env.GOOFISH_DISABLE_DB_WRITE || '').toLowerCase() === 'true';
 const configuredMaxProducts = parseInt(process.env.GOOFISH_MAX_PRODUCTS || '', 10);
 const MAX_PRODUCTS_TO_PROCESS = Number.isFinite(configuredMaxProducts) && configuredMaxProducts > 0
@@ -177,8 +174,8 @@ async function callSiliconFlow(messages, temperature = 0.3, maxTokens = 100) {
   const maxAttempts = 5;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      const response = await axios.post('https://api.siliconflow.com/v1/chat/completions', {
-        model: "Qwen/Qwen3-8B",
+      const response = await axios.post('https://api.siliconflow.cn/v1/chat/completions', {
+        model: "Qwen/Qwen2.5-7B-Instruct",
         messages,
         temperature,
         max_tokens: maxTokens,
@@ -1534,11 +1531,7 @@ async function run() {
   const translationCache = loadTranslationCache();
   let pendingCacheWrites = 0;
   if (SILICONFLOW_API_KEY) {
-    if (!process.env.SILICONFLOW_API_KEY) {
-      console.log('Using default/fallback API key for translation.');
-    } else {
-      console.log('AI translation is enabled (using env key).');
-    }
+    console.log('AI translation is enabled (using env key).');
   } else {
     console.warn('AI translation is disabled: missing SILICONFLOW_API_KEY.');
   }
