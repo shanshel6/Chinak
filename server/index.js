@@ -28,7 +28,7 @@ import { processProductAI, processProductEmbedding, hybridSearch, estimateProduc
 import { buildCategoryIndex } from './services/categoryService.js';
 import { calculateOrderShipping, calculateProductShipping, getAdjustedPrice } from './services/shippingService.js';
 import { setupLinkCheckerCron, checkAllProductLinks } from './services/linkCheckerService.js';
-import { embedImage, analyzeImageObjects, embedImageCrop } from './services/clipService.js';
+import { embedImage, analyzeImageObjects, embedImageCrop, warmupClipService } from './services/clipService.js';
 import { createClient } from '@supabase/supabase-js';
 import multer from 'multer';
 
@@ -54,6 +54,8 @@ if (fs.existsSync(envPath)) {
 } else {
   console.error('.env file NOT found at:', envPath);
 }
+
+warmupClipService().catch(() => {});
 
 // Supabase Client Initialization
 const supabaseUrl = process.env.SUPABASE_URL || 'https://puxjtecjxfjldwxiwzrk.supabase.co';

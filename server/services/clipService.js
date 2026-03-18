@@ -41,13 +41,16 @@ const directAgent = new Agent({
 });
 
 const MODEL_ID = process.env.CLIP_MODEL_ID || 'Xenova/clip-vit-base-patch32';
-const OD_MODEL_ID = 'Xenova/detr-resnet-50'; // General Object Detection Model
+const OD_MODEL_ID = process.env.OD_MODEL_ID || 'Xenova/yolos-tiny';
 const ZERO_SHOT_OD_MODEL_ID = 'Xenova/owlvit-base-patch32'; // Zero-Shot Object Detection Model
 const QUANTIZED = String(process.env.CLIP_QUANTIZED || 'true').toLowerCase() === 'true';
 
-if (process.env.TRANSFORMERS_CACHE_DIR) {
-  env.cacheDir = process.env.TRANSFORMERS_CACHE_DIR;
-}
+const ensureCacheDir = () => {
+  const cacheDir = process.env.TRANSFORMERS_CACHE_DIR;
+  if (cacheDir && env.cacheDir !== cacheDir) {
+    env.cacheDir = cacheDir;
+  }
+};
 
 env.backends.onnx.wasm.numThreads = 1;
 env.backends.onnx.wasm.proxy = false;
@@ -60,6 +63,7 @@ let zsProcessorPromise = null;
 let zsModelPromise = null;
 
 const getProcessor = async () => {
+  ensureCacheDir();
   if (!processorPromise) {
     processorPromise = AutoProcessor.from_pretrained(MODEL_ID);
   }
@@ -67,6 +71,7 @@ const getProcessor = async () => {
 };
 
 const getVisionModel = async () => {
+  ensureCacheDir();
   if (!visionModelPromise) {
     visionModelPromise = CLIPVisionModelWithProjection.from_pretrained(MODEL_ID, { quantized: QUANTIZED });
   }
@@ -74,6 +79,7 @@ const getVisionModel = async () => {
 };
 
 const getODProcessor = async () => {
+  ensureCacheDir();
   if (!odProcessorPromise) {
     odProcessorPromise = AutoProcessor.from_pretrained(OD_MODEL_ID);
   }
@@ -81,6 +87,7 @@ const getODProcessor = async () => {
 };
 
 const getODModel = async () => {
+  ensureCacheDir();
   if (!odModelPromise) {
     odModelPromise = AutoModelForObjectDetection.from_pretrained(OD_MODEL_ID, { quantized: QUANTIZED });
   }
@@ -88,6 +95,7 @@ const getODModel = async () => {
 };
 
 const getZSProcessor = async () => {
+  ensureCacheDir();
   if (!zsProcessorPromise) {
     zsProcessorPromise = AutoProcessor.from_pretrained(ZERO_SHOT_OD_MODEL_ID);
   }
@@ -95,11 +103,16 @@ const getZSProcessor = async () => {
 };
 
 const getZSModel = async () => {
+  ensureCacheDir();
   if (!zsModelPromise) {
     zsModelPromise = AutoModelForZeroShotObjectDetection.from_pretrained(ZERO_SHOT_OD_MODEL_ID, { quantized: QUANTIZED });
   }
   return zsModelPromise;
 };
+
+export async function warmupClipService() {
+  await Promise.allSettled([getProcessor(), getVisionModel(), getODProcessor(), getODModel()]);
+}
 
 function cropRawImage(rawImage, box) {
   const xmin = Math.max(0, Math.floor(box[0]));
