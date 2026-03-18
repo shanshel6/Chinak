@@ -49,6 +49,9 @@ if (process.env.TRANSFORMERS_CACHE_DIR) {
   env.cacheDir = process.env.TRANSFORMERS_CACHE_DIR;
 }
 
+env.backends.onnx.wasm.numThreads = 1;
+env.backends.onnx.wasm.proxy = false;
+
 let processorPromise = null;
 let visionModelPromise = null;
 let odProcessorPromise = null;
