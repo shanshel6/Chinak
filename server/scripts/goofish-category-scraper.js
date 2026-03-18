@@ -152,6 +152,12 @@ function isExcludedProduct(title) {
   return EXCLUDED_KEYWORDS.some(k => t.includes(k.toUpperCase()));
 }
 
+function isChineseTerm(text) {
+  if (!text) return false;
+  // A rough heuristic to check if the string has Chinese characters
+  return /[\u4e00-\u9fa5]/.test(String(text));
+}
+
 function detectRealPriceFromTitle(title, currentPrice) {
   // DISABLED: Returning current price as requested
   return currentPrice;
@@ -1522,7 +1528,7 @@ async function saveProductToDb(item, existingProductId = null) {
           }
         });
       }
-      console.log(`Saved to DB: ${item.titleEn}`);
+      console.log(`Saved to DB: ${item.titleEn || item.title}`);
     }
   } catch (e) {
     console.error(`Failed to save product ${item.titleEn}:`, e.message);
@@ -1813,7 +1819,7 @@ async function run() {
               titleEn = String(existingProduct.name || titleEn).trim();
               descriptionAr = cleanDescriptionText(String(existingProduct?.aiMetadata?.translatedDescription || titleEn).trim()) || titleEn;
               keywords = ensureKeywordList(existingProduct.keywords, titleEn || it.title);
-              needsDetailedDescription = !descriptionAr || descriptionAr.length < 20 || descriptionAr === titleEn;
+              needsDetailedDescription = !descriptionAr || descriptionAr.length < 20 || descriptionAr === titleEn || isChineseTerm(descriptionAr);
             }
 
             if (SILICONFLOW_API_KEY && (!existingProduct || needsDetailedDescription)) {
@@ -1839,7 +1845,7 @@ async function run() {
                   pendingCacheWrites = 0;
                 }
                 if (titleEn && titleEn !== it.title) {
-                  console.log('AI translation successful.');
+                  console.log(`AI translation successful for: ${titleEn.slice(0, 30)}...`);
                 } else {
                   console.warn('AI translation attempted but no translated output returned.');
                 }
@@ -1852,7 +1858,10 @@ async function run() {
             
             // If descriptionAr is somehow still exactly the Chinese title, or fallback,
             // we should try one more translation directly if we have the key.
-            if (SILICONFLOW_API_KEY && (!descriptionAr || descriptionAr === it.title)) {
+            if (SILICONFLOW_API_KEY && (!descriptionAr || descriptionAr === it.title || isChineseTerm(descriptionAr) || isChineseTerm(titleEn))) {
+                if (isChineseTerm(titleEn)) {
+                    titleEn = await translateFullTitleToArabic(it.title, it.title);
+                }
                 descriptionAr = await translateFullTitleToArabic(it.title, it.title);
                 descriptionAr = cleanDescriptionText(descriptionAr);
             }
