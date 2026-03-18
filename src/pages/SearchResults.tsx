@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { AlertCircle, Search, ArrowRight, Camera, X } from 'lucide-react';
-import { searchProducts, searchProductsByImage } from '../services/api';
+import { searchProducts, searchProductsByImage, analyzeImageObjects, searchProductsByImageCrop } from '../services/api';
 import FilterBar from '../components/home/FilterBar';
 import ProductCard from '../components/home/ProductCard';
 import { useWishlistStore } from '../store/useWishlistStore';
@@ -22,6 +22,11 @@ const SearchResults: React.FC = () => {
   const [activeQuery, setActiveQuery] = useState(initialQuery);
   const [imageSearchInput, setImageSearchInput] = useState<string | null>(null);
   const [imageSearchPreview, setImageSearchPreview] = useState<string | null>(null);
+  const [imageOriginalSize, setImageOriginalSize] = useState<{width: number, height: number} | null>(null);
+  const [showImagePopup, setShowImagePopup] = useState(false);
+  const [detectedObjects, setDetectedObjects] = useState<any[]>([]);
+  const [selectedObjectBox, setSelectedObjectBox] = useState<number[] | null>(null);
+  const [isAnalyzingImage, setIsAnalyzingImage] = useState(false);
   const [conditionFilter, setConditionFilter] = useState<ConditionFilter>(null);
   const [priceFilter, setPriceFilter] = useState<PriceFilter>(null);
   const [draftConditionFilter, setDraftConditionFilter] = useState<ConditionFilter>(null);
@@ -82,10 +87,10 @@ const SearchResults: React.FC = () => {
     setRecentTerms(readRecentTerms());
   }, [isInputFocused, readRecentTerms]);
 
-  const startImageSearch = useCallback(async (imageBase64: string) => {
+  const startImageSearch = useCallback(async (imageBase64: string, width?: number, height?: number) => {
     restoredFromCacheRef.current = false;
     setRestored(false);
-    setLoading(true);
+    setLoading(false); // don't show loading on main screen yet
     setLoadingMore(false);
     setResults([]);
     setError(null);
@@ -97,22 +102,64 @@ const SearchResults: React.FC = () => {
     scrollRatioRef.current = 0;
     setImageSearchInput(imageBase64);
     setImageSearchPreview(imageBase64);
+    if (width && height) setImageOriginalSize({width, height});
     setActiveQuery(IMAGE_QUERY_LABEL);
     setQueryInput(IMAGE_QUERY_LABEL);
     if (inputRef.current) inputRef.current.blur();
     setIsInputFocused(false);
 
+    setDetectedObjects([]);
+    setSelectedObjectBox(null);
+    setShowImagePopup(true);
+    setIsAnalyzingImage(true);
+
     try {
-      const data = await searchProductsByImage(imageBase64, 1, LIMIT);
-      setResults(Array.isArray(data.products) ? data.products : []);
-      setHasMore(Boolean(data.hasMore));
-      setPage(1);
+      const objects = await analyzeImageObjects(imageBase64);
+      setDetectedObjects(objects);
+      
+      // If no objects detected, fallback to full image search immediately
+      if (objects.length === 0) {
+        setShowImagePopup(false);
+        setLoading(true);
+        const data = await searchProductsByImage(imageBase64, 1, LIMIT);
+        setResults(Array.isArray(data.products) ? data.products : []);
+        setHasMore(Boolean(data.hasMore));
+        setPage(1);
+      }
     } catch (err: any) {
+      setShowImagePopup(false);
       setError(err.message || 'حدث خطأ أثناء البحث بالصورة');
+    } finally {
+      setIsAnalyzingImage(false);
+      if (detectedObjects.length === 0) setLoading(false);
+    }
+  }, [detectedObjects.length]);
+
+  const handleObjectSelection = useCallback(async (box: number[] | null) => {
+    if (!imageSearchInput) return;
+    setShowImagePopup(false);
+    setSelectedObjectBox(box);
+    setLoading(true);
+    setResults([]);
+    setError(null);
+
+    try {
+      if (box) {
+        const data = await searchProductsByImageCrop(imageSearchInput, box);
+        setResults(Array.isArray(data.products) ? data.products : []);
+        setHasMore(false);
+      } else {
+        const data = await searchProductsByImage(imageSearchInput, 1, LIMIT);
+        setResults(Array.isArray(data.products) ? data.products : []);
+        setHasMore(Boolean(data.hasMore));
+        setPage(1);
+      }
+    } catch (err: any) {
+      setError('فشل البحث في المنطقة المحددة.');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [imageSearchInput]);
 
   const clearImageSearch = useCallback(() => {
     restoredFromCacheRef.current = false;
@@ -560,7 +607,7 @@ const SearchResults: React.FC = () => {
                     if (ctx) {
                       ctx.drawImage(img, 0, 0);
                       const jpegBase64 = canvas.toDataURL('image/jpeg', 0.9);
-                      void startImageSearch(jpegBase64);
+                      void startImageSearch(jpegBase64, img.width, img.height);
                       URL.revokeObjectURL(objectUrl);
                     }
                   };
@@ -593,33 +640,205 @@ const SearchResults: React.FC = () => {
         )}
       </div>
 
-      {isImageSearch && imageSearchPreview && (
-        <div className="px-4 pt-3">
-          <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 p-3 flex items-center gap-3">
-            <img
-              src={imageSearchPreview}
-              alt="بحث بالصورة"
-              className="h-14 w-14 rounded-xl object-cover border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-900"
-            />
-            <div className="flex-1 min-w-0">
-              <div className="text-sm font-black text-slate-900 dark:text-white">بحث بالصورة</div>
-              <div className="text-xs font-semibold text-slate-500 dark:text-slate-400 truncate">عرض النتائج المشابهة للصورة</div>
+      {showImagePopup && imageSearchPreview && (
+        <div className="fixed inset-0 z-[100] bg-white dark:bg-slate-900 flex flex-col items-center justify-center p-4">
+          {isAnalyzingImage ? (
+            <div className="flex-1 flex flex-col items-center justify-center bg-background-light dark:bg-background-dark min-h-[60vh] w-full absolute inset-0 relative">
+              <div className="absolute top-4 left-4 z-50">
+                <button 
+                  onClick={() => {
+                    setShowImagePopup(false);
+                    clearImageSearch();
+                  }} 
+                  className="text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white p-2 rounded-full bg-slate-100 dark:bg-slate-800"
+                >
+                  <X size={24} />
+                </button>
+              </div>
+              <div className="flex flex-col items-center gap-6">
+                <div className="flex flex-col items-center gap-1">
+                  <div className="flex gap-1 mb-2">
+                    <div className="size-1.5 rounded-full bg-primary animate-bounce [animation-delay:-0.3s]"></div>
+                    <div className="size-1.5 rounded-full bg-primary animate-bounce [animation-delay:-0.15s]"></div>
+                    <div className="size-1.5 rounded-full bg-primary animate-bounce"></div>
+                  </div>
+                  <p className="text-sm font-bold text-slate-500 animate-pulse">
+                    جاري تحليل الصورة...
+                  </p>
+                  <p className="text-xs font-semibold text-slate-400 mt-2 text-center max-w-[200px]">
+                    قد يستغرق هذا بضع ثوانٍ، يرجى الانتظار
+                  </p>
+                </div>
+              </div>
             </div>
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              className="px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-100 text-xs font-black"
-            >
-              تغيير الصورة
-            </button>
-            <button
-              type="button"
-              onClick={clearImageSearch}
-              className="p-2 rounded-xl bg-slate-100 dark:bg-slate-700 text-slate-500 hover:text-slate-700 dark:text-slate-300 dark:hover:text-white"
-              aria-label="مسح البحث بالصورة"
-            >
-              <X size={16} />
-            </button>
+          ) : (
+            <>
+              <div className="flex justify-between items-center w-full max-w-2xl mb-4 relative z-10">
+                <h3 className="text-slate-900 dark:text-white font-bold text-lg">
+                  اختر العنصر للبحث
+                </h3>
+                <button 
+                  onClick={() => {
+                    setShowImagePopup(false);
+                    if (detectedObjects.length > 0) {
+                       handleObjectSelection(detectedObjects[0].box);
+                    } else {
+                       handleObjectSelection(null);
+                    }
+                  }} 
+                  className="text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white p-2 rounded-full bg-slate-100 dark:bg-slate-800"
+                >
+                  <X size={24} />
+                </button>
+              </div>
+              
+              <div className="relative inline-block max-w-full z-10">
+                <img 
+                  src={imageSearchPreview} 
+                  className="max-w-full max-h-[70vh] block object-contain" 
+                  alt="Preview"
+                />
+                {/* Box overlays */}
+                {detectedObjects.map((obj, idx) => {
+                   if (!imageOriginalSize) return null;
+                   const [xmin, ymin, xmax, ymax] = obj.box;
+                   const left = (xmin / imageOriginalSize.width) * 100;
+                   const top = (ymin / imageOriginalSize.height) * 100;
+                   const width = ((xmax - xmin) / imageOriginalSize.width) * 100;
+                   const height = ((ymax - ymin) / imageOriginalSize.height) * 100;
+
+                   return (
+                     <div
+                       key={idx}
+                       onClick={() => handleObjectSelection(obj.box)}
+                       className="absolute border-[3px] border-primary bg-primary/10 cursor-pointer hover:bg-primary/30 transition-colors flex items-center justify-center rounded-sm"
+                       style={{
+                         left: `${left}%`,
+                         top: `${top}%`,
+                         width: `${width}%`,
+                         height: `${height}%`
+                       }}
+                     >
+                       <span className="bg-primary text-white text-xs px-2 py-1 rounded-full font-bold shadow-lg transform -translate-y-1/2 -translate-x-1/2 absolute top-0 left-1/2 whitespace-nowrap">
+                         {`عنصر ${idx + 1}`}
+                       </span>
+                     </div>
+                   )
+                })}
+              </div>
+
+              <button 
+                onClick={() => handleObjectSelection(null)}
+                className="mt-8 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-900 dark:text-white px-6 py-3 rounded-xl font-bold transition-colors z-10"
+              >
+                البحث باستخدام الصورة كاملة
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
+      {isImageSearch && imageSearchPreview && !showImagePopup && (
+        <div className="px-4 pt-3">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 p-3 flex flex-col gap-3">
+            <div className="flex items-center gap-3">
+              <div className="relative w-24 h-24 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-900 overflow-hidden group">
+                <img
+                  src={imageSearchPreview}
+                  alt="بحث بالصورة"
+                  className="w-full h-full object-contain"
+                />
+                
+                {/* Object Selection Overlay */}
+                {detectedObjects.length > 0 && (
+                  <div className="absolute inset-0 z-10 pointer-events-none">
+                    {/* Visual indicators for detected objects on the image thumbnail */}
+                    <div className="absolute inset-0 bg-black/10"></div>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex-1 min-w-0 flex flex-col gap-2 w-full overflow-hidden">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <div className="text-sm font-black text-slate-900 dark:text-white">بحث بالصورة</div>
+                    <div className="text-xs font-semibold text-slate-500 dark:text-slate-400 truncate">
+                      {detectedObjects.length > 0 
+                        ? `تم اكتشاف ${detectedObjects.length} عناصر.` 
+                        : 'جاري تحليل الصورة...'}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowImagePopup(true)}
+                    className="text-xs font-bold text-primary bg-primary/10 px-2 py-1 rounded-lg"
+                  >
+                    تعديل التحديد
+                  </button>
+                </div>
+
+                {/* Detected Objects List - Now as Image Thumbnails */}
+                {detectedObjects.length > 0 && imageOriginalSize && (
+                  <div className="flex overflow-x-auto gap-2 pb-2 hide-scrollbar w-full" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+                    {detectedObjects.map((obj, idx) => {
+                      const isSelected = selectedObjectBox && 
+                        JSON.stringify(selectedObjectBox) === JSON.stringify(obj.box);
+                      
+                      const [xmin, ymin, xmax, ymax] = obj.box;
+                      
+                      // Calculate the crop coordinates for background-position
+                      // We use percentage to position the background image inside the square thumbnail
+                      const widthPercent = (imageOriginalSize.width / (xmax - xmin)) * 100;
+                      const heightPercent = (imageOriginalSize.height / (ymax - ymin)) * 100;
+                      
+                      const leftPercent = (xmin / (imageOriginalSize.width - (xmax - xmin))) * 100 || 0;
+                      const topPercent = (ymin / (imageOriginalSize.height - (ymax - ymin))) * 100 || 0;
+
+                      return (
+                        <button
+                          key={idx}
+                          onClick={() => handleObjectSelection(obj.box)}
+                          className={`relative flex-shrink-0 size-16 rounded-xl overflow-hidden transition-all border-2 ${
+                            isSelected 
+                              ? 'border-primary shadow-md shadow-primary/20 ring-2 ring-primary ring-offset-2 ring-offset-white dark:ring-offset-slate-800' 
+                              : 'border-transparent opacity-70 hover:opacity-100'
+                          }`}
+                        >
+                          <div 
+                            className="absolute inset-0 bg-no-repeat"
+                            style={{
+                              backgroundImage: `url(${imageSearchPreview})`,
+                              backgroundSize: `${widthPercent}% ${heightPercent}%`,
+                              backgroundPosition: `${leftPercent}% ${topPercent}%`
+                            }}
+                          />
+                          {isSelected && (
+                            <div className="absolute inset-0 border-[2px] border-primary rounded-xl z-10 pointer-events-none" />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="flex-1 px-3 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-100 text-xs font-black hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
+              >
+                تغيير الصورة
+              </button>
+              <button
+                type="button"
+                onClick={clearImageSearch}
+                className="px-4 py-2.5 rounded-xl bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 text-xs font-black hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors"
+              >
+                مسح
+              </button>
+            </div>
           </div>
         </div>
       )}

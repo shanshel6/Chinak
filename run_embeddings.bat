@@ -19,12 +19,20 @@ set REEMBED_BATCH_SIZE=100
 set REEMBED_MAX_ITEMS=100000
 set REEMBED_PROGRESS_FILE=%cd%\reembed_progress.json
 set "REEMBED_RESET_PROGRESS="
+set "REEMBED_FORCE_ALL="
+
 if /I "%1"=="reset" set "REEMBED_RESET_PROGRESS=1"
+if /I "%1"=="force" set "REEMBED_FORCE_ALL=1"
+
 if "%~1"=="" (
   if exist "%REEMBED_PROGRESS_FILE%" (
     choice /C YN /N /M "Resume from last checkpoint? (Y/N): "
     if errorlevel 2 set "REEMBED_RESET_PROGRESS=1"
   )
+  
+  choice /C YN /N /M "Force update ALL products (re-process existing embeddings)? (Y/N): "
+  if errorlevel 1 set "REEMBED_FORCE_ALL=1"
+  if errorlevel 2 set "REEMBED_FORCE_ALL="
 )
 if defined REEMBED_RESET_PROGRESS (
   del /q "%REEMBED_PROGRESS_FILE%" >nul 2>&1

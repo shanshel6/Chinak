@@ -50,6 +50,7 @@ async function main() {
   const startId = Number.parseInt(process.env.REEMBED_START_ID || '0', 10) || 0;
   const progressFilePath = path.resolve(process.env.REEMBED_PROGRESS_FILE || 'reembed_progress.json');
   const resetProgress = String(process.env.REEMBED_RESET_PROGRESS || '').trim() === '1';
+  const forceAll = String(process.env.REEMBED_FORCE_ALL || '').trim() === '1';
 
   await prisma.$connect();
   try {
@@ -67,13 +68,22 @@ async function main() {
     } else {
       console.log(`Starting from the first product in the database (progress file: ${progressFilePath})`);
     }
+    
+    if (forceAll) {
+      console.log('FORCE MODE: Processing ALL products (ignoring existing embeddings)');
+    }
 
     while (processed < maxItems) {
       const remaining = maxItems - processed;
       const take = Math.min(batchSize, remaining);
+      
+      const whereClause = forceAll 
+        ? `WHERE id > ${lastId}` 
+        : `WHERE id > ${lastId} AND "imageEmbedding" IS NULL`;
+
       const rows = await prisma.$queryRawUnsafe(`
-        SELECT id, image FROM "Product" 
-        WHERE id > ${lastId} AND "imageEmbedding" IS NULL 
+        SELECT id, image, name FROM "Product" 
+        ${whereClause} 
         ORDER BY id ASC 
         LIMIT ${take}
       `);
@@ -86,22 +96,24 @@ async function main() {
 
       console.log(`Processing batch of ${products.length} products starting from ID ${products[0].id}...`);
 
-      for (const product of products) {
-        lastId = product.id;
-        try {
-          const imageUrl = String(product.image || '').trim();
-          if (!imageUrl || imageUrl === 'null' || imageUrl === 'undefined') {
-            console.log(`Skipping product ${product.id}: No valid image URL`);
-            continue;
-          }
-
+      // Process in chunks for concurrency
+      const CONCURRENCY = 5;
+      for (let i = 0; i < products.length; i += CONCURRENCY) {
+        const chunk = products.slice(i, i + CONCURRENCY);
+        await Promise.all(chunk.map(async (product) => {
           try {
-            await sleep(500);
-            const embedding = await embedImage(imageUrl);
+            const imageUrl = String(product.image || '').trim();
+            if (!imageUrl || imageUrl === 'null' || imageUrl === 'undefined') {
+              console.log(`Skipping product ${product.id}: No valid image URL`);
+              return;
+            }
+
+            // Pass null for product name to disable context-aware object detection (as requested)
+            const embedding = await embedImage(imageUrl, null);
 
             if (embedding.every((v) => v === 0)) {
               console.log(`Warning: Zero embedding for product ${product.id}. URL: ${imageUrl}`);
-              continue;
+              return;
             }
 
             const vectorStr = `[${embedding.join(',')}]`;
@@ -117,15 +129,18 @@ async function main() {
           } catch (err) {
             console.error(`Unexpected error for product ${product.id}: ${err?.message || err}`);
           }
-        } finally {
-          try {
+        }));
+        
+        // Update progress with the last ID in the chunk
+        lastId = chunk[chunk.length - 1].id;
+        try {
             await writeProgress(progressFilePath, { lastId });
-          } catch (err) {
+        } catch (err) {
             console.error(`Failed to write progress file: ${err?.message || err}`);
-          }
         }
-
-        await sleep(150);
+        
+        // Small delay between chunks to let GC run if needed
+        await sleep(100);
         if (processed >= maxItems) break;
       }
     }

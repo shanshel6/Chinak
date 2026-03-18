@@ -1090,6 +1090,29 @@ export async function searchProductsByImage(imageUrl: string, page = 1, limit = 
   };
 }
 
+export async function analyzeImageObjects(imageBase64: string) {
+  const response = await request('/search/analyze-image', {
+    method: 'POST',
+    body: JSON.stringify({ imageBase64 }),
+    skipCache: true
+  });
+  return response.objects || [];
+}
+
+export async function searchProductsByImageCrop(imageBase64: string, box: number[]) {
+  const response = await request('/search/image-crop', {
+    method: 'POST',
+    body: JSON.stringify({ imageBase64, box }),
+    skipCache: true
+  });
+  return {
+    products: Array.isArray(response?.products) ? response.products : [],
+    total: Number(response?.total || 0),
+    hasMore: Boolean(response?.hasMore || false), // Usually vector search returns fixed limit
+    engine: 'clip-crop'
+  };
+}
+
 export async function convertItemIdStr(itemIdStr: string) {
   return request('/tools/itemidstr-convert', {
     method: 'POST',

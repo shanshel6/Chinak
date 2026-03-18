@@ -28,8 +28,12 @@ import { processProductAI, processProductEmbedding, hybridSearch, estimateProduc
 import { buildCategoryIndex } from './services/categoryService.js';
 import { calculateOrderShipping, calculateProductShipping, getAdjustedPrice } from './services/shippingService.js';
 import { setupLinkCheckerCron, checkAllProductLinks } from './services/linkCheckerService.js';
-import { embedImage } from './services/clipService.js';
+import { embedImage, analyzeImageObjects, embedImageCrop } from './services/clipService.js';
 import { createClient } from '@supabase/supabase-js';
+import multer from 'multer';
+
+// Setup multer for memory storage (for image uploads)
+const upload = multer({ storage: multer.memoryStorage() });
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -4742,6 +4746,96 @@ app.post('/api/search/image', async (req, res) => {
     return res.status(500).json({ error: 'Image search failed' });
   }
 });
+
+// --- Image Analysis & Search Endpoints ---
+
+app.post('/api/search/analyze-image', upload.single('image'), async (req, res) => {
+  try {
+    let input;
+    if (req.file) {
+      input = req.file.buffer;
+    } else if (req.body.imageUrl) {
+      input = req.body.imageUrl;
+    } else if (req.body.imageBase64) {
+      input = Buffer.from(req.body.imageBase64.split(',')[1], 'base64');
+    } else {
+      return res.status(400).json({ error: 'No image provided' });
+    }
+
+    const objects = await analyzeImageObjects(input);
+    res.json({ objects });
+  } catch (error) {
+    console.error('Analyze image error:', error);
+    res.status(500).json({ error: 'Failed to analyze image' });
+  }
+});
+
+app.post('/api/search/image-crop', upload.single('image'), async (req, res) => {
+  try {
+    let input;
+    if (req.file) {
+      input = req.file.buffer;
+    } else if (req.body.imageUrl) {
+      input = req.body.imageUrl;
+    } else if (req.body.imageBase64) {
+      input = Buffer.from(req.body.imageBase64.split(',')[1], 'base64');
+    } else {
+      return res.status(400).json({ error: 'No image provided' });
+    }
+
+    const { box } = req.body;
+    if (!box) return res.status(400).json({ error: 'No crop box provided' });
+
+    let cropBox;
+    try {
+      cropBox = typeof box === 'string' ? JSON.parse(box) : box;
+    } catch {
+      return res.status(400).json({ error: 'Invalid box format' });
+    }
+
+    const embedding = await embedImageCrop(input, cropBox);
+    
+    // Perform vector search using the embedding
+    // Re-using the vector search logic from existing endpoint
+    // This part assumes we have access to the search service function or can call it directly
+    // For now, let's just return the embedding or call the search function if refactored.
+    // Ideally, we should refactor the vector search into a service function.
+    
+    // Quick fix: copy-paste vector search logic or refactor. 
+    // Let's refactor search logic into a helper function in a moment.
+    // For now, let's assume we can call `searchByVector`.
+    
+    const results = await searchProductsByVector(embedding);
+    res.json(results);
+
+  } catch (error) {
+    console.error('Search image crop error:', error);
+    res.status(500).json({ error: 'Failed to search by image crop' });
+  }
+});
+
+// Helper function for vector search (moved from /api/products)
+async function searchProductsByVector(vector, limit = 20) {
+  // Use pgvector or meilisearch
+  // Assuming pgvector for now based on previous context
+  const vectorStr = `[${vector.join(',')}]`;
+  const products = await prisma.$queryRawUnsafe(`
+    SELECT id, name, price, image, "basePriceIQD", 
+    1 - (("imageEmbedding" <=> '${vectorStr}')) as similarity
+    FROM "Product"
+    WHERE "imageEmbedding" IS NOT NULL
+    ORDER BY "imageEmbedding" <=> '${vectorStr}'
+    LIMIT ${limit}
+  `);
+  
+  return {
+    products: products.map(p => ({
+      ...p,
+      id: Number(p.id),
+      similarity: Number(p.similarity)
+    }))
+  };
+}
 
 app.get('/api/products', async (req, res) => {
   const requestStart = Date.now();

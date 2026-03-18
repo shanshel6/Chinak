@@ -1,4 +1,4 @@
-import { AutoProcessor, CLIPVisionModelWithProjection, RawImage, env } from '@xenova/transformers';
+import { AutoProcessor, CLIPVisionModelWithProjection, AutoModelForObjectDetection, AutoModelForZeroShotObjectDetection, RawImage, env } from '@xenova/transformers';
 import { Agent, ProxyAgent, setGlobalDispatcher } from 'undici';
 import axios from 'axios';
 import dns from 'node:dns';
@@ -41,6 +41,8 @@ const directAgent = new Agent({
 });
 
 const MODEL_ID = process.env.CLIP_MODEL_ID || 'Xenova/clip-vit-base-patch32';
+const OD_MODEL_ID = 'Xenova/detr-resnet-50'; // General Object Detection Model
+const ZERO_SHOT_OD_MODEL_ID = 'Xenova/owlvit-base-patch32'; // Zero-Shot Object Detection Model
 const QUANTIZED = String(process.env.CLIP_QUANTIZED || 'true').toLowerCase() === 'true';
 
 if (process.env.TRANSFORMERS_CACHE_DIR) {
@@ -49,6 +51,10 @@ if (process.env.TRANSFORMERS_CACHE_DIR) {
 
 let processorPromise = null;
 let visionModelPromise = null;
+let odProcessorPromise = null;
+let odModelPromise = null;
+let zsProcessorPromise = null;
+let zsModelPromise = null;
 
 const getProcessor = async () => {
   if (!processorPromise) {
@@ -63,6 +69,311 @@ const getVisionModel = async () => {
   }
   return visionModelPromise;
 };
+
+const getODProcessor = async () => {
+  if (!odProcessorPromise) {
+    odProcessorPromise = AutoProcessor.from_pretrained(OD_MODEL_ID);
+  }
+  return odProcessorPromise;
+};
+
+const getODModel = async () => {
+  if (!odModelPromise) {
+    odModelPromise = AutoModelForObjectDetection.from_pretrained(OD_MODEL_ID, { quantized: QUANTIZED });
+  }
+  return odModelPromise;
+};
+
+const getZSProcessor = async () => {
+  if (!zsProcessorPromise) {
+    zsProcessorPromise = AutoProcessor.from_pretrained(ZERO_SHOT_OD_MODEL_ID);
+  }
+  return zsProcessorPromise;
+};
+
+const getZSModel = async () => {
+  if (!zsModelPromise) {
+    zsModelPromise = AutoModelForZeroShotObjectDetection.from_pretrained(ZERO_SHOT_OD_MODEL_ID, { quantized: QUANTIZED });
+  }
+  return zsModelPromise;
+};
+
+function cropRawImage(rawImage, box) {
+  const xmin = Math.max(0, Math.floor(box[0]));
+  const ymin = Math.max(0, Math.floor(box[1]));
+  const xmax = Math.min(rawImage.width, Math.floor(box[2]));
+  const ymax = Math.min(rawImage.height, Math.floor(box[3]));
+  
+  const w = xmax - xmin;
+  const h = ymax - ymin;
+  
+  if (w <= 0 || h <= 0) return rawImage;
+
+  const channels = rawImage.channels || 3;
+  const newData = new Uint8ClampedArray(w * h * channels);
+  
+  for (let i = 0; i < h; i++) {
+    const srcRowStart = ((ymin + i) * rawImage.width + xmin) * channels;
+    const destRowStart = (i * w) * channels;
+    const rowLength = w * channels;
+    
+    // Copy row segment
+    // Note: TypedArray.set is faster than loop
+    const srcSub = rawImage.data.subarray(srcRowStart, srcRowStart + rowLength);
+    newData.set(srcSub, destRowStart);
+  }
+  
+  return new RawImage(newData, w, h, channels);
+}
+
+async function detectAndCropObject(image, productName = null) {
+  try {
+    let result = null;
+
+    if (productName) {
+      // Use Zero-Shot Object Detection (OWL-ViT) with product name
+      console.log(`[CLIP Service] Using Zero-Shot Object Detection for "${productName}"...`);
+      try {
+        const processor = await getZSProcessor();
+        const model = await getZSModel();
+        
+        // Clean product name for better detection (remove numbers, weird chars, keep main words)
+        // e.g. "iPhone 13 Pro Max 256GB" -> "iPhone"
+        // But OWL-ViT works better with simple object names.
+        // Let's try using the first 2-3 words or known category synonyms if possible.
+        // For now, use the full name but truncated to first few words to avoid noise.
+        const textQueries = [productName.split(' ').slice(0, 4).join(' ')];
+
+        const { pixel_values, pixel_mask, original_sizes } = await processor(image, textQueries);
+        const outputs = await model({ pixel_values, pixel_mask });
+        
+        // Threshold can be lower for zero-shot
+        const threshold = 0.1; 
+        
+        const postProcess = processor.post_process_object_detection 
+      ? processor.post_process_object_detection.bind(processor)
+      : (processor.feature_extractor?.post_process_object_detection 
+          ? processor.feature_extractor.post_process_object_detection.bind(processor.feature_extractor)
+          : null);
+
+    if (!postProcess) throw new Error('post_process_object_detection not found on processor');
+
+    const results = await postProcess(outputs, threshold, original_sizes);
+        
+        if (results && results.length > 0 && results[0].boxes.length > 0) {
+          result = results[0];
+          console.log(`[CLIP Service] Zero-Shot found ${result.boxes.length} candidates for "${textQueries[0]}"`);
+        }
+      } catch (zsError) {
+        console.warn('[CLIP Service] Zero-Shot Detection failed:', zsError.message);
+      }
+    }
+
+    // Fallback to General Object Detection (DETR) if no product name or zero-shot failed
+    if (!result) {
+      if (productName) {
+        console.log('[CLIP Service] Zero-Shot failed/empty. Falling back to General Object Detection (DETR)...');
+      }
+      const processor = await getODProcessor();
+      const model = await getODModel();
+
+      const { pixel_values, pixel_mask, original_sizes } = await processor(image);
+      const outputs = await model({ pixel_values, pixel_mask });
+      
+      const threshold = 0.9;
+      
+      const postProcess = processor.post_process_object_detection 
+        ? processor.post_process_object_detection.bind(processor)
+        : (processor.feature_extractor?.post_process_object_detection 
+            ? processor.feature_extractor.post_process_object_detection.bind(processor.feature_extractor)
+            : null);
+
+      if (!postProcess) throw new Error('post_process_object_detection not found on processor');
+
+      const results = await postProcess(outputs, threshold, original_sizes);
+      
+      if (results && results.length > 0) {
+        result = results[0];
+      }
+    }
+    
+    if (!result || result.boxes.length === 0) {
+      console.log('[CLIP Service] No objects detected. Using full image.');
+      return image;
+    }
+
+    // Find the "best" box.
+    // Strategy: Largest area is usually the main object
+    let bestBox = null;
+    let maxArea = 0;
+    const imgArea = image.width * image.height;
+
+    for (let i = 0; i < result.boxes.length; i++) {
+      const box = result.boxes[i];
+      
+      const [xmin, ymin, xmax, ymax] = box;
+      const area = (xmax - xmin) * (ymax - ymin);
+      
+      // Filter out tiny boxes (e.g. less than 5% of image)
+      if (area < imgArea * 0.05) continue;
+
+      if (area > maxArea) {
+        maxArea = area;
+        bestBox = box;
+      }
+    }
+
+    if (bestBox) {
+      console.log(`[CLIP Service] Auto-cropped object with area ${(maxArea/imgArea*100).toFixed(1)}%`);
+      return cropRawImage(image, bestBox);
+    }
+
+    console.log('[CLIP Service] No significant object detected. Using full image.');
+    return image;
+  } catch (error) {
+    console.warn('[CLIP Service] Object detection failed, using original image:', error.message);
+    return image;
+  }
+}
+
+/**
+ * Analyze image and return object bounding boxes (without cropping)
+ * Used for frontend interactive selection
+ * @param {string|Buffer} input - Image URL or Buffer
+ * @returns {Promise<Array<{box: number[], score: number, label: string}>>}
+ */
+export async function analyzeImageObjects(input) {
+  try {
+    const processor = await getODProcessor();
+    const model = await getODModel();
+    let image;
+
+    // Load image (reusing logic from generateImageEmbedding)
+    if (typeof input === 'string') {
+      if (input.startsWith('http')) {
+          const res = await fetchWithRetry(input);
+          if (!res || !res.ok) throw new Error(`Failed to fetch image: ${res?.statusText}`);
+          const buffer = await res.arrayBuffer();
+          image = await readRawImageFromBuffer(buffer);
+      } else if (input.startsWith('data:image')) {
+          const base64Data = input.split(',')[1];
+          const buffer = Buffer.from(base64Data, 'base64');
+          image = await readRawImageFromBuffer(buffer);
+      } else {
+          image = await RawImage.read(input);
+      }
+    } else if (input instanceof Buffer) {
+      image = await readRawImageFromBuffer(input);
+    } else {
+        if (Buffer.isBuffer(input)) {
+            image = await readRawImageFromBuffer(input);
+        } else {
+            image = await RawImage.read(input);
+        }
+    }
+
+    const { pixel_values, pixel_mask, original_sizes } = await processor(image);
+    const outputs = await model({ pixel_values, pixel_mask });
+    
+    const threshold = 0.7; // Lower threshold to show more options to user
+    
+    const postProcess = processor.post_process_object_detection 
+      ? processor.post_process_object_detection.bind(processor)
+      : (processor.feature_extractor?.post_process_object_detection 
+          ? processor.feature_extractor.post_process_object_detection.bind(processor.feature_extractor)
+          : null);
+
+    if (!postProcess) throw new Error('post_process_object_detection not found on processor');
+
+    const results = await postProcess(outputs, threshold, original_sizes);
+    
+    if (!results || results.length === 0 || results[0].boxes.length === 0) {
+      return [];
+    }
+
+    const result = results[0];
+    const objects = [];
+    const imgArea = image.width * image.height;
+
+    for (let i = 0; i < result.boxes.length; i++) {
+      const box = result.boxes[i]; // [xmin, ymin, xmax, ymax]
+      const score = result.scores ? result.scores[i] : 0;
+      const labelId = result.labels ? result.labels[i] : -1;
+      const label = model.config.id2label ? model.config.id2label[labelId] : 'object';
+
+      const [xmin, ymin, xmax, ymax] = box;
+      const area = (xmax - xmin) * (ymax - ymin);
+      
+      // Filter out tiny noise (less than 1% of image)
+      if (area < imgArea * 0.01) continue;
+
+      objects.push({
+        box: [xmin, ymin, xmax, ymax],
+        score: Number(score),
+        label: label
+      });
+    }
+
+    // Sort by area (largest first)
+    objects.sort((a, b) => {
+        const areaA = (a.box[2] - a.box[0]) * (a.box[3] - a.box[1]);
+        const areaB = (b.box[2] - b.box[0]) * (b.box[3] - b.box[1]);
+        return areaB - areaA;
+    });
+
+    return objects;
+
+  } catch (error) {
+    console.error('[CLIP Service] Analyze objects failed:', error.message);
+    throw error;
+  }
+}
+
+/**
+ * Generate CLIP embedding for a specific crop region
+ */
+export async function embedImageCrop(input, box) {
+    try {
+        const processor = await getProcessor();
+        const visionModel = await getVisionModel();
+        let image;
+    
+        // Load image
+        if (typeof input === 'string') {
+          if (input.startsWith('http')) {
+              const res = await fetchWithRetry(input);
+              const buffer = await res.arrayBuffer();
+              image = await readRawImageFromBuffer(buffer);
+          } else if (input.startsWith('data:image')) {
+              const base64Data = input.split(',')[1];
+              const buffer = Buffer.from(base64Data, 'base64');
+              image = await readRawImageFromBuffer(buffer);
+          } else {
+              image = await RawImage.read(input);
+          }
+        } else if (input instanceof Buffer) {
+          image = await readRawImageFromBuffer(input);
+        } else {
+            if (Buffer.isBuffer(input)) {
+                image = await readRawImageFromBuffer(input);
+            } else {
+                image = await RawImage.read(input);
+            }
+        }
+
+        // Crop manually
+        const croppedImage = cropRawImage(image, box);
+        
+        const normalizedImage = normalizeImageForProcessor(croppedImage);
+        const { pixel_values } = await processor(normalizedImage);
+        const { image_embeds } = await visionModel({ pixel_values });
+    
+        return normalizeL2(toNumberArray(image_embeds[0]));
+      } catch (error) {
+        console.error('[CLIP Service] Crop embedding failed:', error.message);
+        throw error;
+      }
+}
 
 const normalizeL2 = (vector) => {
   if (!Array.isArray(vector)) throw new Error('Invalid embedding vector');
@@ -172,7 +483,49 @@ async function fetchWithRetry(url, options = {}, retries = 3) {
   throw lastError;
 }
 
-export async function embedImage(input) {
+/**
+ * Helper to expose internal functions for testing
+ */
+export async function testCropObject(input) {
+  try {
+    const isUrl = typeof input === 'string' && input.startsWith('http');
+    let image;
+    
+    if (isUrl) {
+      let cleanInput = input;
+      if (cleanInput.endsWith('_.webp')) cleanInput = cleanInput.slice(0, -6);
+      
+      const response = await fetchWithRetry(cleanInput, {
+        dispatcher: directAgent,
+        method: 'GET',
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          'Accept': 'image/jpeg,image/png,image/*;q=0.8', 
+          'Connection': 'keep-alive'
+        }
+      });
+      const arrayBuffer = await response.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+      image = await readRawImageFromBuffer(buffer);
+    } else {
+       image = await RawImage.read(input);
+    }
+
+    const croppedImage = await detectAndCropObject(image, null); // Pass null to test DETR
+    return { original: image, cropped: croppedImage };
+  } catch (err) {
+    console.error('testCropObject error:', err);
+    throw err;
+  }
+}
+
+/**
+ * Generate CLIP embedding for an image
+ * @param {string|Buffer} input - Image URL, Base64 string, or Buffer
+ * @param {string} [productName] - Optional product name for context-aware cropping (Smart Storage)
+ * @returns {Promise<number[]>} - 512-dim embedding vector
+ */
+export async function embedImage(input, productName = null) {
   try {
     const processor = await getProcessor();
     const model = await getVisionModel();
@@ -220,7 +573,10 @@ export async function embedImage(input) {
       }
     }
 
-    const normalizedImage = normalizeImageForProcessor(image);
+    // Auto-Crop Object (Smart Image Search)
+    // Pass productName only if provided (for storage/indexing context)
+    const croppedImage = await detectAndCropObject(image, productName);
+    const normalizedImage = normalizeImageForProcessor(croppedImage);
     const { pixel_values } = await processor(normalizedImage);
     const output = await model({ pixel_values });
     const imageEmbeds = output?.image_embeds;
