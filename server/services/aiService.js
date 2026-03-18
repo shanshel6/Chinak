@@ -39,10 +39,10 @@ function getClients() {
     const sfKey = process.env.SILICONFLOW_API_KEY;
     if (sfKey) {
       deepinfra = new OpenAI({
-        baseURL: "https://api.siliconflow.cn/v1",
+        baseURL: "https://api.siliconflow.com/v1",
         apiKey: sfKey,
       });
-      deepinfra.baseURL = "https://api.siliconflow.cn/v1";
+      deepinfra.baseURL = "https://api.siliconflow.com/v1";
       console.log(`[AI Debug] SiliconFlow initialized (OpenAI-compatible)`);
     } else if (process.env.DEEPINFRA_API_KEY) {
       deepinfra = new OpenAI({

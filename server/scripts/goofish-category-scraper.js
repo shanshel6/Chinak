@@ -180,7 +180,7 @@ async function callSiliconFlow(messages, temperature = 0.3, maxTokens = 100) {
   const maxAttempts = 5;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      const response = await axios.post('https://api.siliconflow.cn/v1/chat/completions', {
+      const response = await axios.post('https://api.siliconflow.com/v1/chat/completions', {
         model: "Qwen/Qwen2.5-7B-Instruct",
         messages,
         temperature,
