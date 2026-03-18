@@ -1233,13 +1233,19 @@ title_ar: short ecommerce title.
 description_ar: one natural sentence.
 keywords: exactly ${KEYWORDS_PER_PRODUCT} Arabic single-word search terms, no duplicates.
 Title: "${fallback}"`;
-    const result = await callSiliconFlow([{ role: "user", content: prompt }], 0.25, 180);
+    const result = await callSiliconFlow([{ role: "user", content: prompt }], 0.25, 300);
     const raw = String(result || '').trim();
     if (!raw) return { titleAr: fallback, descriptionAr: fallback, keywords: [] };
     const parsed = parseAiTranslationPayload(raw);
     const titleAr = normalizeTranslatedTitle(parsed?.title_ar || raw, fallback);
     let descriptionAr = cleanDescriptionText(parsed?.description_ar || titleAr || fallback) || titleAr || fallback;
-    if (GOOFISH_AI_SECOND_PASS_DESCRIPTION && (!descriptionAr || descriptionAr.length < 24 || descriptionAr === titleAr)) {
+    
+    // Log for debugging
+    // console.log(`[AI Debug] Raw:`, raw);
+    // console.log(`[AI Debug] Parsed:`, parsed);
+    // console.log(`[AI Debug] Desc:`, descriptionAr);
+    
+    if (GOOFISH_AI_SECOND_PASS_DESCRIPTION && (!descriptionAr || descriptionAr.length < 15 || descriptionAr === titleAr)) {
       descriptionAr = cleanDescriptionText(await translateFullTitleToArabic(fallback, descriptionAr || titleAr || fallback)) || titleAr || fallback;
     }
     descriptionAr = cleanDescriptionText(descriptionAr) || titleAr || fallback;
@@ -1843,6 +1849,13 @@ async function run() {
 
             titleEn = sanitizeTranslationText(titleEn);
             descriptionAr = cleanDescriptionText(descriptionAr);
+            
+            // If descriptionAr is somehow still exactly the Chinese title, or fallback,
+            // we should try one more translation directly if we have the key.
+            if (SILICONFLOW_API_KEY && (!descriptionAr || descriptionAr === it.title)) {
+                descriptionAr = await translateFullTitleToArabic(it.title, it.title);
+                descriptionAr = cleanDescriptionText(descriptionAr);
+            }
 
             const itemData = {
               title: it.title || '',
