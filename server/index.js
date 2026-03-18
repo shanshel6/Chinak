@@ -28,7 +28,7 @@ import { processProductAI, processProductEmbedding, hybridSearch, estimateProduc
 import { buildCategoryIndex } from './services/categoryService.js';
 import { calculateOrderShipping, calculateProductShipping, getAdjustedPrice } from './services/shippingService.js';
 import { setupLinkCheckerCron, checkAllProductLinks } from './services/linkCheckerService.js';
-import { embedImage, analyzeImageObjects, embedImageCrop, warmupClipService } from './services/clipService.js';
+import { embedImage, analyzeImageObjects, embedImageCrop, embedImageRaw, warmupClipService } from './services/clipService.js';
 import { createClient } from '@supabase/supabase-js';
 import multer from 'multer';
 
@@ -4848,6 +4848,12 @@ app.post('/api/search/image-crop', upload.single('image'), async (req, res) => {
     }
 
     const { box } = req.body;
+    if (!box && req.file) {
+      const embedding = await runClipTask(() => embedImageRaw(input));
+      const results = await searchProductsByVector(embedding);
+      return res.json(results);
+    }
+
     if (!box) return res.status(400).json({ error: 'No crop box provided' });
 
     let cropBox;

@@ -428,9 +428,11 @@ export async function request(endpoint: string, options: any = {}, retries = 2) 
       console.warn(`[API] Admin request to ${endpoint} without token. Attempt ${attempt}`);
     }
 
+    const isFormDataBody = typeof FormData !== 'undefined' && options?.body instanceof FormData;
+
     const headers: Record<string, string> = {
       'Accept': 'application/json',
-      'Content-Type': 'application/json',
+      ...(!isFormDataBody ? { 'Content-Type': 'application/json' } : {}),
       ...(token && !token.startsWith('test-token-') && !token.startsWith('demo-token-') ? { 'Authorization': `Bearer ${token}` } : {}),
     };
 
@@ -1100,17 +1102,77 @@ export async function analyzeImageObjects(imageBase64: string) {
 }
 
 export async function searchProductsByImageCrop(imageBase64: string, box: number[]) {
-  const response = await request('/search/image-crop', {
-    method: 'POST',
-    body: JSON.stringify({ imageBase64, box }),
-    skipCache: true
-  });
-  return {
-    products: Array.isArray(response?.products) ? response.products : [],
-    total: Number(response?.total || 0),
-    hasMore: Boolean(response?.hasMore || false), // Usually vector search returns fixed limit
-    engine: 'clip-crop'
+  const cropToJpeg = async () => {
+    const img = new Image();
+    img.decoding = 'async';
+    img.src = imageBase64;
+    await new Promise<void>((resolve, reject) => {
+      if (img.complete && img.naturalWidth > 0) return resolve();
+      img.onload = () => resolve();
+      img.onerror = () => reject(new Error('Failed to load image'));
+    });
+
+    const [xmin, ymin, xmax, ymax] = box;
+    const sx = Math.max(0, Math.floor(xmin));
+    const sy = Math.max(0, Math.floor(ymin));
+    const sw = Math.max(1, Math.floor(xmax - xmin));
+    const sh = Math.max(1, Math.floor(ymax - ymin));
+
+    const maxDim = 512;
+    const scale = Math.min(1, maxDim / Math.max(sw, sh));
+    const dw = Math.max(1, Math.round(sw * scale));
+    const dh = Math.max(1, Math.round(sh * scale));
+
+    const canvas = document.createElement('canvas');
+    canvas.width = dw;
+    canvas.height = dh;
+    const ctx = canvas.getContext('2d', { alpha: false });
+    if (!ctx) throw new Error('Canvas not supported');
+
+    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, dw, dh);
+
+    const blob: Blob = await new Promise((resolve, reject) => {
+      canvas.toBlob(
+        (b) => (b ? resolve(b) : reject(new Error('Failed to encode image'))),
+        'image/jpeg',
+        0.85
+      );
+    });
+
+    return blob;
   };
+
+  try {
+    const cropBlob = await cropToJpeg();
+    const formData = new FormData();
+    formData.append('image', cropBlob, 'crop.jpg');
+
+    const response = await request('/search/image-crop', {
+      method: 'POST',
+      body: formData,
+      skipCache: true,
+      timeout: 45000
+    });
+
+    return {
+      products: Array.isArray(response?.products) ? response.products : [],
+      total: Number(response?.total || 0),
+      hasMore: Boolean(response?.hasMore || false),
+      engine: 'clip-crop-fast'
+    };
+  } catch (_err) {
+    const response = await request('/search/image-crop', {
+      method: 'POST',
+      body: JSON.stringify({ imageBase64, box }),
+      skipCache: true
+    });
+    return {
+      products: Array.isArray(response?.products) ? response.products : [],
+      total: Number(response?.total || 0),
+      hasMore: Boolean(response?.hasMore || false),
+      engine: 'clip-crop'
+    };
+  }
 }
 
 export async function convertItemIdStr(itemIdStr: string) {

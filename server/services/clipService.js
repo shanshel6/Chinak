@@ -553,6 +553,67 @@ export async function testCropObject(input) {
   }
 }
 
+export async function embedImageRaw(input) {
+  try {
+    const processor = await getProcessor();
+    const model = await getVisionModel();
+
+    const isUrl = typeof input === 'string' && input.startsWith('http');
+    let image;
+
+    if (isUrl) {
+      let cleanInput = input;
+      if (cleanInput.endsWith('_.webp')) {
+        cleanInput = cleanInput.slice(0, -6);
+      }
+
+      const response = await fetchWithRetry(cleanInput, {
+        dispatcher: directAgent,
+        method: 'GET',
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'image/jpeg,image/png,image/*;q=0.8',
+          'Connection': 'keep-alive'
+        }
+      });
+
+      const arrayBuffer = await response.arrayBuffer();
+      image = await readRawImageFromBuffer(Buffer.from(arrayBuffer));
+    } else {
+      try {
+        if (Buffer.isBuffer(input)) {
+          image = await readRawImageFromBuffer(input);
+        } else {
+          image = await RawImage.read(input);
+        }
+      } catch (err) {
+        console.error('[CLIP Service] Failed to process local image/buffer:', err.message);
+        throw new Error(`Local image processing failed: ${err.message}`);
+      }
+    }
+
+    const normalizedImage = normalizeImageForProcessor(image);
+    const { pixel_values } = await processor(normalizedImage);
+    const output = await model({ pixel_values });
+    const imageEmbeds = output?.image_embeds;
+    if (!imageEmbeds) throw new Error('CLIP model did not return image_embeds');
+
+    const embedding = toNumberArray(imageEmbeds);
+    if (!embedding || embedding.length !== 512) {
+      throw new Error(`Unexpected CLIP embedding length ${embedding?.length} (expected 512)`);
+    }
+    return normalizeL2(embedding);
+  } catch (error) {
+    console.error('[CLIP Service] Error generating raw embedding:', error?.message || error);
+
+    if (Buffer.isBuffer(input) || (typeof input === 'string' && input.startsWith('data:'))) {
+      throw error;
+    }
+
+    return new Array(512).fill(0);
+  }
+}
+
 /**
  * Generate CLIP embedding for an image
  * @param {string|Buffer} input - Image URL, Base64 string, or Buffer
