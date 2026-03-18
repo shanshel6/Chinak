@@ -112,6 +112,14 @@ const VerifyOTP: React.FC = () => {
     if (timer > 0) return;
     
     setResending(true);
+    const state = location.state as { 
+      phone?: string; 
+      fullName?: string; 
+      password?: string;
+      type?: 'login' | 'signup';
+      isTestAccount?: boolean;
+    };
+
     try {
       await sendWhatsAppOTP(phone, state?.fullName, state?.type !== 'signup');
       showToast('تم إعادة إرسال الكود بنجاح', 'success');
