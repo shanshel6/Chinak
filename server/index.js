@@ -719,6 +719,7 @@ const buildSearchDocument = (product) => {
   return {
     id: product.id,
     name: title,
+    aiTitle,
     description,
     keywords: rawKeywords,
     searchText,
@@ -759,7 +760,7 @@ const getMeiliIndex = async () => {
 
 const ensureMeiliIndexSettings = async () => {
   const index = await getMeiliIndex();
-  await index.updateSearchableAttributes(['name', 'keywords']);
+  await index.updateSearchableAttributes(['name', 'aiTitle', 'searchText', 'normalizedSearchText', 'keywords', 'description']);
   await index.updateFilterableAttributes(['status', 'isActive', 'neworold', 'price']);
   await index.updateSortableAttributes(['price', 'updatedAt']);
   await index.updateSynonyms(MEILI_ARABIC_SYNONYMS);
