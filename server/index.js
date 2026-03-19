@@ -9290,10 +9290,6 @@ app.put('/api/products/:id/archive', authenticateToken, isAdmin, async (req, res
       data: { isActive: false }
     });
     
-    // Invalidate product cache
-    clearCachePattern('products');
-    clearCachePattern('product:');
-    
     res.json({ success: true, message: 'Product archived', product });
   } catch (error) {
     console.error('Error archiving product:', error);
