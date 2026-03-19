@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { AlertCircle, Search, ArrowRight, Camera, X } from 'lucide-react';
-import { searchProducts, searchProductsByImage, analyzeImageObjects, searchProductsByImageCrop } from '../services/api';
+import { searchProducts, searchProductsByImage, searchProductsByImageCrop } from '../services/api';
 import FilterBar from '../components/home/FilterBar';
 import ProductCard from '../components/home/ProductCard';
 import { useWishlistStore } from '../store/useWishlistStore';
@@ -56,6 +56,13 @@ const SearchResults: React.FC = () => {
   const RECENT_SEARCH_TERMS_KEY = 'recent_search_terms_v1';
   const [isInputFocused, setIsInputFocused] = useState(false);
   const isImageSearch = Boolean(imageSearchInput && imageSearchPreview);
+
+  // Manual Crop State
+  const cropBoxRef = useRef<HTMLDivElement>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [isResizing, setIsResizing] = useState<string | null>(null); // 'nw', 'ne', 'sw', 'se'
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+  const [initialBox, setInitialBox] = useState<{ xmin: number; ymin: number; xmax: number; ymax: number } | null>(null);
 
   const rememberSearchTerm = useCallback((term: string) => {
     const clean = term.trim();
@@ -132,6 +139,100 @@ const SearchResults: React.FC = () => {
       setDetectedObjects([{ label: 'manual', score: 1, box: [xmin, ymin, xmax, ymax] }]);
     };
   }, []);
+
+  // Handle Drag & Resize for manual crop box
+  useEffect(() => {
+    if (!isDragging && !isResizing) return;
+
+    const handleMouseMove = (e: MouseEvent | TouchEvent) => {
+      if (!imageOriginalSize || detectedObjects.length === 0) return;
+      
+      const el = cropBoxRef.current?.parentElement;
+      if (!el) return;
+
+      const clientX = 'touches' in e ? e.touches[0].clientX : (e as MouseEvent).clientX;
+      const clientY = 'touches' in e ? e.touches[0].clientY : (e as MouseEvent).clientY;
+
+      const parentRect = el.getBoundingClientRect();
+      const dx = ((clientX - dragStart.x) / parentRect.width) * imageOriginalSize.width;
+      const dy = ((clientY - dragStart.y) / parentRect.height) * imageOriginalSize.height;
+
+      const currentBox = detectedObjects[0].box;
+      let [xmin, ymin, xmax, ymax] = initialBox ? [initialBox.xmin, initialBox.ymin, initialBox.xmax, initialBox.ymax] : currentBox;
+
+      if (isDragging) {
+        xmin += dx;
+        xmax += dx;
+        ymin += dy;
+        ymax += dy;
+        
+        // Boundaries
+        const width = xmax - xmin;
+        const height = ymax - ymin;
+        if (xmin < 0) { xmin = 0; xmax = width; }
+        if (ymin < 0) { ymin = 0; ymax = height; }
+        if (xmax > imageOriginalSize.width) { xmax = imageOriginalSize.width; xmin = xmax - width; }
+        if (ymax > imageOriginalSize.height) { ymax = imageOriginalSize.height; ymin = ymax - height; }
+      } else if (isResizing) {
+        if (isResizing.includes('w')) xmin += dx;
+        if (isResizing.includes('e')) xmax += dx;
+        if (isResizing.includes('n')) ymin += dy;
+        if (isResizing.includes('s')) ymax += dy;
+
+        // Minimum size
+        const minSize = imageOriginalSize.width * 0.1;
+        if (xmax - xmin < minSize) {
+          if (isResizing.includes('w')) xmin = xmax - minSize;
+          if (isResizing.includes('e')) xmax = xmin + minSize;
+        }
+        if (ymax - ymin < minSize) {
+          if (isResizing.includes('n')) ymin = ymax - minSize;
+          if (isResizing.includes('s')) ymax = ymin + minSize;
+        }
+
+        // Boundaries
+        xmin = Math.max(0, Math.min(xmin, xmax - minSize));
+        ymin = Math.max(0, Math.min(ymin, ymax - minSize));
+        xmax = Math.min(imageOriginalSize.width, Math.max(xmax, xmin + minSize));
+        ymax = Math.min(imageOriginalSize.height, Math.max(ymax, ymin + minSize));
+      }
+
+      setDetectedObjects([{ label: 'manual', score: 1, box: [xmin, ymin, xmax, ymax] }]);
+    };
+
+    const handleMouseUp = () => {
+      setIsDragging(false);
+      setIsResizing(null);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('touchmove', handleMouseMove, { passive: false });
+    window.addEventListener('mouseup', handleMouseUp);
+    window.addEventListener('touchend', handleMouseUp);
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('touchmove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+      window.removeEventListener('touchend', handleMouseUp);
+    };
+  }, [isDragging, isResizing, dragStart, imageOriginalSize, initialBox, detectedObjects]);
+
+  const handlePointerDown = (e: React.MouseEvent | React.TouchEvent, action: string) => {
+    e.stopPropagation();
+    if (action === 'drag') e.preventDefault();
+    const clientX = 'touches' in e ? e.touches[0].clientX : (e as React.MouseEvent).clientX;
+    const clientY = 'touches' in e ? e.touches[0].clientY : (e as React.MouseEvent).clientY;
+    setDragStart({ x: clientX, y: clientY });
+    setInitialBox({
+      xmin: detectedObjects[0].box[0],
+      ymin: detectedObjects[0].box[1],
+      xmax: detectedObjects[0].box[2],
+      ymax: detectedObjects[0].box[3],
+    });
+    if (action === 'drag') setIsDragging(true);
+    else setIsResizing(action);
+  };
 
   const handleObjectSelection = useCallback(async (box: number[] | null) => {
     if (!imageSearchInput) return;
@@ -729,7 +830,10 @@ const SearchResults: React.FC = () => {
                    return (
                      <div
                        key={idx}
+                       ref={isManual ? cropBoxRef : null}
                        onClick={() => !isManual && handleObjectSelection(obj.box)}
+                       onMouseDown={(e) => isManual && handlePointerDown(e, 'drag')}
+                       onTouchStart={(e) => isManual && handlePointerDown(e, 'drag')}
                        className={`absolute border-[3px] border-primary transition-colors flex items-center justify-center rounded-sm ${isManual ? '' : 'bg-primary/10 cursor-pointer hover:bg-primary/30'}`}
                        style={{
                          left: `${left}%`,
@@ -737,44 +841,35 @@ const SearchResults: React.FC = () => {
                          width: `${width}%`,
                          height: `${height}%`,
                          boxShadow: isManual ? '0 0 0 9999px rgba(0, 0, 0, 0.5)' : 'none',
-                         cursor: isManual ? 'move' : 'pointer',
-                         resize: isManual ? 'both' : 'none',
-                         overflow: isManual ? 'auto' : 'visible',
-                         zIndex: 10
+                         cursor: isManual ? (isDragging ? 'grabbing' : 'grab') : 'pointer',
+                         zIndex: 10,
+                         touchAction: 'none'
                        }}
                      >
                        {isManual && (
-                         <button
-                           onClick={(e) => {
-                             e.stopPropagation();
-                             const el = e.currentTarget.parentElement;
-                             if (el && imageOriginalSize.width && imageOriginalSize.height) {
-                                const parentRect = el.parentElement!.getBoundingClientRect();
-                                const rect = el.getBoundingClientRect();
-                                const newXmin = ((rect.left - parentRect.left) / parentRect.width) * imageOriginalSize.width;
-                                const newYmin = ((rect.top - parentRect.top) / parentRect.height) * imageOriginalSize.height;
-                                const newXmax = newXmin + (rect.width / parentRect.width) * imageOriginalSize.width;
-                                const newYmax = newYmin + (rect.height / parentRect.height) * imageOriginalSize.height;
-                                handleObjectSelection([newXmin, newYmin, newXmax, newYmax]);
-                             } else {
-                                handleObjectSelection(obj.box);
-                             }
-                           }}
-                           style={{
-                             position: 'absolute',
-                             bottom: '-40px',
-                             backgroundColor: '#ff4757',
-                             color: 'white',
-                             border: 'none',
-                             padding: '8px 16px',
-                             borderRadius: '20px',
-                             fontWeight: 'bold',
-                             cursor: 'pointer',
-                             boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
-                           }}
-                         >
-                           بحث
-                         </button>
+                         <>
+                           {/* Resize Handles */}
+                           <div
+                             onMouseDown={(e) => handlePointerDown(e, 'nw')}
+                             onTouchStart={(e) => handlePointerDown(e, 'nw')}
+                             className="absolute -top-2 -left-2 w-5 h-5 bg-white border-2 border-primary rounded-full cursor-nwse-resize z-20"
+                           />
+                           <div
+                             onMouseDown={(e) => handlePointerDown(e, 'ne')}
+                             onTouchStart={(e) => handlePointerDown(e, 'ne')}
+                             className="absolute -top-2 -right-2 w-5 h-5 bg-white border-2 border-primary rounded-full cursor-nesw-resize z-20"
+                           />
+                           <div
+                             onMouseDown={(e) => handlePointerDown(e, 'sw')}
+                             onTouchStart={(e) => handlePointerDown(e, 'sw')}
+                             className="absolute -bottom-2 -left-2 w-5 h-5 bg-white border-2 border-primary rounded-full cursor-nesw-resize z-20"
+                           />
+                           <div
+                             onMouseDown={(e) => handlePointerDown(e, 'se')}
+                             onTouchStart={(e) => handlePointerDown(e, 'se')}
+                             className="absolute -bottom-2 -right-2 w-5 h-5 bg-white border-2 border-primary rounded-full cursor-nwse-resize z-20"
+                           />
+                         </>
                        )}
                        {!isManual && (
                          <span className="bg-primary text-white text-xs px-2 py-1 rounded-full font-bold shadow-lg transform -translate-y-1/2 -translate-x-1/2 absolute top-0 left-1/2 whitespace-nowrap">
@@ -787,10 +882,14 @@ const SearchResults: React.FC = () => {
               </div>
 
               <button 
-                onClick={() => handleObjectSelection(null)}
-                className="mt-8 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-900 dark:text-white px-6 py-3 rounded-xl font-bold transition-colors z-10"
+                onClick={() => {
+                   if (detectedObjects.length > 0 && detectedObjects[0].label === 'manual') {
+                      handleObjectSelection(detectedObjects[0].box);
+                   }
+                }}
+                className="mt-8 bg-primary hover:bg-primary/90 text-white px-8 py-3 rounded-xl font-bold transition-colors z-10 shadow-lg"
               >
-                البحث باستخدام الصورة كاملة
+                البحث عن الجزء المحدد
               </button>
             </>
           )}
