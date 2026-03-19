@@ -1146,7 +1146,8 @@ export async function searchProductsByImageCrop(imageBase64: string, box: number
     const cropBlob = await cropToJpeg();
     const formData = new FormData();
     formData.append('image', cropBlob, 'crop.jpg');
-
+    // Only send the raw cropped image blob via FormData. Do not append the original Base64.
+    
     const response = await request('/search/image-crop', {
       method: 'POST',
       body: formData,
@@ -1162,6 +1163,7 @@ export async function searchProductsByImageCrop(imageBase64: string, box: number
     };
   } catch (_err) {
     console.warn('[Image Crop] Frontend fast crop failed, falling back to backend crop:', _err);
+    // If the local crop fails for whatever reason, fall back to sending the Base64 to the backend
     const response = await request('/search/image-crop', {
       method: 'POST',
       body: JSON.stringify({ imageBase64, box }),
