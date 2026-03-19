@@ -1092,7 +1092,7 @@ export async function searchProductsByImage(imageUrl: string, page = 1, limit = 
   };
 }
 
-export async function analyzeImageObjects(imageBase64: string) {
+export async function analyzeImageObjects() {
   // Deprecated: We now use manual user cropping instead of AI detection
   return [];
 }
