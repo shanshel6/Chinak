@@ -200,7 +200,7 @@ const embeddingJobSet = new Set();
 const embeddingJobAttempts = new Map();
 let embeddingJobRunning = false;
 const ENABLE_SEMANTIC_SEARCH = process.env.ENABLE_SEMANTIC_SEARCH === 'true';
-const ENABLE_SEARCH_PERF_LOGS = process.env.ENABLE_SEARCH_PERF_LOGS === 'true';
+const ENABLE_SEARCH_PERF_LOGS = ['true', '1', 'yes', 'on'].includes(String(process.env.ENABLE_SEARCH_PERF_LOGS || '').trim().toLowerCase());
 
 const createPerfLog = (scope) => {
   const startedAt = Date.now();
@@ -10806,6 +10806,7 @@ app.get('/*any', (req, res) => {
 setupLinkCheckerCron();
 
 console.log('Attempting to start server on port:', process.env.PORT || 5001);
+console.log('[Perf] ENABLE_SEARCH_PERF_LOGS =', ENABLE_SEARCH_PERF_LOGS, `(raw: ${String(process.env.ENABLE_SEARCH_PERF_LOGS || '')})`);
 
 const server = httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`Server is running on port ${PORT} (accessible from network)`);
