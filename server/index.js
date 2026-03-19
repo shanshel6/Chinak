@@ -4830,11 +4830,17 @@ app.post('/api/search/analyze-image', upload.single('image'), async (req, res) =
 app.post('/api/search/image-crop', upload.single('image'), async (req, res) => {
   try {
     let input;
+    let isRawUpload = false;
+    
     if (req.file) {
+      console.log('[Image Crop] Received raw image file upload (frontend cropped)');
       input = req.file.buffer;
+      isRawUpload = true;
     } else if (req.body.imageUrl) {
+      console.log('[Image Crop] Received imageUrl');
       input = req.body.imageUrl;
     } else if (req.body.imageBase64) {
+      console.log('[Image Crop] Received base64 image (backend crop needed)');
       const raw = String(req.body.imageBase64 || '');
       const commaIndex = raw.indexOf(',');
       const base64Data = commaIndex >= 0 ? raw.slice(commaIndex + 1) : raw;
@@ -4848,7 +4854,10 @@ app.post('/api/search/image-crop', upload.single('image'), async (req, res) => {
     }
 
     const { box } = req.body;
-    if (!box && req.file) {
+    
+    // Check if it's a file upload (which means frontend already cropped it)
+    if (isRawUpload && !box) {
+      console.log('[Image Crop] Fast path: embedding raw image without backend crop detection');
       const embedding = await runClipTask(() => embedImageRaw(input));
       const results = await searchProductsByVector(embedding);
       return res.json(results);

@@ -1161,6 +1161,7 @@ export async function searchProductsByImageCrop(imageBase64: string, box: number
       engine: 'clip-crop-fast'
     };
   } catch (_err) {
+    console.warn('[Image Crop] Frontend fast crop failed, falling back to backend crop:', _err);
     const response = await request('/search/image-crop', {
       method: 'POST',
       body: JSON.stringify({ imageBase64, box }),
