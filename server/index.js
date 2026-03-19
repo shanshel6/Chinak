@@ -202,13 +202,13 @@ let embeddingJobRunning = false;
 const ENABLE_SEMANTIC_SEARCH = process.env.ENABLE_SEMANTIC_SEARCH === 'true';
 const ENABLE_SEARCH_PERF_LOGS = ['true', '1', 'yes', 'on'].includes(String(process.env.ENABLE_SEARCH_PERF_LOGS || '').trim().toLowerCase());
 
-const createPerfLog = (scope) => {
+const createPerfLog = (scope, enabled = ENABLE_SEARCH_PERF_LOGS) => {
   const startedAt = Date.now();
   const requestId = `${scope}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
   return {
     requestId,
     log: (stage, data = {}) => {
-      if (!ENABLE_SEARCH_PERF_LOGS) return;
+      if (!enabled) return;
       console.log(`[PERF ${requestId}] ${stage}`, { ...data, elapsedMs: Date.now() - startedAt });
     }
   };
@@ -4930,7 +4930,8 @@ async function searchProductsByVector(vector, limit = 20) {
 }
 
 app.get('/api/products', async (req, res) => {
-  const perf = createPerfLog('products');
+  const forcePerf = String(req.query.perf || req.headers['x-perf-log'] || '').trim() === '1';
+  const perf = createPerfLog('products', ENABLE_SEARCH_PERF_LOGS || forcePerf);
   perf.log('start', { query: req.query });
   try {
     const page = parseInt(req.query.page) || 1;
@@ -7881,7 +7882,8 @@ app.post('/api/admin/search/reindex', authenticateToken, isAdmin, hasPermission(
 });
 
 app.get('/api/search', async (req, res) => {
-  const perf = createPerfLog('search');
+  const forcePerf = String(req.query.perf || req.headers['x-perf-log'] || '').trim() === '1';
+  const perf = createPerfLog('search', ENABLE_SEARCH_PERF_LOGS || forcePerf);
   perf.log('start', { query: req.query });
   try {
     const q = String(req.query.q || '').trim();
