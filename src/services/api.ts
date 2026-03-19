@@ -1676,6 +1676,14 @@ export async function bulkCreateProducts(products: any[], token?: string | null)
   });
 }
 
+// Admin: Archive a single product (set isActive = false)
+export async function archiveProduct(id: number | string, token?: string | null) {
+  return request(`/admin/products/${id}/archive`, {
+    method: 'PUT',
+    token
+  });
+}
+
 // Cart
 export async function fetchCart() {
   return request('/cart');

@@ -1,8 +1,11 @@
 import React, { useRef, useState } from 'react';
 import LazyImage from '../LazyImage';
-import { Heart } from 'lucide-react';
+import { Heart, X } from 'lucide-react';
 import type { Product } from '../../types/product';
 import { motion } from 'framer-motion';
+import { useAuthStore } from '../../store/useAuthStore';
+import { archiveProduct } from '../../services/api';
+import { useToastStore } from '../../store/useToastStore';
 
 interface ProductCardProps {
   product: Product;
@@ -12,11 +15,35 @@ interface ProductCardProps {
 }
 
 const ProductCard: React.FC<ProductCardProps> = React.memo(({
-  product,
+  product: initialProduct,
   onNavigate,
   onAddToWishlist,
   isProductInWishlist,
 }) => {
+  const [product, setProduct] = useState(initialProduct);
+  const [isArchiving, setIsArchiving] = useState(false);
+  const user = useAuthStore(state => state.user);
+  const isAdmin = user?.role === 'ADMIN';
+  const showToast = useToastStore(state => state.showToast);
+
+  const handleArchive = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!isAdmin || isArchiving) return;
+
+    if (window.confirm('هل أنت متأكد من أرشفة (إخفاء) هذا المنتج؟')) {
+      try {
+        setIsArchiving(true);
+        await archiveProduct(product.id);
+        setProduct(prev => ({ ...prev, isActive: false }));
+        showToast('تم إخفاء المنتج بنجاح', 'success');
+      } catch (error) {
+        console.error('Failed to archive product:', error);
+        showToast('فشل إخفاء المنتج', 'error');
+        setIsArchiving(false);
+      }
+    }
+  };
+
   const [_currentImageIndex, _setCurrentImageIndex] = React.useState(0);
   const displayImages = React.useMemo(() => {
     // START WITH MAIN IMAGE (product.image) - This is critical for consistency with search/home
@@ -102,6 +129,11 @@ const ProductCard: React.FC<ProductCardProps> = React.memo(({
     return minPrice;
   }, [minPrice]);
 
+  // If the product is archived and we are just hiding it from view instantly
+  if (product.isActive === false) {
+    return null;
+  }
+
   return (
     <motion.div 
       layoutId={`product-${product.id}`}
@@ -116,6 +148,18 @@ const ProductCard: React.FC<ProductCardProps> = React.memo(({
       transition={{ type: "spring", stiffness: 300, damping: 20 }}
       className="group relative flex flex-col overflow-hidden rounded-[24px] bg-white dark:bg-slate-800 shadow-[0_2px_15px_-3px_rgba(0,0,0,0.07),0_10px_20px_-2px_rgba(0,0,0,0.04)] hover:shadow-[0_8px_25px_-5px_rgba(0,0,0,0.1),0_10px_10px_-5px_rgba(0,0,0,0.04)] cursor-pointer ring-1 ring-slate-100 dark:ring-slate-700/50"
     >
+      {/* Admin Archive Button */}
+      {isAdmin && (
+        <button
+          onClick={handleArchive}
+          disabled={isArchiving}
+          className="absolute top-3 left-3 z-20 p-1.5 bg-red-500 hover:bg-red-600 text-white rounded-full shadow-md transition-colors pointer-events-auto"
+          title="أرشفة المنتج (إخفاء)"
+        >
+          <X size={16} />
+        </button>
+      )}
+
       {/* Image Container */}
       <div className="relative aspect-[4/5] w-full overflow-hidden bg-slate-50 dark:bg-slate-700/50">
         <LazyImage 
