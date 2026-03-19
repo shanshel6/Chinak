@@ -9275,6 +9275,32 @@ app.get('/api/search/suggestions-legacy-disabled', async (req, res) => {
 
 // ADMIN: Create Product
 // ADMIN: Update Product
+
+app.put('/api/products/:id/archive', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // We don't want to break if it's a local draft ID accidentally sent here
+    if (id.toString().startsWith('local-')) {
+        return res.json({ success: true });
+    }
+
+    const product = await prisma.product.update({
+      where: { id: safeParseId(id) },
+      data: { isActive: false }
+    });
+    
+    // Invalidate product cache
+    clearCachePattern('products');
+    clearCachePattern('product:');
+    
+    res.json({ success: true, message: 'Product archived', product });
+  } catch (error) {
+    console.error('Error archiving product:', error);
+    res.status(500).json({ error: 'Failed to archive product' });
+  }
+});
+
 app.put('/api/products/:id', authenticateToken, isAdmin, hasPermission('manage_products'), async (req, res) => {
   try {
     const { id } = req.params;
