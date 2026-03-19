@@ -106,7 +106,30 @@ async function checkGoofishLinks() {
     goofishWhere.id = { gte: startId };
   }
 
-  const totalProducts = await prisma.product.count({ where: goofishWhere });
+  let totalProducts = 0;
+  let retryCount = 0;
+  const maxRetries = 3;
+
+  while (retryCount < maxRetries) {
+    try {
+      totalProducts = await prisma.product.count({ where: goofishWhere });
+      break; // Success, exit retry loop
+    } catch (error) {
+      if (error?.code === 'P1001' || error?.code === 'P1017') {
+        retryCount++;
+        console.warn(`Database connection error (attempt ${retryCount}/${maxRetries}). Retrying in 5 seconds...`);
+        await new Promise(resolve => setTimeout(resolve, 5000));
+      } else {
+        throw error;
+      }
+    }
+  }
+
+  if (retryCount >= maxRetries) {
+    console.error('Failed to connect to the database after multiple attempts. Exiting.');
+    await prisma.$disconnect();
+    process.exit(1);
+  }
   
   if (totalProducts === 0) {
     console.log('No products found to check.');
@@ -115,17 +138,39 @@ async function checkGoofishLinks() {
   }
 
   // 1. Get active Goofish/Xianyu products starting from startId
-  const products = await prisma.product.findMany({
-    where: goofishWhere,
-    orderBy: { id: 'asc' },
-    select: {
-      id: true,
-      name: true,
-      purchaseUrl: true,
-      imagesChecked: true,
-      specs: true
+  let products = [];
+  retryCount = 0;
+  
+  while (retryCount < maxRetries) {
+    try {
+      products = await prisma.product.findMany({
+        where: goofishWhere,
+        orderBy: { id: 'asc' },
+        select: {
+          id: true,
+          name: true,
+          purchaseUrl: true,
+          imagesChecked: true,
+          specs: true
+        }
+      });
+      break; // Success, exit retry loop
+    } catch (error) {
+      if (error?.code === 'P1001' || error?.code === 'P1017') {
+        retryCount++;
+        console.warn(`Database connection error while fetching products (attempt ${retryCount}/${maxRetries}). Retrying in 5 seconds...`);
+        await new Promise(resolve => setTimeout(resolve, 5000));
+      } else {
+        throw error;
+      }
     }
-  });
+  }
+
+  if (retryCount >= maxRetries) {
+    console.error('Failed to fetch products from the database after multiple attempts. Exiting.');
+    await prisma.$disconnect();
+    process.exit(1);
+  }
 
   console.log(`Found ${products.length} active Goofish/Xianyu products to check.`);
 
