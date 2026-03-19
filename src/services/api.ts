@@ -1092,13 +1092,67 @@ export async function searchProductsByImage(imageUrl: string, page = 1, limit = 
   };
 }
 
+import { env, ObjectDetectionPipeline, pipeline } from '@xenova/transformers';
+
+// Configure transformers to use local cache and web workers
+env.allowLocalModels = false; // Force fetching from HF Hub in browser
+env.useBrowserCache = true;
+
+// Singleton for Object Detection Pipeline
+class ObjectDetectionService {
+  private static instance: ObjectDetectionPipeline | null = null;
+  private static isInitializing = false;
+
+  static async getInstance(): Promise<ObjectDetectionPipeline> {
+    if (this.instance) return this.instance;
+    if (this.isInitializing) {
+      // Wait for initialization to complete
+      while (this.isInitializing) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      return this.instance!;
+    }
+
+    this.isInitializing = true;
+    try {
+      // Use the tiny YOLO model for fast on-device detection
+      this.instance = await pipeline('object-detection', 'Xenova/yolos-tiny', {
+        quantized: true // Use quantized version for faster download and inference on mobile
+      });
+      return this.instance;
+    } finally {
+      this.isInitializing = false;
+    }
+  }
+}
+
 export async function analyzeImageObjects(imageBase64: string) {
-  const response = await request('/search/analyze-image', {
-    method: 'POST',
-    body: JSON.stringify({ imageBase64 }),
-    skipCache: true
-  });
-  return response.objects || [];
+  try {
+    // Try to do it locally on the device first!
+    const detector = await ObjectDetectionService.getInstance();
+    const results = await detector(imageBase64, {
+      threshold: 0.1,
+      percentage: false // Get absolute pixel coordinates
+    });
+
+    if (results && Array.isArray(results) && results.length > 0) {
+      // Map Xenova output format to our app's expected format
+      return results.map(r => ({
+        label: r.label,
+        score: r.score,
+        box: [r.box.xmin, r.box.ymin, r.box.xmax, r.box.ymax]
+      }));
+    }
+    return [];
+  } catch (error) {
+    console.warn('Local object detection failed, falling back to server:', error);
+    const response = await request('/search/analyze-image', {
+      method: 'POST',
+      body: JSON.stringify({ imageBase64 }),
+      skipCache: true
+    });
+    return response.objects || [];
+  }
 }
 
 export async function searchProductsByImageCrop(imageBase64: string, box: number[]) {
