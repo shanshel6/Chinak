@@ -1131,15 +1131,19 @@ export async function searchProductsByImageCrop(imageBase64: string, box: number
 
     ctx.drawImage(img, sx, sy, sw, sh, 0, 0, dw, dh);
 
-    const blob: Blob = await new Promise((resolve, reject) => {
-      canvas.toBlob(
-        (b) => (b ? resolve(b) : reject(new Error('Failed to encode image'))),
-        'image/jpeg',
-        0.85
-      );
-    });
-
-    return blob;
+    // On some mobile browsers/webviews (like Capacitor iOS), canvas.toBlob might be slow or fail.
+    // Fallback to toDataURL which is generally more reliable across WebViews.
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+    
+    // Convert base64 to Blob manually
+    const base64Data = dataUrl.split(',')[1];
+    const byteCharacters = atob(base64Data);
+    const byteNumbers = new Array(byteCharacters.length);
+    for (let i = 0; i < byteCharacters.length; i++) {
+      byteNumbers[i] = byteCharacters.charCodeAt(i);
+    }
+    const byteArray = new Uint8Array(byteNumbers);
+    return new Blob([byteArray], { type: 'image/jpeg' });
   };
 
   try {
