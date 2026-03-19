@@ -78,6 +78,7 @@ const createTaskQueue = (maxQueued = 1) => {
 };
 
 const runClipTask = createTaskQueue(Math.max(1, Number.parseInt(String(process.env.CLIP_MAX_QUEUE || ''), 10) || 1));
+const ENABLE_CLIP_WARMUP = ['true', '1', 'yes', 'on'].includes(String(process.env.ENABLE_CLIP_WARMUP || '').trim().toLowerCase());
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -99,7 +100,11 @@ if (fs.existsSync(envPath)) {
   console.error('.env file NOT found at:', envPath);
 }
 
-warmupClipService().catch(() => {});
+if (ENABLE_CLIP_WARMUP) {
+  warmupClipService().catch(() => {});
+} else {
+  console.log('[CLIP] Warmup disabled (set ENABLE_CLIP_WARMUP=true to enable)');
+}
 
 // Supabase Client Initialization
 const supabaseUrl = process.env.SUPABASE_URL || 'https://puxjtecjxfjldwxiwzrk.supabase.co';
