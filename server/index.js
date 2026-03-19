@@ -200,6 +200,19 @@ const embeddingJobSet = new Set();
 const embeddingJobAttempts = new Map();
 let embeddingJobRunning = false;
 const ENABLE_SEMANTIC_SEARCH = process.env.ENABLE_SEMANTIC_SEARCH === 'true';
+const ENABLE_SEARCH_PERF_LOGS = process.env.ENABLE_SEARCH_PERF_LOGS === 'true';
+
+const createPerfLog = (scope) => {
+  const startedAt = Date.now();
+  const requestId = `${scope}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+  return {
+    requestId,
+    log: (stage, data = {}) => {
+      if (!ENABLE_SEARCH_PERF_LOGS) return;
+      console.log(`[PERF ${requestId}] ${stage}`, { ...data, elapsedMs: Date.now() - startedAt });
+    }
+  };
+};
 
 const bulkImportJobQueue = [];
 const bulkImportJobs = new Map();
@@ -4917,8 +4930,8 @@ async function searchProductsByVector(vector, limit = 20) {
 }
 
 app.get('/api/products', async (req, res) => {
-  const requestStart = Date.now();
-  console.log(`[Products] GET /api/products request received. Query:`, req.query);
+  const perf = createPerfLog('products');
+  perf.log('start', { query: req.query });
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 20;
@@ -4932,6 +4945,7 @@ app.get('/api/products', async (req, res) => {
        cachedStoreSettingsTime = Date.now();
     }
     const storeSettings = cachedStoreSettings;
+    perf.log('store_settings_ready', { cacheAgeMs: Date.now() - cachedStoreSettingsTime });
 
     const shippingRates = {
       airShippingRate: storeSettings?.airShippingRate,
@@ -4964,6 +4978,7 @@ app.get('/api/products', async (req, res) => {
       }
     }
 
+    const dbStartedAt = Date.now();
     const [products, total] = await Promise.all([
       prisma.product.findMany({
         where,
@@ -4994,6 +5009,7 @@ app.get('/api/products', async (req, res) => {
       }),
       prisma.product.count({ where })
     ]);
+    perf.log('db_query_done', { dbMs: Date.now() - dbStartedAt, productsCount: products.length, total });
 
     // If no products found, return empty result immediately to avoid processing overhead
     if (!products || products.length === 0) {
@@ -5022,7 +5038,9 @@ app.get('/api/products', async (req, res) => {
       totalPages: Math.ceil(total / limit),
       engine: 'db'
     });
+    perf.log('response_sent', { engine: 'db', returned: products.length });
   } catch (error) {
+    perf.log('error', { message: error?.message, name: error?.name });
     console.error('[Products] Failed to fetch products:', error);
     try {
       const logPath = path.join(__dirname, 'server_error_full.log');
@@ -7863,6 +7881,8 @@ app.post('/api/admin/search/reindex', authenticateToken, isAdmin, hasPermission(
 });
 
 app.get('/api/search', async (req, res) => {
+  const perf = createPerfLog('search');
+  perf.log('start', { query: req.query });
   try {
     const q = String(req.query.q || '').trim();
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
@@ -7872,6 +7892,7 @@ app.get('/api/search', async (req, res) => {
     const condition = String(req.query.condition || '').trim();
 
     if (!q) {
+      perf.log('empty_query');
       return res.json({ products: [], total: 0, page, totalPages: 0, hasMore: false, engine: 'meili' });
     }
 
@@ -7903,6 +7924,7 @@ app.get('/api/search', async (req, res) => {
       cachedStoreSettingsTime = Date.now();
     }
     const storeSettings = cachedStoreSettings;
+    perf.log('store_settings_ready', { cacheAgeMs: Date.now() - cachedStoreSettingsTime });
     const shippingRates = {
       airShippingRate: storeSettings?.airShippingRate,
       seaShippingRate: storeSettings?.seaShippingRate,
@@ -7910,7 +7932,9 @@ app.get('/api/search', async (req, res) => {
     };
 
     try {
+      const meiliSetupStartedAt = Date.now();
       const index = await ensureMeiliIndexSettings();
+      perf.log('meili_index_ready', { setupMs: Date.now() - meiliSetupStartedAt });
       const filters = ['status = PUBLISHED', 'isActive = true'];
       if (Number.isFinite(maxPrice) && maxPrice > 0) {
         filters.push(`price <= ${maxPrice}`);
@@ -7921,20 +7945,25 @@ app.get('/api/search', async (req, res) => {
         filters.push('(neworold = false OR neworold IS NULL)');
       }
 
+      const meiliSearchStartedAt = Date.now();
       const searchResult = await index.search(normalizedQuery || q, {
         limit,
         offset,
         filter: filters,
         sort: ['updatedAt:desc']
       });
+      perf.log('meili_search_done', { meiliMs: Date.now() - meiliSearchStartedAt, estimatedTotalHits: Number(searchResult?.estimatedTotalHits || 0) });
 
       const hitIds = Array.isArray(searchResult?.hits)
         ? searchResult.hits.map((hit) => Number(hit?.id)).filter((id) => Number.isFinite(id))
         : [];
+      perf.log('meili_hits_ready', { hitIdsCount: hitIds.length });
       if (hitIds.length === 0) {
+        perf.log('response_sent', { engine: 'meili', returned: 0, total: 0 });
         return res.json({ products: [], total: 0, page, totalPages: 0, hasMore: false, engine: 'meili' });
       }
 
+      const dbFetchStartedAt = Date.now();
       const productsFromDb = await prisma.product.findMany({
         where: {
           id: { in: hitIds },
@@ -7943,6 +7972,7 @@ app.get('/api/search', async (req, res) => {
         },
         select: productSelect
       });
+      perf.log('db_fetch_for_meili_done', { dbMs: Date.now() - dbFetchStartedAt, productsCount: productsFromDb.length });
 
       const rankIndex = new Map(hitIds.map((id, indexPosition) => [id, indexPosition]));
       const rankedProducts = productsFromDb
@@ -7959,6 +7989,7 @@ app.get('/api/search', async (req, res) => {
         });
 
       const total = Number(searchResult?.estimatedTotalHits || 0);
+      perf.log('response_sent', { engine: 'meili', returned: rankedProducts.length, total });
       return res.json({
         products: rankedProducts,
         total,
@@ -7968,6 +7999,7 @@ app.get('/api/search', async (req, res) => {
         engine: 'meili'
       });
     } catch (meiliError) {
+      perf.log('meili_fallback', { reason: meiliError?.message || String(meiliError) });
       console.warn('[Meili] search fallback to db:', meiliError?.message || meiliError);
       const searchTerms = Array.from(new Set([q, normalizedQuery].map((v) => String(v || '').trim()).filter(Boolean)));
       const andFilters = [];
@@ -7991,11 +8023,15 @@ app.get('/api/search', async (req, res) => {
         ...(andFilters.length > 0 ? { AND: andFilters } : {})
       };
 
+      const dbCountStartedAt = Date.now();
       const total = await prisma.product.count({ where });
+      perf.log('db_fallback_count_done', { dbCountMs: Date.now() - dbCountStartedAt, total });
       if (!total) {
+        perf.log('response_sent', { engine: 'db', returned: 0, total: 0 });
         return res.json({ products: [], total: 0, page, totalPages: 0, hasMore: false, engine: 'db' });
       }
 
+      const dbFindStartedAt = Date.now();
       const productsFromDb = await prisma.product.findMany({
         where,
         skip: offset,
@@ -8003,6 +8039,7 @@ app.get('/api/search', async (req, res) => {
         orderBy: { updatedAt: 'desc' },
         select: productSelect
       });
+      perf.log('db_fallback_find_done', { dbFindMs: Date.now() - dbFindStartedAt, productsCount: productsFromDb.length });
 
       const processedProducts = productsFromDb.map((product) => {
         const aiMetadata = parseAiMetadata(product.aiMetadata);
@@ -8014,6 +8051,7 @@ app.get('/api/search', async (req, res) => {
         return { ...processed, aiMetadata, isRealBrand, neworold };
       });
 
+      perf.log('response_sent', { engine: 'db', returned: processedProducts.length, total });
       return res.json({
         products: processedProducts,
         total,
@@ -8024,6 +8062,7 @@ app.get('/api/search', async (req, res) => {
       });
     }
   } catch (error) {
+    perf.log('error', { message: error?.message, name: error?.name });
     console.error('[Meili] search failed:', error);
     return res.status(503).json({
       error: 'Meilisearch search failed',
