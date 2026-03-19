@@ -14,11 +14,13 @@ dotenv.config({ path: envPath });
 if (process.env.DATABASE_URL) {
     try {
         const url = new URL(process.env.DATABASE_URL);
-        // Limit server connections to leave room for scraper/others
         if (!url.searchParams.has('connection_limit')) {
-            url.searchParams.set('connection_limit', '5'); 
-            process.env.DATABASE_URL = url.toString();
+            url.searchParams.set('connection_limit', '1'); 
         }
+        if (!url.searchParams.has('pool_timeout')) {
+            url.searchParams.set('pool_timeout', '20'); 
+        }
+        process.env.DATABASE_URL = url.toString();
     } catch (e) {
         console.warn('Warning: Could not parse DATABASE_URL to set connection_limit in prismaClient.js');
     }
