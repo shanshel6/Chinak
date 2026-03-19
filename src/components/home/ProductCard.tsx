@@ -23,7 +23,7 @@ const ProductCard: React.FC<ProductCardProps> = React.memo(({
   const [product, setProduct] = useState(initialProduct);
   const [isArchiving, setIsArchiving] = useState(false);
   const user = useAuthStore(state => state.user);
-  const isAdmin = user?.role === 'ADMIN';
+  const isAdmin = user && user.role === 'ADMIN';
   const showToast = useToastStore(state => state.showToast);
 
   const handleArchive = async (e: React.MouseEvent) => {
@@ -33,7 +33,9 @@ const ProductCard: React.FC<ProductCardProps> = React.memo(({
     if (window.confirm('هل أنت متأكد من أرشفة (إخفاء) هذا المنتج؟')) {
       try {
         setIsArchiving(true);
-        await archiveProduct(product.id);
+        // Pass the token explicitly to ensure it authenticates properly
+        const token = useAuthStore.getState().token || localStorage.getItem('auth_token');
+        await archiveProduct(product.id, token);
         setProduct(prev => ({ ...prev, isActive: false }));
         showToast('تم إخفاء المنتج بنجاح', 'success');
       } catch (error) {
