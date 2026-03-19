@@ -111,29 +111,27 @@ const SearchResults: React.FC = () => {
     setDetectedObjects([]);
     setSelectedObjectBox(null);
     setShowImagePopup(true);
-    setIsAnalyzingImage(true);
+    setIsAnalyzingImage(false); // We no longer analyze
 
-    try {
-      const objects = await analyzeImageObjects(imageBase64);
-      setDetectedObjects(objects);
+    // Calculate initial box based on actual image dimensions
+    const img = new Image();
+    img.src = imageBase64;
+    img.onload = () => {
+      const width = img.width;
+      const height = img.height;
+      const cx = width / 2;
+      const cy = height / 2;
+      const bw = width * 0.5;
+      const bh = height * 0.5;
+      const xmin = cx - bw / 2;
+      const ymin = cy - bh / 2;
+      const xmax = cx + bw / 2;
+      const ymax = cy + bh / 2;
       
-      // If no objects detected, fallback to full image search immediately
-      if (objects.length === 0) {
-        setShowImagePopup(false);
-        setLoading(true);
-        const data = await searchProductsByImage(imageBase64, 1, LIMIT);
-        setResults(Array.isArray(data.products) ? data.products : []);
-        setHasMore(Boolean(data.hasMore));
-        setPage(1);
-      }
-    } catch (err: any) {
-      setShowImagePopup(false);
-      setError(err.message || 'حدث خطأ أثناء البحث بالصورة');
-    } finally {
-      setIsAnalyzingImage(false);
-      if (detectedObjects.length === 0) setLoading(false);
-    }
-  }, [detectedObjects.length]);
+      setImageOriginalSize({ width, height });
+      setDetectedObjects([{ label: 'manual', score: 1, box: [xmin, ymin, xmax, ymax] }]);
+    };
+  }, []);
 
   const handleObjectSelection = useCallback(async (box: number[] | null) => {
     if (!imageSearchInput) return;
@@ -698,10 +696,31 @@ const SearchResults: React.FC = () => {
                   className="max-w-full max-h-[70vh] block object-contain" 
                   alt="Preview"
                 />
+                {/* Show a helpful message when waiting for manual crop */}
+                {detectedObjects.length === 1 && detectedObjects[0].label === 'manual' && !selectedObjectBox && !isAnalyzingImage && (
+                  <div style={{
+                    position: 'absolute',
+                    top: '10%',
+                    left: '50%',
+                    transform: 'translateX(-50%)',
+                    backgroundColor: 'rgba(0,0,0,0.7)',
+                    color: 'white',
+                    padding: '8px 16px',
+                    borderRadius: '20px',
+                    fontSize: '14px',
+                    fontWeight: 'bold',
+                    zIndex: 20,
+                    whiteSpace: 'nowrap',
+                    pointerEvents: 'none'
+                  }}>
+                    قم بتغيير حجم المربع لتحديد المنتج الذي تبحث عنه
+                  </div>
+                )}
                 {/* Box overlays */}
                 {detectedObjects.map((obj, idx) => {
                    if (!imageOriginalSize) return null;
                    const [xmin, ymin, xmax, ymax] = obj.box;
+                   const isManual = obj.label === 'manual';
                    const left = (xmin / imageOriginalSize.width) * 100;
                    const top = (ymin / imageOriginalSize.height) * 100;
                    const width = ((xmax - xmin) / imageOriginalSize.width) * 100;
@@ -710,18 +729,58 @@ const SearchResults: React.FC = () => {
                    return (
                      <div
                        key={idx}
-                       onClick={() => handleObjectSelection(obj.box)}
-                       className="absolute border-[3px] border-primary bg-primary/10 cursor-pointer hover:bg-primary/30 transition-colors flex items-center justify-center rounded-sm"
+                       onClick={() => !isManual && handleObjectSelection(obj.box)}
+                       className={`absolute border-[3px] border-primary transition-colors flex items-center justify-center rounded-sm ${isManual ? '' : 'bg-primary/10 cursor-pointer hover:bg-primary/30'}`}
                        style={{
                          left: `${left}%`,
                          top: `${top}%`,
                          width: `${width}%`,
-                         height: `${height}%`
+                         height: `${height}%`,
+                         boxShadow: isManual ? '0 0 0 9999px rgba(0, 0, 0, 0.5)' : 'none',
+                         cursor: isManual ? 'move' : 'pointer',
+                         resize: isManual ? 'both' : 'none',
+                         overflow: isManual ? 'auto' : 'visible',
+                         zIndex: 10
                        }}
                      >
-                       <span className="bg-primary text-white text-xs px-2 py-1 rounded-full font-bold shadow-lg transform -translate-y-1/2 -translate-x-1/2 absolute top-0 left-1/2 whitespace-nowrap">
-                         {`عنصر ${idx + 1}`}
-                       </span>
+                       {isManual && (
+                         <button
+                           onClick={(e) => {
+                             e.stopPropagation();
+                             const el = e.currentTarget.parentElement;
+                             if (el && imageOriginalSize.width && imageOriginalSize.height) {
+                                const parentRect = el.parentElement!.getBoundingClientRect();
+                                const rect = el.getBoundingClientRect();
+                                const newXmin = ((rect.left - parentRect.left) / parentRect.width) * imageOriginalSize.width;
+                                const newYmin = ((rect.top - parentRect.top) / parentRect.height) * imageOriginalSize.height;
+                                const newXmax = newXmin + (rect.width / parentRect.width) * imageOriginalSize.width;
+                                const newYmax = newYmin + (rect.height / parentRect.height) * imageOriginalSize.height;
+                                handleObjectSelection([newXmin, newYmin, newXmax, newYmax]);
+                             } else {
+                                handleObjectSelection(obj.box);
+                             }
+                           }}
+                           style={{
+                             position: 'absolute',
+                             bottom: '-40px',
+                             backgroundColor: '#ff4757',
+                             color: 'white',
+                             border: 'none',
+                             padding: '8px 16px',
+                             borderRadius: '20px',
+                             fontWeight: 'bold',
+                             cursor: 'pointer',
+                             boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
+                           }}
+                         >
+                           بحث
+                         </button>
+                       )}
+                       {!isManual && (
+                         <span className="bg-primary text-white text-xs px-2 py-1 rounded-full font-bold shadow-lg transform -translate-y-1/2 -translate-x-1/2 absolute top-0 left-1/2 whitespace-nowrap">
+                           {`عنصر ${idx + 1}`}
+                         </span>
+                       )}
                      </div>
                    )
                 })}
