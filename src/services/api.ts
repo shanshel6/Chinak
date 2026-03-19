@@ -1680,7 +1680,7 @@ export async function bulkCreateProducts(products: any[], token?: string | null)
 export async function archiveProduct(id: number | string, token?: string | null) {
   // Pass the token implicitly or explicitly to the request helper
   // Request wrapper automatically appends API_BASE_URL (which includes /api)
-  return request(`/admin/products/${id}/archive`, {
+  return request(`/products/${id}/archive`, {
     method: 'PUT',
     token
   });
