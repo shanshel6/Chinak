@@ -130,11 +130,12 @@ const OUTPUT_JSON = String(process.env.GOOFISH_OUTPUT_JSON || '').toLowerCase() 
 const REQUIRE_DB_WRITE = String(process.env.GOOFISH_REQUIRE_DB_WRITE || 'true').toLowerCase() !== 'false';
 const AI_ONLY_TERMS = String(process.env.GOOFISH_AI_ONLY_TERMS || '').toLowerCase() === 'true';
 const TRANSLATION_CACHE_PATH = path.join(__dirname, 'goofish-translation-cache.json');
-const ITEMS_PER_SEARCH = Math.max(1, parseInt(process.env.GOOFISH_ITEMS_PER_SEARCH || '90', 10) || 90);
+const ITEMS_PER_SEARCH = Math.max(1, parseInt(process.env.GOOFISH_ITEMS_PER_SEARCH || '300', 10) || 300);
 const KEYWORDS_PER_PRODUCT = Math.max(10, Math.min(50, parseInt(process.env.GOOFISH_KEYWORDS_PER_PRODUCT || '30', 10) || 30));
 const GOOFISH_AI_TITLE_MAX_CHARS = Math.max(40, parseInt(process.env.GOOFISH_AI_TITLE_MAX_CHARS || '140', 10) || 140);
 const GOOFISH_AI_SECOND_PASS_DESCRIPTION = String(process.env.GOOFISH_AI_SECOND_PASS_DESCRIPTION || 'false').toLowerCase() === 'true';
 const GOOFISH_TRANSLATION_CACHE_FLUSH_EVERY = Math.max(1, parseInt(process.env.GOOFISH_TRANSLATION_CACHE_FLUSH_EVERY || '20', 10) || 20);
+const GOOFISH_RESET_TERMS_ON_START = String(process.env.GOOFISH_RESET_TERMS_ON_START || '').toLowerCase() === 'true';
 const UPDATE_EXISTING = String(process.env.GOOFISH_UPDATE_EXISTING || '').toLowerCase() === 'true';
 const UPDATE_LIMIT = parseInt(process.env.GOOFISH_UPDATE_LIMIT || '', 10);
 const UPDATE_START_ID = parseInt(process.env.GOOFISH_UPDATE_START_ID || '0', 10);
@@ -1104,6 +1105,15 @@ function loadSearchTermHistory() {
 
 function saveSearchTermHistory(history) {
   fs.writeFileSync(SEARCH_TERMS_PATH, JSON.stringify(history, null, 2));
+}
+
+function clearSearchTermHistory() {
+  try {
+    if (fs.existsSync(SEARCH_TERMS_PATH)) fs.unlinkSync(SEARCH_TERMS_PATH);
+    console.log('Search term history reset.');
+  } catch (error) {
+    console.warn('Failed to reset search term history:', error?.message || error);
+  }
 }
 
 function isFoodTerm(term) {
@@ -2108,6 +2118,9 @@ async function run() {
   console.log("Browser created.");
   await ensureDbReady();
   console.log("DB ready.");
+  if (GOOFISH_RESET_TERMS_ON_START) {
+    clearSearchTermHistory();
+  }
   const translationCache = loadTranslationCache();
   let pendingCacheWrites = 0;
   if (SILICONFLOW_API_KEY) {
