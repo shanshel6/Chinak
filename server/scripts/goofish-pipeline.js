@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import dotenv from 'dotenv';
 import readline from 'readline';
+import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { Prisma, PrismaClient } from '@prisma/client';
 import axios from 'axios';
@@ -978,6 +979,16 @@ function getExecutablePath() {
     for (const p of linuxPaths) {
       if (fs.existsSync(p)) return p;
     }
+    const commands = ['google-chrome-stable', 'google-chrome', 'chromium-browser', 'chromium', 'chrome'];
+    for (const command of commands) {
+      try {
+        const resolved = spawnSync('which', [command], { encoding: 'utf8' });
+        if (resolved.status === 0) {
+          const candidate = String(resolved.stdout || '').trim().split('\n')[0];
+          if (candidate && fs.existsSync(candidate)) return candidate;
+        }
+      } catch {}
+    }
     return null;
   }
   for (const p of CHROME_PATHS) {
@@ -1316,8 +1327,6 @@ async function createBrowser() {
 
   if (executablePath) {
     launchOptions.executablePath = executablePath;
-  } else if (process.platform === 'linux') {
-    launchOptions.channel = 'chrome';
   } else {
     console.warn('Chrome/Edge executable not found on system.');
   }
