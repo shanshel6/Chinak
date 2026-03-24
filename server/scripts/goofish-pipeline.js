@@ -7,6 +7,7 @@ import readline from 'readline';
 import { fileURLToPath } from 'url';
 import { Prisma, PrismaClient } from '@prisma/client';
 import axios from 'axios';
+import { embedImage } from '../services/clipService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -956,6 +957,19 @@ const USER_AGENTS = [
 ];
 
 function getExecutablePath() {
+  if (process.platform === 'linux') {
+    // Return null on Linux so puppeteer uses its bundled Chromium
+    // Or return common paths if installed via apt
+    const linuxPaths = [
+      '/usr/bin/google-chrome',
+      '/usr/bin/chromium-browser',
+      '/usr/bin/chromium'
+    ];
+    for (const p of linuxPaths) {
+      if (fs.existsSync(p)) return p;
+    }
+    return null; // let puppeteer try to find its own
+  }
   for (const p of CHROME_PATHS) {
     if (fs.existsSync(p)) return p;
   }
@@ -1193,17 +1207,84 @@ function clearActiveBatch(batchId) {
   saveSearchTermHistory({ ...history, activeBatch: null });
 }
 
+const UNAVAILABLE_KEYWORDS = [
+  '卖掉了', // Sold out (Primary indicator)
+  '宝贝不存在', // Baby does not exist
+  '下架', // Taken off shelf
+  '删除', // Deleted
+  '转移', // Transferred
+  '很抱歉', // Very sorry
+  'Sold out',
+  'This item is no longer available',
+  '商品已失效' // Product invalid
+];
+
+const withTimeout = async (promiseFactory, label, timeoutMs = 60000) => {
+  let timer;
+  try {
+    return await Promise.race([
+      promiseFactory(),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+      })
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
+const safeDbDisconnect = async () => {
+  try {
+    await withTimeout(() => prisma.$disconnect(), 'db disconnect', 5000);
+  } catch {}
+};
+
+const safeDbConnect = async () => {
+  try {
+    await withTimeout(() => prisma.$connect(), 'db connect', 10000);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const withRetry = async (run, label, retries = 5, timeoutMs = 60000, backoffMs = 1500) => {
+  let lastError;
+  for (let i = 1; i <= retries; i++) {
+    try {
+      return await withTimeout(run, label, timeoutMs);
+    } catch (error) {
+      lastError = error;
+      const msg = String(error?.message || '');
+      const retryable = msg.includes('Timed out fetching a new connection from the connection pool')
+        || msg.includes("Can't reach database server")
+        || msg.includes('timed out after')
+        || msg.includes('Server has closed the connection')
+        || String(error?.code || '') === 'P2024'
+        || String(error?.code || '') === 'P1017'
+        || String(error?.code || '') === 'P1001';
+      if (!retryable || i === retries) break;
+      console.warn(`${label} failed (attempt ${i}/${retries}), retrying... ${msg}`);
+      await safeDbDisconnect();
+      await new Promise((r) => setTimeout(r, backoffMs * i));
+      await safeDbConnect();
+    }
+  }
+  throw lastError;
+};
+
+const toErrorText = (error) => String(error?.message || error || 'unknown error');
+const toErrorCode = (error) => String(error?.code || '');
+
 async function createBrowser() {
   const executablePath = getExecutablePath();
-  if (!executablePath) {
-    console.error('Chrome/Edge executable not found on system.');
-    process.exit(1);
+  if (!executablePath && process.platform !== 'linux') {
+    console.warn('Chrome/Edge executable not found on system. Relying on bundled Puppeteer Chromium.');
   }
-  return puppeteer.launch({
-    executablePath,
-    headless: false,
+  
+  const launchOptions = {
+    headless: true,
     defaultViewport: null,
-    // userDataDir: path.join(process.cwd(), 'chrome_data'), // Disabled for incognito-like behavior
     args: [
       '--start-maximized',
       '--no-sandbox',
@@ -1213,12 +1294,24 @@ async function createBrowser() {
       '--excludeSwitches=enable-automation',
       '--disable-features=IsolateOrigins,site-per-process',
       '--incognito',
-      '--proxy-server=http://192.168.2.150:7890',
       '--disable-dev-shm-usage',
       '--disable-accelerated-2d-canvas',
       '--disable-gpu'
     ]
-  });
+  };
+
+  // Keep proxy if provided
+  if (process.env.PROXY_SERVER) {
+      launchOptions.args.push(`--proxy-server=${process.env.PROXY_SERVER}`);
+  } else {
+      launchOptions.args.push('--proxy-server=http://192.168.2.150:7890');
+  }
+
+  if (executablePath) {
+    launchOptions.executablePath = executablePath;
+  }
+
+  return puppeteer.launch(launchOptions);
 }
 
 function toAbsoluteImage(src) {
@@ -1291,17 +1384,20 @@ Title: "${fallback}"`;
 }
 
 async function ensureDbReady() {
+  console.log("ensureDbReady called. DISABLE_DB_WRITE:", DISABLE_DB_WRITE);
   if (DISABLE_DB_WRITE) {
     if (REQUIRE_DB_WRITE) {
       throw new Error('GOOFISH_DISABLE_DB_WRITE is true while DB write is required.');
     }
     return false;
   }
+  console.log("dbChecked:", dbChecked);
   if (dbChecked) return dbReady;
   dbChecked = true;
   const maxAttempts = 6;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
+      console.log(`Prisma connecting (attempt ${attempt})...`);
       await prisma.$connect();
       dbReady = true;
       console.log('Database connection established.');
@@ -1503,6 +1599,7 @@ async function saveProductToDb(item, existingProductId = null) {
         }
         console.log(`Updated product (raw SQL): ${item.titleEn || item.title}`);
       }
+      return existing.id;
     } else {
       let newProduct;
       try {
@@ -1570,17 +1667,376 @@ async function saveProductToDb(item, existingProductId = null) {
       } else {
         console.log(`Saved to DB: id=unknown title=${item.titleEn || item.title}`);
       }
+      return newProduct?.id || null;
     }
   } catch (e) {
     console.error(`Failed to save product ${item.titleEn}:`, e.message);
     // Print stack trace for debugging
     if (e.stack) console.error(e.stack);
+    return null;
+  }
+}
+
+async function processProductDetails(page, product) {
+  const mutationTimeoutMs = Math.max(3000, Number.parseInt(process.env.GOOFISH_MUTATION_TIMEOUT_MS || '12000', 10) || 12000);
+  const mutationRetryCount = Math.max(1, Number.parseInt(process.env.GOOFISH_MUTATION_RETRY_COUNT || '1', 10) || 1);
+  const newOrOldTimeoutMs = Math.max(5000, Number.parseInt(process.env.GOOFISH_NEWOROLD_TIMEOUT_MS || '20000', 10) || 20000);
+  const newOrOldRetryCount = Math.max(1, Number.parseInt(process.env.GOOFISH_NEWOROLD_RETRY_COUNT || '2', 10) || 2);
+  const retryBackoffMs = 1500;
+  const productTimeoutMs = Math.max(30000, Number.parseInt(process.env.GOOFISH_PRODUCT_TIMEOUT_MS || '180000', 10) || 180000);
+
+  console.log(`\n[Pipeline] Checking details for Product ID ${product.id}: ${product.name}`);
+  console.log(`URL: \`${product.url}\``);
+
+  if (!product.url) {
+    console.log(`⚠️ No URL. Skipping.`);
+    return;
+  }
+
+  try {
+    await withTimeout(async () => {
+      await page.goto(product.url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    
+      const delay = Math.floor(Math.random() * 1500) + 1000;
+      await new Promise(r => setTimeout(r, delay));
+
+      const pageContent = await page.evaluate(() => document.body.innerText);
+      const title = await page.title();
+    
+      let isUnavailable = false;
+      let unavailableReason = '';
+
+      for (const keyword of UNAVAILABLE_KEYWORDS) {
+        if (pageContent.includes(keyword) || title.includes(keyword)) {
+          isUnavailable = true;
+          unavailableReason = keyword;
+          break;
+        }
+      }
+
+      if (page.url().includes('login.taobao.com') || page.url().includes('login.tmall.com')) {
+        console.warn('⚠️ Redirected to login page. Cannot verify status accurately. Skipping.');
+        return;
+      }
+
+      if (isUnavailable) {
+        console.log(`❌ Product ${product.id} is UNAVAILABLE. Reason: Found keyword: ${unavailableReason}`);
+      
+        await withRetry(
+          () => prisma.product.update({
+            where: { id: product.id },
+            data: { isActive: false }
+          }),
+          `update isActive ${product.id}`,
+          mutationRetryCount,
+          mutationTimeoutMs,
+          retryBackoffMs
+        );
+      } else {
+        console.log(`✅ Product ${product.id} is AVAILABLE.`);
+      
+        const newOrOldStatus = await page.evaluate(() => {
+          try {
+            const images = Array.from(document.querySelectorAll('img'));
+            const newImgUrl = 'https://gw.alicdn.com/imgextra/i3/O1CN015hOhg21hTpVIveeDA_!!6000000004279-2-tps-252-60.png';
+            const usedImgUrl = 'https://gw.alicdn.com/imgextra/i4/O1CN01MQosre1EmUmuzzD3k_!!6000000000394-2-tps-252-60.png';
+            const almostNewImgUrl = 'https://gw.alicdn.com/imgextra/i3/O1CN01yU5CER1wslIj9m7bv_!!6000000006364-2-tps-252-60.png';
+
+            const hasNewImg = images.some(img => img.src === newImgUrl);
+            const hasUsedImg = images.some(img => img.src === usedImgUrl);
+            const hasAlmostNewImg = images.some(img => img.src === almostNewImgUrl);
+
+            if (hasNewImg) return true;
+            if (hasUsedImg || hasAlmostNewImg) return false;
+
+            const labels = Array.from(document.querySelectorAll('.item--qI9ENIfp'));
+            for (const label of labels) {
+              const labelText = label.querySelector('.label--ejJeaTRV')?.innerText || '';
+              const valueText = label.querySelector('.value--EyQBSInp')?.innerText || '';
+          
+              if (labelText.includes('成色')) {
+                if (valueText.includes('全新')) return true;
+                if (valueText.includes('使用痕迹') || valueText.includes('二手') || valueText.includes('闲置') || valueText.includes('有磨损') || valueText.includes('有划痕')) return false;
+              }
+            }
+
+            const desc = document.querySelector('.desc--GaIUKUQY')?.innerText || '';
+            if (desc.includes('全新') && !desc.includes('部分全新') && !desc.includes('99新')) return true;
+            if (desc.includes('使用痕迹') || desc.includes('二手') || desc.includes('闲置')) return false;
+
+            return null;
+          } catch (e) {
+            return null;
+          }
+        });
+
+        if (newOrOldStatus !== null) {
+          console.log(`ℹ️ Product ${product.id} detected as ${newOrOldStatus ? 'NEW' : 'USED'}. Updating...`);
+          try {
+            await withRetry(
+              () => prisma.product.update({
+                where: { id: product.id },
+                data: { neworold: newOrOldStatus }
+              }),
+              `update neworold ${product.id}`,
+              newOrOldRetryCount,
+              newOrOldTimeoutMs,
+              retryBackoffMs
+            );
+          } catch (updateErr) {
+            console.error(`Error updating neworold for Product ${product.id} (code=${toErrorCode(updateErr) || 'n/a'}): ${toErrorText(updateErr)}`);
+            const updateErrText = toErrorText(updateErr);
+            const updateErrCode = toErrorCode(updateErr);
+            if (
+              updateErrText.includes('Server has closed the connection')
+              || updateErrText.includes("Can't reach database server")
+              || updateErrText.includes('timed out after')
+              || updateErrCode === 'P1017'
+              || updateErrCode === 'P1001'
+            ) {
+              await safeDbDisconnect();
+              try {
+                await withRetry(
+                  () => prisma.$connect(),
+                  'reconnect after neworold failure',
+                  2,
+                  10000,
+                  1000
+                );
+              } catch {}
+            }
+          }
+        }
+
+        if (product.specs && product.specs !== 'null') {
+          console.log(`ℹ️ Specs already exist for Product ${product.id}. Skipping extraction.`);
+        } else {
+          const rawSpecs = await page.evaluate(() => {
+            try {
+              const labels = Array.from(document.querySelectorAll('.labels--ndhPFgp8 .item--qI9ENIfp'));
+              const specs = {};
+          
+              for (const item of labels) {
+                const labelEl = item.querySelector('.label--ejJeaTRV');
+                if (!labelEl) continue;
+            
+                let key = labelEl.innerText.replace(/[\n\r\s：:]/g, '').trim();
+            
+                const valueEl = item.querySelector('.value--EyQBSInp');
+                if (!valueEl) continue;
+                let value = valueEl.innerText.trim();
+            
+                if (key && value) {
+                  specs[key] = value;
+                }
+              }
+          
+              return Object.keys(specs).length > 0 ? specs : null;
+            } catch (e) {
+              return null;
+            }
+          });
+
+          if (rawSpecs) {
+            console.log(`ℹ️ Found specs for Product ${product.id}:`, JSON.stringify(rawSpecs));
+        
+            const rawSpecsText = JSON.stringify(rawSpecs);
+            const containsChinese = true;
+
+            if (SILICONFLOW_API_KEY) {
+              console.log(`ℹ️ Product ${product.id} specs found. Attempting translation...`);
+              try {
+                const prompt = `Translate this JSON from Chinese to Arabic. Translate keys and values. Return JSON only.\n${JSON.stringify(rawSpecs)}`;
+                
+                const translatedJsonStr = await callSiliconFlow([{ role: "user", content: prompt }], 0.2, 350);
+                
+                if (translatedJsonStr) {
+                  const cleanJson = translatedJsonStr.replace(/```json/g, '').replace(/```/g, '').trim();
+                  let translatedSpecs;
+                  try {
+                    translatedSpecs = JSON.parse(cleanJson);
+                  } catch (parseErr) {
+                     console.error(`❌ Failed to parse translated specs JSON for Product ${product.id}:`, parseErr.message);
+                     translatedSpecs = rawSpecs;
+                  }
+                  
+                  console.log(`✅ Translated specs for Product ${product.id}:`, JSON.stringify(translatedSpecs));
+                  
+                  await withRetry(
+                    () => prisma.product.update({
+                      where: { id: product.id },
+                      data: { specs: JSON.stringify(translatedSpecs) }
+                    }),
+                    `update specs ${product.id}`,
+                    mutationRetryCount,
+                    mutationTimeoutMs,
+                    retryBackoffMs
+                  );
+                } else {
+                    console.warn(`⚠️ Translation returned empty for Product ${product.id}. Saving raw specs.`);
+                    await withRetry(
+                      () => prisma.product.update({
+                          where: { id: product.id },
+                          data: { specs: rawSpecsText }
+                      }),
+                      `update specs raw ${product.id}`,
+                      mutationRetryCount,
+                      mutationTimeoutMs,
+                      retryBackoffMs
+                    );
+                }
+              } catch (err) {
+                console.error(`❌ Failed to translate specs for Product ${product.id}:`, err.message);
+                await withRetry(
+                  () => prisma.product.update({
+                    where: { id: product.id },
+                    data: { specs: rawSpecsText }
+                  }),
+                  `update specs fallback ${product.id}`,
+                  mutationRetryCount,
+                  mutationTimeoutMs,
+                  retryBackoffMs
+                );
+              }
+            } else {
+              console.warn(`⚠️ SILICONFLOW_API_KEY missing. Saving raw specs for Product ${product.id}.`);
+              await withRetry(
+                () => prisma.product.update({
+                  where: { id: product.id },
+                  data: { specs: rawSpecsText }
+                }),
+                `update specs raw ${product.id}`,
+                mutationRetryCount,
+                mutationTimeoutMs,
+                retryBackoffMs
+              );
+            }
+          }
+        }
+
+        let mainImage = null;
+        if (product.imagesChecked) {
+          console.log(`ℹ️ Images already checked for Product ${product.id}. Skipping extraction.`);
+        } else {
+          console.log('Checking for images...');
+          const images = await page.evaluate(() => {
+            const container = document.querySelector('.item-main-window-list--od7DK4Fm');
+            if (!container) return [];
+
+            const imgElements = Array.from(container.querySelectorAll('img.fadeInImg--DnykYtf4'));
+            return imgElements.map(img => img.getAttribute('src')).filter(src => src);
+          });
+
+          if (images.length > 0) {
+            const cleanImages = images.map(url => {
+              let clean = url;
+              if (clean.startsWith('//')) clean = 'https:' + clean;
+              return clean.replace(/_\d+x\d+.*$/, '').replace(/\.webp$/, '');
+            });
+
+            mainImage = cleanImages[0];
+
+            console.log(`Found ${cleanImages.length} images. Updating database...`);
+
+            await withRetry(
+              () => prisma.$transaction(async (tx) => {
+                await tx.product.update({
+                  where: { id: product.id },
+                  data: { 
+                    image: mainImage,
+                    imagesChecked: true
+                  }
+                });
+
+                await tx.productImage.deleteMany({
+                  where: { productId: product.id }
+                });
+
+                if (cleanImages.length > 0) {
+                  await tx.productImage.createMany({
+                    data: cleanImages.map((url, index) => ({
+                      productId: product.id,
+                      url: url,
+                      order: index,
+                      type: 'GALLERY'
+                    }))
+                  });
+                }
+              }, {
+                maxWait: 15000,
+                timeout: 60000
+              }),
+              `update images ${product.id}`,
+              mutationRetryCount,
+              mutationTimeoutMs,
+              retryBackoffMs
+            );
+            console.log(`Images updated for Product ${product.id}`);
+          } else {
+            console.log('No images found with the specified selector.');
+            
+            await withRetry(
+              () => prisma.product.update({
+                where: { id: product.id },
+                data: { imagesChecked: true }
+              }),
+              `mark imagesChecked ${product.id}`,
+              mutationRetryCount,
+              mutationTimeoutMs,
+              retryBackoffMs
+            );
+            console.log(`Marked Product ${product.id} as checked (no images found).`);
+          }
+        }
+
+        // Now generate embedding
+        // We need an image URL to embed. Either mainImage we just got, or the product.image from DB.
+        const imageToEmbed = mainImage || product.image;
+        if (imageToEmbed) {
+          console.log(`[Pipeline] Generating embedding for Product ${product.id}...`);
+          try {
+            const embedding = await embedImage(imageToEmbed, null);
+            if (embedding && embedding.length > 0) {
+              const isZero = embedding.every((v) => v === 0);
+              if (isZero) {
+                console.log(`Warning: Zero embedding for product ${product.id}. URL: ${imageToEmbed}`);
+              }
+              const vectorStr = `[${embedding.join(',')}]`;
+              await withRetry(
+                () => prisma.$executeRawUnsafe(`
+                  UPDATE "Product"
+                  SET "imageEmbedding" = $1::vector
+                  WHERE id = $2
+                `, vectorStr, product.id),
+                `update embedding ${product.id}`,
+                mutationRetryCount,
+                mutationTimeoutMs,
+                retryBackoffMs
+              );
+              console.log(`✅ Embedding saved for Product ${product.id}`);
+            } else {
+              console.warn(`⚠️ Failed to generate embedding for Product ${product.id}`);
+            }
+          } catch (embedErr) {
+            console.error(`❌ Embedding error for Product ${product.id}: ${embedErr.message}`);
+          }
+        } else {
+          console.log(`ℹ️ No image available to embed for Product ${product.id}`);
+        }
+      }
+    }, `process product ${product.id}`, productTimeoutMs);
+
+  } catch (error) {
+    console.error(`Error processing Product ${product.id}:`, error.message);
   }
 }
 
 async function run() {
+  console.log("Starting goofish-pipeline run()...");
   const browser = await createBrowser();
+  console.log("Browser created.");
   await ensureDbReady();
+  console.log("DB ready.");
   const translationCache = loadTranslationCache();
   let pendingCacheWrites = 0;
   if (SILICONFLOW_API_KEY) {
@@ -1707,6 +2163,7 @@ async function run() {
 
         let pageIndex = 0;
         let termProcessedCount = 0;
+        const insertedItemsForTerm = [];
 
         while (pageIndex < MAX_PAGES && termProcessedCount < ITEMS_PER_SEARCH) {
           pageIndex += 1;
@@ -1923,7 +2380,16 @@ async function run() {
             if (OUTPUT_JSON) {
               allItems.push(itemData);
             }
-            await saveProductToDb(itemData, existingProduct?.id || null);
+            const dbId = await saveProductToDb(itemData, existingProduct?.id || null);
+            if (dbId) {
+              insertedItemsForTerm.push({
+                id: dbId,
+                url: resolvedUrl,
+                name: titleEn || it.title,
+                imagesChecked: existingProduct?.imagesChecked || false,
+                specs: existingProduct?.specs || null
+              });
+            }
             // Log for debugging
             // console.log(`Processed item: ${itemData.titleEn || itemData.title}`);
             processedCount += 1;
@@ -1969,6 +2435,12 @@ async function run() {
         } else {
           console.log(`[${term}] collected target ${termProcessedCount}/${ITEMS_PER_SEARCH}.`);
         }
+        
+        console.log(`[Pipeline] Now processing details and embeddings for ${insertedItemsForTerm.length} products...`);
+        for (const p of insertedItemsForTerm) {
+            await processProductDetails(page, p);
+        }
+
         updateActiveBatchProgress(batchId, termIndex + 1);
 
         await humanDelay(1400, 2600);
@@ -2186,5 +2658,8 @@ if (UPDATE_EXISTING) {
       await prisma.$disconnect();
     });
 } else {
-  run();
+  run().catch(e => {
+    console.error("Pipeline failed with error:", e);
+    process.exit(1);
+  });
 }

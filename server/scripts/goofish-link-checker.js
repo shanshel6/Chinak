@@ -2,6 +2,7 @@ import puppeteer from 'puppeteer-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import { PrismaClient } from '@prisma/client';
 import fs from 'fs';
+import { promises as fsPromises } from 'fs';
 import path from 'path';
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
@@ -19,8 +20,98 @@ dotenv.config({ path: envPath });
 // Enable stealth mode to avoid detection
 puppeteer.use(StealthPlugin());
 
-const prisma = new PrismaClient();
+const withDbParams = (url) => {
+  if (!url) return '';
+  const parsed = new URL(url);
+  if (!parsed.searchParams.has('connection_limit')) parsed.searchParams.set('connection_limit', '3');
+  if (!parsed.searchParams.has('pool_timeout')) parsed.searchParams.set('pool_timeout', '120');
+  if (!parsed.searchParams.has('connect_timeout')) parsed.searchParams.set('connect_timeout', '20');
+  if (!parsed.searchParams.has('sslmode')) parsed.searchParams.set('sslmode', 'require');
+  return parsed.toString();
+};
+
+const prismaDbUrl = withDbParams(
+  String(process.env.GOOFISH_DATABASE_URL || process.env.DATABASE_URL || '').trim()
+);
+
+const prisma = prismaDbUrl
+  ? new PrismaClient({ datasources: { db: { url: prismaDbUrl } } })
+  : new PrismaClient();
 const SILICONFLOW_API_KEY = String(process.env.SILICONFLOW_API_KEY || '').trim();
+
+const withTimeout = async (promiseFactory, label, timeoutMs = 60000) => {
+  let timer;
+  try {
+    return await Promise.race([
+      promiseFactory(),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+      })
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
+const safeDbDisconnect = async () => {
+  try {
+    await withTimeout(() => prisma.$disconnect(), 'db disconnect', 5000);
+  } catch {}
+};
+
+const safeDbConnect = async () => {
+  try {
+    await withTimeout(() => prisma.$connect(), 'db connect', 10000);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const withRetry = async (run, label, retries = 5, timeoutMs = 60000, backoffMs = 1500) => {
+  let lastError;
+  for (let i = 1; i <= retries; i++) {
+    try {
+      return await withTimeout(run, label, timeoutMs);
+    } catch (error) {
+      lastError = error;
+      const msg = String(error?.message || '');
+      const retryable = msg.includes('Timed out fetching a new connection from the connection pool')
+        || msg.includes("Can't reach database server")
+        || msg.includes('timed out after')
+        || msg.includes('Server has closed the connection')
+        || String(error?.code || '') === 'P2024'
+        || String(error?.code || '') === 'P1017'
+        || String(error?.code || '') === 'P1001';
+      if (!retryable || i === retries) break;
+      console.warn(`${label} failed (attempt ${i}/${retries}), retrying... ${msg}`);
+      await safeDbDisconnect();
+      await new Promise((r) => setTimeout(r, backoffMs * i));
+      await safeDbConnect();
+    }
+  }
+  throw lastError;
+};
+
+const toErrorText = (error) => String(error?.message || error || 'unknown error');
+const toErrorCode = (error) => String(error?.code || '');
+
+const waitForDbReady = async (maxWaitMs, retryCount, timeoutMs, backoffMs) => {
+  const start = Date.now();
+  const infiniteWait = maxWaitMs <= 0;
+  while (infiniteWait || (Date.now() - start < maxWaitMs)) {
+    try {
+      await withRetry(() => prisma.$connect(), 'connect', retryCount, timeoutMs, backoffMs);
+      await withRetry(() => prisma.$queryRawUnsafe('SELECT 1'), 'db ping', retryCount, timeoutMs, backoffMs);
+      return true;
+    } catch (error) {
+      const msg = String(error?.message || '');
+      console.warn(`Database not ready, retrying... ${msg}`);
+      await new Promise((r) => setTimeout(r, 5000));
+    }
+  }
+  return false;
+};
 
 // Indicators that a product is gone
 const UNAVAILABLE_KEYWORDS = [
@@ -39,28 +130,38 @@ const UNAVAILABLE_KEYWORDS = [
 async function callSiliconFlow(messages, temperature = 0.3, maxTokens = 500) {
   const apiKey = SILICONFLOW_API_KEY;
   if (!apiKey) return null;
-  try {
-    const response = await axios.post('https://api.siliconflow.com/v1/chat/completions', {
-      model: "Qwen/Qwen2.5-7B-Instruct",
-      messages,
-      temperature,
-      max_tokens: maxTokens,
-      stream: false
-    }, {
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
-      },
-      timeout: 30000
-    });
-    return response.data.choices[0].message.content.trim();
-  } catch (error) {
-    console.error('SiliconFlow API Error:', error.message);
-    if (error.response) {
+  const timeoutMs = Math.max(1000, Number.parseInt(process.env.SILICONFLOW_TIMEOUT_MS || '60000', 10) || 60000);
+  const retries = Math.max(1, Number.parseInt(process.env.SILICONFLOW_RETRY_COUNT || '3', 10) || 3);
+  const backoffMs = Math.max(200, Number.parseInt(process.env.SILICONFLOW_RETRY_BACKOFF_MS || '2000', 10) || 2000);
+  let lastError;
+  for (let i = 1; i <= retries; i++) {
+    try {
+      const response = await axios.post('https://api.siliconflow.com/v1/chat/completions', {
+        model: "Qwen/Qwen2.5-7B-Instruct",
+        messages,
+        temperature,
+        max_tokens: maxTokens,
+        stream: false
+      }, {
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        },
+        timeout: timeoutMs
+      });
+      return response.data.choices[0].message.content.trim();
+    } catch (error) {
+      lastError = error;
+      console.error(`SiliconFlow API Error (attempt ${i}/${retries}):`, error.message);
+      if (error.response) {
         console.error('Response data:', error.response.data);
+      }
+      if (i < retries) {
+        await new Promise((r) => setTimeout(r, backoffMs * i));
+      }
     }
-    return null;
   }
+  return null;
 }
 
 function askQuestion(query) {
@@ -74,6 +175,40 @@ function askQuestion(query) {
   }));
 }
 
+async function readProgress(progressFilePath) {
+  try {
+    const raw = await fsPromises.readFile(progressFilePath, 'utf8');
+    const data = JSON.parse(raw);
+    const lastId = Number.parseInt(String(data?.lastId ?? '0'), 10) || 0;
+    return { lastId };
+  } catch {
+    return { lastId: 0 };
+  }
+}
+
+async function writeProgress(progressFilePath, progress) {
+  const dir = path.dirname(progressFilePath);
+  await fsPromises.mkdir(dir, { recursive: true });
+
+  const tmpPath = `${progressFilePath}.tmp`;
+  const payload = JSON.stringify(
+    {
+      lastId: progress.lastId,
+      updatedAt: new Date().toISOString(),
+    },
+    null,
+    2
+  );
+
+  await fsPromises.writeFile(tmpPath, payload, 'utf8');
+  try {
+    await fsPromises.rename(tmpPath, progressFilePath);
+  } catch {
+    try { await fsPromises.unlink(progressFilePath); } catch {}
+    await fsPromises.rename(tmpPath, progressFilePath);
+  }
+}
+
 async function checkGoofishLinks() {
   console.log('Starting Goofish link checker & image updater...');
   if (SILICONFLOW_API_KEY) {
@@ -82,10 +217,56 @@ async function checkGoofishLinks() {
       console.warn('AI Translation DISABLED. No API Key found.');
   }
 
-  const startInput = await askQuestion('Start from Product ID (press Enter for beginning): ');
-  const startId = startInput ? parseInt(startInput.trim(), 10) : 0;
+  const progressFilePath = path.resolve(process.env.GOOFISH_PROGRESS_FILE || 'goofish-checker-progress.json');
+  const resumeProgress = await readProgress(progressFilePath);
+  const noPrompt = String(process.env.GOOFISH_NO_PROMPT || '').trim() === '1';
+
+  let startIdRaw = 0;
+  if (!noPrompt && resumeProgress.lastId <= 0) {
+    const startInput = await askQuestion('Start from Product ID (press Enter for beginning): ');
+    startIdRaw = startInput ? parseInt(startInput.trim(), 10) : 0;
+  }
+  const startId = Math.max(startIdRaw || 0, resumeProgress.lastId || 0);
 
   console.log(`Starting check from Product ID: ${startId || 'Beginning'}`);
+
+  const queryTimeoutMs = Math.max(1000, Number.parseInt(process.env.GOOFISH_QUERY_TIMEOUT_MS || '90000', 10) || 90000);
+  const updateTimeoutMs = Math.max(1000, Number.parseInt(process.env.GOOFISH_UPDATE_TIMEOUT_MS || '180000', 10) || 180000);
+  const retryCount = Math.max(1, Number.parseInt(process.env.GOOFISH_RETRY_COUNT || '5', 10) || 5);
+  const retryBackoffMs = Math.max(200, Number.parseInt(process.env.GOOFISH_RETRY_BACKOFF_MS || '2000', 10) || 2000);
+  const batchSize = Math.max(1, Number.parseInt(process.env.GOOFISH_BATCH_SIZE || '50', 10) || 50);
+  const idScanBatch = Math.max(1, Number.parseInt(process.env.GOOFISH_ID_SCAN_BATCH || '300', 10) || 300);
+  const reconnectEveryBatch = String(process.env.GOOFISH_RECONNECT_EVERY_BATCH || '0').trim() === '1';
+  const dbWaitMs = Math.max(1000, Number.parseInt(process.env.GOOFISH_DB_WAIT_MS || '300000', 10) || 300000);
+  const heartbeatMs = Math.max(5000, Number.parseInt(process.env.GOOFISH_HEARTBEAT_MS || '30000', 10) || 30000);
+  const productTimeoutMs = Math.max(30000, Number.parseInt(process.env.GOOFISH_PRODUCT_TIMEOUT_MS || '180000', 10) || 180000);
+  const mutationTimeoutMs = Math.max(3000, Number.parseInt(process.env.GOOFISH_MUTATION_TIMEOUT_MS || '12000', 10) || 12000);
+  const mutationRetryCount = Math.max(1, Number.parseInt(process.env.GOOFISH_MUTATION_RETRY_COUNT || '1', 10) || 1);
+  const fetchTimeoutMs = Math.max(5000, Number.parseInt(process.env.GOOFISH_FETCH_TIMEOUT_MS || '20000', 10) || 20000);
+  const fetchRetryCount = Math.max(1, Number.parseInt(process.env.GOOFISH_FETCH_RETRY_COUNT || '1', 10) || 1);
+  const newOrOldTimeoutMs = Math.max(5000, Number.parseInt(process.env.GOOFISH_NEWOROLD_TIMEOUT_MS || '20000', 10) || 20000);
+  const newOrOldRetryCount = Math.max(1, Number.parseInt(process.env.GOOFISH_NEWOROLD_RETRY_COUNT || '2', 10) || 2);
+  const statementTimeoutMs = Math.max(5000, Number.parseInt(process.env.GOOFISH_DB_STATEMENT_TIMEOUT_MS || String(Math.max(fetchTimeoutMs, newOrOldTimeoutMs, mutationTimeoutMs)), 10) || Math.max(fetchTimeoutMs, newOrOldTimeoutMs, mutationTimeoutMs));
+  let currentLastId = startId || 0;
+  const heartbeat = setInterval(async () => {
+    try { await writeProgress(progressFilePath, { lastId: currentLastId }); } catch {}
+  }, heartbeatMs);
+
+  const dbReady = await waitForDbReady(dbWaitMs, retryCount, queryTimeoutMs, retryBackoffMs);
+  if (!dbReady) {
+    console.error('Database was not reachable within the wait window. Exiting.');
+    await safeDbDisconnect();
+    clearInterval(heartbeat);
+    return;
+  }
+
+  await withRetry(
+    () => prisma.$executeRawUnsafe(`SET statement_timeout TO ${statementTimeoutMs}`),
+    'set statement_timeout',
+    retryCount,
+    Math.max(fetchTimeoutMs, mutationTimeoutMs, newOrOldTimeoutMs, 10000),
+    retryBackoffMs
+  );
 
   const goofishWhere = {
     isActive: true,
@@ -102,82 +283,17 @@ async function checkGoofishLinks() {
     ]
   };
 
-  if (startId > 0) {
-    goofishWhere.id = { gte: startId };
-  }
-
-  let totalProducts = 0;
-  let retryCount = 0;
-  const maxRetries = 3;
-
-  while (retryCount < maxRetries) {
-    try {
-      totalProducts = await prisma.product.count({ where: goofishWhere });
-      break; // Success, exit retry loop
-    } catch (error) {
-      if (error?.code === 'P1001' || error?.code === 'P1017') {
-        retryCount++;
-        console.warn(`Database connection error (attempt ${retryCount}/${maxRetries}). Retrying in 5 seconds...`);
-        await new Promise(resolve => setTimeout(resolve, 5000));
-      } else {
-        throw error;
-      }
-    }
-  }
-
-  if (retryCount >= maxRetries) {
-    console.error('Failed to connect to the database after multiple attempts. Exiting.');
-    await prisma.$disconnect();
-    process.exit(1);
-  }
-  
-  if (totalProducts === 0) {
-    console.log('No products found to check.');
-    await prisma.$disconnect();
-    return;
-  }
-
-  // 1. Get active Goofish/Xianyu products starting from startId
-  let products = [];
-  retryCount = 0;
-  
-  while (retryCount < maxRetries) {
-    try {
-      products = await prisma.product.findMany({
-        where: goofishWhere,
-        orderBy: { id: 'asc' },
-        select: {
-          id: true,
-          name: true,
-          purchaseUrl: true,
-          imagesChecked: true,
-          specs: true
-        }
-      });
-      break; // Success, exit retry loop
-    } catch (error) {
-      if (error?.code === 'P1001' || error?.code === 'P1017') {
-        retryCount++;
-        console.warn(`Database connection error while fetching products (attempt ${retryCount}/${maxRetries}). Retrying in 5 seconds...`);
-        await new Promise(resolve => setTimeout(resolve, 5000));
-      } else {
-        throw error;
-      }
-    }
-  }
-
-  if (retryCount >= maxRetries) {
-    console.error('Failed to fetch products from the database after multiple attempts. Exiting.');
-    await prisma.$disconnect();
-    process.exit(1);
-  }
-
-  console.log(`Found ${products.length} active Goofish/Xianyu products to check.`);
-
-  if (products.length === 0) {
-    console.log('No products to check.');
-    await prisma.$disconnect();
-    return;
+  let totalProducts = null;
+  try {
+    totalProducts = await withRetry(
+      () => prisma.product.count({ where: goofishWhere }),
+      'count products',
+      retryCount,
+      queryTimeoutMs,
+      retryBackoffMs
+    );
+  } catch {
+    console.warn('Failed to count products. Continuing without total.');
   }
 
   // 2. Launch Browser
@@ -217,29 +333,28 @@ async function checkGoofishLinks() {
     ]
   });
 
+  const configurePage = async (targetPage) => {
+    const width = 1920 + Math.floor(Math.random() * 100) - 50;
+    const height = 1080 + Math.floor(Math.random() * 100) - 50;
+    await targetPage.setViewport({ width, height });
+    await targetPage.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
+    await targetPage.setExtraHTTPHeaders({
+      'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+      'Cache-Control': 'max-age=0',
+      'Upgrade-Insecure-Requests': '1'
+    });
+    await targetPage.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+      Object.defineProperty(navigator, 'language', { get: () => 'zh-CN' });
+      Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh', 'en'] });
+      Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
+      window.chrome = { runtime: {} };
+    });
+  };
+
   const pages = await browser.pages();
-  const page = pages.length > 0 ? pages[0] : await browser.newPage();
-  
-  // Randomize Viewport slightly
-  const width = 1920 + Math.floor(Math.random() * 100) - 50;
-  const height = 1080 + Math.floor(Math.random() * 100) - 50;
-  await page.setViewport({ width, height });
-
-  // Rotate User Agent
-  await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
-
-  await page.setExtraHTTPHeaders({
-    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-    'Cache-Control': 'max-age=0',
-    'Upgrade-Insecure-Requests': '1'
-  });
-  await page.evaluateOnNewDocument(() => {
-    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-    Object.defineProperty(navigator, 'language', { get: () => 'zh-CN' });
-    Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh', 'en'] });
-    Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
-    window.chrome = { runtime: {} };
-  });
+  let page = pages.length > 0 ? pages[0] : await browser.newPage();
+  await configurePage(page);
 
   console.log('Browser launched. Processing products...');
 
@@ -248,160 +363,284 @@ async function checkGoofishLinks() {
   let unavailableCount = 0;
 
   try {
-    for (const product of products) {
+    let lastId = startId > 0 ? startId - 1 : 0;
+    while (true) {
+      const batchWhere = {
+        ...goofishWhere,
+        id: { gt: lastId }
+      };
+      if (reconnectEveryBatch) {
+        await safeDbDisconnect();
+        await withRetry(() => prisma.$connect(), 'reconnect', retryCount, fetchTimeoutMs, retryBackoffMs);
+      }
+
+      let products = [];
+      try {
+        products = await withRetry(
+          () => prisma.product.findMany({
+            where: batchWhere,
+            orderBy: { id: 'asc' },
+            take: batchSize,
+            select: {
+              id: true,
+              name: true,
+              purchaseUrl: true,
+              imagesChecked: true,
+              specs: true
+            }
+          }),
+          'fetch products batch',
+          fetchRetryCount,
+          fetchTimeoutMs,
+          retryBackoffMs
+        );
+      } catch (error) {
+        console.warn(`Batch fetch primary error (code=${toErrorCode(error) || 'n/a'}): ${toErrorText(error)}`);
+        try {
+          await withRetry(
+            () => prisma.$queryRawUnsafe('SELECT 1'),
+            'db probe after batch fetch failure',
+            1,
+            5000,
+            500
+          );
+          console.warn('DB probe after batch fetch failure: OK');
+        } catch (probeError) {
+          console.warn(`DB probe after batch fetch failure: FAILED (code=${toErrorCode(probeError) || 'n/a'}) ${toErrorText(probeError)}`);
+        }
+        console.warn(`Batch fetch failed. Falling back to id-scan after id ${lastId}.`);
+        await safeDbDisconnect();
+        try {
+          await withRetry(
+            () => prisma.$connect(),
+            'reconnect after batch fetch failure',
+            2,
+            10000,
+            1000
+          );
+        } catch {}
+        try {
+          const idRows = await withRetry(
+            () => prisma.$queryRawUnsafe(
+              `SELECT id FROM "Product" WHERE id > ${lastId} AND "isActive" = true ORDER BY id ASC LIMIT ${idScanBatch}`
+            ),
+            'fetch id scan',
+            fetchRetryCount,
+            fetchTimeoutMs,
+            retryBackoffMs
+          );
+          const ids = Array.isArray(idRows) ? idRows.map((r) => r.id).filter(Boolean) : [];
+          if (ids.length > 0) {
+            products = await withRetry(
+              () => prisma.product.findMany({
+                where: {
+                  id: { in: ids },
+                  isActive: true
+                },
+                orderBy: { id: 'asc' },
+                select: {
+                  id: true,
+                  name: true,
+                  purchaseUrl: true,
+                  imagesChecked: true,
+                  specs: true
+                }
+              }),
+              'fetch products by ids',
+              fetchRetryCount,
+              fetchTimeoutMs,
+              retryBackoffMs
+            );
+            products = products.filter((p) =>
+              p.purchaseUrl && (p.purchaseUrl.includes('goofish.com') || p.purchaseUrl.includes('xianyu.com')) && !p.purchaseUrl.includes('taobao.com')
+            );
+          }
+        } catch (singleError) {
+          console.warn(`Id-scan fetch failed. Skipping product id ${lastId + 1} and continuing.`);
+          lastId += 1;
+          try { await writeProgress(progressFilePath, { lastId }); } catch {}
+          continue;
+        }
+      }
+      if (!products.length) break;
+      lastId = products[products.length - 1].id;
+
+      for (const product of products) {
+      const resumeLastId = Math.max(0, Number(product.id) - 1);
+      currentLastId = resumeLastId;
+      try { await writeProgress(progressFilePath, { lastId: resumeLastId }); } catch {}
       processedCount++;
-      console.log(`\n[${processedCount}/${totalProducts}] Checking Product ID ${product.id}: ${product.name},`);
+      const totalLabel = totalProducts ? `${processedCount}/${totalProducts}` : `${processedCount}`;
+      console.log(`\n[${totalLabel}] Checking Product ID ${product.id}: ${product.name},`);
       console.log(`URL: \`${product.purchaseUrl}\``);
 
       if (!product.purchaseUrl) {
         console.log(`⚠️ No purchase URL for Product ${product.id}. Skipping.`);
+        currentLastId = Number(product.id) || currentLastId;
+        try { await writeProgress(progressFilePath, { lastId: product.id }); } catch {}
         continue;
       }
 
       try {
-        await page.goto(product.purchaseUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+        await withTimeout(async () => {
+          await page.goto(product.purchaseUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
         
-        // Random delay to mimic human behavior
-        const delay = Math.floor(Math.random() * 1500) + 1000;
-        await new Promise(r => setTimeout(r, delay));
+          const delay = Math.floor(Math.random() * 1500) + 1000;
+          await new Promise(r => setTimeout(r, delay));
 
-        // Check for unavailability keywords
-        const pageContent = await page.evaluate(() => document.body.innerText);
-        const title = await page.title();
+          const pageContent = await page.evaluate(() => document.body.innerText);
+          const title = await page.title();
         
-        let isUnavailable = false;
-        let unavailableReason = '';
+          let isUnavailable = false;
+          let unavailableReason = '';
 
-        for (const keyword of UNAVAILABLE_KEYWORDS) {
-          if (pageContent.includes(keyword) || title.includes(keyword)) {
-            isUnavailable = true;
-            unavailableReason = keyword;
-            break;
-          }
-        }
-
-        // Also check if redirected to login or error page (simple check)
-        if (page.url().includes('login.taobao.com') || page.url().includes('login.tmall.com')) {
-           // Login required isn't necessarily unavailable, but we can't check it.
-           // For now, let's log a warning and skip updating status.
-           console.warn('⚠️ Redirected to login page. Cannot verify status accurately. Skipping.');
-           continue;
-        }
-
-        if (isUnavailable) {
-          console.log(`❌ Product ${product.id} is UNAVAILABLE. Reason: Found keyword: ${unavailableReason}`);
-          
-          await prisma.product.update({
-            where: { id: product.id },
-            data: { isActive: false }
-          });
-          unavailableCount++;
-        } else {
-          console.log(`✅ Product ${product.id} is AVAILABLE.`);
-          
-          // --- NEW/USED DETECTION ---
-        const newOrOldStatus = await page.evaluate(() => {
-          try {
-            // 1. Check for specific images indicating status
-            const images = Array.from(document.querySelectorAll('img'));
-            const newImgUrl = 'https://gw.alicdn.com/imgextra/i3/O1CN015hOhg21hTpVIveeDA_!!6000000004279-2-tps-252-60.png';
-            const usedImgUrl = 'https://gw.alicdn.com/imgextra/i4/O1CN01MQosre1EmUmuzzD3k_!!6000000000394-2-tps-252-60.png';
-            const almostNewImgUrl = 'https://gw.alicdn.com/imgextra/i3/O1CN01yU5CER1wslIj9m7bv_!!6000000006364-2-tps-252-60.png';
-
-            const hasNewImg = images.some(img => img.src === newImgUrl);
-            const hasUsedImg = images.some(img => img.src === usedImgUrl);
-            const hasAlmostNewImg = images.some(img => img.src === almostNewImgUrl);
-
-            if (hasNewImg) return true; // New
-            if (hasUsedImg || hasAlmostNewImg) return false; // Used
-
-            // 2. Check text indicators in labels
-            const labels = Array.from(document.querySelectorAll('.item--qI9ENIfp'));
-            for (const label of labels) {
-              const labelText = label.querySelector('.label--ejJeaTRV')?.innerText || '';
-              const valueText = label.querySelector('.value--EyQBSInp')?.innerText || '';
-              
-              if (labelText.includes('成色')) {
-                if (valueText.includes('全新')) return true;
-                if (valueText.includes('使用痕迹') || valueText.includes('二手') || valueText.includes('闲置') || valueText.includes('有磨损') || valueText.includes('有划痕')) return false;
-              }
+          for (const keyword of UNAVAILABLE_KEYWORDS) {
+            if (pageContent.includes(keyword) || title.includes(keyword)) {
+              isUnavailable = true;
+              unavailableReason = keyword;
+              break;
             }
-
-            // 3. Check description text for keywords
-            const desc = document.querySelector('.desc--GaIUKUQY')?.innerText || '';
-            if (desc.includes('全新') && !desc.includes('部分全新') && !desc.includes('99新')) return true;
-            if (desc.includes('使用痕迹') || desc.includes('二手') || desc.includes('闲置')) return false;
-
-            return null; // Could not determine
-          } catch (e) {
-            return null;
           }
-        });
 
-        if (newOrOldStatus !== null) {
-          console.log(`ℹ️ Product ${product.id} detected as ${newOrOldStatus ? 'NEW' : 'USED'}. Updating...`);
-          try {
-            await prisma.$executeRaw`
-              UPDATE "Product" 
-              SET "neworold" = ${newOrOldStatus} 
-              WHERE "id" = ${product.id}
-            `;
-          } catch (updateErr) {
-            console.error(`Error updating neworold for Product ${product.id}:`, updateErr.message);
+          if (page.url().includes('login.taobao.com') || page.url().includes('login.tmall.com')) {
+            console.warn('⚠️ Redirected to login page. Cannot verify status accurately. Skipping.');
+            currentLastId = Number(product.id) || currentLastId;
+            try { await writeProgress(progressFilePath, { lastId: product.id }); } catch {}
+            return;
           }
-        }
 
-        // --- SPECS EXTRACTION ---
-        if (product.specs && product.specs !== 'null') {
-          console.log(`ℹ️ Specs already exist for Product ${product.id}. Skipping extraction.`);
-        } else {
-          const rawSpecs = await page.evaluate(() => {
-            try {
-              const labels = Array.from(document.querySelectorAll('.labels--ndhPFgp8 .item--qI9ENIfp'));
-              const specs = {};
+          if (isUnavailable) {
+            console.log(`❌ Product ${product.id} is UNAVAILABLE. Reason: Found keyword: ${unavailableReason}`);
+          
+            await withRetry(
+              () => prisma.product.update({
+                where: { id: product.id },
+                data: { isActive: false }
+              }),
+              `update isActive ${product.id}`,
+              mutationRetryCount,
+              mutationTimeoutMs,
+              retryBackoffMs
+            );
+            unavailableCount++;
+          } else {
+            console.log(`✅ Product ${product.id} is AVAILABLE.`);
+          
+            const newOrOldStatus = await page.evaluate(() => {
+              try {
+                const images = Array.from(document.querySelectorAll('img'));
+                const newImgUrl = 'https://gw.alicdn.com/imgextra/i3/O1CN015hOhg21hTpVIveeDA_!!6000000004279-2-tps-252-60.png';
+                const usedImgUrl = 'https://gw.alicdn.com/imgextra/i4/O1CN01MQosre1EmUmuzzD3k_!!6000000000394-2-tps-252-60.png';
+                const almostNewImgUrl = 'https://gw.alicdn.com/imgextra/i3/O1CN01yU5CER1wslIj9m7bv_!!6000000006364-2-tps-252-60.png';
+
+                const hasNewImg = images.some(img => img.src === newImgUrl);
+                const hasUsedImg = images.some(img => img.src === usedImgUrl);
+                const hasAlmostNewImg = images.some(img => img.src === almostNewImgUrl);
+
+                if (hasNewImg) return true;
+                if (hasUsedImg || hasAlmostNewImg) return false;
+
+                const labels = Array.from(document.querySelectorAll('.item--qI9ENIfp'));
+                for (const label of labels) {
+                  const labelText = label.querySelector('.label--ejJeaTRV')?.innerText || '';
+                  const valueText = label.querySelector('.value--EyQBSInp')?.innerText || '';
               
-              for (const item of labels) {
-                // Extract label key: Remove invisible chars, newlines, and colons
-                const labelEl = item.querySelector('.label--ejJeaTRV');
-                if (!labelEl) continue;
-                
-                // Get text content recursively but ignore hidden structural divs if possible, 
-                // or just clean up the text which is usually split into divs like <div><div>品</div></div><div><div>牌</div></div>
-                let key = labelEl.innerText.replace(/[\n\r\s：:]/g, '').trim();
-                
-                // Extract value
-                const valueEl = item.querySelector('.value--EyQBSInp');
-                if (!valueEl) continue;
-                let value = valueEl.innerText.trim();
-                
-                if (key && value) {
-                  specs[key] = value;
+                  if (labelText.includes('成色')) {
+                    if (valueText.includes('全新')) return true;
+                    if (valueText.includes('使用痕迹') || valueText.includes('二手') || valueText.includes('闲置') || valueText.includes('有磨损') || valueText.includes('有划痕')) return false;
+                  }
+                }
+
+                const desc = document.querySelector('.desc--GaIUKUQY')?.innerText || '';
+                if (desc.includes('全新') && !desc.includes('部分全新') && !desc.includes('99新')) return true;
+                if (desc.includes('使用痕迹') || desc.includes('二手') || desc.includes('闲置')) return false;
+
+                return null;
+              } catch (e) {
+                return null;
+              }
+            });
+
+            if (newOrOldStatus !== null) {
+              console.log(`ℹ️ Product ${product.id} detected as ${newOrOldStatus ? 'NEW' : 'USED'}. Updating...`);
+              try {
+                await withRetry(
+                  () => prisma.product.update({
+                    where: { id: product.id },
+                    data: { neworold: newOrOldStatus }
+                  }),
+                  `update neworold ${product.id}`,
+                  newOrOldRetryCount,
+                  newOrOldTimeoutMs,
+                  retryBackoffMs
+                );
+              } catch (updateErr) {
+                console.error(`Error updating neworold for Product ${product.id} (code=${toErrorCode(updateErr) || 'n/a'}): ${toErrorText(updateErr)}`);
+                const updateErrText = toErrorText(updateErr);
+                const updateErrCode = toErrorCode(updateErr);
+                if (
+                  updateErrText.includes('Server has closed the connection')
+                  || updateErrText.includes("Can't reach database server")
+                  || updateErrText.includes('timed out after')
+                  || updateErrCode === 'P1017'
+                  || updateErrCode === 'P1001'
+                ) {
+                  await safeDbDisconnect();
+                  try {
+                    await withRetry(
+                      () => prisma.$connect(),
+                      'reconnect after neworold failure',
+                      2,
+                      10000,
+                      1000
+                    );
+                  } catch {}
                 }
               }
-              
-              return Object.keys(specs).length > 0 ? specs : null;
-            } catch (e) {
-              return null;
             }
-          });
 
-          if (rawSpecs) {
-            console.log(`ℹ️ Found specs for Product ${product.id}:`, JSON.stringify(rawSpecs));
+            if (product.specs && product.specs !== 'null') {
+              console.log(`ℹ️ Specs already exist for Product ${product.id}. Skipping extraction.`);
+            } else {
+              const rawSpecs = await page.evaluate(() => {
+                try {
+                  const labels = Array.from(document.querySelectorAll('.labels--ndhPFgp8 .item--qI9ENIfp'));
+                  const specs = {};
+              
+                  for (const item of labels) {
+                    const labelEl = item.querySelector('.label--ejJeaTRV');
+                    if (!labelEl) continue;
+                
+                    let key = labelEl.innerText.replace(/[\n\r\s：:]/g, '').trim();
+                
+                    const valueEl = item.querySelector('.value--EyQBSInp');
+                    if (!valueEl) continue;
+                    let value = valueEl.innerText.trim();
+                
+                    if (key && value) {
+                      specs[key] = value;
+                    }
+                  }
+              
+                  return Object.keys(specs).length > 0 ? specs : null;
+                } catch (e) {
+                  return null;
+                }
+              });
+
+              if (rawSpecs) {
+                console.log(`ℹ️ Found specs for Product ${product.id}:`, JSON.stringify(rawSpecs));
             
-            const rawSpecsText = JSON.stringify(rawSpecs);
-            // Relaxed check: always try to translate if key exists, or assume Chinese if unsure
-            // const containsChinese = /[\u4e00-\u9fff]/.test(rawSpecsText);
-            const containsChinese = true; // FORCE translation attempt for now to debug
+                const rawSpecsText = JSON.stringify(rawSpecs);
+                const containsChinese = true;
 
-            // Debug log to confirm flow
-            console.log(`[DEBUG] Product ${product.id} - API Key Present: ${!!SILICONFLOW_API_KEY}, Contains Chinese: ${containsChinese}`);
+                console.log(`[DEBUG] Product ${product.id} - API Key Present: ${!!SILICONFLOW_API_KEY}, Contains Chinese: ${containsChinese}`);
 
-            if (SILICONFLOW_API_KEY) {
+                if (SILICONFLOW_API_KEY) {
                   console.log(`ℹ️ Product ${product.id} specs found. Attempting translation...`);
                   try {
                     const prompt = `Translate this JSON from Chinese to Arabic. Translate keys and values. Return JSON only.\n${JSON.stringify(rawSpecs)}`;
                     
-                    // Increased tokens slightly
                     const translatedJsonStr = await callSiliconFlow([{ role: "user", content: prompt }], 0.2, 350);
                     
                     if (translatedJsonStr) {
@@ -416,112 +655,146 @@ async function checkGoofishLinks() {
                       
                       console.log(`✅ Translated specs for Product ${product.id}:`, JSON.stringify(translatedSpecs));
                       
-                      await prisma.product.update({
-                        where: { id: product.id },
-                        data: { specs: JSON.stringify(translatedSpecs) }
-                      });
+                      await withRetry(
+                        () => prisma.product.update({
+                          where: { id: product.id },
+                          data: { specs: JSON.stringify(translatedSpecs) }
+                        }),
+                        `update specs ${product.id}`,
+                        mutationRetryCount,
+                        mutationTimeoutMs,
+                        retryBackoffMs
+                      );
                     } else {
                         console.warn(`⚠️ Translation returned empty for Product ${product.id}. Saving raw specs.`);
-                        await prisma.product.update({
-                            where: { id: product.id },
-                            data: { specs: rawSpecsText }
-                        });
+                        await withRetry(
+                          () => prisma.product.update({
+                              where: { id: product.id },
+                              data: { specs: rawSpecsText }
+                          }),
+                          `update specs raw ${product.id}`,
+                          mutationRetryCount,
+                          mutationTimeoutMs,
+                          retryBackoffMs
+                        );
                     }
                   } catch (err) {
                     console.error(`❌ Failed to translate specs for Product ${product.id}:`, err.message);
-                    await prisma.product.update({
+                    await withRetry(
+                      () => prisma.product.update({
                         where: { id: product.id },
                         data: { specs: rawSpecsText }
-                    });
+                      }),
+                      `update specs fallback ${product.id}`,
+                      mutationRetryCount,
+                      mutationTimeoutMs,
+                      retryBackoffMs
+                    );
                   }
-            } else {
-              console.warn(`⚠️ SILICONFLOW_API_KEY missing. Saving raw specs for Product ${product.id}.`);
-              await prisma.product.update({
-                where: { id: product.id },
-                data: { specs: rawSpecsText }
-              });
+                } else {
+                  console.warn(`⚠️ SILICONFLOW_API_KEY missing. Saving raw specs for Product ${product.id}.`);
+                  await withRetry(
+                    () => prisma.product.update({
+                      where: { id: product.id },
+                      data: { specs: rawSpecsText }
+                    }),
+                    `update specs raw ${product.id}`,
+                    mutationRetryCount,
+                    mutationTimeoutMs,
+                    retryBackoffMs
+                  );
+                }
+              }
             }
-          }
-        }
 
-        // --- IMAGE EXTRACTION ---
-        if (product.imagesChecked) {
-            console.log(`ℹ️ Images already checked for Product ${product.id}. Skipping extraction.`);
-        } else {
-            console.log('Checking for images...');
-            const images = await page.evaluate(() => {
-            // Selector provided by user
-            const container = document.querySelector('.item-main-window-list--od7DK4Fm');
-            if (!container) return [];
+            if (product.imagesChecked) {
+              console.log(`ℹ️ Images already checked for Product ${product.id}. Skipping extraction.`);
+            } else {
+              console.log('Checking for images...');
+              const images = await page.evaluate(() => {
+                const container = document.querySelector('.item-main-window-list--od7DK4Fm');
+                if (!container) return [];
 
-            const imgElements = Array.from(container.querySelectorAll('img.fadeInImg--DnykYtf4'));
-            return imgElements.map(img => img.getAttribute('src')).filter(src => src);
-            });
+                const imgElements = Array.from(container.querySelectorAll('img.fadeInImg--DnykYtf4'));
+                return imgElements.map(img => img.getAttribute('src')).filter(src => src);
+              });
 
-            if (images.length > 0) {
-                // Clean URLs
+              if (images.length > 0) {
                 const cleanImages = images.map(url => {
-                    let clean = url;
-                    if (clean.startsWith('//')) clean = 'https:' + clean;
-                    // Remove resizing suffix like _220x10000Q90.jpg_.webp to get full size
-                    return clean.replace(/_\d+x\d+.*$/, '').replace(/\.webp$/, '');
+                  let clean = url;
+                  if (clean.startsWith('//')) clean = 'https:' + clean;
+                  return clean.replace(/_\d+x\d+.*$/, '').replace(/\.webp$/, '');
                 });
 
-                // Use the first image as the main image
                 const mainImage = cleanImages[0];
 
                 console.log(`Found ${cleanImages.length} images. Updating database...`);
 
-                // Transaction to update product and replace gallery images
-                await prisma.$transaction(async (tx) => {
-                    // 1. Update main product image and mark imagesChecked as true
+                await withRetry(
+                  () => prisma.$transaction(async (tx) => {
                     await tx.product.update({
-                        where: { id: product.id },
-                        data: { 
-                            image: mainImage,
-                            imagesChecked: true
-                        }
+                      where: { id: product.id },
+                      data: { 
+                        image: mainImage,
+                        imagesChecked: true
+                      }
                     });
 
-                    // 2. Delete existing gallery images to avoid duplicates
                     await tx.productImage.deleteMany({
-                        where: { productId: product.id }
+                      where: { productId: product.id }
                     });
 
-                    // 3. Insert new gallery images
                     if (cleanImages.length > 0) {
-                        await tx.productImage.createMany({
-                            data: cleanImages.map((url, index) => ({
-                                productId: product.id,
-                                url: url,
-                                order: index,
-                                type: 'GALLERY'
-                            }))
-                        });
+                      await tx.productImage.createMany({
+                        data: cleanImages.map((url, index) => ({
+                          productId: product.id,
+                          url: url,
+                          order: index,
+                          type: 'GALLERY'
+                        }))
+                      });
                     }
-                }, {
-                    maxWait: 5000, // default: 2000
-                    timeout: 10000 // default: 5000
-                });
+                  }, {
+                    maxWait: 15000,
+                    timeout: 60000
+                  }),
+                  `update images ${product.id}`,
+                  mutationRetryCount,
+                  mutationTimeoutMs,
+                  retryBackoffMs
+                );
                 updatedCount++;
                 console.log(`Images updated for Product ${product.id}`);
-            } else {
+              } else {
                 console.log('No images found with the specified selector.');
-                // Mark checked even if no images found to avoid re-checking empty ones repeatedly?
-                // For now, let's only mark if we actually found something, or maybe we should mark it anyway?
-                // User said "mark that product so you won't add imgs again", implying we should mark it as processed.
                 
-                await prisma.product.update({
+                await withRetry(
+                  () => prisma.product.update({
                     where: { id: product.id },
                     data: { imagesChecked: true }
-                });
+                  }),
+                  `mark imagesChecked ${product.id}`,
+                  mutationRetryCount,
+                  mutationTimeoutMs,
+                  retryBackoffMs
+                );
                 console.log(`Marked Product ${product.id} as checked (no images found).`);
+              }
             }
-        }
-      }
+          }
+        }, `process product ${product.id}`, productTimeoutMs);
 
     } catch (error) {
       console.error(`Error processing Product ${product.id}:`, error.message);
+      if (String(error?.message || '').includes(`process product ${product.id} timed out`)) {
+        try { await page.close({ runBeforeUnload: false }); } catch {}
+        page = await browser.newPage();
+        await configurePage(page);
+        console.warn(`Recreated browser page after timeout on Product ${product.id}.`);
+      }
+    }
+    currentLastId = Number(product.id) || currentLastId;
+    try { await writeProgress(progressFilePath, { lastId: Number(product.id) || lastId }); } catch {}
     }
   }
   } catch (err) {
@@ -532,8 +805,9 @@ async function checkGoofishLinks() {
     console.log(`Unavailable/Removed: ${unavailableCount}`);
     console.log(`Images Updated: ${updatedCount}`);
     
+    clearInterval(heartbeat);
     await browser.close();
-    await prisma.$disconnect();
+    await safeDbDisconnect();
     console.log('Done.');
     process.exit(0);
   }
