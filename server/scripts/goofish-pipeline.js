@@ -957,18 +957,28 @@ const USER_AGENTS = [
 ];
 
 function getExecutablePath() {
+  const envPaths = [
+    process.env.PUPPETEER_EXECUTABLE_PATH,
+    process.env.GOOFISH_CHROME_PATH,
+    process.env.CHROME_PATH
+  ].filter(Boolean);
+  for (const p of envPaths) {
+    if (fs.existsSync(p)) return p;
+  }
+
   if (process.platform === 'linux') {
-    // Return null on Linux so puppeteer uses its bundled Chromium
-    // Or return common paths if installed via apt
     const linuxPaths = [
+      '/usr/bin/google-chrome-stable',
       '/usr/bin/google-chrome',
+      '/opt/google/chrome/chrome',
       '/usr/bin/chromium-browser',
-      '/usr/bin/chromium'
+      '/usr/bin/chromium',
+      '/snap/bin/chromium'
     ];
     for (const p of linuxPaths) {
       if (fs.existsSync(p)) return p;
     }
-    return null; // let puppeteer try to find its own
+    return null;
   }
   for (const p of CHROME_PATHS) {
     if (fs.existsSync(p)) return p;
@@ -1278,9 +1288,6 @@ const toErrorCode = (error) => String(error?.code || '');
 
 async function createBrowser() {
   const executablePath = getExecutablePath();
-  if (!executablePath && process.platform !== 'linux') {
-    console.warn('Chrome/Edge executable not found on system. Relying on bundled Puppeteer Chromium.');
-  }
   
   const launchOptions = {
     headless: true,
@@ -1309,6 +1316,10 @@ async function createBrowser() {
 
   if (executablePath) {
     launchOptions.executablePath = executablePath;
+  } else if (process.platform === 'linux') {
+    launchOptions.channel = 'chrome';
+  } else {
+    console.warn('Chrome/Edge executable not found on system.');
   }
 
   return puppeteer.launch(launchOptions);
