@@ -2,4 +2,4 @@
 builder = "NIXPACKS"
 
 [deploy]
-startCommand = "node -e \"const fs=require('node:fs');const cp=require('node:child_process');const cwd=fs.existsSync('server/scripts/goofish-pipeline.js')?'server':'.';const script='scripts/goofish-pipeline.js';const npm=process.platform==='win32'?'npm.cmd':'npm';const i=cp.spawnSync(npm,['install'],{cwd,stdio:'inherit'});if(i.status!==0)process.exit(i.status||1);const r=cp.spawnSync(process.execPath,[script],{cwd,stdio:'inherit'});process.exit(r.status||0);\""
+startCommand = "node -e \"const fs=require('node:fs');const cp=require('node:child_process');const cwd=fs.existsSync('server/scripts/goofish-pipeline.js')?'server':'.';const script='scripts/goofish-pipeline.js';const npm=process.platform==='win32'?'npm.cmd':'npm';const i=cp.spawnSync(npm,['install'],{cwd,stdio:'inherit'});if(i.status!==0)process.exit(i.status||1);const env={...process.env,ALLOW_SCRAPER_IN_PROD:'true'};const r=cp.spawnSync(process.execPath,[script],{cwd,stdio:'inherit',env});process.exit(r.status||0);\""
