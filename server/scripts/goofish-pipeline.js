@@ -1327,6 +1327,8 @@ async function createBrowser() {
 
   if (executablePath) {
     launchOptions.executablePath = executablePath;
+  } else if (process.platform === 'linux') {
+    launchOptions.channel = 'chrome';
   } else {
     console.warn('Chrome/Edge executable not found on system.');
   }
