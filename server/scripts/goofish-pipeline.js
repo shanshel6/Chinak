@@ -1364,9 +1364,9 @@ async function createBrowser() {
 
   // Keep proxy if provided
   if (process.env.PROXY_SERVER) {
-      launchOptions.args.push(`--proxy-server=${process.env.PROXY_SERVER}`);
-  } else {
-      launchOptions.args.push('--proxy-server=http://192.168.2.150:7890');
+    launchOptions.args.push(`--proxy-server=${process.env.PROXY_SERVER}`);
+  } else if (process.platform === 'win32') {
+    launchOptions.args.push('--proxy-server=http://192.168.2.150:7890');
   }
 
   if (!executablePath && process.platform === 'linux') {
@@ -2161,7 +2161,32 @@ async function run() {
 
   try {
     console.log('Opening Goofish...');
-    await page.goto('https://www.goofish.com/', { waitUntil: 'domcontentloaded', timeout: 60000 });
+    const entryUrls = String(process.env.GOOFISH_ENTRY_URLS || 'https://www.goofish.com/,https://2.taobao.com/')
+      .split(',')
+      .map((url) => url.trim())
+      .filter(Boolean);
+    let opened = false;
+    let openError = null;
+    for (const entryUrl of entryUrls) {
+      for (let attempt = 1; attempt <= 3 && !opened; attempt += 1) {
+        try {
+          await page.goto(entryUrl, { waitUntil: 'domcontentloaded', timeout: 90000 });
+          opened = true;
+        } catch (error) {
+          openError = error;
+          const errorText = toErrorText(error);
+          const errorCode = toErrorCode(error);
+          console.warn(`Failed to open ${entryUrl} (attempt ${attempt}/3): ${errorText}${errorCode ? ` [${errorCode}]` : ''}`);
+          if (attempt < 3) {
+            await humanDelay(2000, 5000);
+          }
+        }
+      }
+      if (opened) break;
+    }
+    if (!opened) {
+      throw openError || new Error('Failed to open Goofish');
+    }
 
     // Handle login popup closer immediately if present
     try {
