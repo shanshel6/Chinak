@@ -997,6 +997,50 @@ function getExecutablePath() {
   return null;
 }
 
+function findChromeInPuppeteerCache() {
+  const roots = [
+    path.join(process.cwd(), '.cache', 'puppeteer'),
+    path.join(process.cwd(), '..', '.cache', 'puppeteer'),
+    path.join('/app', '.cache', 'puppeteer'),
+    path.join('/root', '.cache', 'puppeteer')
+  ];
+  const seen = new Set();
+  const walk = (dir) => {
+    let files = [];
+    let entries = [];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return files;
+    }
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (seen.has(fullPath)) continue;
+      seen.add(fullPath);
+      if (entry.isDirectory()) {
+        files = files.concat(walk(fullPath));
+      } else {
+        files.push(fullPath);
+      }
+    }
+    return files;
+  };
+  for (const root of roots) {
+    const files = walk(root);
+    const match = files.find((filePath) => /[\\/]chrome(?:\.exe)?$/.test(filePath) && filePath.includes('chrome-linux'));
+    if (match) return match;
+  }
+  return null;
+}
+
+function installChromeForLinux() {
+  const result = spawnSync('npx', ['-y', '@puppeteer/browsers', 'install', 'chrome@stable', '--path', '.cache/puppeteer'], {
+    cwd: process.cwd(),
+    stdio: 'inherit'
+  });
+  return result.status === 0;
+}
+
 const delay = (ms) => new Promise(res => setTimeout(res, ms));
 const humanDelay = (min = 1000, max = 3000) => delay(Math.floor(Math.random() * (max - min + 1)) + min);
 
@@ -1298,7 +1342,7 @@ const toErrorText = (error) => String(error?.message || error || 'unknown error'
 const toErrorCode = (error) => String(error?.code || '');
 
 async function createBrowser() {
-  const executablePath = getExecutablePath();
+  let executablePath = getExecutablePath();
   
   const launchOptions = {
     headless: true,
@@ -1325,12 +1369,17 @@ async function createBrowser() {
       launchOptions.args.push('--proxy-server=http://192.168.2.150:7890');
   }
 
+  if (!executablePath && process.platform === 'linux') {
+    const installed = installChromeForLinux();
+    if (installed) {
+      executablePath = getExecutablePath() || findChromeInPuppeteerCache();
+    }
+  }
+
   if (executablePath) {
     launchOptions.executablePath = executablePath;
-  } else if (process.platform === 'linux') {
-    launchOptions.channel = 'chrome';
   } else {
-    console.warn('Chrome/Edge executable not found on system.');
+    throw new Error('Chrome executable not found on system and could not be installed.');
   }
 
   return puppeteer.launch(launchOptions);
