@@ -4,7 +4,10 @@ import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const seedPath = path.join(__dirname, '..', 'scripts', 'canonical-categories.seed.json');
+const seedPathCandidates = [
+  path.join(__dirname, '..', 'scripts', 'canonical-categories.seed.json'),
+  path.join(process.cwd(), 'scripts', 'canonical-categories.seed.json')
+];
 
 const normalizeCategoryText = (value) => String(value || '')
   .toLowerCase()
@@ -22,9 +25,17 @@ const normalizeCategoryText = (value) => String(value || '')
   .trim();
 
 const loadCanonicalCategories = () => {
-  const raw = fs.readFileSync(seedPath, 'utf8');
-  const parsed = JSON.parse(raw);
-  return Array.isArray(parsed) ? parsed : [];
+  for (const seedPath of seedPathCandidates) {
+    try {
+      if (!fs.existsSync(seedPath)) continue;
+      const raw = fs.readFileSync(seedPath, 'utf8');
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    } catch {
+      continue;
+    }
+  }
+  return [];
 };
 
 const buildAliasLookup = (categories) => {
