@@ -18,6 +18,8 @@ const SearchResults: React.FC = () => {
   const toggleWishlist = useWishlistStore((state) => state.toggleWishlist);
   const initialQuery = useMemo(() => new URLSearchParams(location.search).get('q') || '', [location.search]);
   const IMAGE_QUERY_LABEL = 'بحث بالصورة';
+  const IMAGE_SEARCH_CACHE_KEY = '__image_search__';
+  const IMAGE_SEARCH_STATE_STORAGE_KEY = 'image_search_state_v1';
   const [queryInput, setQueryInput] = useState(initialQuery);
   const [activeQuery, setActiveQuery] = useState(initialQuery);
   const [imageSearchInput, setImageSearchInput] = useState<string | null>(null);
@@ -63,6 +65,49 @@ const SearchResults: React.FC = () => {
   const [isResizing, setIsResizing] = useState<string | null>(null); // 'nw', 'ne', 'sw', 'se'
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [initialBox, setInitialBox] = useState<{ xmin: number; ymin: number; xmax: number; ymax: number } | null>(null);
+
+  const persistImageSearchState = useCallback((payload: {
+    imageSearchInput: string;
+    imageSearchPreview: string;
+    imageOriginalSize: { width: number; height: number } | null;
+    selectedObjectBox: number[] | null;
+  }) => {
+    try {
+      sessionStorage.setItem(IMAGE_SEARCH_STATE_STORAGE_KEY, JSON.stringify(payload));
+    } catch {}
+  }, []);
+
+  const readImageSearchState = useCallback(() => {
+    try {
+      const raw = sessionStorage.getItem(IMAGE_SEARCH_STATE_STORAGE_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') return null;
+      const input = String(parsed.imageSearchInput || '').trim();
+      const preview = String(parsed.imageSearchPreview || '').trim();
+      if (!input || !preview) return null;
+      return {
+        imageSearchInput: input,
+        imageSearchPreview: preview,
+        imageOriginalSize: parsed.imageOriginalSize
+          && typeof parsed.imageOriginalSize.width === 'number'
+          && typeof parsed.imageOriginalSize.height === 'number'
+          ? { width: parsed.imageOriginalSize.width, height: parsed.imageOriginalSize.height }
+          : null,
+        selectedObjectBox: Array.isArray(parsed.selectedObjectBox)
+          ? parsed.selectedObjectBox.map((v: any) => Number(v)).filter((v: number) => Number.isFinite(v))
+          : null
+      };
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const clearImageSearchStateCache = useCallback(() => {
+    try {
+      sessionStorage.removeItem(IMAGE_SEARCH_STATE_STORAGE_KEY);
+    } catch {}
+  }, []);
 
   const rememberSearchTerm = useCallback((term: string) => {
     const clean = term.trim();
@@ -119,6 +164,12 @@ const SearchResults: React.FC = () => {
     setSelectedObjectBox(null);
     setShowImagePopup(true);
     setIsAnalyzingImage(false); // We no longer analyze
+    persistImageSearchState({
+      imageSearchInput: imageBase64,
+      imageSearchPreview: imageBase64,
+      imageOriginalSize: width && height ? { width, height } : null,
+      selectedObjectBox: null
+    });
 
     // Calculate initial box based on actual image dimensions
     const img = new Image();
@@ -138,7 +189,7 @@ const SearchResults: React.FC = () => {
       setImageOriginalSize({ width, height });
       setDetectedObjects([{ label: 'manual', score: 1, box: [xmin, ymin, xmax, ymax] }]);
     };
-  }, []);
+  }, [persistImageSearchState]);
 
   // Handle Drag & Resize for manual crop box
   useEffect(() => {
@@ -247,11 +298,16 @@ const SearchResults: React.FC = () => {
         const data = await searchProductsByImageCrop(imageSearchInput, box);
         setResults(Array.isArray(data.products) ? data.products : []);
         setHasMore(false);
+        hasMoreRef.current = false;
+        setPage(1);
+        pageRef.current = 1;
       } else {
         const data = await searchProductsByImage(imageSearchInput, 1, LIMIT);
         setResults(Array.isArray(data.products) ? data.products : []);
         setHasMore(Boolean(data.hasMore));
+        hasMoreRef.current = Boolean(data.hasMore);
         setPage(1);
+        pageRef.current = 1;
       }
     } catch (err: any) {
       setError('فشل البحث في المنطقة المحددة.');
@@ -265,6 +321,9 @@ const SearchResults: React.FC = () => {
     setRestored(false);
     setImageSearchInput(null);
     setImageSearchPreview(null);
+    setImageOriginalSize(null);
+    setSelectedObjectBox(null);
+    setDetectedObjects([]);
     setResults([]);
     setHasMore(false);
     setPage(1);
@@ -277,11 +336,21 @@ const SearchResults: React.FC = () => {
     setLoadingMore(false);
     setQueryInput('');
     setActiveQuery('');
+    clearImageSearchStateCache();
+    usePageCacheStore.getState().setSearchData(IMAGE_SEARCH_CACHE_KEY, {
+      results: [],
+      page: 1,
+      hasMore: false,
+      condition: null,
+      price: null,
+      scrollPos: 0
+    });
+    usePageCacheStore.getState().setSearchScrollPos(IMAGE_SEARCH_CACHE_KEY, 0);
     navigate('/search', { replace: true });
     setTimeout(() => {
       if (inputRef.current) inputRef.current.focus();
     }, 50);
-  }, [navigate]);
+  }, [clearImageSearchStateCache, navigate]);
 
   useEffect(() => {
     // Check if we arrived here with a pending image search
@@ -289,8 +358,55 @@ const SearchResults: React.FC = () => {
     if (pendingImage) {
       sessionStorage.removeItem('pendingImageSearch');
       void startImageSearch(pendingImage);
+      return;
     }
-  }, [startImageSearch]);
+    if (initialQuery.trim()) return;
+    const cachedImageState = readImageSearchState();
+    const cachedSearch = usePageCacheStore.getState().getSearchData(IMAGE_SEARCH_CACHE_KEY);
+    if (!cachedImageState || !cachedSearch || !Array.isArray(cachedSearch.results) || cachedSearch.results.length === 0) return;
+    restoredFromCacheRef.current = true;
+    setRestored(true);
+    setImageSearchInput(cachedImageState.imageSearchInput);
+    setImageSearchPreview(cachedImageState.imageSearchPreview);
+    setImageOriginalSize(cachedImageState.imageOriginalSize);
+    setSelectedObjectBox(cachedImageState.selectedObjectBox);
+    setShowImagePopup(false);
+    setIsAnalyzingImage(false);
+    setConditionFilter(null);
+    setPriceFilter(null);
+    setDraftConditionFilter(null);
+    setDraftPriceFilter(null);
+    setResults(cachedSearch.results);
+    setHasMore(Boolean(cachedSearch.hasMore));
+    hasMoreRef.current = Boolean(cachedSearch.hasMore);
+    const restoredPage = Math.max(1, Number(cachedSearch.page || 1));
+    setPage(restoredPage);
+    pageRef.current = restoredPage;
+    setError(null);
+    setLoading(false);
+    setLoadingMore(false);
+    setActiveQuery(IMAGE_QUERY_LABEL);
+    setQueryInput(IMAGE_QUERY_LABEL);
+    const pos = Number(cachedSearch.scrollPos || 0);
+    if (pos > 0) {
+      setTimeout(() => {
+        window.scrollTo(0, pos);
+        if (document.scrollingElement) {
+          document.scrollingElement.scrollTop = pos;
+        }
+      }, 100);
+    }
+  }, [IMAGE_QUERY_LABEL, initialQuery, readImageSearchState, startImageSearch]);
+
+  useEffect(() => {
+    if (!imageSearchInput || !imageSearchPreview) return;
+    persistImageSearchState({
+      imageSearchInput,
+      imageSearchPreview,
+      imageOriginalSize,
+      selectedObjectBox
+    });
+  }, [imageSearchInput, imageSearchPreview, imageOriginalSize, persistImageSearchState, selectedObjectBox]);
 
   useEffect(() => {
     if (initialQuery.trim()) return;
@@ -556,22 +672,20 @@ const SearchResults: React.FC = () => {
   }, [activeQuery, loadMore]);
 
   useEffect(() => {
-    const key = activeQuery.trim();
+    const key = imageSearchInput ? IMAGE_SEARCH_CACHE_KEY : activeQuery.trim();
     if (!key) return;
-    if (imageSearchInput) return;
     usePageCacheStore.getState().setSearchData(key, {
       results,
       page,
       hasMore,
-      condition: conditionFilter as any,
-      price: priceFilter as any,
+      condition: imageSearchInput ? null : conditionFilter as any,
+      price: imageSearchInput ? null : priceFilter as any,
     });
-  }, [results, page, hasMore, activeQuery, conditionFilter, priceFilter, imageSearchInput]);
+  }, [activeQuery, conditionFilter, hasMore, imageSearchInput, page, priceFilter, results]);
 
   useEffect(() => {
-    const key = activeQuery.trim();
+    const key = imageSearchInput ? IMAGE_SEARCH_CACHE_KEY : activeQuery.trim();
     if (!key) return;
-    if (imageSearchInput) return;
     let timeoutId: any = null;
     const getScrollY = () => {
       const se = document.scrollingElement as null | { scrollTop?: unknown };
@@ -624,7 +738,7 @@ const SearchResults: React.FC = () => {
   };
 
   const handleNavigateToProduct = useCallback((id: number | string, product: Product) => {
-    const key = activeQueryRef.current.trim();
+    const key = imageSearchInput ? IMAGE_SEARCH_CACHE_KEY : activeQueryRef.current.trim();
     if (key) {
       const scrollY = window.pageYOffset || window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0;
       usePageCacheStore.getState().setSearchScrollPos(key, scrollY);
@@ -632,12 +746,20 @@ const SearchResults: React.FC = () => {
         results,
         page: pageRef.current,
         hasMore: hasMoreRef.current,
-        condition: conditionFilterRef.current as any,
-        price: priceFilterRef.current as any,
+        condition: imageSearchInput ? null : conditionFilterRef.current as any,
+        price: imageSearchInput ? null : priceFilterRef.current as any,
+      });
+    }
+    if (imageSearchInput && imageSearchPreview) {
+      persistImageSearchState({
+        imageSearchInput,
+        imageSearchPreview,
+        imageOriginalSize,
+        selectedObjectBox
       });
     }
     navigate(`/product?id=${id}`, { state: { initialProduct: product } });
-  }, [navigate, results]);
+  }, [imageOriginalSize, imageSearchInput, imageSearchPreview, navigate, persistImageSearchState, results, selectedObjectBox]);
 
   const isProductInWishlist = (productId: number | string) => wishlistItems.some(item => String(item.productId) === String(productId));
 
