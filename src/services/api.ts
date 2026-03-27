@@ -377,6 +377,7 @@ export async function request(endpoint: string, options: any = {}, retries = 2) 
       if (endpoint.includes('/notifications')) return [];
       if (endpoint.includes('/addresses')) return [];
       if (endpoint.includes('/favorites')) return [];
+      if (endpoint.includes('/wishlist')) return [];
       if (endpoint.includes('/cart')) return [];
       if (endpoint.includes('/profile')) return {};
        
@@ -419,6 +420,7 @@ export async function request(endpoint: string, options: any = {}, retries = 2) 
       if (endpoint.includes('/notifications')) return [];
       if (endpoint.includes('/addresses')) return [];
       if (endpoint.includes('/favorites')) return [];
+      if (endpoint.includes('/wishlist')) return [];
       if (endpoint.includes('/cart')) return [];
       if (endpoint.includes('/profile')) return {};
     }
@@ -493,7 +495,14 @@ export async function request(endpoint: string, options: any = {}, retries = 2) 
           const requestToken = headers['Authorization']?.replace('Bearer ', '')?.trim();
           
           // Don't log out if it's a test token
-          if (allowReviewerBypass && (requestToken?.startsWith('test-token-') || requestToken?.startsWith('demo-token-'))) {
+          if (
+            allowReviewerBypass &&
+            (
+              requestToken?.startsWith('test-token-') ||
+              requestToken?.startsWith('demo-token-') ||
+              requestToken?.startsWith('guest-token-')
+            )
+          ) {
             console.warn('[API] 401 from test token, ignoring logout');
             throw new Error(`Test token unauthorized: ${endpoint}`);
           }
@@ -506,7 +515,13 @@ export async function request(endpoint: string, options: any = {}, retries = 2) 
             }
           }
 
-          if (!isAuthRequest && (currentToken === requestToken || !currentToken) && !currentToken?.startsWith('demo-token-') && !currentToken?.startsWith('test-token-')) {
+          if (
+            !isAuthRequest &&
+            (currentToken === requestToken || !currentToken) &&
+            !currentToken?.startsWith('demo-token-') &&
+            !currentToken?.startsWith('test-token-') &&
+            !currentToken?.startsWith('guest-token-')
+          ) {
             // Clear local storage and dispatch event for global logout
             localStorage.removeItem('auth_token');
             window.dispatchEvent(new Event('auth-unauthorized'));
@@ -1743,8 +1758,6 @@ export async function cancelOrder(id: number | string) {
   return request(`/orders/${id}/cancel`, { method: 'PUT' });
 }
 
-// Wishlist - Replaced by local storage in useWishlistStore.ts
-/*
 export async function fetchWishlist() {
   return request('/wishlist');
 }
@@ -1759,7 +1772,6 @@ export async function addToWishlist(productId: number | string) {
 export async function removeFromWishlist(productId: number | string) {
   return request(`/wishlist/${productId}`, { method: 'DELETE' });
 }
-*/
 
 // Messages
 export async function fetchMessages(orderId: number | string) {

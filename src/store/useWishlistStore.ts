@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { Product } from '../types/product';
+import { addToWishlist, fetchWishlist, removeFromWishlist } from '../services/api';
 
 interface WishlistItem {
   id: number | string;
@@ -25,16 +26,37 @@ export const useWishlistStore = create<WishlistState>()(
       isLoading: false,
       error: null,
 
-      fetchWishlist: async () => {
-        // No-op for local favorites
+      fetchWishlist: async (silent = false) => {
+        const token = localStorage.getItem('auth_token')?.trim();
+        if (!token) {
+          if (!silent) set({ items: [], isLoading: false, error: null });
+          return;
+        }
+        if (!silent) set({ isLoading: true, error: null });
+        try {
+          const serverData = await fetchWishlist();
+          const normalized = Array.isArray(serverData) ? serverData : [];
+          set({ items: normalized, isLoading: false, error: null });
+        } catch (error: any) {
+          set({ isLoading: false, error: error?.message || 'Failed to fetch wishlist' });
+        }
       },
 
       toggleWishlist: async (productId: number | string, productInfo?: any) => {
         const { items } = get();
         const isInWishlist = items.some(item => String(item.productId) === String(productId));
+        const token = localStorage.getItem('auth_token')?.trim();
 
         if (isInWishlist) {
-          set({ items: items.filter(item => String(item.productId) !== String(productId)) });
+          const nextItems = items.filter(item => String(item.productId) !== String(productId));
+          set({ items: nextItems, error: null });
+          if (token) {
+            try {
+              await removeFromWishlist(productId);
+            } catch (error: any) {
+              set({ items, error: error?.message || 'Failed to update wishlist' });
+            }
+          }
         } else if (productInfo) {
           const newItem: WishlistItem = {
             id: `local-${Date.now()}`,
@@ -51,7 +73,16 @@ export const useWishlistStore = create<WishlistState>()(
               height: productInfo.height
             }
           };
-          set({ items: [...items, newItem] });
+          const nextItems = [...items, newItem];
+          set({ items: nextItems, error: null });
+          if (token) {
+            try {
+              await addToWishlist(productId);
+              await get().fetchWishlist(true);
+            } catch (error: any) {
+              set({ items, error: error?.message || 'Failed to update wishlist' });
+            }
+          }
         }
       },
 

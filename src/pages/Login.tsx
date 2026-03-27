@@ -448,6 +448,20 @@ const Login: React.FC = () => {
     setError('');
   };
 
+  const handleGuestLogin = () => {
+    const guestToken = `guest-token-${Date.now()}`;
+    const guestUser = {
+      id: 'guest-user',
+      phone: '',
+      name: 'زائر',
+      email: 'guest@local.app',
+      role: 'GUEST'
+    };
+    setAuth(guestToken, guestUser);
+    showToast('تم تسجيل الدخول كضيف', 'success');
+    navigate('/');
+  };
+
 
   return (
     <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden bg-background-light dark:bg-background-dark shadow-2xl font-display text-slate-900 dark:text-white antialiased selection:bg-primary/30 rtl pb-safe pt-safe" dir="rtl">
@@ -969,6 +983,16 @@ const Login: React.FC = () => {
 
           {/* Secondary Action - Toggle Method */}
           <div className="flex flex-col gap-3">
+            <button
+              type="button"
+              onClick={handleGuestLogin}
+              className="w-full flex items-center justify-center gap-2 rounded-xl border border-amber-300/70 dark:border-amber-500/40 bg-gradient-to-r from-amber-100 to-orange-100 dark:from-amber-900/35 dark:to-orange-900/35 p-3.5 shadow-md shadow-amber-200/60 dark:shadow-amber-900/20 transition-all active:scale-95 text-amber-900 dark:text-amber-200 hover:from-amber-200 hover:to-orange-200 dark:hover:from-amber-800/45 dark:hover:to-orange-800/45"
+            >
+              <UserIcon size={18} />
+              <span className="text-sm font-bold">تسجيل الدخول كضيف</span>
+              <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-white/70 dark:bg-amber-950/70 text-amber-700 dark:text-amber-300">سريع</span>
+            </button>
+
             <button 
               type="button"
               onClick={toggleMethod}

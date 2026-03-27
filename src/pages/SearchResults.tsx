@@ -489,15 +489,6 @@ const SearchResults: React.FC = () => {
     setDraftPriceFilter(priceFilter);
   }, [conditionFilter, priceFilter]);
 
-  const shuffleProducts = useCallback((items: Product[]) => {
-    const shuffled = [...items];
-    for (let i = shuffled.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-    }
-    return shuffled;
-  }, []);
-
   const applyFilters = useCallback(() => {
     setConditionFilter(draftConditionFilter);
     setPriceFilter(draftPriceFilter);
@@ -553,8 +544,8 @@ const SearchResults: React.FC = () => {
         const condition = conditionFilter === 'new' ? 'new' : conditionFilter === 'used' ? 'used' : undefined;
         const response = await searchProducts(query, initialPage, LIMIT, maxPrice, condition);
         if (cancelled) return;
-        const randomized = Array.isArray(response.products) ? shuffleProducts(response.products) : [];
-        setResults(randomized);
+        const orderedResults = Array.isArray(response.products) ? response.products : [];
+        setResults(orderedResults);
         setHasMore(Boolean(response.hasMore));
       } catch (searchError: any) {
         if (cancelled) return;
@@ -570,7 +561,7 @@ const SearchResults: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [activeQuery, conditionFilter, priceFilter, restored, rememberSearchTerm, shuffleProducts, searchVersion, imageSearchInput]);
+  }, [activeQuery, conditionFilter, priceFilter, restored, rememberSearchTerm, searchVersion, imageSearchInput]);
 
   const loadMore = useCallback(async () => {
     const query = activeQueryRef.current.trim();
@@ -607,7 +598,7 @@ const SearchResults: React.FC = () => {
       const condition = cond === 'new' ? 'new' : cond === 'used' ? 'used' : undefined;
       const response = await searchProducts(query, nextPage, LIMIT, maxPrice, condition);
       if (activeQueryRef.current.trim() !== query) return;
-      const incoming = Array.isArray(response.products) ? shuffleProducts(response.products) : [];
+      const incoming = Array.isArray(response.products) ? response.products : [];
       setResults((prev) => {
         const merged = [...prev, ...incoming];
         const seen = new Set<string>();
@@ -629,7 +620,7 @@ const SearchResults: React.FC = () => {
       if (activeQueryRef.current.trim() === query) setLoadingMore(false);
       inFlightMoreRef.current = false;
     }
-  }, [shuffleProducts, imageSearchInput]);
+  }, [imageSearchInput]);
 
   useEffect(() => {
     const query = activeQuery.trim();

@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { fetchMe, logout as apiLogout, performCacheMaintenance } from '../services/api';
 import { useCartStore } from './useCartStore';
+import { useWishlistStore } from './useWishlistStore';
 
 interface User {
   id: string; 
@@ -22,6 +23,14 @@ interface AuthState {
   checkAuth: () => Promise<void>;
   updateUser: (user: User) => void;
 }
+
+const buildGuestUser = (): User => ({
+  id: 'guest-user',
+  name: 'زائر',
+  phone: '',
+  role: 'GUEST',
+  email: 'guest@local.app'
+});
 
 export const useAuthStore = create<AuthState>((set) => ({
   user: null,
@@ -54,6 +63,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       // ignore
     }
     useCartStore.getState().clearCart();
+    useWishlistStore.getState().clearWishlist();
     set({ user: null, token: null, isAuthenticated: false, isLoading: false });
   },
 
@@ -62,6 +72,11 @@ export const useAuthStore = create<AuthState>((set) => ({
       const token = localStorage.getItem('auth_token');
       if (!token) {
         set({ user: null, token: null, isAuthenticated: false, isLoading: false });
+        return;
+      }
+
+      if (token.startsWith('guest-token-')) {
+        set({ user: buildGuestUser(), token, isAuthenticated: true, isLoading: false });
         return;
       }
 

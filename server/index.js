@@ -1419,6 +1419,35 @@ const authenticateToken = async (req, res, next) => {
     return res.status(401).json({ error: 'Authentication required' });
   }
 
+  if (token.startsWith('guest-token-')) {
+    try {
+      const guestSupabaseId = `guest:${token}`;
+      let guestUser = await prisma.user.findUnique({
+        where: { supabaseId: guestSupabaseId }
+      });
+      if (!guestUser) {
+        guestUser = await prisma.user.create({
+          data: {
+            supabaseId: guestSupabaseId,
+            name: 'زائر',
+            role: 'GUEST',
+            isVerified: true
+          }
+        });
+      }
+      req.user = {
+        id: guestUser.id,
+        role: guestUser.role,
+        name: guestUser.name,
+        supabaseId: guestUser.supabaseId
+      };
+      return next();
+    } catch (guestError) {
+      console.error('[Auth] Guest token handling failed:', guestError?.message || guestError);
+      return res.status(401).json({ error: 'Authentication failed for guest token' });
+    }
+  }
+
   try {
     // Try Supabase Auth first
     console.log('[Auth] Checking Supabase token...');
@@ -8113,6 +8142,11 @@ app.get('/api/search', async (req, res) => {
 
     const normalizedQuery = normalizeSearchText(q);
     const expandedSearchTerms = expandSearchTermsForIraqiSlang(q);
+    const queryVariants = new Set([
+      q,
+      normalizedQuery,
+      ...expandedSearchTerms
+    ].map((value) => String(value || '').trim()).filter(Boolean));
     const productSelect = {
       id: true,
       name: true,
@@ -8124,6 +8158,7 @@ app.get('/api/search', async (req, res) => {
       isFeatured: true,
       domesticShippingFee: true,
       deliveryTime: true,
+      updatedAt: true,
       variants: {
         select: {
           id: true,
@@ -8156,6 +8191,30 @@ app.get('/api/search', async (req, res) => {
       seaShippingRate: storeSettings?.seaShippingRate,
       airShippingMinFloor: storeSettings?.airShippingMinFloor
     };
+    const featuredWhere = {
+      status: 'PUBLISHED',
+      isActive: true,
+      isFeatured: true,
+      ...(Number.isFinite(maxPrice) && maxPrice > 0 ? { price: { lte: maxPrice } } : {}),
+      ...(condition === 'new'
+        ? { neworold: true }
+        : condition === 'used'
+          ? { OR: [{ neworold: false }, { neworold: null }] }
+          : {})
+    };
+    const featuredCandidates = await prisma.product.findMany({
+      where: featuredWhere,
+      select: productSelect
+    });
+    const featuredMatchedProducts = featuredCandidates
+      .filter((product) => isFeaturedMatchForQuery(product, queryVariants, condition))
+      .sort((a, b) => {
+        const aUpdated = a?.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+        const bUpdated = b?.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+        return bUpdated - aUpdated;
+      });
+    const featuredMatchedIdSet = new Set(featuredMatchedProducts.map((product) => Number(product.id)).filter((id) => Number.isFinite(id)));
+    perf.log('featured_matches_ready', { featuredMatches: featuredMatchedProducts.length });
 
     try {
       const meiliSetupStartedAt = Date.now();
@@ -8173,22 +8232,23 @@ app.get('/api/search', async (req, res) => {
 
       const meiliSearchStartedAt = Date.now();
       const meiliQuery = expandedSearchTerms.join(' ').trim() || normalizedQuery || q;
+      const meiliCandidateLimit = Math.min(1000, Math.max(limit * 5, offset + limit + 100));
       const searchResult = await index.search(meiliQuery, {
-        limit,
-        offset,
+        limit: meiliCandidateLimit,
+        offset: 0,
         filter: filters,
         sort: ['isFeatured:desc', 'updatedAt:desc']
       });
-      perf.log('meili_search_done', { meiliMs: Date.now() - meiliSearchStartedAt, estimatedTotalHits: Number(searchResult?.estimatedTotalHits || 0) });
+      perf.log('meili_search_done', {
+        meiliMs: Date.now() - meiliSearchStartedAt,
+        estimatedTotalHits: Number(searchResult?.estimatedTotalHits || 0),
+        candidateLimit: meiliCandidateLimit
+      });
 
       const hitIds = Array.isArray(searchResult?.hits)
         ? searchResult.hits.map((hit) => Number(hit?.id)).filter((id) => Number.isFinite(id))
         : [];
       perf.log('meili_hits_ready', { hitIdsCount: hitIds.length });
-      if (hitIds.length === 0) {
-        perf.log('response_sent', { engine: 'meili', returned: 0, total: 0 });
-        return res.json({ products: [], total: 0, page, totalPages: 0, hasMore: false, engine: 'meili' });
-      }
 
       const dbFetchStartedAt = Date.now();
       const productsFromDb = await prisma.product.findMany({
@@ -8202,11 +8262,6 @@ app.get('/api/search', async (req, res) => {
       perf.log('db_fetch_for_meili_done', { dbMs: Date.now() - dbFetchStartedAt, productsCount: productsFromDb.length });
 
       const rankIndex = new Map(hitIds.map((id, indexPosition) => [id, indexPosition]));
-      const queryVariants = new Set([
-        q,
-        normalizedQuery,
-        ...expandedSearchTerms
-      ].map((value) => String(value || '').trim()).filter(Boolean));
       const rankedProducts = productsFromDb
         .slice()
         .sort((a, b) => {
@@ -8230,15 +8285,31 @@ app.get('/api/search', async (req, res) => {
         : condition === 'used'
           ? rankedProducts.filter((product) => inferProductCondition(product) !== true)
           : rankedProducts;
-
-      const total = Number(searchResult?.estimatedTotalHits || 0);
-      perf.log('response_sent', { engine: 'meili', returned: conditionFilteredProducts.length, total });
+      const mergedProducts = [];
+      const mergedSeenIds = new Set();
+      for (const product of featuredMatchedProducts) {
+        const id = Number(product?.id);
+        if (!Number.isFinite(id) || mergedSeenIds.has(id)) continue;
+        mergedSeenIds.add(id);
+        mergedProducts.push(product);
+      }
+      for (const product of conditionFilteredProducts) {
+        const id = Number(product?.id);
+        if (!Number.isFinite(id) || mergedSeenIds.has(id)) continue;
+        mergedSeenIds.add(id);
+        mergedProducts.push(product);
+      }
+      const pagedProducts = mergedProducts.slice(offset, offset + limit);
+      const additionalFeaturedCount = Array.from(featuredMatchedIdSet).filter((id) => !rankIndex.has(id)).length;
+      const estimatedTotal = Number(searchResult?.estimatedTotalHits || 0) + additionalFeaturedCount;
+      const total = Math.max(estimatedTotal, mergedProducts.length);
+      perf.log('response_sent', { engine: 'meili', returned: pagedProducts.length, total });
       return res.json({
-        products: conditionFilteredProducts,
+        products: pagedProducts,
         total,
         page,
         totalPages: Math.ceil(total / limit),
-        hasMore: offset + conditionFilteredProducts.length < total,
+        hasMore: offset + pagedProducts.length < total,
         engine: 'meili'
       });
     } catch (meiliError) {
@@ -8297,11 +8368,6 @@ app.get('/api/search', async (req, res) => {
           : extractNewOrOld(aiMetadata);
         return { ...processed, aiMetadata, isRealBrand, neworold };
       });
-      const queryVariants = new Set([
-        q,
-        normalizedQuery,
-        ...expandedSearchTerms
-      ].map((value) => String(value || '').trim()).filter(Boolean));
       const rankedFallbackProducts = processedProducts
         .slice()
         .sort((a, b) => {
@@ -8315,13 +8381,29 @@ app.get('/api/search', async (req, res) => {
           ? rankedFallbackProducts.filter((product) => inferProductCondition(product) !== true)
           : rankedFallbackProducts;
 
-      perf.log('response_sent', { engine: 'db', returned: conditionFilteredProducts.length, total });
+      const mergedProducts = [];
+      const mergedSeenIds = new Set();
+      for (const product of featuredMatchedProducts) {
+        const id = Number(product?.id);
+        if (!Number.isFinite(id) || mergedSeenIds.has(id)) continue;
+        mergedSeenIds.add(id);
+        mergedProducts.push(product);
+      }
+      for (const product of conditionFilteredProducts) {
+        const id = Number(product?.id);
+        if (!Number.isFinite(id) || mergedSeenIds.has(id)) continue;
+        mergedSeenIds.add(id);
+        mergedProducts.push(product);
+      }
+      const pagedProducts = mergedProducts.slice(offset, offset + limit);
+      const combinedTotal = Math.max(total + Array.from(featuredMatchedIdSet).filter((id) => !processedProducts.some((product) => Number(product?.id) === id)).length, mergedProducts.length);
+      perf.log('response_sent', { engine: 'db', returned: pagedProducts.length, total: combinedTotal });
       return res.json({
-        products: conditionFilteredProducts,
-        total,
+        products: pagedProducts,
+        total: combinedTotal,
         page,
-        totalPages: Math.ceil(total / limit),
-        hasMore: offset + conditionFilteredProducts.length < total,
+        totalPages: Math.ceil(combinedTotal / limit),
+        hasMore: offset + pagedProducts.length < combinedTotal,
         engine: 'db'
       });
     }
@@ -10568,7 +10650,6 @@ app.put('/api/orders/:id/confirm-payment', authenticateToken, async (req, res) =
 });
 
 // --- Wishlist routes ---
-/* Replaced by local storage
 app.get('/api/wishlist', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.id;
@@ -10581,7 +10662,6 @@ app.get('/api/wishlist', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch wishlist' });
   }
 });
-*/
 
 // --- Review routes ---
 app.post('/api/products/:id/reviews', authenticateToken, async (req, res) => {
@@ -10714,7 +10794,6 @@ app.get('/api/products/:id/reviews', async (req, res) => {
   }
 });
 
-/* Replaced by local storage
 app.post('/api/wishlist', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.id;
@@ -10724,7 +10803,7 @@ app.post('/api/wishlist', authenticateToken, async (req, res) => {
       where: {
         userId_productId: { userId, productId: safeParseId(productId) }
       },
-      update: {}, // No update needed if already exists
+      update: {},
       create: {
         userId,
         productId: safeParseId(productId)
@@ -10752,7 +10831,6 @@ app.delete('/api/wishlist/:productId', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Failed to remove from wishlist' });
   }
 });
-*/
 
 // --- Admin: Banners ---
 app.get('/api/banners', async (req, res) => {

@@ -7,7 +7,7 @@ import ScrollToTop from './components/ScrollToTop';
 import Toast from './components/Toast';
 import { useAuthStore } from './store/useAuthStore';
 import { useCartStore } from './store/useCartStore';
-// import { useWishlistStore } from './store/useWishlistStore';
+import { useWishlistStore } from './store/useWishlistStore';
 import { useNotificationStore } from './store/useNotificationStore';
 import { useThemeStore } from './store/useThemeStore';
 import { useChatStore } from './store/useChatStore';
@@ -301,7 +301,7 @@ function AnimatedRoutes() {
 function App() {
   const checkAuth = useAuthStore((state) => state.checkAuth);
   const fetchCart = useCartStore((state) => state.fetchCart);
-  // const fetchWishlist = useWishlistStore((state) => state.fetchWishlist); // Removed unused
+  const fetchWishlist = useWishlistStore((state) => state.fetchWishlist);
   
   const { isAuthenticated, user, isLoading } = useAuthStore(
     useShallow((state) => ({ 
@@ -347,8 +347,13 @@ function App() {
   useEffect(() => {
     // Only connect socket and fetch user data when we are fully authenticated and done loading
     if (isAuthenticated && user && !isLoading) {
+      const isGuest = String(user.role || '').toUpperCase() === 'GUEST';
       fetchCart();
-      // fetchWishlist(); // Removed as wishlist is now local storage only
+      fetchWishlist(true);
+      if (isGuest) {
+        disconnectSocket();
+        return;
+      }
       fetchNotifications();
       
       // OPTIMIZATION: Delay socket connection to prevent startup lag
@@ -366,7 +371,7 @@ function App() {
     } else if (!isAuthenticated && !isLoading) {
       disconnectSocket();
     }
-  }, [isAuthenticated, user, isLoading, fetchCart, fetchNotifications, initNotificationSocket, cleanupNotificationSocket]);
+  }, [isAuthenticated, user, isLoading, fetchCart, fetchWishlist, fetchNotifications, initNotificationSocket, cleanupNotificationSocket]);
 
   if (isServerDown) {
     return <MaintenanceScreen />;
