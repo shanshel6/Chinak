@@ -692,6 +692,7 @@ const ARABIC_SYNONYM_GROUPS = [
   ['كرسي', 'كرسيه', 'chair', 'seat'],
   ['طاوله', 'طاولة', 'table', 'desk', 'مكتب'],
   ['كنبه', 'كنبة', 'اريكة', 'أريكة', 'sofa', 'couch'],
+  ['كنتور', 'قنتور', 'دولاب', 'خزانة', 'خزانه', 'خزانة ملابس', 'دولاب ملابس', 'wardrobe', 'closet'],
   ['سرير', 'bed'],
   ['مرتبه', 'مرتبة', 'mattress'],
   ['بطانيه', 'بطانية', 'blanket'],
@@ -733,6 +734,54 @@ const buildMeiliSynonyms = (groups) => {
 };
 
 const MEILI_ARABIC_SYNONYMS = buildMeiliSynonyms(ARABIC_SYNONYM_GROUPS);
+
+const IRAQI_SLANG_NORMALIZATION_MAP = {
+  كنتور: ['دولاب', 'خزانة', 'خزانه', 'دولاب ملابس', 'خزانة ملابس'],
+  قنتور: ['دولاب', 'خزانة', 'خزانه', 'دولاب ملابس', 'خزانة ملابس'],
+  درنفيس: ['دولاب', 'خزانة'],
+  قندره: ['حذاء', 'جزمة'],
+  جواتي: ['حذاء', 'رياضي'],
+  دشداشه: ['ثوب', 'ملابس'],
+  عركيه: ['قبعة'],
+  ياخه: ['ياقة', 'قميص']
+};
+
+const expandSearchTermsForIraqiSlang = (query) => {
+  const base = String(query || '').trim();
+  if (!base) return [];
+  const normalized = normalizeSearchText(base);
+  const terms = new Set([base, normalized]);
+  const addCandidates = (value) => {
+    const key = normalizeSearchText(value);
+    if (!key) return;
+    terms.add(key);
+    const directMapped = IRAQI_SLANG_NORMALIZATION_MAP[key];
+    if (Array.isArray(directMapped)) {
+      for (const candidate of directMapped) {
+        const cleanCandidate = String(candidate || '').trim();
+        if (!cleanCandidate) continue;
+        terms.add(cleanCandidate);
+        terms.add(normalizeSearchText(cleanCandidate));
+      }
+    }
+    const synonymMapped = MEILI_ARABIC_SYNONYMS[key];
+    if (Array.isArray(synonymMapped)) {
+      for (const candidate of synonymMapped) {
+        const cleanCandidate = String(candidate || '').trim();
+        if (!cleanCandidate) continue;
+        terms.add(cleanCandidate);
+        terms.add(normalizeSearchText(cleanCandidate));
+      }
+    }
+  };
+  addCandidates(base);
+  addCandidates(normalized);
+  const tokens = normalized.split(/\s+/).map((token) => token.trim()).filter(Boolean);
+  for (const token of tokens) {
+    addCandidates(token);
+  }
+  return Array.from(terms).map((value) => String(value || '').trim()).filter(Boolean).slice(0, 30);
+};
 
 const buildSearchDocument = (product) => {
   const aiMetadata = parseAiMetadata(product?.aiMetadata);
@@ -8006,6 +8055,7 @@ app.get('/api/search', async (req, res) => {
     }
 
     const normalizedQuery = normalizeSearchText(q);
+    const expandedSearchTerms = expandSearchTermsForIraqiSlang(q);
     const productSelect = {
       id: true,
       name: true,
@@ -8065,7 +8115,8 @@ app.get('/api/search', async (req, res) => {
       }
 
       const meiliSearchStartedAt = Date.now();
-      const searchResult = await index.search(normalizedQuery || q, {
+      const meiliQuery = expandedSearchTerms.join(' ').trim() || normalizedQuery || q;
+      const searchResult = await index.search(meiliQuery, {
         limit,
         offset,
         filter: filters,
@@ -8125,7 +8176,11 @@ app.get('/api/search', async (req, res) => {
     } catch (meiliError) {
       perf.log('meili_fallback', { reason: meiliError?.message || String(meiliError) });
       console.warn('[Meili] search fallback to db:', meiliError?.message || meiliError);
-      const searchTerms = Array.from(new Set([q, normalizedQuery].map((v) => String(v || '').trim()).filter(Boolean)));
+      const searchTerms = Array.from(new Set([
+        ...expandedSearchTerms,
+        q,
+        normalizedQuery
+      ].map((v) => String(v || '').trim()).filter(Boolean)));
       const andFilters = [];
       if (searchTerms.length > 0) {
         andFilters.push({
