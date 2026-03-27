@@ -803,6 +803,7 @@ const buildSearchDocument = (product) => {
     price: Number(product?.price || 0),
     status: String(product?.status || ''),
     isActive: Boolean(product?.isActive),
+    isFeatured: Boolean(product?.isFeatured),
     neworold: typeof product?.neworold === 'boolean' ? product.neworold : null,
     updatedAt: product?.updatedAt ? new Date(product.updatedAt).getTime() : 0
   };
@@ -838,7 +839,7 @@ const ensureMeiliIndexSettings = async () => {
   const index = await getMeiliIndex();
   await index.updateSearchableAttributes(['keywords', 'name', 'aiTitle', 'searchText', 'normalizedSearchText', 'description']);
   await index.updateFilterableAttributes(['status', 'isActive', 'neworold', 'price']);
-  await index.updateSortableAttributes(['price', 'updatedAt']);
+  await index.updateSortableAttributes(['isFeatured', 'price', 'updatedAt']);
   await index.updateSynonyms(MEILI_ARABIC_SYNONYMS);
   await index.updateRankingRules([
     'words',
@@ -869,6 +870,7 @@ const syncProductsToMeili = async () => {
         price: true,
         status: true,
         isActive: true,
+        isFeatured: true,
         neworold: true,
         updatedAt: true
       }
@@ -898,6 +900,7 @@ const syncProductToMeiliById = async (productId) => {
       price: true,
       status: true,
       isActive: true,
+      isFeatured: true,
       neworold: true,
       updatedAt: true
     }
@@ -8120,7 +8123,7 @@ app.get('/api/search', async (req, res) => {
         limit,
         offset,
         filter: filters,
-        sort: ['updatedAt:desc']
+        sort: ['isFeatured:desc', 'updatedAt:desc']
       });
       perf.log('meili_search_done', { meiliMs: Date.now() - meiliSearchStartedAt, estimatedTotalHits: Number(searchResult?.estimatedTotalHits || 0) });
 
@@ -8215,7 +8218,7 @@ app.get('/api/search', async (req, res) => {
         where,
         skip: offset,
         take: limit,
-        orderBy: { updatedAt: 'desc' },
+        orderBy: [{ isFeatured: 'desc' }, { updatedAt: 'desc' }],
         select: productSelect
       });
       perf.log('db_fallback_find_done', { dbFindMs: Date.now() - dbFindStartedAt, productsCount: productsFromDb.length });

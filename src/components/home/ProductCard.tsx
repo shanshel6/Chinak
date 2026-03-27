@@ -1,10 +1,10 @@
 import React, { useRef, useState } from 'react';
 import LazyImage from '../LazyImage';
-import { Heart, X } from 'lucide-react';
+import { Heart, Star, X } from 'lucide-react';
 import type { Product } from '../../types/product';
 import { motion } from 'framer-motion';
 import { useAuthStore } from '../../store/useAuthStore';
-import { archiveProduct } from '../../services/api';
+import { archiveProduct, updateProduct } from '../../services/api';
 import { useToastStore } from '../../store/useToastStore';
 
 interface ProductCardProps {
@@ -22,6 +22,7 @@ const ProductCard: React.FC<ProductCardProps> = React.memo(({
 }) => {
   const [product, setProduct] = useState(initialProduct);
   const [isArchiving, setIsArchiving] = useState(false);
+  const [isTogglingFeatured, setIsTogglingFeatured] = useState(false);
   const user = useAuthStore(state => state.user);
   const isAdmin = user && user.role === 'ADMIN';
   const showToast = useToastStore(state => state.showToast);
@@ -43,6 +44,24 @@ const ProductCard: React.FC<ProductCardProps> = React.memo(({
         showToast('فشل إخفاء المنتج', 'error');
         setIsArchiving(false);
       }
+    }
+  };
+
+  const handleToggleFeatured = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!isAdmin || isTogglingFeatured) return;
+    try {
+      setIsTogglingFeatured(true);
+      const token = useAuthStore.getState().token || localStorage.getItem('auth_token');
+      const nextFeatured = !Boolean(product.isFeatured);
+      await updateProduct(product.id, { isFeatured: nextFeatured }, token);
+      setProduct((prev) => ({ ...prev, isFeatured: nextFeatured }));
+      showToast(nextFeatured ? 'تم تمييز المنتج في البحث' : 'تم إلغاء تمييز المنتج', 'success');
+    } catch (error) {
+      console.error('Failed to toggle featured status:', error);
+      showToast('فشل تحديث تمييز المنتج', 'error');
+    } finally {
+      setIsTogglingFeatured(false);
     }
   };
 
@@ -159,6 +178,20 @@ const ProductCard: React.FC<ProductCardProps> = React.memo(({
           title="أرشفة المنتج (إخفاء)"
         >
           <X size={16} />
+        </button>
+      )}
+      {isAdmin && (
+        <button
+          onClick={handleToggleFeatured}
+          disabled={isTogglingFeatured}
+          className={`absolute top-3 left-14 z-20 p-1.5 rounded-full shadow-md transition-colors pointer-events-auto ${
+            product.isFeatured
+              ? 'bg-amber-500 hover:bg-amber-600 text-white'
+              : 'bg-slate-700/85 hover:bg-slate-800 text-white'
+          }`}
+          title={product.isFeatured ? 'إلغاء تمييز المنتج' : 'تمييز المنتج في البحث'}
+        >
+          <Star size={16} fill={product.isFeatured ? 'currentColor' : 'none'} />
         </button>
       )}
 
