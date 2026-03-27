@@ -256,15 +256,18 @@ const Home: React.FC = () => {
             recentTerms = [];
           }
 
-          if (isAuthenticated && recentTerms.length > 0) {
+          if (recentTerms.length > 0) {
             const batches = await Promise.all(
-              recentTerms.map((term) => {
+              recentTerms.slice(0, 12).map((term) => {
                 const randomPage = Math.floor(Math.random() * 3) + 1;
                 return searchProducts(term, randomPage, 18).catch(() => ({ products: [] as Product[] }));
               })
             );
             const mergedRecent = batches.flatMap((batch) => (Array.isArray(batch.products) ? batch.products : []));
-            personalizedPool = shuffle(mergeUniqueProducts(mergedRecent, []));
+            const mergedUnique = mergeUniqueProducts(mergedRecent, []);
+            const featuredRecent = mergedUnique.filter((item) => Boolean(item?.isFeatured));
+            const nonFeaturedRecent = mergedUnique.filter((item) => !item?.isFeatured);
+            personalizedPool = mergeUniqueProducts(shuffle(featuredRecent), shuffle(nonFeaturedRecent));
             if (personalizedPool.length > 0) {
               writeRecentFeed(personalizedPool, recentTermsHashForFeed);
             }

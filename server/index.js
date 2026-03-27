@@ -5158,7 +5158,7 @@ app.get('/api/products', async (req, res) => {
         },
         skip,
         take: limit,
-        orderBy: { updatedAt: 'desc' }
+        orderBy: [{ isFeatured: 'desc' }, { updatedAt: 'desc' }]
       }),
       prisma.product.count({ where })
     ]));
@@ -8150,7 +8150,11 @@ app.get('/api/search', async (req, res) => {
       const rankIndex = new Map(hitIds.map((id, indexPosition) => [id, indexPosition]));
       const rankedProducts = productsFromDb
         .slice()
-        .sort((a, b) => (rankIndex.get(a.id) ?? 999999) - (rankIndex.get(b.id) ?? 999999))
+        .sort((a, b) => {
+          const featuredDiff = Number(Boolean(b.isFeatured)) - Number(Boolean(a.isFeatured));
+          if (featuredDiff !== 0) return featuredDiff;
+          return (rankIndex.get(a.id) ?? 999999) - (rankIndex.get(b.id) ?? 999999);
+        })
         .map((product) => {
           const aiMetadata = parseAiMetadata(product.aiMetadata);
           const processed = applyDynamicPricingToProduct(product, shippingRates);
