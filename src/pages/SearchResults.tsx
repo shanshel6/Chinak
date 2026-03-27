@@ -531,7 +531,7 @@ const SearchResults: React.FC = () => {
       setLoading(true);
       setLoadingMore(false);
       setResults([]);
-      const initialPage = Math.max(1, randomStartPageRef.current || 1);
+      const initialPage = 1;
       setPage(initialPage);
       setHasMore(false);
       pageRef.current = initialPage;
@@ -703,7 +703,7 @@ const SearchResults: React.FC = () => {
     const q = queryInput.trim();
     if (!q || q === IMAGE_QUERY_LABEL) return;
     restoredFromCacheRef.current = false;
-    randomStartPageRef.current = Math.floor(Math.random() * 3) + 1;
+    randomStartPageRef.current = 1;
     setRestored(false);
     setResults([]);
     setHasMore(false);
@@ -1142,7 +1142,7 @@ const SearchResults: React.FC = () => {
                   onClick={() => {
                     setQueryInput(term);
                     restoredFromCacheRef.current = false;
-                    randomStartPageRef.current = Math.floor(Math.random() * 3) + 1;
+                    randomStartPageRef.current = 1;
                     setRestored(false);
                     setResults([]);
                     setHasMore(false);

@@ -686,8 +686,6 @@ const isFeaturedMatchForQuery = (productLike, queryVariants, condition = '') => 
       if (!term.spaced || !term.compact) continue;
       if (term.spaced === normalizedVariant) return true;
       if (term.compact === compactVariant) return true;
-      if (normalizedVariant.includes(term.spaced) || term.spaced.includes(normalizedVariant)) return true;
-      if (compactVariant.includes(term.compact) || term.compact.includes(compactVariant)) return true;
     }
   }
   return false;

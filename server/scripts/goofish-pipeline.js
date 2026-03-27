@@ -162,10 +162,20 @@ const GOOFISH_DB_ENGINE_COOLDOWN_MS = Math.max(1000, parseInt(process.env.GOOFIS
 const GOOFISH_DB_FORCE_RECONNECT_MIN_INTERVAL_MS = Math.max(1000, parseInt(process.env.GOOFISH_DB_FORCE_RECONNECT_MIN_INTERVAL_MS || '45000', 10) || 45000);
 const GOOFISH_PROGRESS_STALL_TIMEOUT_MS = Math.max(30000, parseInt(process.env.GOOFISH_PROGRESS_STALL_TIMEOUT_MS || '120000', 10) || 120000);
 const GOOFISH_PROGRESS_WATCHDOG_INTERVAL_MS = Math.max(5000, parseInt(process.env.GOOFISH_PROGRESS_WATCHDOG_INTERVAL_MS || '10000', 10) || 10000);
+const GOOFISH_PROGRESS_RECOVERY_COOLDOWN_MS = Math.max(5000, parseInt(process.env.GOOFISH_PROGRESS_RECOVERY_COOLDOWN_MS || '30000', 10) || 30000);
+const GOOFISH_PROGRESS_STALL_MAX_RECOVERS = Math.max(1, parseInt(process.env.GOOFISH_PROGRESS_STALL_MAX_RECOVERS || '3', 10) || 3);
+const GOOFISH_PROGRESS_STALL_HARD_EXIT_MS = Math.max(
+  GOOFISH_PROGRESS_STALL_TIMEOUT_MS,
+  parseInt(
+    process.env.GOOFISH_PROGRESS_STALL_HARD_EXIT_MS || String(GOOFISH_PROGRESS_STALL_TIMEOUT_MS * 2),
+    10
+  ) || (GOOFISH_PROGRESS_STALL_TIMEOUT_MS * 2)
+);
 const parsedRecoverWaitMs = parseInt(process.env.GOOFISH_DB_RECOVER_WAIT_MS || '120000', 10);
 const GOOFISH_DB_RECOVER_WAIT_MS = Number.isFinite(parsedRecoverWaitMs) ? Math.max(0, parsedRecoverWaitMs) : 120000;
 const GOOFISH_DB_RECOVER_PING_TIMEOUT_MS = Math.max(1000, parseInt(process.env.GOOFISH_DB_RECOVER_PING_TIMEOUT_MS || '12000', 10) || 12000);
 const GOOFISH_DB_RECOVER_MAX_CYCLES_PER_OP = Math.max(0, parseInt(process.env.GOOFISH_DB_RECOVER_MAX_CYCLES_PER_OP || '1', 10) || 1);
+const GOOFISH_PROCESS_LINK_TIMEOUT_MS = Math.max(30000, parseInt(process.env.GOOFISH_PROCESS_LINK_TIMEOUT_MS || '120000', 10) || 120000);
 const GOOFISH_AI_CALL_TIMEOUT_MS = Math.max(5000, parseInt(process.env.GOOFISH_AI_CALL_TIMEOUT_MS || '15000', 10) || 15000);
 const GOOFISH_AI_RETRY_MAX_ATTEMPTS = Math.max(1, parseInt(process.env.GOOFISH_AI_RETRY_MAX_ATTEMPTS || '2', 10) || 2);
 const GOOFISH_AI_MODEL = String(process.env.GOOFISH_AI_MODEL || 'Qwen/Qwen3-14B').trim() || 'Qwen/Qwen3-14B';
@@ -238,6 +248,10 @@ let pipelineLastProgressAt = Date.now();
 let pipelineLastProgressLabel = 'startup';
 let pipelineWatchdogTimer = null;
 let pipelineWatchdogReconnectInFlight = false;
+let pipelineWatchdogLastRecoveryAt = 0;
+let pipelineWatchdogLastStallLabel = '';
+let pipelineWatchdogStallCount = 0;
+let pipelineRestartScheduled = false;
 
 if (process.env.NODE_ENV === 'production' && process.env.ALLOW_SCRAPER_IN_PROD !== 'true') {
   console.error('CRITICAL: Scraper is BLOCKED in production environment.');
@@ -1720,22 +1734,53 @@ const forceDbReconnectFromScratch = async (label) => {
 const markPipelineProgress = (label = '') => {
   pipelineLastProgressAt = Date.now();
   if (label) pipelineLastProgressLabel = String(label);
+  pipelineWatchdogLastStallLabel = '';
+  pipelineWatchdogStallCount = 0;
+};
+
+const schedulePipelineRestart = (reason) => {
+  if (pipelineRestartScheduled) return;
+  pipelineRestartScheduled = true;
+  const exitCode = 86;
+  console.error(`[Watchdog] Restarting pipeline: ${reason}`);
+  process.exitCode = exitCode;
+  setTimeout(() => {
+    process.exit(exitCode);
+  }, 250);
 };
 
 const startPipelineProgressWatchdog = () => {
   if (pipelineWatchdogTimer) return;
   pipelineWatchdogTimer = setInterval(() => {
     if (DISABLE_DB_WRITE) return;
+    if (pipelineRestartScheduled) return;
     if (pipelineWatchdogReconnectInFlight) return;
     const now = Date.now();
     const idleMs = now - pipelineLastProgressAt;
     if (idleMs < GOOFISH_PROGRESS_STALL_TIMEOUT_MS) return;
-    pipelineWatchdogReconnectInFlight = true;
     const idleSec = Math.floor(idleMs / 1000);
     const label = pipelineLastProgressLabel || 'unknown';
+    if (pipelineWatchdogLastStallLabel === label) {
+      pipelineWatchdogStallCount += 1;
+    } else {
+      pipelineWatchdogLastStallLabel = label;
+      pipelineWatchdogStallCount = 1;
+    }
+    if (idleMs >= GOOFISH_PROGRESS_STALL_HARD_EXIT_MS || pipelineWatchdogStallCount > GOOFISH_PROGRESS_STALL_MAX_RECOVERS) {
+      schedulePipelineRestart(
+        `stalled at "${label}" for ${idleSec}s after ${pipelineWatchdogStallCount - 1} recoveries`
+      );
+      return;
+    }
+    if ((now - pipelineWatchdogLastRecoveryAt) < GOOFISH_PROGRESS_RECOVERY_COOLDOWN_MS) {
+      return;
+    }
+    pipelineWatchdogReconnectInFlight = true;
     Promise.resolve()
       .then(async () => {
-        console.warn(`[Watchdog] No pipeline progress for ${idleSec}s at "${label}". Triggering DB reconnect.`);
+        console.warn(
+          `[Watchdog] No pipeline progress for ${idleSec}s at "${label}". Triggering DB reconnect (${pipelineWatchdogStallCount}/${GOOFISH_PROGRESS_STALL_MAX_RECOVERS}).`
+        );
         let reconnected = false;
         try {
           await forceDbReconnectFromScratch(`watchdog idle ${idleSec}s ${label.slice(0, 40)}`);
@@ -1744,7 +1789,7 @@ const startPipelineProgressWatchdog = () => {
           console.warn(`[Watchdog] DB reconnect failed: ${toErrorText(error)}`);
         } finally {
           if (reconnected) {
-            markPipelineProgress('watchdog-reconnect-ok');
+            pipelineWatchdogLastRecoveryAt = Date.now();
           }
           pipelineWatchdogReconnectInFlight = false;
         }
@@ -1763,6 +1808,10 @@ const stopPipelineProgressWatchdog = () => {
   clearInterval(pipelineWatchdogTimer);
   pipelineWatchdogTimer = null;
   pipelineWatchdogReconnectInFlight = false;
+  pipelineWatchdogLastRecoveryAt = 0;
+  pipelineWatchdogLastStallLabel = '';
+  pipelineWatchdogStallCount = 0;
+  pipelineRestartScheduled = false;
 };
 
 const isRetryableDbError = (error) => {
@@ -3344,7 +3393,11 @@ async function run() {
             }
             try {
               markPipelineProgress(`process-link ${currentItemId || 'n/a'}`);
-              const detailTarget = await processCollectedLink(currentItem);
+              const detailTarget = await withTimeout(
+                () => processCollectedLink(currentItem),
+                `process link ${currentItemId || 'n/a'}`,
+                GOOFISH_PROCESS_LINK_TIMEOUT_MS
+              );
               if (detailTarget) {
                 await processProductDetails(page, detailTarget, {
                   current: currentProgress,
