@@ -642,6 +642,57 @@ const normalizeSearchText = (value) => {
     .trim();
 };
 
+const sanitizeFeaturedSearchTerms = (input) => {
+  const source = Array.isArray(input)
+    ? input
+    : (typeof input === 'string' ? input.split('\n') : []);
+  const seen = new Set();
+  const output = [];
+  for (const raw of source) {
+    const term = String(raw || '').trim();
+    if (!term) continue;
+    const normalized = normalizeSearchText(term);
+    if (!normalized) continue;
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    output.push(term);
+    if (output.length >= 40) break;
+  }
+  return output;
+};
+
+const getFeaturedSearchTermsFromMetadata = (aiMetadata) => {
+  if (!aiMetadata || typeof aiMetadata !== 'object') return [];
+  return sanitizeFeaturedSearchTerms(aiMetadata.featuredSearchTerms);
+};
+
+const isFeaturedMatchForQuery = (productLike, queryVariants, condition = '') => {
+  if (!productLike || !queryVariants || queryVariants.size === 0) return false;
+  if (!productLike.isFeatured) return false;
+  if (condition === 'new' && inferProductCondition(productLike) === false) return false;
+  if (condition === 'used' && inferProductCondition(productLike) === true) return false;
+  const aiMetadata = parseAiMetadata(productLike.aiMetadata);
+  const featuredTerms = getFeaturedSearchTermsFromMetadata(aiMetadata);
+  if (featuredTerms.length === 0) return false;
+  const normalizedTerms = featuredTerms
+    .map((term) => normalizeSearchText(term))
+    .filter(Boolean)
+    .map((term) => ({ spaced: term, compact: term.replace(/\s+/g, '') }));
+  for (const variant of queryVariants) {
+    const normalizedVariant = normalizeSearchText(variant);
+    if (!normalizedVariant) continue;
+    const compactVariant = normalizedVariant.replace(/\s+/g, '');
+    for (const term of normalizedTerms) {
+      if (!term.spaced || !term.compact) continue;
+      if (term.spaced === normalizedVariant) return true;
+      if (term.compact === compactVariant) return true;
+      if (normalizedVariant.includes(term.spaced) || term.spaced.includes(normalizedVariant)) return true;
+      if (compactVariant.includes(term.compact) || term.compact.includes(compactVariant)) return true;
+    }
+  }
+  return false;
+};
+
 const ARABIC_SYNONYM_GROUPS = [
   ['جوال', 'هاتف', 'موبايل', 'تلفون', 'محمول', 'موبيل', 'خلوي', 'موبايل فون'],
   ['ايفون', 'آيفون', 'iphone', 'اىفون', 'اي فون'],
@@ -786,17 +837,20 @@ const expandSearchTermsForIraqiSlang = (query) => {
 const buildSearchDocument = (product) => {
   const aiMetadata = parseAiMetadata(product?.aiMetadata);
   const rawKeywords = Array.isArray(product?.keywords) ? product.keywords : [];
+  const featuredSearchTerms = getFeaturedSearchTermsFromMetadata(aiMetadata);
   const keywordsJoined = rawKeywords.map((kw) => String(kw || '').trim()).filter(Boolean).join(' ');
   const title = String(product?.name || '').trim();
   const description = String(product?.description || '').trim();
   const aiTitle = String(aiMetadata?.title_ar || aiMetadata?.title || '').trim();
-  const searchText = [title, aiTitle, keywordsJoined, description].filter(Boolean).join(' ');
+  const featuredTermsJoined = featuredSearchTerms.join(' ');
+  const searchText = [title, aiTitle, keywordsJoined, featuredTermsJoined, description].filter(Boolean).join(' ');
   const normalizedSearchText = normalizeSearchText(searchText);
   return {
     id: product.id,
     name: title,
     aiTitle,
     description,
+    featuredSearchTerms,
     keywords: rawKeywords,
     searchText,
     normalizedSearchText,
@@ -8148,11 +8202,18 @@ app.get('/api/search', async (req, res) => {
       perf.log('db_fetch_for_meili_done', { dbMs: Date.now() - dbFetchStartedAt, productsCount: productsFromDb.length });
 
       const rankIndex = new Map(hitIds.map((id, indexPosition) => [id, indexPosition]));
+      const queryVariants = new Set([
+        q,
+        normalizedQuery,
+        ...expandedSearchTerms
+      ].map((value) => String(value || '').trim()).filter(Boolean));
       const rankedProducts = productsFromDb
         .slice()
         .sort((a, b) => {
-          const featuredDiff = Number(Boolean(b.isFeatured)) - Number(Boolean(a.isFeatured));
-          if (featuredDiff !== 0) return featuredDiff;
+          const aFeaturedMatch = isFeaturedMatchForQuery(a, queryVariants, condition);
+          const bFeaturedMatch = isFeaturedMatchForQuery(b, queryVariants, condition);
+          const featuredMatchDiff = Number(bFeaturedMatch) - Number(aFeaturedMatch);
+          if (featuredMatchDiff !== 0) return featuredMatchDiff;
           return (rankIndex.get(a.id) ?? 999999) - (rankIndex.get(b.id) ?? 999999);
         })
         .map((product) => {
@@ -8236,11 +8297,23 @@ app.get('/api/search', async (req, res) => {
           : extractNewOrOld(aiMetadata);
         return { ...processed, aiMetadata, isRealBrand, neworold };
       });
+      const queryVariants = new Set([
+        q,
+        normalizedQuery,
+        ...expandedSearchTerms
+      ].map((value) => String(value || '').trim()).filter(Boolean));
+      const rankedFallbackProducts = processedProducts
+        .slice()
+        .sort((a, b) => {
+          const aFeaturedMatch = isFeaturedMatchForQuery(a, queryVariants, condition);
+          const bFeaturedMatch = isFeaturedMatchForQuery(b, queryVariants, condition);
+          return Number(bFeaturedMatch) - Number(aFeaturedMatch);
+        });
       const conditionFilteredProducts = condition === 'new'
-        ? processedProducts.filter((product) => inferProductCondition(product) !== false)
+        ? rankedFallbackProducts.filter((product) => inferProductCondition(product) !== false)
         : condition === 'used'
-          ? processedProducts.filter((product) => inferProductCondition(product) !== true)
-          : processedProducts;
+          ? rankedFallbackProducts.filter((product) => inferProductCondition(product) !== true)
+          : rankedFallbackProducts;
 
       perf.log('response_sent', { engine: 'db', returned: conditionFilteredProducts.length, total });
       return res.json({
@@ -9533,7 +9606,7 @@ app.put('/api/products/:id', authenticateToken, isAdmin, hasPermission('manage_p
     const { 
       name, chineseName, price, basePriceIQD, description, image, 
       isFeatured, isActive, status, purchaseUrl, videoUrl, 
-      specs, images, detailImages,
+      specs, images, detailImages, featuredSearchTerms,
       weight, length, width, height, domesticShippingFee, deliveryTime
     } = req.body;
     
@@ -9588,6 +9661,23 @@ app.put('/api/products/:id', authenticateToken, isAdmin, hasPermission('manage_p
       domesticShippingFee: domesticShippingFee !== undefined ? (domesticShippingFee === '' ? null : parseFloat(domesticShippingFee)) : undefined,
       deliveryTime: deliveryTime !== undefined ? (deliveryTime === '' ? null : deliveryTime) : undefined
     };
+
+    if (featuredSearchTerms !== undefined) {
+      const normalizedFeaturedTerms = sanitizeFeaturedSearchTerms(featuredSearchTerms);
+      const currentProduct = await prisma.product.findUnique({
+        where: { id: safeParseId(id) },
+        select: { aiMetadata: true }
+      });
+      const currentMetadata = parseAiMetadata(currentProduct?.aiMetadata) || {};
+      const nextMetadata = {
+        ...currentMetadata,
+        featuredSearchTerms: normalizedFeaturedTerms
+      };
+      updateData.aiMetadata = nextMetadata;
+      if (isFeatured === undefined) {
+        updateData.isFeatured = normalizedFeaturedTerms.length > 0;
+      }
+    }
 
     // Remove undefined fields
     Object.keys(updateData).forEach(key => updateData[key] === undefined && delete updateData[key]);

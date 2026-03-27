@@ -1,6 +1,6 @@
 import React, { useRef, useState } from 'react';
 import LazyImage from '../LazyImage';
-import { Heart, Star, X } from 'lucide-react';
+import { Check, Heart, Pencil, Star, X } from 'lucide-react';
 import type { Product } from '../../types/product';
 import { motion } from 'framer-motion';
 import { useAuthStore } from '../../store/useAuthStore';
@@ -12,6 +12,8 @@ interface ProductCardProps {
   onNavigate: (id: number | string) => void;
   onAddToWishlist: (e: React.MouseEvent, product: Product) => void;
   isProductInWishlist: (id: number | string) => boolean;
+  allowAdminFeatureControls?: boolean;
+  searchContextQuery?: string;
 }
 
 const ProductCard: React.FC<ProductCardProps> = React.memo(({
@@ -19,13 +21,52 @@ const ProductCard: React.FC<ProductCardProps> = React.memo(({
   onNavigate,
   onAddToWishlist,
   isProductInWishlist,
+  allowAdminFeatureControls = false,
+  searchContextQuery = '',
 }) => {
   const [product, setProduct] = useState(initialProduct);
   const [isArchiving, setIsArchiving] = useState(false);
   const [isTogglingFeatured, setIsTogglingFeatured] = useState(false);
+  const [showFeatureEditor, setShowFeatureEditor] = useState(false);
+  const [isSavingFeatureTerms, setIsSavingFeatureTerms] = useState(false);
+  const [featureTerms, setFeatureTerms] = useState<string[]>(() => {
+    const raw = Array.isArray(initialProduct?.aiMetadata?.featuredSearchTerms)
+      ? initialProduct.aiMetadata.featuredSearchTerms
+      : [];
+    const terms = raw.map((v: any) => String(v || '').trim()).filter(Boolean);
+    return terms.length > 0 ? terms : [''];
+  });
   const user = useAuthStore(state => state.user);
   const isAdmin = user && user.role === 'ADMIN';
+  const canManageFeature = Boolean(isAdmin && allowAdminFeatureControls);
   const showToast = useToastStore(state => state.showToast);
+
+  const normalizeTerm = (value: string) => String(value || '').trim().toLowerCase();
+  const normalizeUniqueTerms = (terms: string[]) => {
+    const seen = new Set<string>();
+    const output: string[] = [];
+    terms.forEach((entry) => {
+      const trimmed = String(entry || '').trim();
+      if (!trimmed) return;
+      const key = normalizeTerm(trimmed);
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      output.push(trimmed);
+    });
+    return output;
+  };
+  const currentQuery = String(searchContextQuery || '').trim();
+  const updateFeatureState = (nextFeatured: boolean, nextTerms: string[]) => {
+    setProduct((prev) => ({
+      ...prev,
+      isFeatured: nextFeatured,
+      aiMetadata: {
+        ...(prev.aiMetadata || {}),
+        featuredSearchTerms: nextTerms
+      }
+    }));
+    setFeatureTerms(nextTerms.length > 0 ? nextTerms : ['']);
+  };
 
   const handleArchive = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -49,19 +90,77 @@ const ProductCard: React.FC<ProductCardProps> = React.memo(({
 
   const handleToggleFeatured = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!isAdmin || isTogglingFeatured) return;
+    if (!canManageFeature || isTogglingFeatured || isSavingFeatureTerms) return;
     try {
       setIsTogglingFeatured(true);
       const token = useAuthStore.getState().token || localStorage.getItem('auth_token');
-      const nextFeatured = !Boolean(product.isFeatured);
-      await updateProduct(product.id, { isFeatured: nextFeatured }, token);
-      setProduct((prev) => ({ ...prev, isFeatured: nextFeatured }));
-      showToast(nextFeatured ? 'تم تمييز المنتج في البحث' : 'تم إلغاء تمييز المنتج', 'success');
+      const existingTerms = normalizeUniqueTerms(Array.isArray(product?.aiMetadata?.featuredSearchTerms) ? product.aiMetadata.featuredSearchTerms : []);
+      const queryKey = normalizeTerm(currentQuery);
+      const hasQueryInTerms = Boolean(queryKey && existingTerms.some((term) => normalizeTerm(term) === queryKey));
+      let nextTerms: string[] = [];
+      if (!product.isFeatured) {
+        nextTerms = normalizeUniqueTerms([currentQuery, ...existingTerms]);
+      } else if (hasQueryInTerms) {
+        nextTerms = existingTerms.filter((term) => normalizeTerm(term) !== queryKey);
+      } else {
+        nextTerms = normalizeUniqueTerms([currentQuery, ...existingTerms]);
+      }
+      const nextFeatured = nextTerms.length > 0;
+      await updateProduct(product.id, { isFeatured: nextFeatured, featuredSearchTerms: nextTerms }, token);
+      updateFeatureState(nextFeatured, nextTerms);
+      if (nextFeatured) {
+        showToast('تم تثبيت المنتج لعبارة البحث الحالية', 'success');
+      } else {
+        showToast('تم إلغاء تثبيت المنتج من نتائج البحث', 'success');
+      }
     } catch (error) {
       console.error('Failed to toggle featured status:', error);
       showToast('فشل تحديث تمييز المنتج', 'error');
     } finally {
       setIsTogglingFeatured(false);
+    }
+  };
+
+  const handleOpenFeatureEditor = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!canManageFeature || !product.isFeatured) return;
+    const existingTerms = normalizeUniqueTerms(Array.isArray(product?.aiMetadata?.featuredSearchTerms) ? product.aiMetadata.featuredSearchTerms : []);
+    setFeatureTerms(existingTerms.length > 0 ? existingTerms : ['']);
+    setShowFeatureEditor((prev) => !prev);
+  };
+
+  const handleFeatureTermChange = (index: number, value: string) => {
+    setFeatureTerms((prev) => prev.map((item, i) => (i === index ? value : item)));
+  };
+
+  const handleFeatureTermEnter = (e: React.KeyboardEvent<HTMLInputElement>, index: number) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    setFeatureTerms((prev) => {
+      const next = [...prev];
+      if (!String(next[index] || '').trim()) return next;
+      next.splice(index + 1, 0, '');
+      return next;
+    });
+  };
+
+  const handleSaveFeatureTerms = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!canManageFeature || isSavingFeatureTerms || isTogglingFeatured) return;
+    try {
+      setIsSavingFeatureTerms(true);
+      const token = useAuthStore.getState().token || localStorage.getItem('auth_token');
+      const nextTerms = normalizeUniqueTerms(featureTerms);
+      const nextFeatured = nextTerms.length > 0;
+      await updateProduct(product.id, { isFeatured: nextFeatured, featuredSearchTerms: nextTerms }, token);
+      updateFeatureState(nextFeatured, nextTerms);
+      setShowFeatureEditor(false);
+      showToast('تم حفظ كلمات تثبيت البحث', 'success');
+    } catch (error) {
+      console.error('Failed to save featured search terms:', error);
+      showToast('فشل حفظ كلمات التثبيت', 'error');
+    } finally {
+      setIsSavingFeatureTerms(false);
     }
   };
 
@@ -180,19 +279,67 @@ const ProductCard: React.FC<ProductCardProps> = React.memo(({
           <X size={16} />
         </button>
       )}
-      {isAdmin && (
+      {canManageFeature && (
         <button
           onClick={handleToggleFeatured}
-          disabled={isTogglingFeatured}
+          disabled={isTogglingFeatured || isSavingFeatureTerms}
           className={`absolute top-3 left-14 z-20 p-1.5 rounded-full shadow-md transition-colors pointer-events-auto ${
             product.isFeatured
               ? 'bg-amber-500 hover:bg-amber-600 text-white'
               : 'bg-slate-700/85 hover:bg-slate-800 text-white'
           }`}
-          title={product.isFeatured ? 'إلغاء تمييز المنتج' : 'تمييز المنتج في البحث'}
+          title={product.isFeatured ? 'إلغاء تثبيت المنتج لعبارة البحث الحالية' : 'تثبيت المنتج لعبارة البحث الحالية'}
         >
           <Star size={16} fill={product.isFeatured ? 'currentColor' : 'none'} />
         </button>
+      )}
+      {canManageFeature && product.isFeatured && (
+        <button
+          onClick={handleOpenFeatureEditor}
+          disabled={isSavingFeatureTerms || isTogglingFeatured}
+          className="absolute top-3 left-24 z-20 p-1.5 rounded-full shadow-md transition-colors pointer-events-auto bg-indigo-600 hover:bg-indigo-700 text-white"
+          title="تعديل عبارات التثبيت"
+        >
+          <Pencil size={16} />
+        </button>
+      )}
+      {canManageFeature && showFeatureEditor && product.isFeatured && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="absolute top-14 left-3 right-3 z-30 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 shadow-xl"
+        >
+          <div className="space-y-2 max-h-48 overflow-y-auto">
+            {featureTerms.map((term, index) => (
+              <input
+                key={`feature-term-${index}`}
+                value={term}
+                onChange={(e) => handleFeatureTermChange(index, e.target.value)}
+                onKeyDown={(e) => handleFeatureTermEnter(e, index)}
+                placeholder="اكتب عبارة بحث ثم اضغط Enter"
+                className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-xs text-slate-800 dark:text-slate-100 outline-none focus:border-indigo-500"
+              />
+            ))}
+          </div>
+          <div className="mt-3 flex items-center justify-end gap-2">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowFeatureEditor(false);
+              }}
+              className="px-3 py-1.5 rounded-md text-xs font-semibold bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200"
+            >
+              إغلاق
+            </button>
+            <button
+              onClick={handleSaveFeatureTerms}
+              disabled={isSavingFeatureTerms}
+              className="px-3 py-1.5 rounded-md text-xs font-semibold bg-indigo-600 text-white disabled:opacity-60 flex items-center gap-1"
+            >
+              <Check size={14} />
+              حفظ
+            </button>
+          </div>
+        </div>
       )}
 
       {/* Image Container */}

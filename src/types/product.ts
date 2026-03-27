@@ -35,6 +35,7 @@ export interface Product {
   aiMetadata?: {
     isRealBrand?: boolean;
     translatedDescription?: string;
+    featuredSearchTerms?: string[];
     [key: string]: any;
   };
 }

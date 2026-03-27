@@ -1203,6 +1203,8 @@ const SearchResults: React.FC = () => {
                 onNavigate={(id) => handleNavigateToProduct(id, product)}
                 onAddToWishlist={onAddToWishlist}
                 isProductInWishlist={isProductInWishlist}
+                allowAdminFeatureControls={!imageSearchInput && Boolean(activeQuery.trim())}
+                searchContextQuery={activeQuery}
               />
             ))}
           </div>
