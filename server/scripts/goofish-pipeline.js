@@ -1864,6 +1864,20 @@ const withRetry = async (run, label, retries = 5, timeoutMs = 60000, backoffMs =
 
 const toErrorText = (error) => String(error?.message || error || 'unknown error');
 const toErrorCode = (error) => String(error?.code || '');
+const makePipelineRestartError = (message, cause = null) => {
+  const error = new Error(message);
+  error.code = 'GOOFISH_PIPELINE_RESTART';
+  if (cause) {
+    error.cause = cause;
+  }
+  return error;
+};
+const isPipelineRestartError = (error) => String(error?.code || '') === 'GOOFISH_PIPELINE_RESTART';
+const shouldRestartPipelineForItemError = (error) => {
+  if (isPipelineRestartError(error)) return true;
+  const text = toErrorText(error);
+  return text.includes('process link ') && text.includes(' timed out after ');
+};
 
 async function createBrowser() {
   let executablePath = getExecutablePath();
@@ -2265,8 +2279,7 @@ async function saveProductToDb(item, existingProductId = null) {
     }
     const ready = await ensureDbReady();
     if (!ready) {
-        console.error('Database not ready, cannot save product.');
-        return;
+        throw makePipelineRestartError(`database not ready before save ${extractGoofishItemId(item.url) || 'item'}`);
     }
 
     const existing = existingProductId ? { id: existingProductId } : null;
@@ -3205,18 +3218,21 @@ async function run() {
         url: resolvedUrl
       };
       if (OUTPUT_JSON) allItems.push(itemData);
+      const goofishItemId = extractGoofishItemId(resolvedUrl);
       if (isDbCircuitOpen()) {
-        return existingProduct?.id ? {
+        if (!existingProduct?.id) {
+          throw makePipelineRestartError(`db circuit open before save ${goofishItemId || 'n/a'}`);
+        }
+        return {
           id: existingProduct.id,
           url: resolvedUrl,
           name: titleEn || item.title,
           image: existingProduct?.image || item.image || '',
           imagesChecked: existingProduct?.imagesChecked || false,
           specs: existingProduct?.specs || null
-        } : null;
+        };
       }
       let dbId = null;
-      const goofishItemId = extractGoofishItemId(resolvedUrl);
       try {
         dbId = await withRetry(
           () => saveProductToDb(itemData, existingProduct?.id || null),
@@ -3254,11 +3270,13 @@ async function run() {
           };
         }
         const recoveredTarget = await resolveDetailTargetFromDbByUrl();
-        return recoveredTarget || null;
+        if (recoveredTarget) return recoveredTarget;
+        throw makePipelineRestartError(`failed to persist item ${goofishItemId || 'n/a'}`, saveErr);
       }
       if (!dbId) {
         const recoveredTarget = await resolveDetailTargetFromDbByUrl();
-        return recoveredTarget || null;
+        if (recoveredTarget) return recoveredTarget;
+        throw makePipelineRestartError(`save returned no db target for ${goofishItemId || 'n/a'}`);
       }
       return {
         id: dbId,
@@ -3408,6 +3426,14 @@ async function run() {
               }
               markPipelineProgress(`process-done ${currentItemId || 'n/a'}`);
             } catch (itemErr) {
+              if (shouldRestartPipelineForItemError(itemErr)) {
+                queue.termStates[termIndex] = state;
+                queue.nextProcessTerm = termIndex;
+                queue.updatedAt = new Date().toISOString();
+                saveBatchLinksQueue(queue);
+                console.error(`[Process] Fatal processing failure. Restart required: ${toErrorText(itemErr)}`);
+                throw itemErr;
+              }
               console.error(`[Process] Failed processing link, skipping to next: ${toErrorText(itemErr)}`);
             }
             processedCount += 1;

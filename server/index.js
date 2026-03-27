@@ -8140,10 +8140,9 @@ app.get('/api/search', async (req, res) => {
 
     const normalizedQuery = normalizeSearchText(q);
     const expandedSearchTerms = expandSearchTermsForIraqiSlang(q);
-    const queryVariants = new Set([
+    const exactFeaturedQueryVariants = new Set([
       q,
-      normalizedQuery,
-      ...expandedSearchTerms
+      normalizedQuery
     ].map((value) => String(value || '').trim()).filter(Boolean));
     const productSelect = {
       id: true,
@@ -8205,7 +8204,7 @@ app.get('/api/search', async (req, res) => {
       select: productSelect
     });
     const featuredMatchedProducts = featuredCandidates
-      .filter((product) => isFeaturedMatchForQuery(product, queryVariants, condition))
+      .filter((product) => isFeaturedMatchForQuery(product, exactFeaturedQueryVariants, condition))
       .sort((a, b) => {
         const aUpdated = a?.updatedAt ? new Date(a.updatedAt).getTime() : 0;
         const bUpdated = b?.updatedAt ? new Date(b.updatedAt).getTime() : 0;
@@ -8263,8 +8262,8 @@ app.get('/api/search', async (req, res) => {
       const rankedProducts = productsFromDb
         .slice()
         .sort((a, b) => {
-          const aFeaturedMatch = isFeaturedMatchForQuery(a, queryVariants, condition);
-          const bFeaturedMatch = isFeaturedMatchForQuery(b, queryVariants, condition);
+          const aFeaturedMatch = isFeaturedMatchForQuery(a, exactFeaturedQueryVariants, condition);
+          const bFeaturedMatch = isFeaturedMatchForQuery(b, exactFeaturedQueryVariants, condition);
           const featuredMatchDiff = Number(bFeaturedMatch) - Number(aFeaturedMatch);
           if (featuredMatchDiff !== 0) return featuredMatchDiff;
           return (rankIndex.get(a.id) ?? 999999) - (rankIndex.get(b.id) ?? 999999);
@@ -8369,8 +8368,8 @@ app.get('/api/search', async (req, res) => {
       const rankedFallbackProducts = processedProducts
         .slice()
         .sort((a, b) => {
-          const aFeaturedMatch = isFeaturedMatchForQuery(a, queryVariants, condition);
-          const bFeaturedMatch = isFeaturedMatchForQuery(b, queryVariants, condition);
+          const aFeaturedMatch = isFeaturedMatchForQuery(a, exactFeaturedQueryVariants, condition);
+          const bFeaturedMatch = isFeaturedMatchForQuery(b, exactFeaturedQueryVariants, condition);
           return Number(bFeaturedMatch) - Number(aFeaturedMatch);
         });
       const conditionFilteredProducts = condition === 'new'

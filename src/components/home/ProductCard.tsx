@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import LazyImage from '../LazyImage';
 import { Check, Heart, Pencil, Star, X } from 'lucide-react';
 import type { Product } from '../../types/product';
@@ -37,7 +37,7 @@ const ProductCard: React.FC<ProductCardProps> = React.memo(({
     return terms.length > 0 ? terms : [''];
   });
   const user = useAuthStore(state => state.user);
-  const isAdmin = user && user.role === 'ADMIN';
+  const isAdmin = String(user?.role || '').toUpperCase() === 'ADMIN';
   const canManageFeature = Boolean(isAdmin && allowAdminFeatureControls);
   const showToast = useToastStore(state => state.showToast);
 
@@ -67,6 +67,15 @@ const ProductCard: React.FC<ProductCardProps> = React.memo(({
     }));
     setFeatureTerms(nextTerms.length > 0 ? nextTerms : ['']);
   };
+
+  useEffect(() => {
+    setProduct(initialProduct);
+    const raw = Array.isArray(initialProduct?.aiMetadata?.featuredSearchTerms)
+      ? initialProduct.aiMetadata.featuredSearchTerms
+      : [];
+    const terms = raw.map((v: any) => String(v || '').trim()).filter(Boolean);
+    setFeatureTerms(terms.length > 0 ? terms : ['']);
+  }, [initialProduct]);
 
   const handleArchive = async (e: React.MouseEvent) => {
     e.stopPropagation();
