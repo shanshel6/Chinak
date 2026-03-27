@@ -599,6 +599,28 @@ const extractNewOrOld = (aiMetadata) => {
   return null;
 };
 
+const CONDITION_USED_TEXT_REGEX = /(轻微使用痕迹|使用痕迹|二手|闲置|自用|有磨损|有划痕|成色|旧款|旧包|旧货|used|pre[-\s]?owned|second[-\s]?hand|مستعمل|استخدام\s*خفيف|غير\s*جديد)/i;
+const CONDITION_NEW_TEXT_REGEX = /(全新|全新未使用|未使用|未拆封|全新带吊牌|全新带标签|吊牌未拆|brand\s*new|جديد|غير\s*مستعمل)/i;
+
+const inferProductCondition = (productLike) => {
+  if (!productLike || typeof productLike !== 'object') return null;
+  if (typeof productLike.neworold === 'boolean') return productLike.neworold;
+  const aiMetadata = parseAiMetadata(productLike.aiMetadata);
+  const metadataCondition = extractNewOrOld(aiMetadata);
+  if (typeof metadataCondition === 'boolean') return metadataCondition;
+  const text = [
+    String(productLike?.name || '').trim(),
+    String(aiMetadata?.originalTitle || '').trim(),
+    String(aiMetadata?.conditionText || '').trim(),
+    String(aiMetadata?.translatedDescription || '').trim()
+  ].filter(Boolean).join(' ');
+  if (!text) return null;
+  const normalized = String(text).toLowerCase();
+  if (CONDITION_USED_TEXT_REGEX.test(normalized)) return false;
+  if (CONDITION_NEW_TEXT_REGEX.test(normalized)) return true;
+  return null;
+};
+
 const MEILI_INDEX_NAME = process.env.MEILI_INDEX_NAME || 'products';
 const MEILI_HOST = process.env.MEILI_HOST || '';
 const MEILI_ADMIN_API_KEY = process.env.MEILI_ADMIN_API_KEY || process.env.MEILI_MASTER_KEY || '';
@@ -765,7 +787,7 @@ const getMeiliIndex = async () => {
 
 const ensureMeiliIndexSettings = async () => {
   const index = await getMeiliIndex();
-  await index.updateSearchableAttributes(['name', 'aiTitle', 'searchText', 'normalizedSearchText', 'keywords', 'description']);
+  await index.updateSearchableAttributes(['keywords', 'name', 'aiTitle', 'searchText', 'normalizedSearchText', 'description']);
   await index.updateFilterableAttributes(['status', 'isActive', 'neworold', 'price']);
   await index.updateSortableAttributes(['price', 'updatedAt']);
   await index.updateSynonyms(MEILI_ARABIC_SYNONYMS);
@@ -856,6 +878,27 @@ const ensureMeiliIndexed = async () => {
     if ((stats?.numberOfDocuments || 0) > 0) return;
     await syncProductsToMeili();
   } catch (error) {
+    const message = String(error?.message || '');
+    const code = String(error?.code || '');
+    const isDbIssue = error?.name === 'PrismaClientInitializationError'
+      || code === 'P1001'
+      || code === 'P1017'
+      || code === 'P2024'
+      || message.includes("Can't reach database server")
+      || message.includes('Server has closed the connection')
+      || message.includes('timed out');
+    const isMeiliIssue = message.includes('127.0.0.1:7700')
+      || message.includes('ECONNREFUSED')
+      || message.includes('failed to fetch')
+      || message.includes('fetch failed');
+    if (isDbIssue) {
+      console.warn('[Meili] Startup indexing skipped: database unavailable.');
+      return;
+    }
+    if (isMeiliIssue) {
+      console.warn('[Meili] Startup indexing skipped: Meilisearch unavailable.');
+      return;
+    }
     console.error('[Meili] ensureMeiliIndexed failed:', error?.message || error);
   }
 };
@@ -972,14 +1015,25 @@ app.get('/api/diagnostics', (req, res) => {
 
 // Test Database Connection
 prisma.$connect()
-  .then(() => {
+  .then(async () => {
     console.log('Successfully connected to the database');
-    return prisma.product.count();
-  })
-  .then(count => {
+    const count = await prisma.product.count();
     console.log(`Database check: Found ${count} products`);
   })
-  .catch(err => {
+  .catch((err) => {
+    const message = String(err?.message || '');
+    const code = String(err?.code || '');
+    const isTransientDbIssue = err?.name === 'PrismaClientInitializationError'
+      || code === 'P1001'
+      || code === 'P1017'
+      || code === 'P2024'
+      || message.includes("Can't reach database server")
+      || message.includes('Server has closed the connection')
+      || message.includes('timed out');
+    if (isTransientDbIssue) {
+      console.warn('DATABASE CONNECTION WARNING: database unavailable during startup. Server will keep running and retry on incoming requests.');
+      return;
+    }
     console.error('DATABASE CONNECTION ERROR:', err);
   });
 
@@ -3434,6 +3488,35 @@ app.post('/api/shipping/calculate', authenticateToken, async (req, res) => {
 // Products routes
 let cachedStoreSettings = null;
 let cachedStoreSettingsTime = 0;
+const productsResponseCache = new Map();
+const PRODUCTS_RESPONSE_TTL_MS = 30000;
+
+const isDbConnectionError = (error) => {
+  const code = String(error?.code || '');
+  const message = String(error?.message || '');
+  return code === 'P1001' || code === 'P1017' || code === 'P2024'
+    || message.includes("Can't reach database server")
+    || message.includes('Server has closed the connection')
+    || message.includes('timed out');
+};
+
+const withDbRetry = async (task, attempts = 3) => {
+  let lastError = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await task();
+    } catch (error) {
+      lastError = error;
+      if (!isDbConnectionError(error) || attempt === attempts) {
+        throw error;
+      }
+      try { await prisma.$disconnect(); } catch {}
+      await sleep(500 * attempt);
+      try { await prisma.$connect(); } catch {}
+    }
+  }
+  throw lastError;
+};
 
 const mapProductToRapidItem = (product) => {
   const media = Array.isArray(product?.images) ? product.images : [];
@@ -4939,6 +5022,7 @@ app.get('/api/products', async (req, res) => {
   const forcePerf = String(req.query.perf || req.headers['x-perf-log'] || '').trim() === '1';
   const perf = createPerfLog('products', ENABLE_SEARCH_PERF_LOGS || forcePerf);
   perf.log('start', { query: req.query });
+  const cacheKey = JSON.stringify(req.query || {});
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 20;
@@ -4948,8 +5032,18 @@ app.get('/api/products', async (req, res) => {
 
     // Cache Store Settings for 60 seconds to reduce DB round-trips
     if (!cachedStoreSettings || (Date.now() - cachedStoreSettingsTime > 60000)) {
-       cachedStoreSettings = await prisma.storeSettings.findUnique({ where: { id: 1 } });
-       cachedStoreSettingsTime = Date.now();
+      try {
+        cachedStoreSettings = await withDbRetry(() => prisma.storeSettings.findUnique({ where: { id: 1 } }));
+        cachedStoreSettingsTime = Date.now();
+      } catch (settingsError) {
+        if (!isDbConnectionError(settingsError)) {
+          throw settingsError;
+        }
+        if (!cachedStoreSettings) {
+          cachedStoreSettings = null;
+          cachedStoreSettingsTime = Date.now();
+        }
+      }
     }
     const storeSettings = cachedStoreSettings;
     perf.log('store_settings_ready', { cacheAgeMs: Date.now() - cachedStoreSettingsTime });
@@ -4986,7 +5080,7 @@ app.get('/api/products', async (req, res) => {
     }
 
     const dbStartedAt = Date.now();
-    const [products, total] = await Promise.all([
+    const [products, total] = await withDbRetry(() => Promise.all([
       prisma.product.findMany({
         where,
         select: {
@@ -5015,7 +5109,7 @@ app.get('/api/products', async (req, res) => {
         orderBy: { updatedAt: 'desc' }
       }),
       prisma.product.count({ where })
-    ]);
+    ]));
     perf.log('db_query_done', { dbMs: Date.now() - dbStartedAt, productsCount: products.length, total });
 
     // If no products found, return empty result immediately to avoid processing overhead
@@ -5029,7 +5123,7 @@ app.get('/api/products', async (req, res) => {
       });
     }
 
-    res.json({
+    const payload = {
       products: products.map(p => {
         const aiMetadata = parseAiMetadata(p.aiMetadata);
         const processed = applyDynamicPricingToProduct(p, shippingRates);
@@ -5044,10 +5138,17 @@ app.get('/api/products', async (req, res) => {
       page,
       totalPages: Math.ceil(total / limit),
       engine: 'db'
-    });
+    };
+    productsResponseCache.set(cacheKey, { at: Date.now(), payload });
+    res.json(payload);
     perf.log('response_sent', { engine: 'db', returned: products.length });
   } catch (error) {
     perf.log('error', { message: error?.message, name: error?.name });
+    const cached = productsResponseCache.get(cacheKey);
+    if (cached && (Date.now() - cached.at) <= PRODUCTS_RESPONSE_TTL_MS && isDbConnectionError(error)) {
+      perf.log('served_stale_cache', { ageMs: Date.now() - cached.at });
+      return res.json({ ...cached.payload, stale: true });
+    }
     console.error('[Products] Failed to fetch products:', error);
     try {
       const logPath = path.join(__dirname, 'server_error_full.log');
@@ -7928,8 +8029,18 @@ app.get('/api/search', async (req, res) => {
     };
 
     if (!cachedStoreSettings || (Date.now() - cachedStoreSettingsTime > 60000)) {
-      cachedStoreSettings = await prisma.storeSettings.findUnique({ where: { id: 1 } });
-      cachedStoreSettingsTime = Date.now();
+      try {
+        cachedStoreSettings = await withDbRetry(() => prisma.storeSettings.findUnique({ where: { id: 1 } }));
+        cachedStoreSettingsTime = Date.now();
+      } catch (settingsError) {
+        if (!isDbConnectionError(settingsError)) {
+          throw settingsError;
+        }
+        if (!cachedStoreSettings) {
+          cachedStoreSettings = null;
+          cachedStoreSettingsTime = Date.now();
+        }
+      }
     }
     const storeSettings = cachedStoreSettings;
     perf.log('store_settings_ready', { cacheAgeMs: Date.now() - cachedStoreSettingsTime });
@@ -7995,15 +8106,20 @@ app.get('/api/search', async (req, res) => {
             : extractNewOrOld(aiMetadata);
           return { ...processed, aiMetadata, isRealBrand, neworold };
         });
+      const conditionFilteredProducts = condition === 'new'
+        ? rankedProducts.filter((product) => inferProductCondition(product) !== false)
+        : condition === 'used'
+          ? rankedProducts.filter((product) => inferProductCondition(product) !== true)
+          : rankedProducts;
 
       const total = Number(searchResult?.estimatedTotalHits || 0);
-      perf.log('response_sent', { engine: 'meili', returned: rankedProducts.length, total });
+      perf.log('response_sent', { engine: 'meili', returned: conditionFilteredProducts.length, total });
       return res.json({
-        products: rankedProducts,
+        products: conditionFilteredProducts,
         total,
         page,
         totalPages: Math.ceil(total / limit),
-        hasMore: offset + rankedProducts.length < total,
+        hasMore: offset + conditionFilteredProducts.length < total,
         engine: 'meili'
       });
     } catch (meiliError) {
@@ -8058,14 +8174,19 @@ app.get('/api/search', async (req, res) => {
           : extractNewOrOld(aiMetadata);
         return { ...processed, aiMetadata, isRealBrand, neworold };
       });
+      const conditionFilteredProducts = condition === 'new'
+        ? processedProducts.filter((product) => inferProductCondition(product) !== false)
+        : condition === 'used'
+          ? processedProducts.filter((product) => inferProductCondition(product) !== true)
+          : processedProducts;
 
-      perf.log('response_sent', { engine: 'db', returned: processedProducts.length, total });
+      perf.log('response_sent', { engine: 'db', returned: conditionFilteredProducts.length, total });
       return res.json({
-        products: processedProducts,
+        products: conditionFilteredProducts,
         total,
         page,
         totalPages: Math.ceil(total / limit),
-        hasMore: offset + processedProducts.length < total,
+        hasMore: offset + conditionFilteredProducts.length < total,
         engine: 'db'
       });
     }
@@ -10822,7 +10943,14 @@ const server = httpServer.listen(PORT, '0.0.0.0', () => {
   // Trigger MeiliSearch indexing on startup
   setTimeout(() => {
     console.log('[Meili Debug] Triggering startup index check...');
-    ensureMeiliIndexed().catch(err => console.error('[Meili Debug] Startup index check failed:', err));
+    ensureMeiliIndexed().catch(err => {
+      // Don't crash the server or flood logs if DB is down at startup
+      if (err.name === 'PrismaClientInitializationError') {
+        console.error('[Meili Debug] Startup index check skipped: Database connection unavailable (Will retry automatically on next request)');
+      } else {
+        console.error('[Meili Debug] Startup index check failed:', err.message);
+      }
+    });
   }, 5000);
 });
 
