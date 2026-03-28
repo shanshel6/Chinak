@@ -12,6 +12,7 @@ export interface LocalProduct {
   status: 'DRAFT';
   isActive: boolean;
   isFeatured: boolean;
+  featuredSearchSentences?: string[];
   isLocal: boolean;
   purchaseUrl?: string;
   videoUrl?: string;

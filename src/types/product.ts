@@ -15,6 +15,7 @@ export interface Product {
   variants?: any[];
   purchaseUrl?: string;
   isFeatured?: boolean;
+  featuredSearchSentences?: string[];
   averageRating?: string;
   totalReviews?: number;
   reviews?: any[];
