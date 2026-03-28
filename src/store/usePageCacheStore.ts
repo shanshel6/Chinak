@@ -22,9 +22,16 @@ interface PageCacheState {
   setSearchData: (key: string, entry: Omit<SearchCacheEntry, 'scrollPos'> & { scrollPos?: number }) => void;
   setSearchScrollPos: (key: string, pos: number) => void;
   getSearchData: (key: string) => SearchCacheEntry | undefined;
+  removeProductFromCache: (productId: number | string) => void;
 }
 
 export const usePageCacheStore = create<PageCacheState>((set, get) => {
+  const normalizeProductId = (value: unknown) => String(value ?? '').trim().replace(/^rapid-/i, '');
+  const filterProducts = (products: Product[], productId: string) => (
+    Array.isArray(products)
+      ? products.filter((product) => normalizeProductId((product as any)?.id) !== productId)
+      : []
+  );
   const readHome = () => {
     try {
       const raw = localStorage.getItem('home_cache_v1');
@@ -52,6 +59,20 @@ export const usePageCacheStore = create<PageCacheState>((set, get) => {
     try {
       localStorage.setItem(`search_cache_v1:${key}`, JSON.stringify(entry));
     } catch {}
+  };
+  const readAllSearchEntries = () => {
+    const entries: Record<string, SearchCacheEntry> = {};
+    try {
+      Object.keys(localStorage).forEach((storageKey) => {
+        if (!storageKey.startsWith('search_cache_v1:')) return;
+        const key = storageKey.slice('search_cache_v1:'.length);
+        const entry = readSearch(key);
+        if (entry) {
+          entries[key] = entry;
+        }
+      });
+    } catch {}
+    return entries;
   };
   const initialHome = readHome();
   return ({
@@ -87,6 +108,11 @@ export const usePageCacheStore = create<PageCacheState>((set, get) => {
     clearCache: () => set(() => {
       try {
         localStorage.removeItem('home_cache_v1');
+        Object.keys(localStorage).forEach((key) => {
+          if (key.startsWith('search_cache_v1:')) {
+            localStorage.removeItem(key);
+          }
+        });
       } catch {}
       return {
         homeProducts: [],
@@ -118,5 +144,36 @@ export const usePageCacheStore = create<PageCacheState>((set, get) => {
       set((s) => ({ searchCache: { ...s.searchCache, [key]: next } }));
     },
     getSearchData: (key) => get().searchCache[key] || readSearch(key),
+    removeProductFromCache: (productId) => set((s) => {
+      const normalizedProductId = normalizeProductId(productId);
+      if (!normalizedProductId) return {};
+
+      const nextHomeProducts = filterProducts(s.homeProducts, normalizedProductId);
+      writeHome({
+        products: nextHomeProducts,
+        page: s.homePage,
+        scrollPos: s.homeScrollPos,
+        categoryId: s.homeCategoryId,
+      });
+
+      const nextSearchCache = {
+        ...readAllSearchEntries(),
+        ...s.searchCache,
+      };
+
+      Object.entries(nextSearchCache).forEach(([key, entry]) => {
+        const nextEntry: SearchCacheEntry = {
+          ...entry,
+          results: filterProducts(entry.results, normalizedProductId),
+        };
+        nextSearchCache[key] = nextEntry;
+        writeSearch(key, nextEntry);
+      });
+
+      return {
+        homeProducts: nextHomeProducts,
+        searchCache: nextSearchCache,
+      };
+    }),
   });
 });
