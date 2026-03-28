@@ -4,7 +4,7 @@ import { AlertCircle, Search, ArrowRight, Camera, X } from 'lucide-react';
 import { searchProducts, searchProductsByImage, searchProductsByImageCrop } from '../services/api';
 import FilterBar from '../components/home/FilterBar';
 import ProductCard from '../components/home/ProductCard';
-import { useWishlistStore } from '../store/useWishlistStore';
+import { normalizeWishlistProductId, useWishlistStore } from '../store/useWishlistStore';
 import { useAuthStore } from '../store/useAuthStore';
 import type { ConditionFilter, PriceFilter } from '../components/home/FilterBar';
 import type { Product } from '../types/product';
@@ -752,7 +752,11 @@ const SearchResults: React.FC = () => {
     navigate(`/product?id=${id}`, { state: { initialProduct: product } });
   }, [imageOriginalSize, imageSearchInput, imageSearchPreview, navigate, persistImageSearchState, results, selectedObjectBox]);
 
-  const isProductInWishlist = (productId: number | string) => wishlistItems.some(item => String(item.productId) === String(productId));
+  const isProductInWishlist = (productId: number | string) => {
+    const normalizedProductId = normalizeWishlistProductId(productId);
+    if (!normalizedProductId) return false;
+    return wishlistItems.some(item => normalizeWishlistProductId(item.productId) === normalizedProductId);
+  };
 
   return (
     <div className="min-h-screen bg-background-light dark:bg-background-dark pb-24" dir="rtl">

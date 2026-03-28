@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import { fetchProductById, fetchProductReviews, checkProductPurchase, findProductInGlobalCache, trackInteraction } from '../services/api';
-import { useWishlistStore } from '../store/useWishlistStore';
+import { normalizeWishlistProductId, useWishlistStore } from '../store/useWishlistStore';
 import { useCartStore } from '../store/useCartStore';
 import { useAuthStore } from '../store/useAuthStore';
 import { useToastStore } from '../store/useToastStore';
@@ -41,7 +41,11 @@ const ProductDetails: React.FC = () => {
   const [searchParams] = useSearchParams();
   const productId = searchParams.get('id');
   
-  const isProductInWishlist = (id: number | string) => wishlistItems.some(item => String(item.productId) === String(id));
+  const isProductInWishlist = (id: number | string) => {
+    const normalizedProductId = normalizeWishlistProductId(id);
+    if (!normalizedProductId) return false;
+    return wishlistItems.some(item => normalizeWishlistProductId(item.productId) === normalizedProductId);
+  };
   
   const [product, setProduct] = useState<Product | null>(() => {
     // 1. Try to get initial data from navigation state for instant rendering

@@ -9,6 +9,32 @@ interface WishlistItem {
   product: Product;
 }
 
+export const normalizeWishlistProductId = (value: number | string | null | undefined) => {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '';
+  return raw.replace(/^rapid-/i, '');
+};
+
+const normalizeWishlistItem = (item: any): WishlistItem | null => {
+  if (!item || typeof item !== 'object') return null;
+  const normalizedProductId = normalizeWishlistProductId(item.productId ?? item.product?.id);
+  if (!normalizedProductId) return null;
+  const product = item.product && typeof item.product === 'object' ? item.product : {};
+
+  return {
+    id: item.id ?? `wishlist-${normalizedProductId}`,
+    productId: normalizedProductId,
+    product: {
+      ...product,
+      id: normalizeWishlistProductId(product.id ?? normalizedProductId) || normalizedProductId,
+      name: product.name ?? '',
+      price: Number(product.price ?? 0),
+      image: product.image ?? '',
+      description: product.description ?? '',
+    }
+  };
+};
+
 interface WishlistState {
   items: WishlistItem[];
   isLoading: boolean;
@@ -35,7 +61,9 @@ export const useWishlistStore = create<WishlistState>()(
         if (!silent) set({ isLoading: true, error: null });
         try {
           const serverData = await fetchWishlist();
-          const normalized = Array.isArray(serverData) ? serverData : [];
+          const normalized = Array.isArray(serverData)
+            ? serverData.map(normalizeWishlistItem).filter(Boolean) as WishlistItem[]
+            : [];
           set({ items: normalized, isLoading: false, error: null });
         } catch (error: any) {
           set({ isLoading: false, error: error?.message || 'Failed to fetch wishlist' });
@@ -44,15 +72,17 @@ export const useWishlistStore = create<WishlistState>()(
 
       toggleWishlist: async (productId: number | string, productInfo?: any) => {
         const { items } = get();
-        const isInWishlist = items.some(item => String(item.productId) === String(productId));
+        const normalizedProductId = normalizeWishlistProductId(productId);
+        if (!normalizedProductId) return;
+        const isInWishlist = items.some(item => normalizeWishlistProductId(item.productId) === normalizedProductId);
         const token = localStorage.getItem('auth_token')?.trim();
 
         if (isInWishlist) {
-          const nextItems = items.filter(item => String(item.productId) !== String(productId));
+          const nextItems = items.filter(item => normalizeWishlistProductId(item.productId) !== normalizedProductId);
           set({ items: nextItems, error: null });
           if (token) {
             try {
-              await removeFromWishlist(productId);
+              await removeFromWishlist(normalizedProductId);
             } catch (error: any) {
               set({ items, error: error?.message || 'Failed to update wishlist' });
             }
@@ -60,9 +90,10 @@ export const useWishlistStore = create<WishlistState>()(
         } else if (productInfo) {
           const newItem: WishlistItem = {
             id: `local-${Date.now()}`,
-            productId,
+            productId: normalizedProductId,
             product: {
-              id: productInfo.id,
+              ...productInfo,
+              id: normalizeWishlistProductId(productInfo.id ?? normalizedProductId) || normalizedProductId,
               name: productInfo.name,
               price: productInfo.price,
               image: productInfo.image,
@@ -77,7 +108,7 @@ export const useWishlistStore = create<WishlistState>()(
           set({ items: nextItems, error: null });
           if (token) {
             try {
-              await addToWishlist(productId);
+              await addToWishlist(normalizedProductId);
               await get().fetchWishlist(true);
             } catch (error: any) {
               set({ items, error: error?.message || 'Failed to update wishlist' });
@@ -87,7 +118,9 @@ export const useWishlistStore = create<WishlistState>()(
       },
 
       isProductInWishlist: (productId: number | string) => {
-        return get().items.some(item => String(item.productId) === String(productId));
+        const normalizedProductId = normalizeWishlistProductId(productId);
+        if (!normalizedProductId) return false;
+        return get().items.some(item => normalizeWishlistProductId(item.productId) === normalizedProductId);
       },
 
       clearWishlist: () => {

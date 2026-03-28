@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { fetchProducts, searchProducts } from '../services/api';
 import { useAuthStore } from '../store/useAuthStore';
-import { useWishlistStore } from '../store/useWishlistStore';
+import { normalizeWishlistProductId, useWishlistStore } from '../store/useWishlistStore';
 import { usePageCacheStore } from '../store/usePageCacheStore';
 import Skeleton from '../components/Skeleton';
 import { useTranslation } from 'react-i18next';
@@ -611,7 +611,11 @@ const Home: React.FC = () => {
     return () => window.clearTimeout(timer);
   }, [products.length, hasMore, loading, loadingMore, selectedCategoryId, loadData, appendCachedChunk, page]);
 
-  const isProductInWishlist = (productId: number | string) => wishlistItems.some(item => String(item.productId) === String(productId));
+  const isProductInWishlist = (productId: number | string) => {
+    const normalizedProductId = normalizeWishlistProductId(productId);
+    if (!normalizedProductId) return false;
+    return wishlistItems.some(item => normalizeWishlistProductId(item.productId) === normalizedProductId);
+  };
 
   const handleAddToWishlist = (e: React.MouseEvent, product: Product) => {
     e.stopPropagation();

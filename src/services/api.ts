@@ -1763,14 +1763,16 @@ export async function fetchWishlist() {
 }
 
 export async function addToWishlist(productId: number | string) {
+  const normalizedProductId = String(productId ?? '').trim().replace(/^rapid-/i, '');
   return request('/wishlist', {
     method: 'POST',
-    body: JSON.stringify({ productId }),
+    body: JSON.stringify({ productId: normalizedProductId }),
   });
 }
 
 export async function removeFromWishlist(productId: number | string) {
-  return request(`/wishlist/${productId}`, { method: 'DELETE' });
+  const normalizedProductId = String(productId ?? '').trim().replace(/^rapid-/i, '');
+  return request(`/wishlist/${encodeURIComponent(normalizedProductId)}`, { method: 'DELETE' });
 }
 
 // Messages

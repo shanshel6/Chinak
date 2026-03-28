@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useCartStore } from '../store/useCartStore';
-import { useWishlistStore } from '../store/useWishlistStore';
+import { normalizeWishlistProductId, useWishlistStore } from '../store/useWishlistStore';
 import { useToastStore } from '../store/useToastStore';
 import LazyImage from '../components/LazyImage';
 import DiscountPopup from '../components/DiscountPopup';
@@ -42,7 +42,11 @@ const Cart: React.FC = () => {
   const airCount = allCartItems.filter(i => i.shippingMethod === 'air').length;
   const seaCount = allCartItems.filter(i => i.shippingMethod === 'sea').length;
 
-  const isProductInWishlist = (productId: number | string) => wishlistItems.some(item => item.productId === productId);
+  const isProductInWishlist = (productId: number | string) => {
+    const normalizedProductId = normalizeWishlistProductId(productId);
+    if (!normalizedProductId) return false;
+    return wishlistItems.some(item => normalizeWishlistProductId(item.productId) === normalizedProductId);
+  };
 
   const checkAvailableCoupons = async () => {
     try {
