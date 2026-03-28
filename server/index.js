@@ -642,7 +642,7 @@ const normalizeSearchText = (value) => {
     .trim();
 };
 
-const sanitizeFeaturedSearchTerms = (input) => {
+const sanitizeFeaturedSearchSentences = (input) => {
   const source = Array.isArray(input)
     ? input
     : (typeof input === 'string' ? input.split('\n') : []);
@@ -661,9 +661,17 @@ const sanitizeFeaturedSearchTerms = (input) => {
   return output;
 };
 
-const getFeaturedSearchTermsFromMetadata = (aiMetadata) => {
-  if (!aiMetadata || typeof aiMetadata !== 'object') return [];
-  return sanitizeFeaturedSearchTerms(aiMetadata.featuredSearchTerms);
+const stripLegacyFeaturedSearchTermsFromMetadata = (aiMetadata) => {
+  if (!aiMetadata || typeof aiMetadata !== 'object' || Array.isArray(aiMetadata)) return aiMetadata;
+  if (!Object.prototype.hasOwnProperty.call(aiMetadata, 'featuredSearchTerms')) return aiMetadata;
+  const nextMetadata = { ...aiMetadata };
+  delete nextMetadata.featuredSearchTerms;
+  return nextMetadata;
+};
+
+const getFeaturedSearchSentencesFromProduct = (productLike) => {
+  if (!productLike || typeof productLike !== 'object') return [];
+  return sanitizeFeaturedSearchSentences(productLike.featuredSearchSentences);
 };
 
 const isFeaturedMatchForQuery = (productLike, queryVariants, condition = '') => {
@@ -671,10 +679,9 @@ const isFeaturedMatchForQuery = (productLike, queryVariants, condition = '') => 
   if (!productLike.isFeatured) return false;
   if (condition === 'new' && inferProductCondition(productLike) === false) return false;
   if (condition === 'used' && inferProductCondition(productLike) === true) return false;
-  const aiMetadata = parseAiMetadata(productLike.aiMetadata);
-  const featuredTerms = getFeaturedSearchTermsFromMetadata(aiMetadata);
-  if (featuredTerms.length === 0) return false;
-  const normalizedTerms = featuredTerms
+  const featuredSentences = getFeaturedSearchSentencesFromProduct(productLike);
+  if (featuredSentences.length === 0) return false;
+  const normalizedTerms = featuredSentences
     .map((term) => normalizeSearchText(term))
     .filter(Boolean)
     .map((term) => ({ spaced: term, compact: term.replace(/\s+/g, '') }));
@@ -835,6 +842,25 @@ const expandSearchTermsForIraqiSlang = (query) => {
   return Array.from(terms).map((value) => String(value || '').trim()).filter(Boolean).slice(0, 30);
 };
 
+const buildKeywordSearchTerms = (query) => {
+  const expandedTerms = expandSearchTermsForIraqiSlang(query);
+  const keywords = new Set();
+  for (const term of expandedTerms) {
+    const normalizedTerm = normalizeSearchText(term);
+    if (normalizedTerm) {
+      if (!normalizedTerm.includes(' ')) keywords.add(normalizedTerm);
+      for (const token of normalizedTerm.split(/\s+/).map((value) => value.trim()).filter(Boolean)) {
+        keywords.add(token);
+      }
+    }
+    const rawTerm = String(term || '').trim();
+    if (rawTerm && !rawTerm.includes(' ')) {
+      keywords.add(rawTerm);
+    }
+  }
+  return Array.from(keywords).filter(Boolean).slice(0, 40);
+};
+
 const buildExactFeaturedSentenceVariants = (query) => {
   const base = String(query || '').trim();
   if (!base) return new Set();
@@ -845,12 +871,12 @@ const buildExactFeaturedSentenceVariants = (query) => {
 const buildSearchDocument = (product) => {
   const aiMetadata = parseAiMetadata(product?.aiMetadata);
   const rawKeywords = Array.isArray(product?.keywords) ? product.keywords : [];
-  const featuredSearchTerms = getFeaturedSearchTermsFromMetadata(aiMetadata);
+  const featuredSearchSentences = getFeaturedSearchSentencesFromProduct(product);
   const keywordsJoined = rawKeywords.map((kw) => String(kw || '').trim()).filter(Boolean).join(' ');
   const title = String(product?.name || '').trim();
   const description = String(product?.description || '').trim();
   const aiTitle = String(aiMetadata?.title_ar || aiMetadata?.title || '').trim();
-  const featuredTermsJoined = featuredSearchTerms.join(' ');
+  const featuredTermsJoined = featuredSearchSentences.join(' ');
   const searchText = [title, aiTitle, keywordsJoined, featuredTermsJoined, description].filter(Boolean).join(' ');
   const normalizedSearchText = normalizeSearchText(searchText);
   return {
@@ -858,7 +884,7 @@ const buildSearchDocument = (product) => {
     name: title,
     aiTitle,
     description,
-    featuredSearchTerms,
+    featuredSearchSentences,
     keywords: rawKeywords,
     searchText,
     normalizedSearchText,
@@ -928,6 +954,7 @@ const syncProductsToMeili = async () => {
         id: true,
         name: true,
         keywords: true,
+        featuredSearchSentences: true,
         aiMetadata: true,
         price: true,
         status: true,
@@ -958,6 +985,7 @@ const syncProductToMeiliById = async (productId) => {
       id: true,
       name: true,
       keywords: true,
+      featuredSearchSentences: true,
       aiMetadata: true,
       price: true,
       status: true,
@@ -3637,10 +3665,31 @@ const PRODUCTS_RESPONSE_TTL_MS = 30000;
 const isDbConnectionError = (error) => {
   const code = String(error?.code || '');
   const message = String(error?.message || '');
+  const name = String(error?.name || '');
   return code === 'P1001' || code === 'P1017' || code === 'P2024'
+    || name === 'PrismaClientInitializationError'
     || message.includes("Can't reach database server")
     || message.includes('Server has closed the connection')
-    || message.includes('timed out');
+    || message.includes('timed out')
+    || message.includes('Engine is not yet connected')
+    || message.includes('Connection terminated unexpectedly')
+    || message.includes('Transaction API error');
+};
+
+let prismaReconnectPromise = null;
+const reconnectPrisma = async (attempt = 1) => {
+  if (!prismaReconnectPromise) {
+    prismaReconnectPromise = (async () => {
+      try { await prisma.$disconnect(); } catch {}
+      await sleep(500 * attempt);
+      await prisma.$connect();
+    })();
+  }
+  try {
+    await prismaReconnectPromise;
+  } finally {
+    prismaReconnectPromise = null;
+  }
 };
 
 const withDbRetry = async (task, attempts = 3) => {
@@ -3653,9 +3702,9 @@ const withDbRetry = async (task, attempts = 3) => {
       if (!isDbConnectionError(error) || attempt === attempts) {
         throw error;
       }
-      try { await prisma.$disconnect(); } catch {}
-      await sleep(500 * attempt);
-      try { await prisma.$connect(); } catch {}
+      try {
+        await reconnectPrisma(attempt);
+      } catch {}
     }
   }
   throw lastError;
@@ -4998,6 +5047,7 @@ app.post('/api/search/image', async (req, res) => {
       aiMetadata: true,
       neworold: true,
       isFeatured: true,
+      featuredSearchSentences: true,
       domesticShippingFee: true,
       deliveryTime: true,
       variants: {
@@ -5235,6 +5285,7 @@ app.get('/api/products', async (req, res) => {
           aiMetadata: true,
           neworold: true,
           isFeatured: true,
+          featuredSearchSentences: true,
           domesticShippingFee: true,
           deliveryTime: true,
           variants: {
@@ -6258,10 +6309,11 @@ app.post('/api/products', authenticateToken, isAdmin, hasPermission('manage_prod
     const { 
       name, chineseName, description, price, basePriceIQD, image, 
       isFeatured, isActive, status, purchaseUrl, videoUrl, 
-      specs, images, detailImages,
+      specs, images, detailImages, featuredSearchSentences,
       weight, length, width, height, domesticShippingFee, options, variants, aiMetadata, deliveryTime, isAirRestricted
     } = req.body;
 
+    const normalizedFeaturedSearchSentences = sanitizeFeaturedSearchSentences(featuredSearchSentences);
     const parsedAiMetadata = (() => {
       const candidate = aiMetadata ?? req.body.marketing_metadata ?? req.body.aimetatags;
       if (!candidate) return null;
@@ -6340,7 +6392,8 @@ app.post('/api/products', authenticateToken, isAdmin, hasPermission('manage_prod
         image: mainImage,
         purchaseUrl,
         // videoUrl,
-        isFeatured: isFeatured || false,
+        isFeatured: normalizedFeaturedSearchSentences.length > 0,
+        featuredSearchSentences: normalizedFeaturedSearchSentences,
         isActive: isActive !== undefined ? isActive : true,
         status: 'DRAFT',
         specs: specs && typeof specs === 'object' ? JSON.stringify(specs) : (specs || null),
@@ -6410,7 +6463,8 @@ app.post('/api/products', authenticateToken, isAdmin, hasPermission('manage_prod
         image: mainImage,
         purchaseUrl,
         // videoUrl,
-        isFeatured: isFeatured || false,
+        isFeatured: normalizedFeaturedSearchSentences.length > 0,
+        featuredSearchSentences: normalizedFeaturedSearchSentences,
         isActive: isActive !== undefined ? isActive : true,
         status: status || 'PUBLISHED',
         specs: specs && typeof specs === 'object' ? JSON.stringify(specs) : (specs || null),
@@ -6423,7 +6477,7 @@ app.post('/api/products', authenticateToken, isAdmin, hasPermission('manage_prod
         domesticShippingFee: domesticFee,
         // shippingPriceIncluded: shippingPriceIncluded,
         isAirRestricted: isAirRestricted === true || isAirRestricted === 'true' || isAirRestricted === 1,
-        aiMetadata: parsedAiMetadata,
+        aiMetadata: stripLegacyFeaturedSearchTermsFromMetadata(parsedAiMetadata),
         deliveryTime: cleanDeliveryTime(deliveryTime),
         neworold: req.body.neworold !== undefined ? req.body.neworold : null,
         images: {
@@ -8033,6 +8087,7 @@ app.get('/api/products/:id', async (req, res) => {
         purchaseUrl: true,
         status: true,
         isFeatured: true,
+        featuredSearchSentences: true,
         isActive: true,
         specs: true,
         createdAt: true,
@@ -8150,6 +8205,7 @@ app.get('/api/search', async (req, res) => {
 
     const normalizedQuery = normalizeSearchText(q);
     const expandedSearchTerms = expandSearchTermsForIraqiSlang(q);
+    const keywordSearchTerms = buildKeywordSearchTerms(q);
     const exactFeaturedQueryVariants = buildExactFeaturedSentenceVariants(q);
     const productSelect = {
       id: true,
@@ -8160,6 +8216,7 @@ app.get('/api/search', async (req, res) => {
       aiMetadata: true,
       neworold: true,
       isFeatured: true,
+      featuredSearchSentences: true,
       domesticShippingFee: true,
       deliveryTime: true,
       updatedAt: true,
@@ -8198,7 +8255,9 @@ app.get('/api/search', async (req, res) => {
     const featuredWhere = {
       status: 'PUBLISHED',
       isActive: true,
-      isFeatured: true,
+      featuredSearchSentences: {
+        isEmpty: false
+      },
       ...(Number.isFinite(maxPrice) && maxPrice > 0 ? { price: { lte: maxPrice } } : {}),
       ...(condition === 'new'
         ? { neworold: true }
@@ -8206,10 +8265,10 @@ app.get('/api/search', async (req, res) => {
           ? { OR: [{ neworold: false }, { neworold: null }] }
           : {})
     };
-    const featuredCandidates = await prisma.product.findMany({
+    const featuredCandidates = await withDbRetry(() => prisma.product.findMany({
       where: featuredWhere,
       select: productSelect
-    });
+    }));
     const featuredMatchedProducts = featuredCandidates
       .filter((product) => isFeaturedMatchForQuery(product, exactFeaturedQueryVariants, condition))
       .sort((a, b) => {
@@ -8254,14 +8313,14 @@ app.get('/api/search', async (req, res) => {
       perf.log('meili_hits_ready', { hitIdsCount: hitIds.length });
 
       const dbFetchStartedAt = Date.now();
-      const productsFromDb = await prisma.product.findMany({
+      const productsFromDb = await withDbRetry(() => prisma.product.findMany({
         where: {
           id: { in: hitIds },
           status: 'PUBLISHED',
           isActive: true
         },
         select: productSelect
-      });
+      }));
       perf.log('db_fetch_for_meili_done', { dbMs: Date.now() - dbFetchStartedAt, productsCount: productsFromDb.length });
 
       const rankIndex = new Map(hitIds.map((id, indexPosition) => [id, indexPosition]));
@@ -8326,7 +8385,10 @@ app.get('/api/search', async (req, res) => {
       const andFilters = [];
       if (searchTerms.length > 0) {
         andFilters.push({
-          OR: searchTerms.map((term) => ({ name: { contains: term, mode: 'insensitive' } }))
+          OR: [
+            ...searchTerms.map((term) => ({ name: { contains: term, mode: 'insensitive' } })),
+            ...(keywordSearchTerms.length > 0 ? [{ keywords: { hasSome: keywordSearchTerms } }] : [])
+          ]
         });
       }
       if (Number.isFinite(maxPrice) && maxPrice > 0) {
@@ -8345,7 +8407,7 @@ app.get('/api/search', async (req, res) => {
       };
 
       const dbCountStartedAt = Date.now();
-      const total = await prisma.product.count({ where });
+      const total = await withDbRetry(() => prisma.product.count({ where }));
       perf.log('db_fallback_count_done', { dbCountMs: Date.now() - dbCountStartedAt, total });
       if (!total) {
         perf.log('response_sent', { engine: 'db', returned: 0, total: 0 });
@@ -8353,13 +8415,13 @@ app.get('/api/search', async (req, res) => {
       }
 
       const dbFindStartedAt = Date.now();
-      const productsFromDb = await prisma.product.findMany({
+      const productsFromDb = await withDbRetry(() => prisma.product.findMany({
         where,
         skip: offset,
         take: limit,
         orderBy: [{ updatedAt: 'desc' }],
         select: productSelect
-      });
+      }));
       perf.log('db_fallback_find_done', { dbFindMs: Date.now() - dbFindStartedAt, productsCount: productsFromDb.length });
 
       const processedProducts = productsFromDb.map((product) => {
@@ -8483,6 +8545,7 @@ app.get('/api/search-legacy-disabled', async (req, res) => {
       purchaseUrl: true,
       status: true,
       isFeatured: true,
+      featuredSearchSentences: true,
       isActive: true,
       neworold: true,
       aiMetadata: true,
@@ -9691,7 +9754,7 @@ app.put('/api/products/:id', authenticateToken, isAdmin, hasPermission('manage_p
     const { 
       name, chineseName, price, basePriceIQD, description, image, 
       isFeatured, isActive, status, purchaseUrl, videoUrl, 
-      specs, images, detailImages, featuredSearchTerms,
+      specs, images, detailImages, featuredSearchSentences, featuredSearchTerms,
       weight, length, width, height, domesticShippingFee, deliveryTime
     } = req.body;
     
@@ -9747,21 +9810,28 @@ app.put('/api/products/:id', authenticateToken, isAdmin, hasPermission('manage_p
       deliveryTime: deliveryTime !== undefined ? (deliveryTime === '' ? null : deliveryTime) : undefined
     };
 
-    if (featuredSearchTerms !== undefined) {
-      const normalizedFeaturedTerms = sanitizeFeaturedSearchTerms(featuredSearchTerms);
+    const rawFeaturedSearchSentences = featuredSearchSentences !== undefined
+      ? featuredSearchSentences
+      : featuredSearchTerms;
+
+    if (rawFeaturedSearchSentences !== undefined) {
+      const normalizedFeaturedTerms = sanitizeFeaturedSearchSentences(rawFeaturedSearchSentences);
       const currentProduct = await prisma.product.findUnique({
         where: { id: safeParseId(id) },
         select: { aiMetadata: true }
       });
-      const currentMetadata = parseAiMetadata(currentProduct?.aiMetadata) || {};
-      const nextMetadata = {
-        ...currentMetadata,
-        featuredSearchTerms: normalizedFeaturedTerms
-      };
-      updateData.aiMetadata = nextMetadata;
-      if (isFeatured === undefined) {
-        updateData.isFeatured = normalizedFeaturedTerms.length > 0;
-      }
+      const currentMetadata = stripLegacyFeaturedSearchTermsFromMetadata(parseAiMetadata(currentProduct?.aiMetadata) || {});
+      updateData.aiMetadata = currentMetadata;
+      updateData.featuredSearchSentences = normalizedFeaturedTerms;
+      updateData.isFeatured = normalizedFeaturedTerms.length > 0;
+    } else if (isFeatured === false) {
+      const currentProduct = await prisma.product.findUnique({
+        where: { id: safeParseId(id) },
+        select: { aiMetadata: true }
+      });
+      updateData.aiMetadata = stripLegacyFeaturedSearchTermsFromMetadata(parseAiMetadata(currentProduct?.aiMetadata) || {});
+      updateData.featuredSearchSentences = [];
+      updateData.isFeatured = false;
     }
 
     // Remove undefined fields

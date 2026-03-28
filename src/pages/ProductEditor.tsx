@@ -77,11 +77,25 @@ const ProductEditor: React.FC<ProductEditorProps> = ({ productId, storeSettings,
     specs: {},
     images: [],
     detailImages: [],
+    featuredSearchSentences: [''],
     deliveryTime: ''
   });
 
   const [options, setOptions] = useState<ProductOption[]>([]);
   const [variants, setVariants] = useState<ProductVariant[]>([]);
+  const normalizeFeaturedSearchSentences = (entries: string[]) => {
+    const seen = new Set<string>();
+    const output: string[] = [];
+    entries.forEach((entry) => {
+      const trimmed = String(entry || '').trim();
+      if (!trimmed) return;
+      const key = trimmed.toLowerCase();
+      if (seen.has(key)) return;
+      seen.add(key);
+      output.push(trimmed);
+    });
+    return output;
+  };
 
   const loadProduct = useCallback(async () => {
     console.log('Loading product with ID:', productId);
@@ -119,6 +133,8 @@ const ProductEditor: React.FC<ProductEditorProps> = ({ productId, storeSettings,
 
       setFormData({
         ...product,
+        isFeatured: Array.isArray(product.featuredSearchSentences) && product.featuredSearchSentences.length > 0,
+        featuredSearchSentences: Array.isArray(product.featuredSearchSentences) && product.featuredSearchSentences.length > 0 ? product.featuredSearchSentences : [''],
         specs: safeParse(product.specs, {}),
         images: Array.isArray(product.images) ? product.images.filter((img: any) => img.type === 'GALLERY') : [],
         detailImages: Array.isArray(product.images) ? product.images.filter((img: any) => img.type === 'DETAIL') : []
@@ -187,6 +203,33 @@ const ProductEditor: React.FC<ProductEditorProps> = ({ productId, storeSettings,
     }));
   };
 
+  const handleFeaturedSentenceChange = (index: number, value: string) => {
+    setFormData((prev: any) => ({
+      ...prev,
+      featuredSearchSentences: (Array.isArray(prev.featuredSearchSentences) && prev.featuredSearchSentences.length > 0 ? prev.featuredSearchSentences : ['']).map((entry: string, currentIndex: number) => (
+        currentIndex === index ? value : entry
+      ))
+    }));
+  };
+
+  const handleAddFeaturedSentence = () => {
+    setFormData((prev: any) => ({
+      ...prev,
+      featuredSearchSentences: [...(Array.isArray(prev.featuredSearchSentences) ? prev.featuredSearchSentences : []), '']
+    }));
+  };
+
+  const handleRemoveFeaturedSentence = (index: number) => {
+    setFormData((prev: any) => {
+      const next = (Array.isArray(prev.featuredSearchSentences) ? prev.featuredSearchSentences : []).filter((_: string, currentIndex: number) => currentIndex !== index);
+      return {
+        ...prev,
+        featuredSearchSentences: next.length > 0 ? next : [''],
+        isFeatured: next.some((entry: string) => String(entry || '').trim())
+      };
+    });
+  };
+
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>, type: 'main' | 'gallery' | 'detail') => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -214,9 +257,12 @@ const ProductEditor: React.FC<ProductEditorProps> = ({ productId, storeSettings,
 
     try {
       setSaving(true);
+      const featuredSearchSentences = normalizeFeaturedSearchSentences(Array.isArray(formData.featuredSearchSentences) ? formData.featuredSearchSentences : []);
       
       const productData = {
         ...formData,
+        isFeatured: featuredSearchSentences.length > 0,
+        featuredSearchSentences,
         price: parseFloat(formData.price) || 0,
         // isPriceCombined removed
         basePriceIQD: formData.basePriceIQD ? parseFloat(formData.basePriceIQD) : null,
@@ -445,21 +491,50 @@ const ProductEditor: React.FC<ProductEditorProps> = ({ productId, storeSettings,
                 </p>
               </div>
 
-              <div className="flex flex-wrap gap-8">
-                <label className="flex items-center gap-3 cursor-pointer group">
-                  <div className={`w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all ${formData.isFeatured ? 'bg-primary border-primary' : 'border-slate-300 group-hover:border-primary/50'}`}>
-                    {formData.isFeatured && <Plus size={16} className="text-white" />}
+              <div className="space-y-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-black text-slate-700 dark:text-slate-300">جمل التثبيت المميزة</p>
+                    <p className="text-xs text-slate-500 font-medium">كل سطر يمثل جملة بحث كاملة، والنظام يطابق الجملة كما تم تخزينها.</p>
                   </div>
-                  <input 
-                    type="checkbox"
-                    name="isFeatured"
-                    checked={formData.isFeatured}
-                    onChange={handleInputChange}
-                    className="hidden"
-                  />
-                  <span className="text-sm font-bold">منتج مميز</span>
-                </label>
+                  <div className={`rounded-full px-3 py-1 text-xs font-bold ${Array.isArray(formData.featuredSearchSentences) && normalizeFeaturedSearchSentences(formData.featuredSearchSentences).length > 0 ? 'bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300' : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-300'}`}>
+                    {Array.isArray(formData.featuredSearchSentences) && normalizeFeaturedSearchSentences(formData.featuredSearchSentences).length > 0
+                      ? `${normalizeFeaturedSearchSentences(formData.featuredSearchSentences).length} جملة مميزة`
+                      : 'غير مثبت'}
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  {(Array.isArray(formData.featuredSearchSentences) && formData.featuredSearchSentences.length > 0 ? formData.featuredSearchSentences : ['']).map((sentence: string, index: number) => (
+                    <div key={`featured-sentence-${index}`} className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveFeaturedSentence(index)}
+                        className="shrink-0 rounded-xl bg-rose-100 p-3 text-rose-600 transition-colors hover:bg-rose-200 dark:bg-rose-500/10 dark:text-rose-300"
+                        title="حذف جملة البحث"
+                      >
+                        <X size={16} />
+                      </button>
+                      <input
+                        type="text"
+                        value={sentence}
+                        onChange={(e) => handleFeaturedSentenceChange(index, e.target.value)}
+                        placeholder="مثال: اثاث كنتور"
+                        className="w-full bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-primary/20 focus:bg-white dark:focus:bg-slate-900 rounded-2xl px-5 py-4 outline-none transition-all font-bold"
+                      />
+                    </div>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={handleAddFeaturedSentence}
+                  className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 dark:border-slate-700 px-4 py-3 text-sm font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-all"
+                >
+                  <Plus size={16} />
+                  إضافة جملة بحث
+                </button>
+              </div>
 
+              <div className="flex flex-wrap gap-8">
                 <label className="flex items-center gap-3 cursor-pointer group">
                   <div className={`w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all ${formData.isActive ? 'bg-emerald-500 border-emerald-500' : 'border-slate-300 group-hover:border-emerald-500/50'}`}>
                     {formData.isActive && <Plus size={16} className="text-white" />}

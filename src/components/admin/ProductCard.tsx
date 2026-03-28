@@ -719,13 +719,13 @@ const ProductCard: React.FC<ProductCardProps> = ({
                 </button>
               )}
               <button
-                onClick={() => onUpdateStatus(product.id, { isFeatured: !product.isFeatured })}
+                onClick={() => onEdit(product)}
                 className={`p-2 rounded-xl transition-colors shrink-0 ${
                   product.isFeatured 
                     ? 'text-amber-500 hover:bg-amber-500/10' 
                     : 'text-slate-400 hover:bg-slate-200'
                 }`}
-                title={product.isFeatured ? t('dashboard.products.tooltips.unfeature') : t('dashboard.products.tooltips.feature')}
+                title={product.isFeatured ? 'تعديل جمل التثبيت' : 'أضف جمل التثبيت من شاشة التعديل أو من نتائج البحث'}
               >
                 <Star size={20} fill={product.isFeatured ? "currentColor" : "none"} />
               </button>

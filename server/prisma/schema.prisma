@@ -91,6 +91,7 @@ model Product {
   purchaseUrl       String?
   status            String                 @default("PUBLISHED")
   isFeatured        Boolean                @default(false)
+  featuredSearchSentences String[]         @default([])
   isActive          Boolean                @default(true)
   specs             String?
   createdAt         DateTime               @default(now())

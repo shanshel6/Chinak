@@ -30,8 +30,8 @@ const ProductCard: React.FC<ProductCardProps> = React.memo(({
   const [showFeatureEditor, setShowFeatureEditor] = useState(false);
   const [isSavingFeatureTerms, setIsSavingFeatureTerms] = useState(false);
   const [featureTerms, setFeatureTerms] = useState<string[]>(() => {
-    const raw = Array.isArray(initialProduct?.aiMetadata?.featuredSearchTerms)
-      ? initialProduct.aiMetadata.featuredSearchTerms
+    const raw = Array.isArray(initialProduct?.featuredSearchSentences)
+      ? initialProduct.featuredSearchSentences
       : [];
     const terms = raw.map((v: any) => String(v || '').trim()).filter(Boolean);
     return terms.length > 0 ? terms : [''];
@@ -56,22 +56,21 @@ const ProductCard: React.FC<ProductCardProps> = React.memo(({
     return output;
   };
   const currentQuery = String(searchContextQuery || '').trim();
+  const currentFeatureTerms = normalizeUniqueTerms(Array.isArray(product?.featuredSearchSentences) ? product.featuredSearchSentences : []);
+  const hasCurrentQueryPinned = Boolean(currentQuery && currentFeatureTerms.some((term) => normalizeTerm(term) === normalizeTerm(currentQuery)));
   const updateFeatureState = (nextFeatured: boolean, nextTerms: string[]) => {
     setProduct((prev) => ({
       ...prev,
       isFeatured: nextFeatured,
-      aiMetadata: {
-        ...(prev.aiMetadata || {}),
-        featuredSearchTerms: nextTerms
-      }
+      featuredSearchSentences: nextTerms
     }));
     setFeatureTerms(nextTerms.length > 0 ? nextTerms : ['']);
   };
 
   useEffect(() => {
     setProduct(initialProduct);
-    const raw = Array.isArray(initialProduct?.aiMetadata?.featuredSearchTerms)
-      ? initialProduct.aiMetadata.featuredSearchTerms
+    const raw = Array.isArray(initialProduct?.featuredSearchSentences)
+      ? initialProduct.featuredSearchSentences
       : [];
     const terms = raw.map((v: any) => String(v || '').trim()).filter(Boolean);
     setFeatureTerms(terms.length > 0 ? terms : ['']);
@@ -100,10 +99,14 @@ const ProductCard: React.FC<ProductCardProps> = React.memo(({
   const handleToggleFeatured = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!canManageFeature || isTogglingFeatured || isSavingFeatureTerms) return;
+    if (!currentQuery) {
+      showToast('لازم تبحث أولاً حتى يثبت النظام نفس جملة البحث', 'error');
+      return;
+    }
     try {
       setIsTogglingFeatured(true);
       const token = useAuthStore.getState().token || localStorage.getItem('auth_token');
-      const existingTerms = normalizeUniqueTerms(Array.isArray(product?.aiMetadata?.featuredSearchTerms) ? product.aiMetadata.featuredSearchTerms : []);
+      const existingTerms = normalizeUniqueTerms(Array.isArray(product?.featuredSearchSentences) ? product.featuredSearchSentences : []);
       const queryKey = normalizeTerm(currentQuery);
       const hasQueryInTerms = Boolean(queryKey && existingTerms.some((term) => normalizeTerm(term) === queryKey));
       let nextTerms: string[] = [];
@@ -115,9 +118,11 @@ const ProductCard: React.FC<ProductCardProps> = React.memo(({
         nextTerms = normalizeUniqueTerms([currentQuery, ...existingTerms]);
       }
       const nextFeatured = nextTerms.length > 0;
-      await updateProduct(product.id, { isFeatured: nextFeatured, featuredSearchTerms: nextTerms }, token);
+      await updateProduct(product.id, { featuredSearchSentences: nextTerms }, token);
       updateFeatureState(nextFeatured, nextTerms);
-      if (nextFeatured) {
+      if (hasQueryInTerms && nextTerms.length < existingTerms.length) {
+        showToast('تم حذف جملة البحث الحالية من تثبيت المنتج', 'success');
+      } else if (nextFeatured) {
         showToast('تم تثبيت المنتج لعبارة البحث الحالية', 'success');
       } else {
         showToast('تم إلغاء تثبيت المنتج من نتائج البحث', 'success');
@@ -133,7 +138,7 @@ const ProductCard: React.FC<ProductCardProps> = React.memo(({
   const handleOpenFeatureEditor = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!canManageFeature || !product.isFeatured) return;
-    const existingTerms = normalizeUniqueTerms(Array.isArray(product?.aiMetadata?.featuredSearchTerms) ? product.aiMetadata.featuredSearchTerms : []);
+    const existingTerms = normalizeUniqueTerms(Array.isArray(product?.featuredSearchSentences) ? product.featuredSearchSentences : []);
     setFeatureTerms(existingTerms.length > 0 ? existingTerms : ['']);
     setShowFeatureEditor((prev) => !prev);
   };
@@ -153,6 +158,19 @@ const ProductCard: React.FC<ProductCardProps> = React.memo(({
     });
   };
 
+  const handleAddFeatureTermInput = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setFeatureTerms((prev) => [...prev, '']);
+  };
+
+  const handleRemoveFeatureTerm = (e: React.MouseEvent, index: number) => {
+    e.stopPropagation();
+    setFeatureTerms((prev) => {
+      const next = prev.filter((_, i) => i !== index);
+      return next.length > 0 ? next : [''];
+    });
+  };
+
   const handleSaveFeatureTerms = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!canManageFeature || isSavingFeatureTerms || isTogglingFeatured) return;
@@ -161,13 +179,13 @@ const ProductCard: React.FC<ProductCardProps> = React.memo(({
       const token = useAuthStore.getState().token || localStorage.getItem('auth_token');
       const nextTerms = normalizeUniqueTerms(featureTerms);
       const nextFeatured = nextTerms.length > 0;
-      await updateProduct(product.id, { isFeatured: nextFeatured, featuredSearchTerms: nextTerms }, token);
+      await updateProduct(product.id, { featuredSearchSentences: nextTerms }, token);
       updateFeatureState(nextFeatured, nextTerms);
       setShowFeatureEditor(false);
-      showToast('تم حفظ كلمات تثبيت البحث', 'success');
+      showToast('تم حفظ جمل تثبيت البحث', 'success');
     } catch (error) {
-      console.error('Failed to save featured search terms:', error);
-      showToast('فشل حفظ كلمات التثبيت', 'error');
+      console.error('Failed to save featured search sentences:', error);
+      showToast('فشل حفظ جمل التثبيت', 'error');
     } finally {
       setIsSavingFeatureTerms(false);
     }
@@ -293,13 +311,13 @@ const ProductCard: React.FC<ProductCardProps> = React.memo(({
           onClick={handleToggleFeatured}
           disabled={isTogglingFeatured || isSavingFeatureTerms}
           className={`absolute top-3 left-14 z-20 p-1.5 rounded-full shadow-md transition-colors pointer-events-auto ${
-            product.isFeatured
+            hasCurrentQueryPinned
               ? 'bg-amber-500 hover:bg-amber-600 text-white'
               : 'bg-slate-700/85 hover:bg-slate-800 text-white'
           }`}
-          title={product.isFeatured ? 'إلغاء تثبيت المنتج لعبارة البحث الحالية' : 'تثبيت المنتج لعبارة البحث الحالية'}
+          title={hasCurrentQueryPinned ? 'إلغاء تثبيت المنتج لعبارة البحث الحالية' : 'تثبيت المنتج لعبارة البحث الحالية'}
         >
-          <Star size={16} fill={product.isFeatured ? 'currentColor' : 'none'} />
+          <Star size={16} fill={hasCurrentQueryPinned ? 'currentColor' : 'none'} />
         </button>
       )}
       {canManageFeature && product.isFeatured && (
@@ -319,17 +337,32 @@ const ProductCard: React.FC<ProductCardProps> = React.memo(({
         >
           <div className="space-y-2 max-h-48 overflow-y-auto">
             {featureTerms.map((term, index) => (
-              <input
-                key={`feature-term-${index}`}
-                value={term}
-                onChange={(e) => handleFeatureTermChange(index, e.target.value)}
-                onKeyDown={(e) => handleFeatureTermEnter(e, index)}
-                placeholder="اكتب عبارة بحث ثم اضغط Enter"
-                className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-xs text-slate-800 dark:text-slate-100 outline-none focus:border-indigo-500"
-              />
+              <div key={`feature-term-${index}`} className="flex items-center gap-2">
+                <button
+                  onClick={(e) => handleRemoveFeatureTerm(e, index)}
+                  className="shrink-0 rounded-md bg-rose-100 p-2 text-rose-600 dark:bg-rose-500/10 dark:text-rose-300"
+                  title="حذف هذه الجملة"
+                >
+                  <X size={12} />
+                </button>
+                <input
+                  value={term}
+                  onChange={(e) => handleFeatureTermChange(index, e.target.value)}
+                  onKeyDown={(e) => handleFeatureTermEnter(e, index)}
+                  placeholder="اكتب جملة البحث كاملة ثم اضغط Enter"
+                  className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-xs text-slate-800 dark:text-slate-100 outline-none focus:border-indigo-500"
+                />
+              </div>
             ))}
           </div>
-          <div className="mt-3 flex items-center justify-end gap-2">
+          <div className="mt-3 flex items-center justify-between gap-2">
+            <button
+              onClick={handleAddFeatureTermInput}
+              className="px-3 py-1.5 rounded-md text-xs font-semibold bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200"
+            >
+              إضافة جملة
+            </button>
+            <div className="flex items-center justify-end gap-2">
             <button
               onClick={(e) => {
                 e.stopPropagation();
@@ -347,6 +380,7 @@ const ProductCard: React.FC<ProductCardProps> = React.memo(({
               <Check size={14} />
               حفظ
             </button>
+            </div>
           </div>
         </div>
       )}
