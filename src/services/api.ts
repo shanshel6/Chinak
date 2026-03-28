@@ -1693,9 +1693,8 @@ export async function bulkCreateProducts(products: any[], token?: string | null)
 
 // Admin: Archive a single product (set isActive = false)
 export async function archiveProduct(id: number | string, token?: string | null) {
-  // Pass the token implicitly or explicitly to the request helper
-  // Request wrapper automatically appends API_BASE_URL (which includes /api)
-  return request(`/products/${id}/archive`, {
+  const normalizedId = String(id ?? '').trim().replace(/^rapid-/i, '');
+  return request(`/products/${encodeURIComponent(normalizedId)}/archive`, {
     method: 'PUT',
     token
   });
