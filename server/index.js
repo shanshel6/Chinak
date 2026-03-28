@@ -944,6 +944,20 @@ const getMeiliIndex = async () => {
   return client.index(MEILI_INDEX_NAME);
 };
 
+const resetMeiliIndex = async () => {
+  const client = getMeiliClient();
+  try {
+    await client.deleteIndex(MEILI_INDEX_NAME);
+  } catch (error) {
+    const message = String(error?.message || '');
+    const statusCode = Number(error?.cause?.response?.status || error?.response?.status || 0);
+    if (statusCode !== 404 && !message.includes('index_not_found') && !message.includes('not found')) {
+      throw error;
+    }
+  }
+  return ensureMeiliIndexSettings();
+};
+
 const ensureMeiliIndexSettings = async () => {
   const index = await getMeiliIndex();
   await index.updateSearchableAttributes(['keywords', 'name', 'aiTitle', 'searchText', 'normalizedSearchText', 'description']);
@@ -976,8 +990,11 @@ const getMeiliReindexStatus = () => ({
   lastResult: meiliReindexState.lastResult
 });
 
-const syncProductsToMeili = async () => {
-  const index = await ensureMeiliIndexSettings();
+const syncProductsToMeili = async (options = {}) => {
+  const shouldReset = options?.reset === true;
+  const index = shouldReset
+    ? await resetMeiliIndex()
+    : await ensureMeiliIndexSettings();
   const pageSize = MEILI_REINDEX_BATCH_SIZE;
   let lastId = 0;
   let totalIndexed = 0;
@@ -1009,17 +1026,17 @@ const syncProductsToMeili = async () => {
       totalIndexed += docs.length;
     }
   }
-  return { totalIndexed, indexName: MEILI_INDEX_NAME };
+  return { totalIndexed, indexName: MEILI_INDEX_NAME, reset: shouldReset };
 };
 
-const startMeiliReindexInBackground = () => {
+const startMeiliReindexInBackground = (options = {}) => {
   if (meiliReindexState.running) return false;
   meiliReindexState.running = true;
   meiliReindexState.lastStartedAt = new Date().toISOString();
   meiliReindexState.lastFinishedAt = null;
   meiliReindexState.lastError = null;
   meiliReindexState.lastResult = null;
-  void syncProductsToMeili()
+  void syncProductsToMeili(options)
     .then((result) => {
       meiliReindexState.lastResult = result;
       meiliReindexState.lastFinishedAt = new Date().toISOString();
@@ -8251,11 +8268,14 @@ app.get('/api/admin/search/reindex-status', authenticateToken, isAdmin, hasPermi
 
 app.post('/api/admin/search/reindex', authenticateToken, isAdmin, hasPermission('manage_products'), async (_req, res) => {
   try {
-    const started = startMeiliReindexInBackground();
+    const shouldReset = String(_req.query.reset || _req.body?.reset || '').trim() === '1'
+      || _req.body?.reset === true;
+    const started = startMeiliReindexInBackground({ reset: shouldReset });
     return res.json({
       ok: true,
       engine: 'meili',
       started,
+      reset: shouldReset,
       ...getMeiliReindexStatus()
     });
   } catch (error) {
