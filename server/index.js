@@ -639,6 +639,13 @@ const MEILI_TASK_TIMEOUT_MS = Math.max(5000, Number.parseInt(String(process.env.
 const MEILI_TASK_POLL_INTERVAL_MS = Math.max(100, Number.parseInt(String(process.env.MEILI_TASK_POLL_INTERVAL_MS || ''), 10) || 1000);
 const MEILI_REINDEX_BATCH_SIZE = Math.max(10, Math.min(1000, Number.parseInt(String(process.env.MEILI_REINDEX_BATCH_SIZE || ''), 10) || 200));
 let meiliClientSingleton = null;
+const meiliReindexState = {
+  running: false,
+  lastStartedAt: null,
+  lastFinishedAt: null,
+  lastError: null,
+  lastResult: null
+};
 
 const normalizeSearchText = (value) => {
   if (!value) return '';
@@ -961,6 +968,14 @@ const waitForMeiliTask = async (index, taskUid) => {
   });
 };
 
+const getMeiliReindexStatus = () => ({
+  running: meiliReindexState.running,
+  lastStartedAt: meiliReindexState.lastStartedAt,
+  lastFinishedAt: meiliReindexState.lastFinishedAt,
+  lastError: meiliReindexState.lastError,
+  lastResult: meiliReindexState.lastResult
+});
+
 const syncProductsToMeili = async () => {
   const index = await ensureMeiliIndexSettings();
   const pageSize = MEILI_REINDEX_BATCH_SIZE;
@@ -995,6 +1010,30 @@ const syncProductsToMeili = async () => {
     }
   }
   return { totalIndexed, indexName: MEILI_INDEX_NAME };
+};
+
+const startMeiliReindexInBackground = () => {
+  if (meiliReindexState.running) return false;
+  meiliReindexState.running = true;
+  meiliReindexState.lastStartedAt = new Date().toISOString();
+  meiliReindexState.lastFinishedAt = null;
+  meiliReindexState.lastError = null;
+  meiliReindexState.lastResult = null;
+  void syncProductsToMeili()
+    .then((result) => {
+      meiliReindexState.lastResult = result;
+      meiliReindexState.lastFinishedAt = new Date().toISOString();
+      console.log('[Meili] background reindex completed:', result);
+    })
+    .catch((error) => {
+      meiliReindexState.lastError = error?.message || 'Unknown error';
+      meiliReindexState.lastFinishedAt = new Date().toISOString();
+      console.error('[Meili] background reindex failed:', error);
+    })
+    .finally(() => {
+      meiliReindexState.running = false;
+    });
+  return true;
 };
 
 const syncProductToMeiliById = async (productId) => {
@@ -8202,18 +8241,27 @@ app.get('/api/products/:id/check-purchase', authenticateToken, async (req, res) 
   }
 });
 
+app.get('/api/admin/search/reindex-status', authenticateToken, isAdmin, hasPermission('manage_products'), async (_req, res) => {
+  return res.json({
+    ok: true,
+    engine: 'meili',
+    ...getMeiliReindexStatus()
+  });
+});
+
 app.post('/api/admin/search/reindex', authenticateToken, isAdmin, hasPermission('manage_products'), async (_req, res) => {
   try {
-    const result = await syncProductsToMeili();
+    const started = startMeiliReindexInBackground();
     return res.json({
       ok: true,
       engine: 'meili',
-      ...result
+      started,
+      ...getMeiliReindexStatus()
     });
   } catch (error) {
-    console.error('[Meili] reindex failed:', error);
+    console.error('[Meili] reindex failed to start:', error);
     return res.status(503).json({
-      error: 'Meilisearch reindex failed',
+      error: 'Meilisearch reindex failed to start',
       details: error?.message || 'Unknown error'
     });
   }
