@@ -15,6 +15,11 @@ export const normalizeWishlistProductId = (value: number | string | null | undef
   return raw.replace(/^rapid-/i, '');
 };
 
+const isGuestWishlistSession = (token?: string | null) => {
+  const normalizedToken = String(token ?? '').trim();
+  return normalizedToken.startsWith('guest-token-');
+};
+
 const normalizeWishlistItem = (item: any): WishlistItem | null => {
   if (!item || typeof item !== 'object') return null;
   const normalizedProductId = normalizeWishlistProductId(item.productId ?? item.product?.id);
@@ -58,6 +63,10 @@ export const useWishlistStore = create<WishlistState>()(
           if (!silent) set({ items: [], isLoading: false, error: null });
           return;
         }
+        if (isGuestWishlistSession(token)) {
+          set({ isLoading: false, error: null });
+          return;
+        }
         if (!silent) set({ isLoading: true, error: null });
         try {
           const serverData = await fetchWishlist();
@@ -76,11 +85,12 @@ export const useWishlistStore = create<WishlistState>()(
         if (!normalizedProductId) return;
         const isInWishlist = items.some(item => normalizeWishlistProductId(item.productId) === normalizedProductId);
         const token = localStorage.getItem('auth_token')?.trim();
+        const shouldSyncWithServer = Boolean(token && !isGuestWishlistSession(token));
 
         if (isInWishlist) {
           const nextItems = items.filter(item => normalizeWishlistProductId(item.productId) !== normalizedProductId);
           set({ items: nextItems, error: null });
-          if (token) {
+          if (shouldSyncWithServer) {
             try {
               await removeFromWishlist(normalizedProductId);
             } catch (error: any) {
@@ -106,7 +116,7 @@ export const useWishlistStore = create<WishlistState>()(
           };
           const nextItems = [...items, newItem];
           set({ items: nextItems, error: null });
-          if (token) {
+          if (shouldSyncWithServer) {
             try {
               await addToWishlist(normalizedProductId);
               await get().fetchWishlist(true);
