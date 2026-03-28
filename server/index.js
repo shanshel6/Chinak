@@ -790,6 +790,9 @@ const IRAQI_SLANG_NORMALIZATION_MAP = {
   درنفيس: ['دولاب', 'خزانة'],
   قندره: ['حذاء', 'جزمة'],
   جواتي: ['حذاء', 'رياضي'],
+  جربايه: ['جورب', 'جوارب', 'شراب'],
+  جرباية: ['جورب', 'جوارب', 'شراب'],
+  جرابية: ['جورب', 'جوارب', 'شراب'],
   دشداشه: ['ثوب', 'ملابس'],
   عركيه: ['قبعة'],
   ياخه: ['ياقة', 'قميص']
@@ -830,6 +833,56 @@ const expandSearchTermsForIraqiSlang = (query) => {
     addCandidates(token);
   }
   return Array.from(terms).map((value) => String(value || '').trim()).filter(Boolean).slice(0, 30);
+};
+
+const buildExactFeaturedSentenceVariants = (query) => {
+  const base = String(query || '').trim();
+  if (!base) return new Set();
+  const normalized = normalizeSearchText(base);
+  const variants = new Set([base, normalized].map((value) => String(value || '').trim()).filter(Boolean));
+  const normalizedTokens = normalized.split(/\s+/).map((token) => token.trim()).filter(Boolean);
+  if (normalizedTokens.length === 0) return variants;
+
+  const tokenOptions = normalizedTokens.map((token) => {
+    const options = new Set([token]);
+    const directMapped = IRAQI_SLANG_NORMALIZATION_MAP[token];
+    if (Array.isArray(directMapped)) {
+      for (const candidate of directMapped) {
+        const normalizedCandidate = normalizeSearchText(candidate);
+        if (normalizedCandidate) options.add(normalizedCandidate);
+      }
+    }
+    const synonymMapped = MEILI_ARABIC_SYNONYMS[token];
+    if (Array.isArray(synonymMapped)) {
+      for (const candidate of synonymMapped) {
+        const normalizedCandidate = normalizeSearchText(candidate);
+        if (normalizedCandidate && normalizedCandidate.split(/\s+/).length === 1) {
+          options.add(normalizedCandidate);
+        }
+      }
+    }
+    return Array.from(options).slice(0, 6);
+  });
+
+  let combinations = [''];
+  for (const options of tokenOptions) {
+    const nextCombinations = [];
+    for (const prefix of combinations) {
+      for (const option of options) {
+        nextCombinations.push(prefix ? `${prefix} ${option}` : option);
+        if (nextCombinations.length >= 40) break;
+      }
+      if (nextCombinations.length >= 40) break;
+    }
+    combinations = nextCombinations;
+    if (combinations.length >= 40) break;
+  }
+
+  for (const candidate of combinations) {
+    const normalizedCandidate = normalizeSearchText(candidate);
+    if (normalizedCandidate) variants.add(normalizedCandidate);
+  }
+  return variants;
 };
 
 const buildSearchDocument = (product) => {
@@ -8140,10 +8193,7 @@ app.get('/api/search', async (req, res) => {
 
     const normalizedQuery = normalizeSearchText(q);
     const expandedSearchTerms = expandSearchTermsForIraqiSlang(q);
-    const exactFeaturedQueryVariants = new Set([
-      q,
-      normalizedQuery
-    ].map((value) => String(value || '').trim()).filter(Boolean));
+    const exactFeaturedQueryVariants = buildExactFeaturedSentenceVariants(q);
     const productSelect = {
       id: true,
       name: true,
