@@ -635,6 +635,9 @@ const inferProductCondition = (productLike) => {
 const MEILI_INDEX_NAME = process.env.MEILI_INDEX_NAME || 'products';
 const MEILI_HOST = process.env.MEILI_HOST || '';
 const MEILI_ADMIN_API_KEY = process.env.MEILI_ADMIN_API_KEY || process.env.MEILI_MASTER_KEY || '';
+const MEILI_TASK_TIMEOUT_MS = Math.max(5000, Number.parseInt(String(process.env.MEILI_TASK_TIMEOUT_MS || ''), 10) || 120000);
+const MEILI_TASK_POLL_INTERVAL_MS = Math.max(100, Number.parseInt(String(process.env.MEILI_TASK_POLL_INTERVAL_MS || ''), 10) || 1000);
+const MEILI_REINDEX_BATCH_SIZE = Math.max(10, Math.min(1000, Number.parseInt(String(process.env.MEILI_REINDEX_BATCH_SIZE || ''), 10) || 200));
 let meiliClientSingleton = null;
 
 const normalizeSearchText = (value) => {
@@ -951,9 +954,16 @@ const ensureMeiliIndexSettings = async () => {
   return index;
 };
 
+const waitForMeiliTask = async (index, taskUid) => {
+  return index.waitForTask(taskUid, {
+    timeOutMs: MEILI_TASK_TIMEOUT_MS,
+    intervalMs: MEILI_TASK_POLL_INTERVAL_MS
+  });
+};
+
 const syncProductsToMeili = async () => {
   const index = await ensureMeiliIndexSettings();
-  const pageSize = 500;
+  const pageSize = MEILI_REINDEX_BATCH_SIZE;
   let lastId = 0;
   let totalIndexed = 0;
   while (true) {
@@ -980,7 +990,7 @@ const syncProductsToMeili = async () => {
     const docs = batch.map(buildSearchDocument);
     if (docs.length > 0) {
       const task = await index.addDocuments(docs, { primaryKey: 'id' });
-      await index.waitForTask(task.taskUid);
+      await waitForMeiliTask(index, task.taskUid);
       totalIndexed += docs.length;
     }
   }
@@ -1013,7 +1023,7 @@ const syncProductToMeiliById = async (productId) => {
   }
   const doc = buildSearchDocument(product);
   const task = await index.addDocuments([doc], { primaryKey: 'id' });
-  await index.waitForTask(task.taskUid);
+  await waitForMeiliTask(index, task.taskUid);
 };
 
 const deleteProductFromMeiliById = async (productId) => {
@@ -1021,7 +1031,7 @@ const deleteProductFromMeiliById = async (productId) => {
   if (!normalizedId) return;
   const index = await ensureMeiliIndexSettings();
   const task = await index.deleteDocument(normalizedId);
-  await index.waitForTask(task.taskUid);
+  await waitForMeiliTask(index, task.taskUid);
 };
 
 const ensureMeiliIndexed = async () => {
