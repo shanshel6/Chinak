@@ -22,7 +22,7 @@ const Login: React.FC = () => {
   const [newPassword, setNewPassword] = useState('');
   const [fullName, setFullName] = useState('');
   const [otpCode, setOtpCode] = useState('');
-  const [step, setStep] = useState<'phone' | 'phone-password' | 'phone-signup-details' | 'phone-forgot-password' | 'phone-reset-password' | 'email' | 'signup-name' | 'email-otp' | 'forgot-password' | 'reset-password'>('phone');
+  const [step, setStep] = useState<'phone' | 'phone-password' | 'phone-signup-details' | 'phone-forgot-password' | 'phone-reset-password' | 'email' | 'email-password' | 'signup-name' | 'email-otp' | 'forgot-password' | 'reset-password'>('phone');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const allowReviewerBypass = true; // Always allow for App Store reviewers
@@ -319,51 +319,61 @@ const Login: React.FC = () => {
   const handleEmailSubmit = async () => {
     const normalizedEmail = email.toLowerCase().trim();
 
-    // Demo email login
-    if (step === 'email' && normalizedEmail === TEST_ACCOUNTS.demo_email.email && password === TEST_ACCOUNTS.demo_email.password) {
-      const user = {
-        id: 'demo-email-' + Date.now(),
-        phone: TEST_ACCOUNTS.demo_email.phone,
-        name: TEST_ACCOUNTS.demo_email.name,
-        email: TEST_ACCOUNTS.demo_email.email,
-        role: 'USER'
-      };
-      setAuth('demo-token-' + Date.now(), user);
-      showToast('تم تسجيل الدخول كمستخدم تجريبي (بريد)', 'success');
-      navigate('/');
-      return;
-    }
-
     if (step === 'email') {
       if (!email || !email.includes('@')) {
         setError('يرجى إدخال بريد إلكتروني صالح');
         return;
       }
+      if (normalizedEmail === TEST_ACCOUNTS.demo_email.email) {
+        setPassword('');
+        setStep('email-password');
+        return;
+      }
+
+      const { exists } = await checkEmail(normalizedEmail);
+      if (!exists) {
+        setFullName('');
+        setPassword('');
+        setStep('signup-name');
+      } else {
+        setPassword('');
+        setStep('email-password');
+      }
+    } else if (step === 'email-password') {
       if (!password) {
         setError('يرجى إدخال كلمة المرور');
         return;
       }
 
+      if (normalizedEmail === TEST_ACCOUNTS.demo_email.email && password === TEST_ACCOUNTS.demo_email.password) {
+        const user = {
+          id: 'demo-email-' + Date.now(),
+          phone: TEST_ACCOUNTS.demo_email.phone,
+          name: TEST_ACCOUNTS.demo_email.name,
+          email: TEST_ACCOUNTS.demo_email.email,
+          role: 'USER'
+        };
+        setAuth('demo-token-' + Date.now(), user);
+        showToast('تم تسجيل الدخول كمستخدم تجريبي (بريد)', 'success');
+        navigate('/');
+        return;
+      }
+
       try {
-        // Try login directly first - this covers users in Supabase but not in Prisma
         const response = await loginWithEmail(normalizedEmail, password);
         setAuth(response.token, response.user);
         showToast('تم تسجيل الدخول بنجاح', 'success');
         navigate('/');
       } catch (err: any) {
-        // If login fails, check if user exists to determine next step
-        const { exists } = await checkEmail(normalizedEmail);
-        if (!exists) {
-          // User doesn't exist in Prisma OR Supabase (checkEmail should ideally check both but we fallback to signup)
-          setStep('signup-name');
-        } else {
-          // User exists but login failed (wrong password etc)
-          throw err;
-        }
+        throw err;
       }
     } else if (step === 'signup-name') {
       if (!fullName || fullName.length < 3) {
         setError('يرجى إدخال الاسم الكامل');
+        return;
+      }
+      if (!password || password.length < 6) {
+        setError('يجب أن تكون كلمة المرور 6 أحرف على الأقل');
         return;
       }
 
@@ -487,7 +497,8 @@ const Login: React.FC = () => {
              step === 'phone-signup-details' ? 'أهلاً بك في شيناك' :
              step === 'phone-forgot-password' ? 'نسيت كلمة المرور' :
              step === 'phone-reset-password' ? 'تعيين كلمة المرور' :
-             step === 'email' ? 'تسجيل الدخول بالبريد' :
+             step === 'email' ? 'البريد الإلكتروني' :
+             step === 'email-password' ? 'أدخل كلمة المرور' :
              step === 'signup-name' ? 'إنشاء حساب جديد' :
              step === 'forgot-password' ? 'نسيت كلمة المرور' :
              step === 'reset-password' ? 'تعيين كلمة المرور' :
@@ -501,8 +512,9 @@ const Login: React.FC = () => {
                step === 'phone-signup-details' ? 'يرجى إدخال اسمك وكلمة مرور جديدة لإكمال عملية التسجيل' :
                step === 'phone-forgot-password' ? 'أدخل رقم الهاتف للحصول على كود التحقق' :
                step === 'phone-reset-password' ? 'أدخل الكود المرسل وكلمة المرور الجديدة' :
-               step === 'email' ? 'أدخل بريدك الإلكتروني وكلمة المرور' :
-               step === 'signup-name' ? 'يرجى إدخال اسمك لإكمال التسجيل' :
+               step === 'email' ? 'أدخل بريدك الإلكتروني للمتابعة' :
+               step === 'email-password' ? 'أدخل كلمة المرور الخاصة بحسابك' :
+               step === 'signup-name' ? 'يرجى إدخال اسمك وكلمة مرور جديدة لإكمال التسجيل' :
                step === 'forgot-password' ? 'أدخل بريدك الإلكتروني للحصول على كود التحقق' :
                step === 'reset-password' ? 'أدخل الكود المرسل وكلمة المرور الجديدة' :
                `أدخل الكود المرسل إلى ${email}`}
@@ -740,7 +752,24 @@ const Login: React.FC = () => {
                       />
                     </div>
                   </div>
+                </div>
+              )}
 
+              {step === 'email-password' && (
+                <div className="flex flex-col gap-4 animate-in fade-in slide-in-from-left-4 duration-300">
+                  <div className="flex items-center justify-between mb-1">
+                    <button 
+                      type="button" 
+                      onClick={() => {
+                        setPassword('');
+                        setStep('email');
+                      }}
+                      className="text-xs text-primary hover:underline flex items-center gap-1"
+                    >
+                      <ArrowLeft size={12} />
+                      تغيير البريد
+                    </button>
+                  </div>
                   <div className="flex flex-col gap-2">
                     <label className="text-slate-900 dark:text-slate-200 text-sm font-medium pr-1 text-right">
                       كلمة المرور
@@ -778,7 +807,7 @@ const Login: React.FC = () => {
                   <div className="flex items-center justify-between mb-1">
                     <button 
                       type="button" 
-                      onClick={() => setStep('email')}
+                      onClick={() => setStep('email-password')}
                       className="text-xs text-primary hover:underline flex items-center gap-1"
                     >
                       <ArrowLeft size={12} />
@@ -864,7 +893,11 @@ const Login: React.FC = () => {
                   <div className="flex items-center justify-between mb-1">
                     <button 
                       type="button" 
-                      onClick={() => setStep('email')}
+                      onClick={() => {
+                        setFullName('');
+                        setPassword('');
+                        setStep('email');
+                      }}
                       className="text-xs text-primary hover:underline flex items-center gap-1"
                     >
                       <ArrowLeft size={12} />
@@ -888,6 +921,25 @@ const Login: React.FC = () => {
                         required
                         value={fullName}
                         onChange={(e) => setFullName(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <label className="text-slate-900 dark:text-slate-200 text-sm font-medium pr-1 text-right">
+                      كلمة المرور
+                    </label>
+                    <div className="flex w-full items-stretch rounded-xl shadow-sm transition-all focus-within:ring-2 focus-within:ring-primary focus-within:ring-opacity-50">
+                      <div className="flex items-center justify-center px-4 bg-surface-light dark:bg-surface-dark border border-slate-200 dark:border-slate-700 border-l-0 rounded-r-xl text-slate-400">
+                        <Lock size={22} />
+                      </div>
+                      <input 
+                        className="flex-1 bg-surface-light dark:bg-surface-dark border border-slate-200 dark:border-slate-700 border-r-0 rounded-l-xl px-4 py-3.5 text-base text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-0 text-left" 
+                        placeholder="••••••••" 
+                        type="password"
+                        required
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        dir="ltr"
                       />
                     </div>
                   </div>
@@ -972,6 +1024,7 @@ const Login: React.FC = () => {
                     'تأكيد وإرسال الكود'
                   ) : 
                    (step === 'email' ? 'متابعة' : 
+                    step === 'email-password' ? 'تسجيل الدخول' :
                     step === 'signup-name' ? 'إنشاء حساب' : 
                     step === 'forgot-password' ? 'إرسال كود التحقق' :
                     step === 'reset-password' ? 'تعيين كلمة المرور' :

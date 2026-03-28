@@ -9729,12 +9729,14 @@ app.get('/api/search/suggestions-legacy-disabled', async (req, res) => {
 
 app.put('/api/products/:id/archive', authenticateToken, isAdmin, async (req, res) => {
   try {
-    const { id } = req.params;
+    const rawId = String(req.params.id || '').trim();
     
     // We don't want to break if it's a local draft ID accidentally sent here
-    if (id.toString().startsWith('local-')) {
+    if (rawId.startsWith('local-')) {
         return res.json({ success: true });
     }
+
+    const id = rawId.replace(/^rapid-/i, '');
 
     const product = await prisma.product.update({
       where: { id: safeParseId(id) },
