@@ -790,6 +790,9 @@ const IRAQI_SLANG_NORMALIZATION_MAP = {
   درنفيس: ['دولاب', 'خزانة'],
   قندره: ['حذاء', 'جزمة'],
   جواتي: ['حذاء', 'رياضي'],
+  جربايه: ['جورب', 'جوارب', 'شراب'],
+  جرباية: ['جورب', 'جوارب', 'شراب'],
+  جرابية: ['جورب', 'جوارب', 'شراب'],
   دشداشه: ['ثوب', 'ملابس'],
   عركيه: ['قبعة'],
   ياخه: ['ياقة', 'قميص']
@@ -830,6 +833,13 @@ const expandSearchTermsForIraqiSlang = (query) => {
     addCandidates(token);
   }
   return Array.from(terms).map((value) => String(value || '').trim()).filter(Boolean).slice(0, 30);
+};
+
+const buildExactFeaturedSentenceVariants = (query) => {
+  const base = String(query || '').trim();
+  if (!base) return new Set();
+  const normalized = normalizeSearchText(base);
+  return new Set([base, normalized].map((value) => String(value || '').trim()).filter(Boolean));
 };
 
 const buildSearchDocument = (product) => {
@@ -8140,10 +8150,7 @@ app.get('/api/search', async (req, res) => {
 
     const normalizedQuery = normalizeSearchText(q);
     const expandedSearchTerms = expandSearchTermsForIraqiSlang(q);
-    const exactFeaturedQueryVariants = new Set([
-      q,
-      normalizedQuery
-    ].map((value) => String(value || '').trim()).filter(Boolean));
+    const exactFeaturedQueryVariants = buildExactFeaturedSentenceVariants(q);
     const productSelect = {
       id: true,
       name: true,
@@ -8233,8 +8240,7 @@ app.get('/api/search', async (req, res) => {
       const searchResult = await index.search(meiliQuery, {
         limit: meiliCandidateLimit,
         offset: 0,
-        filter: filters,
-        sort: ['isFeatured:desc', 'updatedAt:desc']
+        filter: filters
       });
       perf.log('meili_search_done', {
         meiliMs: Date.now() - meiliSearchStartedAt,
@@ -8351,7 +8357,7 @@ app.get('/api/search', async (req, res) => {
         where,
         skip: offset,
         take: limit,
-        orderBy: [{ isFeatured: 'desc' }, { updatedAt: 'desc' }],
+        orderBy: [{ updatedAt: 'desc' }],
         select: productSelect
       });
       perf.log('db_fallback_find_done', { dbFindMs: Date.now() - dbFindStartedAt, productsCount: productsFromDb.length });
