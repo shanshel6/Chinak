@@ -4,6 +4,7 @@ import { Check, Heart, Pencil, Star, X } from 'lucide-react';
 import type { Product } from '../../types/product';
 import { motion } from 'framer-motion';
 import { useAuthStore } from '../../store/useAuthStore';
+import { usePageCacheStore } from '../../store/usePageCacheStore';
 import { archiveProduct, updateProduct } from '../../services/api';
 import { useToastStore } from '../../store/useToastStore';
 
@@ -40,6 +41,7 @@ const ProductCard: React.FC<ProductCardProps> = React.memo(({
   const isAdmin = String(user?.role || '').toUpperCase() === 'ADMIN';
   const canManageFeature = Boolean(isAdmin && allowAdminFeatureControls);
   const showToast = useToastStore(state => state.showToast);
+  const removeProductFromCache = usePageCacheStore(state => state.removeProductFromCache);
 
   const normalizeTerm = (value: string) => String(value || '').trim().toLowerCase();
   const normalizeUniqueTerms = (terms: string[]) => {
@@ -86,6 +88,7 @@ const ProductCard: React.FC<ProductCardProps> = React.memo(({
         // Pass the token explicitly to ensure it authenticates properly
         const token = useAuthStore.getState().token || localStorage.getItem('auth_token');
         await archiveProduct(product.id, token);
+        removeProductFromCache(product.id);
         setProduct(prev => ({ ...prev, isActive: false }));
         showToast('تم إخفاء المنتج بنجاح', 'success');
       } catch (error) {

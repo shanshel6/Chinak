@@ -224,6 +224,17 @@ const bulkImportJobs = new Map();
 let bulkImportJobRunning = false;
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+const isUniqueIdConstraintError = (error, modelName) => {
+  const targets = Array.isArray(error?.meta?.target) ? error.meta.target.map((value) => String(value)) : [];
+  return error?.code === 'P2002'
+    && String(error?.meta?.modelName || '') === modelName
+    && targets.includes('id');
+};
+const repairTableIdSequence = async (tableName) => {
+  await prisma.$executeRawUnsafe(
+    `SELECT setval(pg_get_serial_sequence('"${tableName}"', 'id'), COALESCE((SELECT MAX("id") FROM "${tableName}"), 0) + 1, false)`
+  );
+};
 
 const getHttpStatusFromError = (err) => {
   if (!err) return null;
@@ -3388,15 +3399,27 @@ app.post('/api/track', async (req, res) => {
       return res.json({ success: true, skipped: true });
     }
 
-    await prisma.userInteraction.create({
-      data: {
-        userId: userId ? safeParseId(userId) : null,
-        sessionId: sessionId || 'guest',
-        productId: parsedProductId,
-        type,
-        weight: weight || 1.0
+    const interactionData = {
+      userId: userId ? safeParseId(userId) : null,
+      sessionId: sessionId || 'guest',
+      productId: parsedProductId,
+      type,
+      weight: weight || 1.0
+    };
+
+    try {
+      await prisma.userInteraction.create({
+        data: interactionData
+      });
+    } catch (error) {
+      if (!isUniqueIdConstraintError(error, 'UserInteraction')) {
+        throw error;
       }
-    });
+      await repairTableIdSequence('UserInteraction');
+      await prisma.userInteraction.create({
+        data: interactionData
+      });
+    }
 
     res.json({ success: true });
   } catch (error) {
