@@ -103,6 +103,10 @@ const withDbParams = (url) => {
   if (!parsed.searchParams.has('connection_limit')) parsed.searchParams.set('connection_limit', '3');
   if (!parsed.searchParams.has('pool_timeout')) parsed.searchParams.set('pool_timeout', '120');
   if (!parsed.searchParams.has('connect_timeout')) parsed.searchParams.set('connect_timeout', '20');
+  if (!parsed.searchParams.has('keepalives')) parsed.searchParams.set('keepalives', '1');
+  if (!parsed.searchParams.has('keepalives_idle')) parsed.searchParams.set('keepalives_idle', '30');
+  if (!parsed.searchParams.has('keepalives_interval')) parsed.searchParams.set('keepalives_interval', '10');
+  if (!parsed.searchParams.has('keepalives_count')) parsed.searchParams.set('keepalives_count', '3');
   if (!parsed.searchParams.has('sslmode')) parsed.searchParams.set('sslmode', 'require');
   return parsed.toString();
 };
@@ -133,6 +137,16 @@ const KEYWORDS_PER_PRODUCT = Math.max(10, Math.min(50, parseInt(process.env.GOOF
 const GOOFISH_AI_TITLE_MAX_CHARS = Math.max(40, parseInt(process.env.GOOFISH_AI_TITLE_MAX_CHARS || '140', 10) || 140);
 const GOOFISH_AI_SECOND_PASS_DESCRIPTION = String(process.env.GOOFISH_AI_SECOND_PASS_DESCRIPTION || 'false').toLowerCase() === 'true';
 const GOOFISH_TRANSLATION_CACHE_FLUSH_EVERY = Math.max(1, parseInt(process.env.GOOFISH_TRANSLATION_CACHE_FLUSH_EVERY || '20', 10) || 20);
+const GOOFISH_AI_TASK_TIMEOUT_MS = Math.max(15000, parseInt(process.env.GOOFISH_AI_TASK_TIMEOUT_MS || '90000', 10) || 90000);
+const GOOFISH_DB_WRITE_TIMEOUT_MS = Math.max(15000, parseInt(process.env.GOOFISH_DB_WRITE_TIMEOUT_MS || '120000', 10) || 120000);
+const GOOFISH_SCRAPER_HEARTBEAT_MS = Math.max(5000, parseInt(process.env.GOOFISH_SCRAPER_HEARTBEAT_MS || '30000', 10) || 30000);
+const GOOFISH_DB_STATEMENT_TIMEOUT_MS = Math.max(5000, parseInt(process.env.GOOFISH_DB_STATEMENT_TIMEOUT_MS || '90000', 10) || 90000);
+const GOOFISH_DB_COOLDOWN_WINDOW_MS = Math.max(1000, parseInt(process.env.GOOFISH_DB_COOLDOWN_WINDOW_MS || '120000', 10) || 120000);
+const GOOFISH_DB_COOLDOWN_THRESHOLD = Math.max(2, parseInt(process.env.GOOFISH_DB_COOLDOWN_THRESHOLD || '4', 10) || 4);
+const GOOFISH_DB_COOLDOWN_SLEEP_MS = Math.max(1000, parseInt(process.env.GOOFISH_DB_COOLDOWN_SLEEP_MS || '15000', 10) || 15000);
+const parsedRecoverWaitMs = parseInt(process.env.GOOFISH_DB_RECOVER_WAIT_MS || '120000', 10);
+const GOOFISH_DB_RECOVER_WAIT_MS = Number.isFinite(parsedRecoverWaitMs) ? Math.max(0, parsedRecoverWaitMs) : 120000;
+const GOOFISH_DB_RECOVER_PING_TIMEOUT_MS = Math.max(1000, parseInt(process.env.GOOFISH_DB_RECOVER_PING_TIMEOUT_MS || '12000', 10) || 12000);
 const UPDATE_EXISTING = String(process.env.GOOFISH_UPDATE_EXISTING || '').toLowerCase() === 'true';
 const UPDATE_LIMIT = parseInt(process.env.GOOFISH_UPDATE_LIMIT || '', 10);
 const UPDATE_START_ID = parseInt(process.env.GOOFISH_UPDATE_START_ID || '0', 10);
@@ -182,6 +196,105 @@ function detectRealPriceFromTitle(title, currentPrice) {
 const MAX_AI_ATTEMPTS = 3;
 let dbReady = false;
 let dbChecked = false;
+let activeBrowser = null;
+let shutdownInProgress = false;
+let dbConnectivityFailureTimestamps = [];
+
+async function runWithTimeout(task, label, timeoutMs) {
+  let timer = null;
+  try {
+    return await Promise.race([
+      Promise.resolve().then(() => task()),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+function isDbConnectivityError(error) {
+  const message = String(error?.message || error || '');
+  const code = String(error?.code || '');
+  return message.includes('Engine is not yet connected')
+    || message.includes("Can't reach database server")
+    || message.includes('Server has closed the connection')
+    || message.includes('Timed out fetching a new connection from the connection pool')
+    || code === 'P2024'
+    || code === 'P1017'
+    || code === 'P1001';
+}
+
+async function applyDbCooldownIfNeeded(label, error) {
+  if (!isDbConnectivityError(error)) return;
+  const now = Date.now();
+  dbConnectivityFailureTimestamps.push(now);
+  dbConnectivityFailureTimestamps = dbConnectivityFailureTimestamps.filter((ts) => now - ts <= GOOFISH_DB_COOLDOWN_WINDOW_MS);
+  if (dbConnectivityFailureTimestamps.length < GOOFISH_DB_COOLDOWN_THRESHOLD) return;
+  console.warn(
+    `[DB Cooldown] ${dbConnectivityFailureTimestamps.length} connectivity errors within ${GOOFISH_DB_COOLDOWN_WINDOW_MS}ms while ${label}. Cooling down for ${GOOFISH_DB_COOLDOWN_SLEEP_MS}ms...`
+  );
+  await humanDelay(GOOFISH_DB_COOLDOWN_SLEEP_MS, GOOFISH_DB_COOLDOWN_SLEEP_MS + 400);
+  dbConnectivityFailureTimestamps = [];
+}
+
+async function reconnectDb() {
+  const recoverWaitMs = Math.max(0, GOOFISH_DB_RECOVER_WAIT_MS);
+  const infiniteWait = recoverWaitMs <= 0;
+  const start = Date.now();
+  let lastPauseLogAt = 0;
+  while (infiniteWait || (Date.now() - start < recoverWaitMs)) {
+    const now = Date.now();
+    if (now - lastPauseLogAt >= 15000) {
+      const elapsedSec = Math.floor((now - start) / 1000);
+      const waitLabel = infiniteWait ? 'infinite' : `${Math.floor(recoverWaitMs / 1000)}s`;
+      console.warn(`[DB Pause] waiting for reconnect (${elapsedSec}s elapsed, wait=${waitLabel})`);
+      lastPauseLogAt = now;
+    }
+    try {
+      await prisma.$disconnect();
+    } catch {}
+    await humanDelay(1200, 2400);
+    try {
+      await prisma.$connect();
+      await prisma.$executeRawUnsafe(`SET statement_timeout TO ${GOOFISH_DB_STATEMENT_TIMEOUT_MS}`);
+      await runWithTimeout(
+        () => prisma.$queryRawUnsafe('SELECT 1'),
+        'recover ping',
+        GOOFISH_DB_RECOVER_PING_TIMEOUT_MS
+      );
+      dbReady = true;
+      console.warn('[DB Pause] reconnect successful, resuming.');
+      return;
+    } catch {
+      await humanDelay(1500, 2200);
+    }
+  }
+  throw new Error(`db recovery failed after ${GOOFISH_DB_RECOVER_WAIT_MS}ms`);
+}
+
+async function shutdownGracefully(signal) {
+  if (shutdownInProgress) return;
+  shutdownInProgress = true;
+  console.warn(`Received ${signal}. Shutting down gracefully...`);
+  try {
+    if (activeBrowser) {
+      await activeBrowser.close();
+    }
+  } catch {}
+  try {
+    await prisma.$disconnect();
+  } catch {}
+  process.exit(0);
+}
+
+process.once('SIGINT', () => {
+  shutdownGracefully('SIGINT');
+});
+process.once('SIGTERM', () => {
+  shutdownGracefully('SIGTERM');
+});
 
 if (process.env.NODE_ENV === 'production' && process.env.ALLOW_SCRAPER_IN_PROD !== 'true') {
   console.error('CRITICAL: Scraper is BLOCKED in production environment.');
@@ -1303,6 +1416,7 @@ async function ensureDbReady() {
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       await prisma.$connect();
+      await prisma.$executeRawUnsafe(`SET statement_timeout TO ${GOOFISH_DB_STATEMENT_TIMEOUT_MS}`);
       dbReady = true;
       console.log('Database connection established.');
       return dbReady;
@@ -1580,9 +1694,16 @@ async function saveProductToDb(item, existingProductId = null) {
 
 async function run() {
   const browser = await createBrowser();
+  activeBrowser = browser;
   await ensureDbReady();
   const translationCache = loadTranslationCache();
   let pendingCacheWrites = 0;
+  let heartbeatState = 'startup';
+  let heartbeatProduct = '';
+  const heartbeat = setInterval(() => {
+    const productInfo = heartbeatProduct ? ` | item: ${heartbeatProduct}` : '';
+    console.log(`[Heartbeat] state=${heartbeatState}${productInfo}`);
+  }, GOOFISH_SCRAPER_HEARTBEAT_MS);
   if (SILICONFLOW_API_KEY) {
     console.log('AI translation is enabled (using env key).');
   } else {
@@ -1865,6 +1986,8 @@ async function run() {
 
             if (SILICONFLOW_API_KEY && (!existingProduct || needsDetailedDescription)) {
               console.log(`[AI Translation] Attempting for: ${it.title.substring(0, 30)}...`);
+              heartbeatState = 'ai_translation';
+              heartbeatProduct = it.title.substring(0, 40);
               const cachedTranslation = getCachedTranslation(translationCache, it.title);
               const canUseCachedDescription = cachedTranslation
                 && cachedTranslation.descriptionAr
@@ -1876,7 +1999,11 @@ async function run() {
                 descriptionAr = cachedTranslation.descriptionAr;
                 keywords = cachedTranslation.keywords;
               } else {
-                const generated = await generateTitleAndKeywords(it.title);
+                const generated = await runWithTimeout(
+                  () => generateTitleAndKeywords(it.title),
+                  `AI translation for ${it.title.substring(0, 30)}`,
+                  GOOFISH_AI_TASK_TIMEOUT_MS
+                );
                 titleEn = generated.titleAr;
                 descriptionAr = generated.descriptionAr;
                 keywords = generated.keywords;
@@ -1902,9 +2029,17 @@ async function run() {
             // we should try one more translation directly if we have the key.
             if (SILICONFLOW_API_KEY && (!descriptionAr || descriptionAr === it.title || isChineseTerm(descriptionAr) || isChineseTerm(titleEn))) {
                 if (isChineseTerm(titleEn)) {
-                    titleEn = await translateFullTitleToArabic(it.title, it.title);
+                    titleEn = await runWithTimeout(
+                      () => translateFullTitleToArabic(it.title, it.title),
+                      `AI title fallback for ${it.title.substring(0, 30)}`,
+                      GOOFISH_AI_TASK_TIMEOUT_MS
+                    );
                 }
-                descriptionAr = await translateFullTitleToArabic(it.title, it.title);
+                descriptionAr = await runWithTimeout(
+                  () => translateFullTitleToArabic(it.title, it.title),
+                  `AI description fallback for ${it.title.substring(0, 30)}`,
+                  GOOFISH_AI_TASK_TIMEOUT_MS
+                );
                 descriptionAr = cleanDescriptionText(descriptionAr);
             }
 
@@ -1923,7 +2058,47 @@ async function run() {
             if (OUTPUT_JSON) {
               allItems.push(itemData);
             }
-            await saveProductToDb(itemData, existingProduct?.id || null);
+            heartbeatState = 'db_save';
+            heartbeatProduct = (itemData.titleEn || itemData.title || '').substring(0, 40);
+            let saveSucceeded = false;
+            let saveAttempt = 0;
+            while (!saveSucceeded) {
+              saveAttempt += 1;
+              heartbeatState = saveAttempt > 1 ? 'db_save_retry' : 'db_save';
+              try {
+                await runWithTimeout(
+                  () => saveProductToDb(itemData, existingProduct?.id || null),
+                  `DB save for ${heartbeatProduct || 'item'}`,
+                  GOOFISH_DB_WRITE_TIMEOUT_MS
+                );
+                saveSucceeded = true;
+              } catch (saveErr) {
+                const saveErrText = String(saveErr?.message || saveErr || '');
+                const timedOut = saveErrText.includes('timed out');
+                const retryable = timedOut || isDbConnectivityError(saveErr);
+                if (retryable) {
+                  console.warn(`[DB Save] Attempt ${saveAttempt} failed. Pausing until DB reconnect, then retrying same item... ${saveErrText}`);
+                  try {
+                    heartbeatState = 'db_reconnect_wait';
+                    await applyDbCooldownIfNeeded('db_save', saveErr);
+                    await reconnectDb();
+                    heartbeatState = 'db_reconnect_ok';
+                  } catch (reconnectErr) {
+                    console.warn(`[DB Save] Reconnect failed: ${String(reconnectErr?.message || reconnectErr || '')}`);
+                    heartbeatState = 'db_reconnect_wait';
+                  }
+                  saveAttempt = 0;
+                  continue;
+                }
+                console.warn(`[DB Save] Skipping item after ${saveAttempt} attempt(s) due to non-retryable error: ${saveErrText}`);
+                break;
+              }
+            }
+            if (!saveSucceeded) {
+              heartbeatState = 'db_save_skipped';
+              continue;
+            }
+            heartbeatState = 'db_save_done';
             // Log for debugging
             // console.log(`Processed item: ${itemData.titleEn || itemData.title}`);
             processedCount += 1;
@@ -1988,8 +2163,10 @@ async function run() {
     console.error('Scraper error:', e);
     process.exit(1);
   } finally {
+    clearInterval(heartbeat);
     saveTranslationCache(translationCache);
     await browser.close();
+    activeBrowser = null;
   }
 }
 
@@ -2026,11 +2203,7 @@ async function updateExistingGoofishProducts() {
   }
 
   const safeReconnect = async () => {
-    try {
-      await prisma.$disconnect();
-    } catch {}
-    await humanDelay(3000, 6000);
-    await prisma.$connect();
+    await reconnectDb();
   };
 
   while (scanned < limit) {
@@ -2048,6 +2221,7 @@ async function updateExistingGoofishProducts() {
     } catch (error) {
       if (error?.code === 'P1017' || error?.code === 'P1001') {
         console.warn('DB connection issue. Reconnecting...');
+        await applyDbCooldownIfNeeded('update_existing_fetch', error);
         await safeReconnect();
         continue;
       }
@@ -2137,6 +2311,7 @@ async function updateExistingGoofishProducts() {
       } catch (error) {
         if (error?.code === 'P1017' || error?.code === 'P1001') {
           console.warn(`DB connection issue while updating product ${product.id}. Reconnecting...`);
+          await applyDbCooldownIfNeeded('update_existing_save', error);
           await safeReconnect();
           continue;
         }

@@ -3393,8 +3393,9 @@ async function run() {
           if (!state) continue;
           const term = state.term || searchTerms[termIndex];
           state.items = Array.isArray(state.items) ? state.items : [];
-          const totalAtStart = state.items.length;
-          console.log(`[Process] ${term}: ${Math.max(0, Number(state.processIndex || 0))}/${totalAtStart}`);
+          const processedBeforeTerm = Math.max(0, Number(state.processIndex || 0));
+          const totalKnownForTerm = Math.max(state.items.length + processedBeforeTerm, processedBeforeTerm);
+          console.log(`[Process] ${term}: ${processedBeforeTerm}/${totalKnownForTerm}`);
           while (state.items.length > 0) {
             markPipelineProgress(`process-start ${term}`);
             if (processedCount >= MAX_PRODUCTS_TO_PROCESS) {
@@ -3403,9 +3404,10 @@ async function run() {
             }
             const currentItem = state.items[0];
             const currentProgress = Math.max(0, Number(state.processIndex || 0)) + 1;
+            const currentTotalForTerm = Math.max(state.items.length + Math.max(0, Number(state.processIndex || 0)), currentProgress);
             const currentItemId = extractGoofishItemId(currentItem?.url);
             const sourceTitle = cleanAiText(String(currentItem?.title || '').slice(0, 80));
-            console.log(`[ProcessItem] term="${term}" progress=${currentProgress}/${Math.max(totalAtStart, currentProgress)} itemId=${currentItemId || 'n/a'} url=${currentItem?.url || ''}`);
+            console.log(`[ProcessItem] term="${term}" progress=${currentProgress}/${currentTotalForTerm} itemId=${currentItemId || 'n/a'} url=${currentItem?.url || ''}`);
             if (sourceTitle) {
               console.log(`[ProcessItem] sourceTitle=${sourceTitle}`);
             }
@@ -3419,7 +3421,7 @@ async function run() {
               if (detailTarget) {
                 await processProductDetails(page, detailTarget, {
                   current: currentProgress,
-                  total: Math.max(totalAtStart, currentProgress)
+                  total: currentTotalForTerm
                 });
               } else {
                 console.warn(`[ProcessItem] detail phase skipped itemId=${currentItemId || 'n/a'} reason=no-db-target`);
@@ -3444,7 +3446,7 @@ async function run() {
             queue.nextProcessTerm = termIndex;
             queue.updatedAt = new Date().toISOString();
             saveBatchLinksQueue(queue);
-            console.log(`[ProcessItem] completed progress=${state.processIndex}/${Math.max(totalAtStart, state.processIndex)} itemId=${currentItemId || 'n/a'}`);
+            console.log(`[ProcessItem] completed progress=${state.processIndex}/${Math.max(state.items.length + state.processIndex, state.processIndex)} itemId=${currentItemId || 'n/a'}`);
             markPipelineProgress(`item-committed ${currentItemId || 'n/a'}`);
           }
           if (reachedProcessLimit) break;

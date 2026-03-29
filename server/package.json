@@ -37,6 +37,7 @@
     "nodemailer": "^7.0.12",
     "onnxruntime-node": "1.14.0",
     "openai": "^6.15.0",
+    "pg": "^8.20.0",
     "prisma": "^6.19.1",
     "puppeteer-core": "^24.36.1",
     "puppeteer-extra": "^3.3.6",
@@ -45,6 +46,7 @@
     "undici": "^7.18.2"
   },
   "devDependencies": {
+    "dotenv-cli": "^11.0.0",
     "nodemon": "^3.1.11"
   }
 }

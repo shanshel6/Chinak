@@ -8,6 +8,7 @@ import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import axios from 'axios';
 import readline from 'readline';
+import { embedImage } from '../services/clipService.js';
 
 console.log('[DEBUG] goofish-link-checker.js: File loaded fresh from rebuild.');
 
@@ -26,6 +27,10 @@ const withDbParams = (url) => {
   if (!parsed.searchParams.has('connection_limit')) parsed.searchParams.set('connection_limit', '3');
   if (!parsed.searchParams.has('pool_timeout')) parsed.searchParams.set('pool_timeout', '120');
   if (!parsed.searchParams.has('connect_timeout')) parsed.searchParams.set('connect_timeout', '20');
+  if (!parsed.searchParams.has('keepalives')) parsed.searchParams.set('keepalives', '1');
+  if (!parsed.searchParams.has('keepalives_idle')) parsed.searchParams.set('keepalives_idle', '30');
+  if (!parsed.searchParams.has('keepalives_interval')) parsed.searchParams.set('keepalives_interval', '10');
+  if (!parsed.searchParams.has('keepalives_count')) parsed.searchParams.set('keepalives_count', '3');
   if (!parsed.searchParams.has('sslmode')) parsed.searchParams.set('sslmode', 'require');
   return parsed.toString();
 };
@@ -38,6 +43,15 @@ const prisma = prismaDbUrl
   ? new PrismaClient({ datasources: { db: { url: prismaDbUrl } } })
   : new PrismaClient();
 const SILICONFLOW_API_KEY = String(process.env.SILICONFLOW_API_KEY || '').trim();
+const GOOFISH_DB_COOLDOWN_WINDOW_MS = Math.max(1000, Number.parseInt(process.env.GOOFISH_DB_COOLDOWN_WINDOW_MS || '120000', 10) || 120000);
+const GOOFISH_DB_COOLDOWN_THRESHOLD = Math.max(2, Number.parseInt(process.env.GOOFISH_DB_COOLDOWN_THRESHOLD || '4', 10) || 4);
+const GOOFISH_DB_COOLDOWN_SLEEP_MS = Math.max(1000, Number.parseInt(process.env.GOOFISH_DB_COOLDOWN_SLEEP_MS || '15000', 10) || 15000);
+const parsedRecoverWaitMs = Number.parseInt(process.env.GOOFISH_DB_RECOVER_WAIT_MS || '120000', 10);
+const GOOFISH_DB_RECOVER_WAIT_MS = Number.isFinite(parsedRecoverWaitMs) ? Math.max(0, parsedRecoverWaitMs) : 120000;
+const GOOFISH_DB_RECOVER_PING_TIMEOUT_MS = Math.max(1000, Number.parseInt(process.env.GOOFISH_DB_RECOVER_PING_TIMEOUT_MS || '12000', 10) || 12000);
+let activeBrowser = null;
+let shutdownInProgress = false;
+let dbConnectivityFailureTimestamps = [];
 
 const withTimeout = async (promiseFactory, label, timeoutMs = 60000) => {
   let timer;
@@ -68,6 +82,38 @@ const safeDbConnect = async () => {
   }
 };
 
+const recoverDbConnection = async (label, backoffMs, attemptIndex) => {
+  const recoverWaitMs = Math.max(0, GOOFISH_DB_RECOVER_WAIT_MS);
+  const infiniteWait = recoverWaitMs <= 0;
+  const start = Date.now();
+  let lastPauseLogAt = 0;
+  while (infiniteWait || (Date.now() - start < recoverWaitMs)) {
+    const now = Date.now();
+    if (now - lastPauseLogAt >= 15000) {
+      const elapsedSec = Math.floor((now - start) / 1000);
+      const waitLabel = infiniteWait ? 'infinite' : `${Math.floor(recoverWaitMs / 1000)}s`;
+      console.warn(`[DB Pause] ${label}: waiting for reconnect (${elapsedSec}s elapsed, wait=${waitLabel})`);
+      lastPauseLogAt = now;
+    }
+    await safeDbDisconnect();
+    const delayMs = Math.max(1000, Math.min(15000, backoffMs * Math.max(1, attemptIndex)));
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    const connected = await safeDbConnect();
+    if (!connected) {
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      continue;
+    }
+    try {
+      await withTimeout(() => prisma.$queryRawUnsafe('SELECT 1'), `recover ping ${label}`, GOOFISH_DB_RECOVER_PING_TIMEOUT_MS);
+      console.warn(`[DB Pause] ${label}: reconnect successful, resuming.`);
+      return true;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+    }
+  }
+  return false;
+};
+
 const withRetry = async (run, label, retries = 5, timeoutMs = 60000, backoffMs = 1500) => {
   let lastError;
   for (let i = 1; i <= retries; i++) {
@@ -75,19 +121,16 @@ const withRetry = async (run, label, retries = 5, timeoutMs = 60000, backoffMs =
       return await withTimeout(run, label, timeoutMs);
     } catch (error) {
       lastError = error;
-      const msg = String(error?.message || '');
-      const retryable = msg.includes('Timed out fetching a new connection from the connection pool')
-        || msg.includes("Can't reach database server")
-        || msg.includes('timed out after')
-        || msg.includes('Server has closed the connection')
-        || String(error?.code || '') === 'P2024'
-        || String(error?.code || '') === 'P1017'
-        || String(error?.code || '') === 'P1001';
+      const msg = toErrorText(error);
+      const retryable = isDbConnectivityError(error);
       if (!retryable || i === retries) break;
       console.warn(`${label} failed (attempt ${i}/${retries}), retrying... ${msg}`);
-      await safeDbDisconnect();
-      await new Promise((r) => setTimeout(r, backoffMs * i));
-      await safeDbConnect();
+      await applyDbCooldownIfNeeded(label, error);
+      const recovered = await recoverDbConnection(label, backoffMs, i);
+      if (!recovered) {
+        lastError = new Error(`db recovery failed for ${label} after ${GOOFISH_DB_RECOVER_WAIT_MS}ms`);
+        break;
+      }
     }
   }
   throw lastError;
@@ -95,6 +138,33 @@ const withRetry = async (run, label, retries = 5, timeoutMs = 60000, backoffMs =
 
 const toErrorText = (error) => String(error?.message || error || 'unknown error');
 const toErrorCode = (error) => String(error?.code || '');
+const isDbConnectivityError = (error) => {
+  const msg = toErrorText(error);
+  const code = toErrorCode(error);
+  return msg.includes('Timed out fetching a new connection from the connection pool')
+    || msg.includes("Can't reach database server")
+    || msg.includes('timed out after')
+    || msg.includes('Server has closed the connection')
+    || msg.includes('Engine is not yet connected')
+    || code === 'P2024'
+    || code === 'P1017'
+    || code === 'P1001';
+};
+
+const applyDbCooldownIfNeeded = async (label, error) => {
+  if (!isDbConnectivityError(error)) return;
+  const now = Date.now();
+  dbConnectivityFailureTimestamps.push(now);
+  dbConnectivityFailureTimestamps = dbConnectivityFailureTimestamps.filter((ts) => now - ts <= GOOFISH_DB_COOLDOWN_WINDOW_MS);
+  if (dbConnectivityFailureTimestamps.length < GOOFISH_DB_COOLDOWN_THRESHOLD) return;
+  console.warn(
+    `[DB Cooldown] ${dbConnectivityFailureTimestamps.length} connectivity errors within ${GOOFISH_DB_COOLDOWN_WINDOW_MS}ms while ${label}. Cooling down for ${GOOFISH_DB_COOLDOWN_SLEEP_MS}ms...`
+  );
+  await safeDbDisconnect();
+  await new Promise((resolve) => setTimeout(resolve, GOOFISH_DB_COOLDOWN_SLEEP_MS));
+  await safeDbConnect();
+  dbConnectivityFailureTimestamps = [];
+};
 
 const waitForDbReady = async (maxWaitMs, retryCount, timeoutMs, backoffMs) => {
   const start = Date.now();
@@ -112,6 +182,28 @@ const waitForDbReady = async (maxWaitMs, retryCount, timeoutMs, backoffMs) => {
   }
   return false;
 };
+
+const shutdownGracefully = async (signal) => {
+  if (shutdownInProgress) return;
+  shutdownInProgress = true;
+  console.warn(`Received ${signal}. Shutting down gracefully...`);
+  try {
+    if (activeBrowser) {
+      await withTimeout(() => activeBrowser.close(), 'browser close', 10000);
+    }
+  } catch {}
+  try {
+    await safeDbDisconnect();
+  } catch {}
+  process.exit(0);
+};
+
+process.once('SIGINT', () => {
+  shutdownGracefully('SIGINT');
+});
+process.once('SIGTERM', () => {
+  shutdownGracefully('SIGTERM');
+});
 
 // Indicators that a product is gone
 const UNAVAILABLE_KEYWORDS = [
@@ -237,7 +329,8 @@ async function checkGoofishLinks() {
   const batchSize = Math.max(1, Number.parseInt(process.env.GOOFISH_BATCH_SIZE || '50', 10) || 50);
   const idScanBatch = Math.max(1, Number.parseInt(process.env.GOOFISH_ID_SCAN_BATCH || '300', 10) || 300);
   const reconnectEveryBatch = String(process.env.GOOFISH_RECONNECT_EVERY_BATCH || '0').trim() === '1';
-  const dbWaitMs = Math.max(1000, Number.parseInt(process.env.GOOFISH_DB_WAIT_MS || '300000', 10) || 300000);
+  const parsedDbWait = Number.parseInt(process.env.GOOFISH_DB_WAIT_MS || '300000', 10);
+  const dbWaitMs = Number.isFinite(parsedDbWait) ? Math.max(0, parsedDbWait) : 300000;
   const heartbeatMs = Math.max(5000, Number.parseInt(process.env.GOOFISH_HEARTBEAT_MS || '30000', 10) || 30000);
   const productTimeoutMs = Math.max(30000, Number.parseInt(process.env.GOOFISH_PRODUCT_TIMEOUT_MS || '180000', 10) || 180000);
   const mutationTimeoutMs = Math.max(3000, Number.parseInt(process.env.GOOFISH_MUTATION_TIMEOUT_MS || '12000', 10) || 12000);
@@ -332,6 +425,7 @@ async function checkGoofishLinks() {
       '--incognito'
     ]
   });
+  activeBrowser = browser;
 
   const configurePage = async (targetPage) => {
     const width = 1920 + Math.floor(Math.random() * 100) - 50;
@@ -361,6 +455,7 @@ async function checkGoofishLinks() {
   let processedCount = 0;
   let updatedCount = 0;
   let unavailableCount = 0;
+  let embeddedCount = 0;
 
   try {
     let lastId = startId > 0 ? startId - 1 : 0;
@@ -386,7 +481,8 @@ async function checkGoofishLinks() {
               name: true,
               purchaseUrl: true,
               imagesChecked: true,
-              specs: true
+                specs: true,
+                image: true
             }
           }),
           'fetch products batch',
@@ -409,6 +505,12 @@ async function checkGoofishLinks() {
           console.warn(`DB probe after batch fetch failure: FAILED (code=${toErrorCode(probeError) || 'n/a'}) ${toErrorText(probeError)}`);
         }
         console.warn(`Batch fetch failed. Falling back to id-scan after id ${lastId}.`);
+        if (isDbConnectivityError(error)) {
+          const recovered = await waitForDbReady(dbWaitMs, retryCount, queryTimeoutMs, retryBackoffMs);
+          if (!recovered) {
+            throw new Error('Database connection could not be recovered after batch fetch failure.');
+          }
+        }
         await safeDbDisconnect();
         try {
           await withRetry(
@@ -443,7 +545,8 @@ async function checkGoofishLinks() {
                   name: true,
                   purchaseUrl: true,
                   imagesChecked: true,
-                  specs: true
+                  specs: true,
+                  image: true
                 }
               }),
               'fetch products by ids',
@@ -456,9 +559,15 @@ async function checkGoofishLinks() {
             );
           }
         } catch (singleError) {
-          console.warn(`Id-scan fetch failed. Skipping product id ${lastId + 1} and continuing.`);
-          lastId += 1;
-          try { await writeProgress(progressFilePath, { lastId }); } catch {}
+          console.warn(`Id-scan fetch failed after id ${lastId}. Retrying same position without skipping.`);
+          if (isDbConnectivityError(singleError)) {
+            const recovered = await waitForDbReady(dbWaitMs, retryCount, queryTimeoutMs, retryBackoffMs);
+            if (!recovered) {
+              throw new Error('Database connection could not be recovered after id-scan failure.');
+            }
+          } else {
+            await new Promise((r) => setTimeout(r, 2000));
+          }
           continue;
         }
       }
@@ -525,6 +634,7 @@ async function checkGoofishLinks() {
             unavailableCount++;
           } else {
             console.log(`✅ Product ${product.id} is AVAILABLE.`);
+            let imageToEmbed = String(product.image || '').trim();
           
             const newOrOldStatus = await page.evaluate(() => {
               try {
@@ -765,6 +875,7 @@ async function checkGoofishLinks() {
                 );
                 updatedCount++;
                 console.log(`Images updated for Product ${product.id}`);
+                imageToEmbed = mainImage;
               } else {
                 console.log('No images found with the specified selector.');
                 
@@ -780,6 +891,40 @@ async function checkGoofishLinks() {
                 );
                 console.log(`Marked Product ${product.id} as checked (no images found).`);
               }
+            }
+
+            const normalizedImageToEmbed = String(imageToEmbed || '').trim();
+            if (normalizedImageToEmbed && normalizedImageToEmbed !== 'null' && normalizedImageToEmbed !== 'undefined') {
+              let cleanImageToEmbed = normalizedImageToEmbed;
+              if (cleanImageToEmbed.startsWith('//')) cleanImageToEmbed = `https:${cleanImageToEmbed}`;
+              cleanImageToEmbed = cleanImageToEmbed.replace(/_\d+x\d+.*$/, '').replace(/\.webp$/, '');
+
+              console.log(`ℹ️ Generating image embedding for Product ${product.id}...`);
+              try {
+                const embedding = await embedImage(cleanImageToEmbed, null);
+                if (embedding && embedding.length > 0) {
+                  const vectorStr = `[${embedding.join(',')}]`;
+                  await withRetry(
+                    () => prisma.$executeRawUnsafe(
+                      `UPDATE "Product" SET "imageEmbedding" = $1::vector WHERE "id" = $2`,
+                      vectorStr,
+                      product.id
+                    ),
+                    `update embedding ${product.id}`,
+                    mutationRetryCount,
+                    mutationTimeoutMs,
+                    retryBackoffMs
+                  );
+                  embeddedCount++;
+                  console.log(`✅ Embedding saved for Product ${product.id}`);
+                } else {
+                  console.warn(`⚠️ Empty embedding for Product ${product.id}`);
+                }
+              } catch (embedErr) {
+                console.error(`❌ Embedding error for Product ${product.id}: ${toErrorText(embedErr)}`);
+              }
+            } else {
+              console.log(`ℹ️ No valid image for embedding for Product ${product.id}`);
             }
           }
         }, `process product ${product.id}`, productTimeoutMs);
@@ -804,9 +949,11 @@ async function checkGoofishLinks() {
     console.log(`Processed: ${processedCount}`);
     console.log(`Unavailable/Removed: ${unavailableCount}`);
     console.log(`Images Updated: ${updatedCount}`);
+    console.log(`Embeddings Saved: ${embeddedCount}`);
     
     clearInterval(heartbeat);
     await browser.close();
+    activeBrowser = null;
     await safeDbDisconnect();
     console.log('Done.');
     process.exit(0);

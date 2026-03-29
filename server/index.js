@@ -638,13 +638,47 @@ const MEILI_ADMIN_API_KEY = process.env.MEILI_ADMIN_API_KEY || process.env.MEILI
 const MEILI_TASK_TIMEOUT_MS = Math.max(5000, Number.parseInt(String(process.env.MEILI_TASK_TIMEOUT_MS || ''), 10) || 120000);
 const MEILI_TASK_POLL_INTERVAL_MS = Math.max(100, Number.parseInt(String(process.env.MEILI_TASK_POLL_INTERVAL_MS || ''), 10) || 1000);
 const MEILI_REINDEX_BATCH_SIZE = Math.max(10, Math.min(1000, Number.parseInt(String(process.env.MEILI_REINDEX_BATCH_SIZE || ''), 10) || 200));
+const MEILI_REINDEX_DEBUG_LOG_LIMIT = Math.max(10, Math.min(200, Number.parseInt(String(process.env.MEILI_REINDEX_DEBUG_LOG_LIMIT || ''), 10) || 60));
 let meiliClientSingleton = null;
-const meiliReindexState = {
+let meiliIndexReadyPromise = null;
+const createMeiliReindexState = () => ({
   running: false,
   lastStartedAt: null,
   lastFinishedAt: null,
   lastError: null,
-  lastResult: null
+  lastResult: null,
+  phase: 'idle',
+  reset: false,
+  totalProducts: null,
+  totalIndexed: 0,
+  progressPercent: 0,
+  processedBatches: 0,
+  currentBatchNumber: 0,
+  currentBatchSize: 0,
+  currentBatchStartedAt: null,
+  currentTaskUid: null,
+  lastIndexedId: 0,
+  lastIndexedAt: null,
+  debugLog: []
+});
+const meiliReindexState = createMeiliReindexState();
+
+const pushMeiliReindexDebug = (message, data = null) => {
+  const entry = {
+    at: new Date().toISOString(),
+    message
+  };
+  if (data && typeof data === 'object') entry.data = data;
+  meiliReindexState.debugLog = [...meiliReindexState.debugLog, entry].slice(-MEILI_REINDEX_DEBUG_LOG_LIMIT);
+  return entry;
+};
+
+const refreshMeiliReindexProgress = () => {
+  if (Number(meiliReindexState.totalProducts) > 0) {
+    meiliReindexState.progressPercent = Number(((meiliReindexState.totalIndexed / meiliReindexState.totalProducts) * 100).toFixed(1));
+    return;
+  }
+  meiliReindexState.progressPercent = 0;
 };
 
 const normalizeSearchText = (value) => {
@@ -955,23 +989,55 @@ const resetMeiliIndex = async () => {
       throw error;
     }
   }
-  return ensureMeiliIndexSettings();
+  meiliIndexReadyPromise = null;
+  return ensureMeiliIndexSettings({ forceRefresh: true });
 };
 
-const ensureMeiliIndexSettings = async () => {
-  const index = await getMeiliIndex();
-  await index.updateSearchableAttributes(['keywords', 'name', 'aiTitle', 'searchText', 'normalizedSearchText', 'description']);
-  await index.updateFilterableAttributes(['status', 'isActive', 'neworold', 'price']);
-  await index.updateSortableAttributes(['isFeatured', 'price', 'updatedAt']);
-  await index.updateSynonyms(MEILI_ARABIC_SYNONYMS);
-  await index.updateRankingRules([
-    'words',
-    'typo',
-    'proximity',
-    'attribute',
-    'sort',
-    'exactness'
+const applyMeiliIndexSettings = async (index) => {
+  const settingsTasks = await Promise.all([
+    index.updateSearchableAttributes(['keywords', 'name', 'aiTitle', 'searchText', 'normalizedSearchText', 'description']),
+    index.updateFilterableAttributes(['status', 'isActive', 'neworold', 'price']),
+    index.updateSortableAttributes(['isFeatured', 'price', 'updatedAt']),
+    index.updateSynonyms(MEILI_ARABIC_SYNONYMS),
+    index.updateRankingRules([
+      'words',
+      'typo',
+      'proximity',
+      'attribute',
+      'sort',
+      'exactness'
+    ])
   ]);
+  for (const task of settingsTasks) {
+    if (task?.taskUid != null) {
+      await waitForMeiliTask(index, task.taskUid);
+    }
+  }
+  return index;
+};
+
+const ensureMeiliIndexSettings = async ({ forceRefresh = false } = {}) => {
+  if (forceRefresh) {
+    meiliIndexReadyPromise = null;
+  }
+  if (!meiliIndexReadyPromise) {
+    meiliIndexReadyPromise = (async () => {
+      const index = await getMeiliIndex();
+      await applyMeiliIndexSettings(index);
+      return index;
+    })().catch((error) => {
+      meiliIndexReadyPromise = null;
+      throw error;
+    });
+  }
+  return meiliIndexReadyPromise;
+};
+
+const getMeiliSearchIndex = async () => {
+  const index = await getMeiliIndex();
+  if (meiliIndexReadyPromise) {
+    await meiliIndexReadyPromise;
+  }
   return index;
 };
 
@@ -987,18 +1053,48 @@ const getMeiliReindexStatus = () => ({
   lastStartedAt: meiliReindexState.lastStartedAt,
   lastFinishedAt: meiliReindexState.lastFinishedAt,
   lastError: meiliReindexState.lastError,
-  lastResult: meiliReindexState.lastResult
+  lastResult: meiliReindexState.lastResult,
+  phase: meiliReindexState.phase,
+  reset: meiliReindexState.reset,
+  totalProducts: meiliReindexState.totalProducts,
+  totalIndexed: meiliReindexState.totalIndexed,
+  progressPercent: meiliReindexState.progressPercent,
+  processedBatches: meiliReindexState.processedBatches,
+  currentBatchNumber: meiliReindexState.currentBatchNumber,
+  currentBatchSize: meiliReindexState.currentBatchSize,
+  currentBatchStartedAt: meiliReindexState.currentBatchStartedAt,
+  currentTaskUid: meiliReindexState.currentTaskUid,
+  lastIndexedId: meiliReindexState.lastIndexedId,
+  lastIndexedAt: meiliReindexState.lastIndexedAt,
+  debugLog: meiliReindexState.debugLog
 });
 
 const syncProductsToMeili = async (options = {}) => {
   const shouldReset = options?.reset === true;
+  meiliReindexState.phase = shouldReset ? 'resetting_index' : 'ensuring_index_settings';
+  meiliReindexState.reset = shouldReset;
+  pushMeiliReindexDebug('Preparing Meilisearch index', {
+    reset: shouldReset,
+    batchSize: MEILI_REINDEX_BATCH_SIZE
+  });
   const index = shouldReset
     ? await resetMeiliIndex()
     : await ensureMeiliIndexSettings();
   const pageSize = MEILI_REINDEX_BATCH_SIZE;
+  meiliReindexState.phase = 'counting_products';
+  meiliReindexState.totalProducts = await prisma.product.count({
+    where: { status: { not: 'DELETED' } }
+  });
+  refreshMeiliReindexProgress();
+  pushMeiliReindexDebug('Loaded product count for reindex', {
+    totalProducts: meiliReindexState.totalProducts,
+    batchSize: pageSize
+  });
   let lastId = 0;
   let totalIndexed = 0;
+  let processedBatches = 0;
   while (true) {
+    meiliReindexState.phase = 'loading_batch';
     const batch = await prisma.product.findMany({
       where: { id: { gt: lastId }, status: { not: 'DELETED' } },
       orderBy: { id: 'asc' },
@@ -1017,34 +1113,124 @@ const syncProductsToMeili = async (options = {}) => {
         updatedAt: true
       }
     });
-    if (batch.length === 0) break;
-    lastId = batch[batch.length - 1].id;
+    if (batch.length === 0) {
+      meiliReindexState.phase = 'finalizing';
+      meiliReindexState.currentBatchSize = 0;
+      meiliReindexState.currentTaskUid = null;
+      meiliReindexState.currentBatchStartedAt = null;
+      pushMeiliReindexDebug('No more products left to index', {
+        totalIndexed,
+        processedBatches
+      });
+      break;
+    }
+    processedBatches += 1;
+    const firstBatchId = batch[0].id;
+    const lastBatchId = batch[batch.length - 1].id;
+    meiliReindexState.currentBatchNumber = processedBatches;
+    meiliReindexState.currentBatchSize = batch.length;
+    meiliReindexState.currentBatchStartedAt = new Date().toISOString();
+    meiliReindexState.phase = 'preparing_batch';
+    pushMeiliReindexDebug('Loaded product batch from database', {
+      batchNumber: processedBatches,
+      batchSize: batch.length,
+      firstId: firstBatchId,
+      lastId: lastBatchId
+    });
     const docs = batch.map(buildSearchDocument);
     if (docs.length > 0) {
+      meiliReindexState.phase = 'uploading_batch';
       const task = await index.addDocuments(docs, { primaryKey: 'id' });
+      meiliReindexState.currentTaskUid = task.taskUid;
+      pushMeiliReindexDebug('Submitted batch to Meilisearch', {
+        batchNumber: processedBatches,
+        batchSize: docs.length,
+        taskUid: task.taskUid,
+        firstId: firstBatchId,
+        lastId: lastBatchId
+      });
+      meiliReindexState.phase = 'waiting_for_meili_task';
       await waitForMeiliTask(index, task.taskUid);
       totalIndexed += docs.length;
+      lastId = lastBatchId;
+      meiliReindexState.totalIndexed = totalIndexed;
+      meiliReindexState.processedBatches = processedBatches;
+      meiliReindexState.lastIndexedId = lastBatchId;
+      meiliReindexState.lastIndexedAt = new Date().toISOString();
+      meiliReindexState.currentTaskUid = null;
+      meiliReindexState.currentBatchStartedAt = null;
+      meiliReindexState.phase = 'batch_completed';
+      refreshMeiliReindexProgress();
+      pushMeiliReindexDebug('Completed Meilisearch batch', {
+        batchNumber: processedBatches,
+        batchSize: docs.length,
+        totalIndexed,
+        totalProducts: meiliReindexState.totalProducts,
+        progressPercent: meiliReindexState.progressPercent,
+        lastIndexedId: lastBatchId
+      });
+    } else {
+      lastId = lastBatchId;
+      meiliReindexState.processedBatches = processedBatches;
+      meiliReindexState.lastIndexedId = lastBatchId;
+      meiliReindexState.lastIndexedAt = new Date().toISOString();
+      meiliReindexState.currentBatchStartedAt = null;
+      meiliReindexState.currentTaskUid = null;
+      meiliReindexState.phase = 'batch_skipped';
+      pushMeiliReindexDebug('Skipped empty transformed batch', {
+        batchNumber: processedBatches,
+        batchSize: batch.length,
+        firstId: firstBatchId,
+        lastId: lastBatchId
+      });
     }
   }
-  return { totalIndexed, indexName: MEILI_INDEX_NAME, reset: shouldReset };
+  meiliReindexState.currentBatchSize = 0;
+  meiliReindexState.currentTaskUid = null;
+  meiliReindexState.currentBatchStartedAt = null;
+  meiliReindexState.phase = 'completed';
+  refreshMeiliReindexProgress();
+  return {
+    totalIndexed,
+    totalProducts: meiliReindexState.totalProducts,
+    processedBatches,
+    lastIndexedId: meiliReindexState.lastIndexedId,
+    indexName: MEILI_INDEX_NAME,
+    reset: shouldReset
+  };
 };
 
 const startMeiliReindexInBackground = (options = {}) => {
   if (meiliReindexState.running) return false;
-  meiliReindexState.running = true;
-  meiliReindexState.lastStartedAt = new Date().toISOString();
-  meiliReindexState.lastFinishedAt = null;
-  meiliReindexState.lastError = null;
-  meiliReindexState.lastResult = null;
+  const nextState = createMeiliReindexState();
+  Object.assign(meiliReindexState, nextState, {
+    running: true,
+    phase: 'starting',
+    reset: options?.reset === true,
+    lastStartedAt: new Date().toISOString()
+  });
+  pushMeiliReindexDebug('Background Meili reindex started', {
+    reset: meiliReindexState.reset,
+    batchSize: MEILI_REINDEX_BATCH_SIZE
+  });
   void syncProductsToMeili(options)
     .then((result) => {
       meiliReindexState.lastResult = result;
       meiliReindexState.lastFinishedAt = new Date().toISOString();
+      meiliReindexState.phase = 'completed';
+      refreshMeiliReindexProgress();
+      pushMeiliReindexDebug('Background Meili reindex completed', result);
       console.log('[Meili] background reindex completed:', result);
     })
     .catch((error) => {
       meiliReindexState.lastError = error?.message || 'Unknown error';
       meiliReindexState.lastFinishedAt = new Date().toISOString();
+      meiliReindexState.phase = 'failed';
+      meiliReindexState.currentTaskUid = null;
+      meiliReindexState.currentBatchStartedAt = null;
+      pushMeiliReindexDebug('Background Meili reindex failed', {
+        error: meiliReindexState.lastError
+      });
       console.error('[Meili] background reindex failed:', error);
     })
     .finally(() => {
@@ -8382,7 +8568,7 @@ app.get('/api/search', async (req, res) => {
 
     try {
       const meiliSetupStartedAt = Date.now();
-      const index = await ensureMeiliIndexSettings();
+      const index = await getMeiliSearchIndex();
       perf.log('meili_index_ready', { setupMs: Date.now() - meiliSetupStartedAt });
       const filters = ['status = PUBLISHED', 'isActive = true'];
       if (Number.isFinite(maxPrice) && maxPrice > 0) {

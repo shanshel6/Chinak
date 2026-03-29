@@ -44,6 +44,8 @@ const MODEL_ID = process.env.CLIP_MODEL_ID || 'Xenova/clip-vit-base-patch32';
 const OD_MODEL_ID = process.env.OD_MODEL_ID || 'Xenova/yolos-tiny';
 const ZERO_SHOT_OD_MODEL_ID = 'Xenova/owlvit-base-patch32'; // Zero-Shot Object Detection Model
 const QUANTIZED = String(process.env.CLIP_QUANTIZED || 'true').toLowerCase() === 'true';
+const CLIP_MAX_IMAGE_SIDE = Math.max(128, parseInt(process.env.CLIP_MAX_IMAGE_SIDE || '1024', 10) || 1024);
+const CLIP_ENABLE_RESIZE = String(process.env.CLIP_ENABLE_RESIZE || 'false').toLowerCase() === 'true';
 
 const ensureCacheDir = () => {
   const cacheDir = process.env.TRANSFORMERS_CACHE_DIR;
@@ -160,6 +162,48 @@ function cropRawImage(rawImage, box) {
   return new RawImage(newData, w, h, channels);
 }
 
+function toPlainArray(value) {
+  if (value == null) return [];
+  if (Array.isArray(value)) return value;
+  if (typeof value === 'object' && typeof value.tolist === 'function') {
+    try {
+      const out = value.tolist();
+      return Array.isArray(out) ? out : [];
+    } catch {}
+  }
+  if (typeof value === 'object' && ArrayBuffer.isView(value)) {
+    return Array.from(value);
+  }
+  if (typeof value === 'object' && value.data && ArrayBuffer.isView(value.data)) {
+    return Array.from(value.data);
+  }
+  return [];
+}
+
+function normalizeDetectionResult(result) {
+  const rawBoxes = toPlainArray(result?.boxes);
+  let boxes = [];
+  if (rawBoxes.length > 0 && Array.isArray(rawBoxes[0])) {
+    boxes = rawBoxes.map((box) => toPlainArray(box));
+  } else if (rawBoxes.length >= 4 && typeof rawBoxes[0] === 'number') {
+    for (let i = 0; i + 3 < rawBoxes.length; i += 4) {
+      boxes.push([rawBoxes[i], rawBoxes[i + 1], rawBoxes[i + 2], rawBoxes[i + 3]]);
+    }
+  }
+  boxes = boxes
+    .map((box) => box.slice(0, 4).map((n) => Number(n)))
+    .filter((box) => box.length === 4 && box.every((n) => Number.isFinite(n)));
+
+  const rawScores = toPlainArray(result?.scores).map((n) => Number(n));
+  const rawLabels = toPlainArray(result?.labels).map((n) => Number(n));
+
+  return {
+    boxes,
+    scores: rawScores,
+    labels: rawLabels
+  };
+}
+
 async function detectAndCropObject(image, productName = null) {
   try {
     let result = null;
@@ -178,8 +222,9 @@ async function detectAndCropObject(image, productName = null) {
         // For now, use the full name but truncated to first few words to avoid noise.
         const textQueries = [productName.split(' ').slice(0, 4).join(' ')];
 
-        const { pixel_values, pixel_mask, original_sizes } = await processor(image, textQueries);
-        const outputs = await model({ pixel_values, pixel_mask });
+        const zsInputs = await processor(image, textQueries);
+        const { original_sizes } = zsInputs;
+        const outputs = await model(zsInputs);
         
         // Threshold can be lower for zero-shot
         const threshold = 0.1; 
@@ -192,10 +237,14 @@ async function detectAndCropObject(image, productName = null) {
 
     if (!postProcess) throw new Error('post_process_object_detection not found on processor');
 
-    const results = await postProcess(outputs, threshold, original_sizes);
+    const targetSizes = getDetectionTargetSizes(image, original_sizes);
+    const results = await postProcess(outputs, threshold, targetSizes);
         
-        if (results && results.length > 0 && results[0].boxes.length > 0) {
-          result = results[0];
+        const normalizedResults = (Array.isArray(results) ? results : [results])
+          .filter(Boolean)
+          .map(normalizeDetectionResult);
+        if (normalizedResults.length > 0 && normalizedResults[0].boxes.length > 0) {
+          result = normalizedResults[0];
           console.log(`[CLIP Service] Zero-Shot found ${result.boxes.length} candidates for "${textQueries[0]}"`);
         }
       } catch (zsError) {
@@ -211,8 +260,9 @@ async function detectAndCropObject(image, productName = null) {
       const processor = await getODProcessor();
       const model = await getODModel();
 
-      const { pixel_values, pixel_mask, original_sizes } = await processor(image);
-      const outputs = await model({ pixel_values, pixel_mask });
+      const odInputs = await processor(image);
+      const { original_sizes } = odInputs;
+      const outputs = await model(odInputs);
       
       const threshold = 0.9;
       
@@ -224,10 +274,14 @@ async function detectAndCropObject(image, productName = null) {
 
       if (!postProcess) throw new Error('post_process_object_detection not found on processor');
 
-      const results = await postProcess(outputs, threshold, original_sizes);
+      const targetSizes = getDetectionTargetSizes(image, original_sizes);
+      const results = await postProcess(outputs, threshold, targetSizes);
       
-      if (results && results.length > 0) {
-        result = results[0];
+      const normalizedResults = (Array.isArray(results) ? results : [results])
+        .filter(Boolean)
+        .map(normalizeDetectionResult);
+      if (normalizedResults.length > 0) {
+        result = normalizedResults[0];
       }
     }
     
@@ -306,8 +360,9 @@ export async function analyzeImageObjects(input) {
         }
     }
 
-    const { pixel_values, pixel_mask, original_sizes } = await processor(image);
-    const outputs = await model({ pixel_values, pixel_mask });
+    const odInputs = await processor(image);
+    const { original_sizes } = odInputs;
+    const outputs = await model(odInputs);
     
     const threshold = 0.7; // Lower threshold to show more options to user
     
@@ -319,13 +374,17 @@ export async function analyzeImageObjects(input) {
 
     if (!postProcess) throw new Error('post_process_object_detection not found on processor');
 
-    const results = await postProcess(outputs, threshold, original_sizes);
+    const targetSizes = getDetectionTargetSizes(image, original_sizes);
+    const results = await postProcess(outputs, threshold, targetSizes);
     
-    if (!results || results.length === 0 || results[0].boxes.length === 0) {
+    const normalizedResults = (Array.isArray(results) ? results : [results])
+      .filter(Boolean)
+      .map(normalizeDetectionResult);
+    if (normalizedResults.length === 0 || normalizedResults[0].boxes.length === 0) {
       return [];
     }
 
-    const result = results[0];
+    const result = normalizedResults[0];
     const objects = [];
     const imgArea = image.width * image.height;
 
@@ -466,6 +525,38 @@ function normalizeImageForProcessor(image) {
   return new RawImage(data, normalized.width, normalized.height, 3);
 }
 
+function maybeResizeImage(image) {
+  if (!image || typeof image.width !== 'number' || typeof image.height !== 'number') {
+    return image;
+  }
+  if (!CLIP_ENABLE_RESIZE) {
+    return image;
+  }
+  const maxSide = Math.max(image.width, image.height);
+  if (!Number.isFinite(maxSide) || maxSide <= CLIP_MAX_IMAGE_SIDE) {
+    console.log(`[CLIP Service] Image size ${image.width}x${image.height}, resize not needed.`);
+    return image;
+  }
+  if (typeof image.resize !== 'function') {
+    console.warn(`[CLIP Service] Resize unavailable for image ${image.width}x${image.height}, continuing without resize.`);
+    return image;
+  }
+  const scale = CLIP_MAX_IMAGE_SIDE / maxSide;
+  const targetWidth = Math.max(1, Math.round(image.width * scale));
+  const targetHeight = Math.max(1, Math.round(image.height * scale));
+  const resized = image.resize(targetWidth, targetHeight);
+  console.log(`[CLIP Service] Resized image ${image.width}x${image.height} -> ${targetWidth}x${targetHeight}`);
+  return resized;
+}
+
+function getDetectionTargetSizes(image, original_sizes) {
+  const fromProcessor = toPlainArray(original_sizes);
+  if (Array.isArray(fromProcessor) && fromProcessor.length > 0) {
+    return fromProcessor;
+  }
+  return [[Math.max(1, Math.round(image.height)), Math.max(1, Math.round(image.width))]];
+}
+
 async function fetchWithRetry(url, options = {}, retries = 3) {
   // Use axios first
   try {
@@ -592,7 +683,8 @@ export async function embedImageRaw(input) {
       }
     }
 
-    const normalizedImage = normalizeImageForProcessor(image);
+    const resizedImage = maybeResizeImage(image);
+    const normalizedImage = normalizeImageForProcessor(resizedImage);
     const { pixel_values } = await processor(normalizedImage);
     const output = await model({ pixel_values });
     const imageEmbeds = output?.image_embeds;

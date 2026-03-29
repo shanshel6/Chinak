@@ -8,6 +8,65 @@ process.env.HF_ENDPOINT = 'https://hf-mirror.com';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const withTimeout = async (promiseFactory, label, timeoutMs = 60000) => {
+  let timer;
+  let heartbeat = null;
+  try {
+    return await Promise.race([
+      promiseFactory(),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+      })
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
+const withRetry = async (run, label, retries = 5, timeoutMs = 60000, backoffMs = 1500) => {
+  let lastError;
+  for (let i = 1; i <= retries; i++) {
+    try {
+      return await withTimeout(run, label, timeoutMs);
+    } catch (error) {
+      lastError = error;
+      const msg = String(error?.message || '');
+      const retryable = msg.includes('Timed out fetching a new connection from the connection pool')
+        || msg.includes("Can't reach database server")
+        || msg.includes('timed out after')
+        || msg.includes('Server has closed the connection')
+        || String(error?.code || '') === 'P2024'
+        || String(error?.code || '') === 'P1017';
+      if (!retryable || i === retries) break;
+      console.warn(`${label} failed (attempt ${i}/${retries}), retrying... ${msg}`);
+      try { await prisma.$disconnect(); } catch {}
+      await new Promise((r) => setTimeout(r, backoffMs * i));
+      try { await prisma.$connect(); } catch {}
+    }
+  }
+  throw lastError;
+};
+
+const waitForDbReady = async (maxWaitMs, retryCount, timeoutMs, backoffMs, progressFilePath, lastId) => {
+  const start = Date.now();
+  const infiniteWait = maxWaitMs <= 0;
+  while (infiniteWait || (Date.now() - start < maxWaitMs)) {
+    try {
+      await withRetry(() => prisma.$connect(), 'connect', retryCount, timeoutMs, backoffMs);
+      await withRetry(() => prisma.$queryRawUnsafe('SELECT 1'), 'db ping', retryCount, timeoutMs, backoffMs);
+      return true;
+    } catch (error) {
+      const msg = String(error?.message || '');
+      console.warn(`Database not ready, retrying... ${msg}`);
+      if (progressFilePath && lastId > 0) {
+        try { await writeProgress(progressFilePath, { lastId }); } catch {}
+      }
+      await new Promise((r) => setTimeout(r, 5000));
+    }
+  }
+  return false;
+};
+
 async function readProgress(progressFilePath) {
   try {
     const raw = await fs.readFile(progressFilePath, 'utf8');
@@ -51,8 +110,23 @@ async function main() {
   const progressFilePath = path.resolve(process.env.REEMBED_PROGRESS_FILE || 'reembed_progress.json');
   const resetProgress = String(process.env.REEMBED_RESET_PROGRESS || '').trim() === '1';
   const forceAll = String(process.env.REEMBED_FORCE_ALL || '').trim() === '1';
+  const testOnly = String(process.env.REEMBED_TEST_ONLY || '').trim() === '1';
+  const queryTimeoutMs = Math.max(1000, Number.parseInt(process.env.REEMBED_QUERY_TIMEOUT_MS || '60000', 10) || 60000);
+  const updateTimeoutMs = Math.max(1000, Number.parseInt(process.env.REEMBED_UPDATE_TIMEOUT_MS || '120000', 10) || 120000);
+  const retryCount = Math.max(1, Number.parseInt(process.env.REEMBED_RETRY_COUNT || '5', 10) || 5);
+  const concurrency = Math.max(1, Number.parseInt(process.env.REEMBED_CONCURRENCY || '1', 10) || 1);
+  const retryBackoffMs = Math.max(200, Number.parseInt(process.env.REEMBED_RETRY_BACKOFF_MS || '1500', 10) || 1500);
+  const pingEveryChunk = String(process.env.REEMBED_DB_PING_EVERY_CHUNK || '1').trim() === '1';
+  const reconnectEveryChunk = String(process.env.REEMBED_RECONNECT_EVERY_CHUNK || '0').trim() === '1';
+  const dbWaitMs = Math.max(1000, Number.parseInt(process.env.REEMBED_DB_WAIT_MS || '300000', 10) || 300000);
+  const progressEvery = Math.max(1, Number.parseInt(process.env.REEMBED_PROGRESS_EVERY || '5', 10) || 5);
+  const heartbeatMs = Math.max(5000, Number.parseInt(process.env.REEMBED_HEARTBEAT_MS || '30000', 10) || 30000);
 
-  await prisma.$connect();
+  const dbHost = process.env.DATABASE_URL ? new URL(process.env.DATABASE_URL).hostname : 'unknown';
+  console.log(`\n=================================================`);
+  console.log(`🚀 Starting embedding process on Database: ${dbHost}`);
+  console.log(`=================================================\n`);
+
   try {
     let processed = 0;
     if (resetProgress) {
@@ -68,12 +142,38 @@ async function main() {
     } else {
       console.log(`Starting from the first product in the database (progress file: ${progressFilePath})`);
     }
+    heartbeat = setInterval(async () => {
+      try { await writeProgress(progressFilePath, { lastId }); } catch {}
+    }, heartbeatMs);
+
+    const dbReady = await waitForDbReady(dbWaitMs, retryCount, queryTimeoutMs, retryBackoffMs, progressFilePath, lastId);
+    if (!dbReady) {
+      console.error('Database was not reachable within the wait window. Exiting.');
+      if (heartbeat) clearInterval(heartbeat);
+      return;
+    }
+
+    await withRetry(
+      () => prisma.$executeRawUnsafe(`SET statement_timeout TO ${Math.max(queryTimeoutMs, updateTimeoutMs)}`),
+      'set statement_timeout',
+      retryCount,
+      Math.max(queryTimeoutMs, updateTimeoutMs),
+      retryBackoffMs
+    );
     
     if (forceAll) {
       console.log('FORCE MODE: Processing ALL products (ignoring existing embeddings)');
     }
+    if (testOnly) {
+      console.log('TEST MODE: Fetching only one batch and exiting (no embedding).');
+    }
 
     while (processed < maxItems) {
+      const ready = await waitForDbReady(dbWaitMs, retryCount, queryTimeoutMs, retryBackoffMs, progressFilePath, lastId);
+      if (!ready) {
+        console.error('Database was not reachable within the wait window. Exiting.');
+        break;
+      }
       const remaining = maxItems - processed;
       const take = Math.min(batchSize, remaining);
       
@@ -81,12 +181,19 @@ async function main() {
         ? `WHERE id > ${lastId}` 
         : `WHERE id > ${lastId} AND "imageEmbedding" IS NULL`;
 
-      const rows = await prisma.$queryRawUnsafe(`
-        SELECT id, image, name FROM "Product" 
-        ${whereClause} 
-        ORDER BY id ASC 
-        LIMIT ${take}
-      `);
+      console.log(`Fetching next batch with lastId=${lastId}...`);
+      const rows = await withRetry(
+        () => prisma.$queryRawUnsafe(`
+          SELECT id, image, name FROM "Product" 
+          ${whereClause} 
+          ORDER BY id ASC 
+          LIMIT ${take}
+        `),
+        'fetch products',
+        retryCount,
+        queryTimeoutMs,
+        retryBackoffMs
+      );
       
       const products = Array.isArray(rows) ? rows : [];
       if (products.length === 0) {
@@ -96,10 +203,28 @@ async function main() {
 
       console.log(`Processing batch of ${products.length} products starting from ID ${products[0].id}...`);
 
-      // Process in chunks for concurrency
-      const CONCURRENCY = 5;
-      for (let i = 0; i < products.length; i += CONCURRENCY) {
-        const chunk = products.slice(i, i + CONCURRENCY);
+      if (testOnly) {
+        lastId = products[products.length - 1].id;
+        await writeProgress(progressFilePath, { lastId });
+        console.log('TEST MODE: Batch fetch OK. Exiting.');
+        break;
+      }
+
+      for (let i = 0; i < products.length; i += concurrency) {
+        const chunk = products.slice(i, i + concurrency);
+        if (pingEveryChunk) {
+          await withRetry(
+            () => prisma.$queryRawUnsafe('SELECT 1'),
+            'db ping',
+            retryCount,
+            queryTimeoutMs,
+            retryBackoffMs
+          );
+        }
+        if (reconnectEveryChunk) {
+          try { await prisma.$disconnect(); } catch {}
+          await withRetry(() => prisma.$connect(), 'reconnect', retryCount, queryTimeoutMs, retryBackoffMs);
+        }
         await Promise.all(chunk.map(async (product) => {
           try {
             const imageUrl = String(product.image || '').trim();
@@ -117,17 +242,31 @@ async function main() {
             }
 
             const vectorStr = `[${embedding.join(',')}]`;
-            await prisma.$executeRawUnsafe(
-              `UPDATE "Product" SET "imageEmbedding" = $1::vector WHERE "id" = $2`,
-              vectorStr,
-              product.id
+            await withRetry(
+              () => prisma.$executeRawUnsafe(
+                `UPDATE "Product" SET "imageEmbedding" = $1::vector WHERE "id" = $2`,
+                vectorStr,
+                product.id
+              ),
+              `update product ${product.id}`,
+              retryCount,
+              updateTimeoutMs,
+              retryBackoffMs
             );
             processed += 1;
             if (processed % 25 === 0) {
               console.log(`Embedded ${processed} images (last product id=${product.id})`);
             }
+            lastId = product.id;
+            if (processed % progressEvery === 0) {
+              try { await writeProgress(progressFilePath, { lastId }); } catch {}
+            }
           } catch (err) {
             console.error(`Unexpected error for product ${product.id}: ${err?.message || err}`);
+            lastId = product.id;
+            if (processed % progressEvery === 0) {
+              try { await writeProgress(progressFilePath, { lastId }); } catch {}
+            }
           }
         }));
         
@@ -139,14 +278,15 @@ async function main() {
             console.error(`Failed to write progress file: ${err?.message || err}`);
         }
         
-        // Small delay between chunks to let GC run if needed
         await sleep(100);
         if (processed >= maxItems) break;
       }
     }
 
+    if (heartbeat) clearInterval(heartbeat);
     console.log(`Done. Embedded ${processed} product images.`);
   } finally {
+    if (heartbeat) clearInterval(heartbeat);
     await prisma.$disconnect();
   }
 }
