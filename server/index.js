@@ -635,10 +635,14 @@ const inferProductCondition = (productLike) => {
 const MEILI_INDEX_NAME = process.env.MEILI_INDEX_NAME || 'products';
 const MEILI_HOST = process.env.MEILI_HOST || '';
 const MEILI_ADMIN_API_KEY = process.env.MEILI_ADMIN_API_KEY || process.env.MEILI_MASTER_KEY || '';
-const MEILI_TASK_TIMEOUT_MS = Math.max(5000, Number.parseInt(String(process.env.MEILI_TASK_TIMEOUT_MS || ''), 10) || 120000);
+const MEILI_CLIENT_REQUEST_TIMEOUT_MS = Math.max(30000, Number.parseInt(String(process.env.MEILI_CLIENT_REQUEST_TIMEOUT_MS || ''), 10) || 900000);
+const MEILI_TASK_TIMEOUT_MS = Math.max(5000, Number.parseInt(String(process.env.MEILI_TASK_TIMEOUT_MS || ''), 10) || 600000);
 const MEILI_TASK_POLL_INTERVAL_MS = Math.max(100, Number.parseInt(String(process.env.MEILI_TASK_POLL_INTERVAL_MS || ''), 10) || 1000);
+const MEILI_TASK_MAX_WAIT_MS = Math.max(0, Number.parseInt(String(process.env.MEILI_TASK_MAX_WAIT_MS || ''), 10) || 0);
+const MEILI_REINDEX_STALE_TASK_MS = Math.max(60000, Number.parseInt(String(process.env.MEILI_REINDEX_STALE_TASK_MS || ''), 10) || 20 * 60 * 1000);
 const MEILI_REINDEX_BATCH_SIZE = Math.max(10, Math.min(1000, Number.parseInt(String(process.env.MEILI_REINDEX_BATCH_SIZE || ''), 10) || 200));
 const MEILI_REINDEX_DEBUG_LOG_LIMIT = Math.max(10, Math.min(200, Number.parseInt(String(process.env.MEILI_REINDEX_DEBUG_LOG_LIMIT || ''), 10) || 60));
+const MEILI_REINDEX_STATE_PATH = path.join(__dirname, 'meili-reindex-state.json');
 let meiliClientSingleton = null;
 let meiliIndexReadyPromise = null;
 const createMeiliReindexState = () => ({
@@ -657,11 +661,52 @@ const createMeiliReindexState = () => ({
   currentBatchSize: 0,
   currentBatchStartedAt: null,
   currentTaskUid: null,
+  currentBatchFirstId: 0,
+  currentBatchLastId: 0,
   lastIndexedId: 0,
   lastIndexedAt: null,
   debugLog: []
 });
-const meiliReindexState = createMeiliReindexState();
+const sanitizeMeiliReindexState = (rawState) => {
+  const baseState = createMeiliReindexState();
+  if (!rawState || typeof rawState !== 'object') return baseState;
+  return {
+    ...baseState,
+    ...rawState,
+    running: false,
+    totalProducts: Number.isFinite(Number(rawState.totalProducts)) ? Number(rawState.totalProducts) : baseState.totalProducts,
+    totalIndexed: Number.isFinite(Number(rawState.totalIndexed)) ? Number(rawState.totalIndexed) : 0,
+    progressPercent: Number.isFinite(Number(rawState.progressPercent)) ? Number(rawState.progressPercent) : 0,
+    processedBatches: Number.isFinite(Number(rawState.processedBatches)) ? Number(rawState.processedBatches) : 0,
+    currentBatchNumber: Number.isFinite(Number(rawState.currentBatchNumber)) ? Number(rawState.currentBatchNumber) : 0,
+    currentBatchSize: Number.isFinite(Number(rawState.currentBatchSize)) ? Number(rawState.currentBatchSize) : 0,
+    currentTaskUid: rawState.currentTaskUid ?? null,
+    currentBatchFirstId: Number.isFinite(Number(rawState.currentBatchFirstId)) ? Number(rawState.currentBatchFirstId) : 0,
+    currentBatchLastId: Number.isFinite(Number(rawState.currentBatchLastId)) ? Number(rawState.currentBatchLastId) : 0,
+    lastIndexedId: Number.isFinite(Number(rawState.lastIndexedId)) ? Number(rawState.lastIndexedId) : 0,
+    debugLog: Array.isArray(rawState.debugLog) ? rawState.debugLog.slice(-MEILI_REINDEX_DEBUG_LOG_LIMIT) : []
+  };
+};
+const loadPersistedMeiliReindexState = () => {
+  try {
+    if (!fs.existsSync(MEILI_REINDEX_STATE_PATH)) return createMeiliReindexState();
+    const raw = fs.readFileSync(MEILI_REINDEX_STATE_PATH, 'utf8');
+    return sanitizeMeiliReindexState(JSON.parse(raw));
+  } catch {
+    return createMeiliReindexState();
+  }
+};
+const meiliReindexState = loadPersistedMeiliReindexState();
+const persistMeiliReindexState = () => {
+  try {
+    fs.writeFileSync(MEILI_REINDEX_STATE_PATH, JSON.stringify({
+      ...meiliReindexState,
+      running: false
+    }, null, 2));
+  } catch (error) {
+    console.warn('[Meili] failed to persist reindex state:', error?.message || error);
+  }
+};
 
 const pushMeiliReindexDebug = (message, data = null) => {
   const entry = {
@@ -670,6 +715,7 @@ const pushMeiliReindexDebug = (message, data = null) => {
   };
   if (data && typeof data === 'object') entry.data = data;
   meiliReindexState.debugLog = [...meiliReindexState.debugLog, entry].slice(-MEILI_REINDEX_DEBUG_LOG_LIMIT);
+  persistMeiliReindexState();
   return entry;
 };
 
@@ -679,6 +725,12 @@ const refreshMeiliReindexProgress = () => {
     return;
   }
   meiliReindexState.progressPercent = 0;
+};
+
+const parseIsoTimestamp = (value) => {
+  if (!value) return null;
+  const parsed = Date.parse(String(value));
+  return Number.isNaN(parsed) ? null : parsed;
 };
 
 const normalizeSearchText = (value) => {
@@ -961,7 +1013,12 @@ const getMeiliClient = () => {
   if (!meiliClientSingleton) {
     meiliClientSingleton = new MeiliSearch({
       host: MEILI_HOST,
-      apiKey: MEILI_ADMIN_API_KEY
+      apiKey: MEILI_ADMIN_API_KEY,
+      timeout: MEILI_CLIENT_REQUEST_TIMEOUT_MS,
+      defaultWaitOptions: {
+        timeout: MEILI_TASK_TIMEOUT_MS,
+        interval: MEILI_TASK_POLL_INTERVAL_MS
+      }
     });
   }
   return meiliClientSingleton;
@@ -1041,11 +1098,45 @@ const getMeiliSearchIndex = async () => {
   return index;
 };
 
-const waitForMeiliTask = async (index, taskUid) => {
-  return index.waitForTask(taskUid, {
-    timeOutMs: MEILI_TASK_TIMEOUT_MS,
-    intervalMs: MEILI_TASK_POLL_INTERVAL_MS
-  });
+const getMeiliTaskErrorMessage = (task) => {
+  const candidate = task?.error?.message
+    || task?.error?.code
+    || task?.details?.error
+    || task?.details?.message
+    || task?.error;
+  if (!candidate) return 'Unknown Meilisearch task error';
+  return String(candidate);
+};
+
+const waitForMeiliTask = async (index, taskUid, options = {}) => {
+  const startedAt = Number.isFinite(Number(options.startedAtMs)) ? Number(options.startedAtMs) : Date.now();
+  const maxWaitMs = Number.isFinite(Number(options.maxWaitMs)) ? Number(options.maxWaitMs) : MEILI_TASK_MAX_WAIT_MS;
+  try {
+    return await index.waitForTask(taskUid, {
+      timeout: MEILI_TASK_TIMEOUT_MS,
+      interval: MEILI_TASK_POLL_INTERVAL_MS
+    });
+  } catch (error) {
+    const message = String(error?.message || error || '');
+    if (!message.toLowerCase().includes('timeout')) {
+      throw error;
+    }
+  }
+
+  while (true) {
+    const task = await index.getTask(taskUid);
+    const status = String(task?.status || '').toLowerCase();
+    if (status === 'succeeded') return task;
+    if (status === 'failed' || status === 'canceled') {
+      throw new Error(`Meilisearch task ${taskUid} ${status}: ${getMeiliTaskErrorMessage(task)}`);
+    }
+
+    if (maxWaitMs > 0 && Date.now() - startedAt > maxWaitMs) {
+      throw new Error(`Meilisearch task ${taskUid} exceeded max wait ${maxWaitMs}ms while status=${status || 'unknown'}`);
+    }
+
+    await sleep(MEILI_TASK_POLL_INTERVAL_MS);
+  }
 };
 
 const getMeiliReindexStatus = () => ({
@@ -1064,15 +1155,115 @@ const getMeiliReindexStatus = () => ({
   currentBatchSize: meiliReindexState.currentBatchSize,
   currentBatchStartedAt: meiliReindexState.currentBatchStartedAt,
   currentTaskUid: meiliReindexState.currentTaskUid,
+  currentBatchFirstId: meiliReindexState.currentBatchFirstId,
+  currentBatchLastId: meiliReindexState.currentBatchLastId,
   lastIndexedId: meiliReindexState.lastIndexedId,
   lastIndexedAt: meiliReindexState.lastIndexedAt,
   debugLog: meiliReindexState.debugLog
 });
 
+const applyCompletedMeiliBatchProgress = (batchNumber, batchSize, lastBatchId) => {
+  meiliReindexState.totalIndexed += batchSize;
+  meiliReindexState.processedBatches = Math.max(meiliReindexState.processedBatches, batchNumber);
+  meiliReindexState.lastIndexedId = lastBatchId;
+  meiliReindexState.lastIndexedAt = new Date().toISOString();
+  meiliReindexState.currentTaskUid = null;
+  meiliReindexState.currentBatchStartedAt = null;
+  meiliReindexState.currentBatchFirstId = 0;
+  meiliReindexState.currentBatchLastId = 0;
+  meiliReindexState.phase = 'batch_completed';
+  refreshMeiliReindexProgress();
+  persistMeiliReindexState();
+};
+
+const resumePendingMeiliBatchIfNeeded = async (index) => {
+  const pendingTaskUid = meiliReindexState.currentTaskUid;
+  const pendingLastId = meiliReindexState.currentBatchLastId;
+  const pendingBatchSize = meiliReindexState.currentBatchSize;
+  const pendingBatchNumber = meiliReindexState.currentBatchNumber;
+  const pendingStartedAtMs = parseIsoTimestamp(meiliReindexState.currentBatchStartedAt);
+  if (!pendingTaskUid || !pendingLastId || pendingLastId <= meiliReindexState.lastIndexedId) return;
+  meiliReindexState.phase = 'resuming_meili_task';
+  persistMeiliReindexState();
+  pushMeiliReindexDebug('Resuming pending Meilisearch task', {
+    taskUid: pendingTaskUid,
+    batchNumber: pendingBatchNumber,
+    batchSize: pendingBatchSize,
+    firstId: meiliReindexState.currentBatchFirstId,
+    lastId: pendingLastId
+  });
+  let task = null;
+  try {
+    task = await index.getTask(pendingTaskUid);
+  } catch (error) {
+    pushMeiliReindexDebug('Could not fetch pending Meilisearch task status, will re-submit batch', {
+      taskUid: pendingTaskUid,
+      error: error?.message || String(error)
+    });
+    meiliReindexState.currentTaskUid = null;
+    meiliReindexState.currentBatchStartedAt = null;
+    meiliReindexState.currentBatchFirstId = 0;
+    meiliReindexState.currentBatchLastId = 0;
+    persistMeiliReindexState();
+    return;
+  }
+  const status = String(task?.status || '').toLowerCase();
+  const pendingElapsedMs = pendingStartedAtMs ? Date.now() - pendingStartedAtMs : 0;
+  if (status !== 'succeeded' && status !== 'failed' && status !== 'canceled' && pendingElapsedMs > MEILI_REINDEX_STALE_TASK_MS) {
+    pushMeiliReindexDebug('Pending Meilisearch task appears stale, re-submitting batch', {
+      taskUid: pendingTaskUid,
+      status: status || 'unknown',
+      elapsedMs: pendingElapsedMs,
+      staleAfterMs: MEILI_REINDEX_STALE_TASK_MS,
+      batchNumber: pendingBatchNumber,
+      firstId: meiliReindexState.currentBatchFirstId,
+      lastId: pendingLastId
+    });
+    meiliReindexState.currentTaskUid = null;
+    meiliReindexState.currentBatchStartedAt = null;
+    meiliReindexState.currentBatchFirstId = 0;
+    meiliReindexState.currentBatchLastId = 0;
+    persistMeiliReindexState();
+    return;
+  }
+  if (status === 'failed' || status === 'canceled') {
+    pushMeiliReindexDebug('Pending Meilisearch task did not complete, re-submitting batch', {
+      taskUid: pendingTaskUid,
+      status,
+      error: getMeiliTaskErrorMessage(task)
+    });
+    meiliReindexState.currentTaskUid = null;
+    meiliReindexState.currentBatchStartedAt = null;
+    meiliReindexState.currentBatchFirstId = 0;
+    meiliReindexState.currentBatchLastId = 0;
+    persistMeiliReindexState();
+    return;
+  }
+  if (status !== 'succeeded') {
+    await waitForMeiliTask(index, pendingTaskUid, {
+      startedAtMs: pendingStartedAtMs,
+      maxWaitMs: MEILI_REINDEX_STALE_TASK_MS
+    });
+  }
+  applyCompletedMeiliBatchProgress(pendingBatchNumber, pendingBatchSize, pendingLastId);
+  pushMeiliReindexDebug('Recovered completed Meilisearch batch after retry', {
+    batchNumber: pendingBatchNumber,
+    batchSize: pendingBatchSize,
+    totalIndexed: meiliReindexState.totalIndexed,
+    totalProducts: meiliReindexState.totalProducts,
+    progressPercent: meiliReindexState.progressPercent,
+    lastIndexedId: pendingLastId
+  });
+};
+
 const syncProductsToMeili = async (options = {}) => {
   const shouldReset = options?.reset === true;
+  const requestedResumeFromId = shouldReset ? 0 : Math.max(0, Number(options?.resumeFromId) || 0);
+  const requestedResumeIndexed = shouldReset ? 0 : Math.max(0, Number(options?.resumeIndexed) || 0);
+  const requestedResumeProcessedBatches = shouldReset ? 0 : Math.max(0, Number(options?.resumeProcessedBatches) || 0);
   meiliReindexState.phase = shouldReset ? 'resetting_index' : 'ensuring_index_settings';
   meiliReindexState.reset = shouldReset;
+  persistMeiliReindexState();
   pushMeiliReindexDebug('Preparing Meilisearch index', {
     reset: shouldReset,
     batchSize: MEILI_REINDEX_BATCH_SIZE
@@ -1086,15 +1277,52 @@ const syncProductsToMeili = async (options = {}) => {
     where: { status: { not: 'DELETED' } }
   });
   refreshMeiliReindexProgress();
+  persistMeiliReindexState();
   pushMeiliReindexDebug('Loaded product count for reindex', {
     totalProducts: meiliReindexState.totalProducts,
     batchSize: pageSize
   });
-  let lastId = 0;
-  let totalIndexed = 0;
-  let processedBatches = 0;
+  if (!shouldReset && requestedResumeFromId > 0) {
+    meiliReindexState.totalIndexed = requestedResumeIndexed;
+    meiliReindexState.processedBatches = requestedResumeProcessedBatches;
+    meiliReindexState.currentBatchNumber = requestedResumeProcessedBatches + 1;
+    meiliReindexState.currentBatchSize = 0;
+    meiliReindexState.currentTaskUid = null;
+    meiliReindexState.currentBatchStartedAt = null;
+    meiliReindexState.currentBatchFirstId = 0;
+    meiliReindexState.currentBatchLastId = 0;
+    meiliReindexState.lastIndexedId = requestedResumeFromId;
+    meiliReindexState.lastIndexedAt = new Date().toISOString();
+    meiliReindexState.phase = 'resuming_from_checkpoint';
+    refreshMeiliReindexProgress();
+    persistMeiliReindexState();
+    pushMeiliReindexDebug('Resuming Meilisearch reindex from checkpoint', {
+      resumeFromId: requestedResumeFromId,
+      totalIndexed: requestedResumeIndexed,
+      processedBatches: requestedResumeProcessedBatches
+    });
+  } else if (!shouldReset) {
+    await resumePendingMeiliBatchIfNeeded(index);
+  } else {
+    meiliReindexState.totalIndexed = 0;
+    meiliReindexState.processedBatches = 0;
+    meiliReindexState.currentBatchNumber = 0;
+    meiliReindexState.currentBatchSize = 0;
+    meiliReindexState.currentTaskUid = null;
+    meiliReindexState.currentBatchStartedAt = null;
+    meiliReindexState.currentBatchFirstId = 0;
+    meiliReindexState.currentBatchLastId = 0;
+    meiliReindexState.lastIndexedId = 0;
+    meiliReindexState.lastIndexedAt = null;
+    refreshMeiliReindexProgress();
+    persistMeiliReindexState();
+  }
+  let lastId = shouldReset ? 0 : Math.max(0, Number(meiliReindexState.lastIndexedId) || 0);
+  let totalIndexed = shouldReset ? 0 : Math.max(0, Number(meiliReindexState.totalIndexed) || 0);
+  let processedBatches = shouldReset ? 0 : Math.max(0, Number(meiliReindexState.processedBatches) || 0);
   while (true) {
     meiliReindexState.phase = 'loading_batch';
+    persistMeiliReindexState();
     const batch = await prisma.product.findMany({
       where: { id: { gt: lastId }, status: { not: 'DELETED' } },
       orderBy: { id: 'asc' },
@@ -1118,6 +1346,9 @@ const syncProductsToMeili = async (options = {}) => {
       meiliReindexState.currentBatchSize = 0;
       meiliReindexState.currentTaskUid = null;
       meiliReindexState.currentBatchStartedAt = null;
+      meiliReindexState.currentBatchFirstId = 0;
+      meiliReindexState.currentBatchLastId = 0;
+      persistMeiliReindexState();
       pushMeiliReindexDebug('No more products left to index', {
         totalIndexed,
         processedBatches
@@ -1130,7 +1361,10 @@ const syncProductsToMeili = async (options = {}) => {
     meiliReindexState.currentBatchNumber = processedBatches;
     meiliReindexState.currentBatchSize = batch.length;
     meiliReindexState.currentBatchStartedAt = new Date().toISOString();
+    meiliReindexState.currentBatchFirstId = firstBatchId;
+    meiliReindexState.currentBatchLastId = lastBatchId;
     meiliReindexState.phase = 'preparing_batch';
+    persistMeiliReindexState();
     pushMeiliReindexDebug('Loaded product batch from database', {
       batchNumber: processedBatches,
       batchSize: batch.length,
@@ -1142,6 +1376,7 @@ const syncProductsToMeili = async (options = {}) => {
       meiliReindexState.phase = 'uploading_batch';
       const task = await index.addDocuments(docs, { primaryKey: 'id' });
       meiliReindexState.currentTaskUid = task.taskUid;
+      persistMeiliReindexState();
       pushMeiliReindexDebug('Submitted batch to Meilisearch', {
         batchNumber: processedBatches,
         batchSize: docs.length,
@@ -1150,17 +1385,15 @@ const syncProductsToMeili = async (options = {}) => {
         lastId: lastBatchId
       });
       meiliReindexState.phase = 'waiting_for_meili_task';
-      await waitForMeiliTask(index, task.taskUid);
-      totalIndexed += docs.length;
+      persistMeiliReindexState();
+      await waitForMeiliTask(index, task.taskUid, {
+        startedAtMs: parseIsoTimestamp(meiliReindexState.currentBatchStartedAt),
+        maxWaitMs: MEILI_REINDEX_STALE_TASK_MS
+      });
       lastId = lastBatchId;
-      meiliReindexState.totalIndexed = totalIndexed;
-      meiliReindexState.processedBatches = processedBatches;
-      meiliReindexState.lastIndexedId = lastBatchId;
-      meiliReindexState.lastIndexedAt = new Date().toISOString();
-      meiliReindexState.currentTaskUid = null;
-      meiliReindexState.currentBatchStartedAt = null;
-      meiliReindexState.phase = 'batch_completed';
-      refreshMeiliReindexProgress();
+      applyCompletedMeiliBatchProgress(processedBatches, docs.length, lastBatchId);
+      totalIndexed = meiliReindexState.totalIndexed;
+      processedBatches = meiliReindexState.processedBatches;
       pushMeiliReindexDebug('Completed Meilisearch batch', {
         batchNumber: processedBatches,
         batchSize: docs.length,
@@ -1176,7 +1409,10 @@ const syncProductsToMeili = async (options = {}) => {
       meiliReindexState.lastIndexedAt = new Date().toISOString();
       meiliReindexState.currentBatchStartedAt = null;
       meiliReindexState.currentTaskUid = null;
+      meiliReindexState.currentBatchFirstId = 0;
+      meiliReindexState.currentBatchLastId = 0;
       meiliReindexState.phase = 'batch_skipped';
+      persistMeiliReindexState();
       pushMeiliReindexDebug('Skipped empty transformed batch', {
         batchNumber: processedBatches,
         batchSize: batch.length,
@@ -1188,8 +1424,11 @@ const syncProductsToMeili = async (options = {}) => {
   meiliReindexState.currentBatchSize = 0;
   meiliReindexState.currentTaskUid = null;
   meiliReindexState.currentBatchStartedAt = null;
+  meiliReindexState.currentBatchFirstId = 0;
+  meiliReindexState.currentBatchLastId = 0;
   meiliReindexState.phase = 'completed';
   refreshMeiliReindexProgress();
+  persistMeiliReindexState();
   return {
     totalIndexed,
     totalProducts: meiliReindexState.totalProducts,
@@ -1202,13 +1441,20 @@ const syncProductsToMeili = async (options = {}) => {
 
 const startMeiliReindexInBackground = (options = {}) => {
   if (meiliReindexState.running) return false;
-  const nextState = createMeiliReindexState();
+  const shouldReset = options?.reset === true;
+  const nextState = shouldReset
+    ? createMeiliReindexState()
+    : sanitizeMeiliReindexState(meiliReindexState);
   Object.assign(meiliReindexState, nextState, {
     running: true,
     phase: 'starting',
-    reset: options?.reset === true,
+    reset: shouldReset,
+    lastFinishedAt: null,
+    lastError: null,
+    lastResult: null,
     lastStartedAt: new Date().toISOString()
   });
+  persistMeiliReindexState();
   pushMeiliReindexDebug('Background Meili reindex started', {
     reset: meiliReindexState.reset,
     batchSize: MEILI_REINDEX_BATCH_SIZE
@@ -1226,8 +1472,7 @@ const startMeiliReindexInBackground = (options = {}) => {
       meiliReindexState.lastError = error?.message || 'Unknown error';
       meiliReindexState.lastFinishedAt = new Date().toISOString();
       meiliReindexState.phase = 'failed';
-      meiliReindexState.currentTaskUid = null;
-      meiliReindexState.currentBatchStartedAt = null;
+      persistMeiliReindexState();
       pushMeiliReindexDebug('Background Meili reindex failed', {
         error: meiliReindexState.lastError
       });
@@ -1235,6 +1480,7 @@ const startMeiliReindexInBackground = (options = {}) => {
     })
     .finally(() => {
       meiliReindexState.running = false;
+      persistMeiliReindexState();
     });
   return true;
 };
@@ -8456,7 +8702,15 @@ app.post('/api/admin/search/reindex', authenticateToken, isAdmin, hasPermission(
   try {
     const shouldReset = String(_req.query.reset || _req.body?.reset || '').trim() === '1'
       || _req.body?.reset === true;
-    const started = startMeiliReindexInBackground({ reset: shouldReset });
+    const resumeFromId = shouldReset ? 0 : Math.max(0, Number.parseInt(String(_req.query.resumeFromId || _req.body?.resumeFromId || '0'), 10) || 0);
+    const resumeIndexed = shouldReset ? 0 : Math.max(0, Number.parseInt(String(_req.query.resumeIndexed || _req.body?.resumeIndexed || '0'), 10) || 0);
+    const resumeProcessedBatches = shouldReset ? 0 : Math.max(0, Number.parseInt(String(_req.query.resumeProcessedBatches || _req.body?.resumeProcessedBatches || '0'), 10) || 0);
+    const started = startMeiliReindexInBackground({
+      reset: shouldReset,
+      resumeFromId,
+      resumeIndexed,
+      resumeProcessedBatches
+    });
     return res.json({
       ok: true,
       engine: 'meili',
