@@ -975,21 +975,50 @@ const buildExactFeaturedSentenceVariants = (query) => {
   return new Set([base, normalized].map((value) => String(value || '').trim()).filter(Boolean));
 };
 
+const getSearchDocumentAiTitle = (aiMetadata) => String(
+  aiMetadata?.title_ar
+  ?? aiMetadata?.titleAr
+  ?? aiMetadata?.translatedTitle
+  ?? aiMetadata?.translated_title
+  ?? aiMetadata?.title
+  ?? ''
+).trim();
+
+const getSearchDocumentOriginalTitle = (aiMetadata) => String(
+  aiMetadata?.originalTitle
+  ?? aiMetadata?.original_title
+  ?? ''
+).trim();
+
+const getSearchDocumentDescription = (product, aiMetadata) => cleanStr(String(
+  product?.description
+  ?? aiMetadata?.translatedDescription
+  ?? aiMetadata?.translatedDesc
+  ?? aiMetadata?.descriptionAr
+  ?? aiMetadata?.description_ar
+  ?? aiMetadata?.fullDescriptionAr
+  ?? aiMetadata?.full_description_ar
+  ?? aiMetadata?.description
+  ?? ''
+).trim());
+
 const buildSearchDocument = (product) => {
   const aiMetadata = parseAiMetadata(product?.aiMetadata);
   const rawKeywords = Array.isArray(product?.keywords) ? product.keywords : [];
   const featuredSearchSentences = getFeaturedSearchSentencesFromProduct(product);
   const keywordsJoined = rawKeywords.map((kw) => String(kw || '').trim()).filter(Boolean).join(' ');
   const title = String(product?.name || '').trim();
-  const description = String(product?.description || '').trim();
-  const aiTitle = String(aiMetadata?.title_ar || aiMetadata?.title || '').trim();
+  const description = getSearchDocumentDescription(product, aiMetadata);
+  const aiTitle = getSearchDocumentAiTitle(aiMetadata);
+  const originalTitle = getSearchDocumentOriginalTitle(aiMetadata);
   const featuredTermsJoined = featuredSearchSentences.join(' ');
-  const searchText = [title, aiTitle, keywordsJoined, featuredTermsJoined, description].filter(Boolean).join(' ');
+  const searchText = [title, aiTitle, originalTitle, keywordsJoined, featuredTermsJoined, description].filter(Boolean).join(' ');
   const normalizedSearchText = normalizeSearchText(searchText);
   return {
     id: product.id,
     name: title,
     aiTitle,
+    originalTitle,
     description,
     featuredSearchSentences,
     keywords: rawKeywords,
@@ -1052,7 +1081,7 @@ const resetMeiliIndex = async () => {
 
 const applyMeiliIndexSettings = async (index) => {
   const settingsTasks = await Promise.all([
-    index.updateSearchableAttributes(['keywords', 'name', 'aiTitle', 'searchText', 'normalizedSearchText', 'description']),
+    index.updateSearchableAttributes(['keywords', 'name', 'aiTitle', 'originalTitle', 'searchText', 'normalizedSearchText', 'description']),
     index.updateFilterableAttributes(['status', 'isActive', 'neworold', 'price']),
     index.updateSortableAttributes(['isFeatured', 'price', 'updatedAt']),
     index.updateSynonyms(MEILI_ARABIC_SYNONYMS),
