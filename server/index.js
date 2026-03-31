@@ -975,6 +975,37 @@ const buildExactFeaturedSentenceVariants = (query) => {
   return new Set([base, normalized].map((value) => String(value || '').trim()).filter(Boolean));
 };
 
+const getNameMatchPriority = (productName, normalizedQuery) => {
+  const normalizedName = normalizeSearchText(String(productName || ''));
+  const normalizedNeedle = normalizeSearchText(String(normalizedQuery || ''));
+  if (!normalizedName || !normalizedNeedle) {
+    return {
+      phraseMatch: 0,
+      allTokensMatch: 0,
+      tokenCoverage: 0,
+      matchedTokenCount: 0
+    };
+  }
+  const queryTokens = normalizedNeedle.split(/\s+/).map((token) => token.trim()).filter(Boolean);
+  if (!queryTokens.length) {
+    return {
+      phraseMatch: 0,
+      allTokensMatch: 0,
+      tokenCoverage: 0,
+      matchedTokenCount: 0
+    };
+  }
+  const matchedTokenCount = queryTokens.reduce((count, token) => {
+    return count + (normalizedName.includes(token) ? 1 : 0);
+  }, 0);
+  return {
+    phraseMatch: Number(normalizedName.includes(normalizedNeedle)),
+    allTokensMatch: Number(matchedTokenCount === queryTokens.length),
+    tokenCoverage: matchedTokenCount / queryTokens.length,
+    matchedTokenCount
+  };
+};
+
 const getSearchDocumentAiTitle = (aiMetadata) => String(
   aiMetadata?.title_ar
   ?? aiMetadata?.titleAr
@@ -1081,7 +1112,7 @@ const resetMeiliIndex = async () => {
 
 const applyMeiliIndexSettings = async (index) => {
   const settingsTasks = await Promise.all([
-    index.updateSearchableAttributes(['keywords', 'name', 'aiTitle', 'originalTitle', 'searchText', 'normalizedSearchText', 'description']),
+    index.updateSearchableAttributes(['name', 'aiTitle', 'originalTitle', 'searchText', 'normalizedSearchText', 'description', 'keywords']),
     index.updateFilterableAttributes(['status', 'isActive', 'neworold', 'price']),
     index.updateSortableAttributes(['isFeatured', 'price', 'updatedAt']),
     index.updateSynonyms(MEILI_ARABIC_SYNONYMS),
@@ -8894,6 +8925,7 @@ app.get('/api/search', async (req, res) => {
       perf.log('db_fetch_for_meili_done', { dbMs: Date.now() - dbFetchStartedAt, productsCount: productsFromDb.length });
 
       const rankIndex = new Map(hitIds.map((id, indexPosition) => [id, indexPosition]));
+      const namePriorityById = new Map(productsFromDb.map((product) => [Number(product?.id), getNameMatchPriority(product?.name, normalizedQuery)]));
       const rankedProducts = productsFromDb
         .slice()
         .sort((a, b) => {
@@ -8901,6 +8933,16 @@ app.get('/api/search', async (req, res) => {
           const bFeaturedMatch = isFeaturedMatchForQuery(b, exactFeaturedQueryVariants, condition);
           const featuredMatchDiff = Number(bFeaturedMatch) - Number(aFeaturedMatch);
           if (featuredMatchDiff !== 0) return featuredMatchDiff;
+          const aNamePriority = namePriorityById.get(Number(a?.id)) || { phraseMatch: 0, allTokensMatch: 0, tokenCoverage: 0, matchedTokenCount: 0 };
+          const bNamePriority = namePriorityById.get(Number(b?.id)) || { phraseMatch: 0, allTokensMatch: 0, tokenCoverage: 0, matchedTokenCount: 0 };
+          const phraseMatchDiff = bNamePriority.phraseMatch - aNamePriority.phraseMatch;
+          if (phraseMatchDiff !== 0) return phraseMatchDiff;
+          const allTokensMatchDiff = bNamePriority.allTokensMatch - aNamePriority.allTokensMatch;
+          if (allTokensMatchDiff !== 0) return allTokensMatchDiff;
+          const tokenCoverageDiff = bNamePriority.tokenCoverage - aNamePriority.tokenCoverage;
+          if (tokenCoverageDiff !== 0) return tokenCoverageDiff;
+          const matchedTokenDiff = bNamePriority.matchedTokenCount - aNamePriority.matchedTokenCount;
+          if (matchedTokenDiff !== 0) return matchedTokenDiff;
           return (rankIndex.get(a.id) ?? 999999) - (rankIndex.get(b.id) ?? 999999);
         })
         .map((product) => {
@@ -9008,7 +9050,21 @@ app.get('/api/search', async (req, res) => {
         .sort((a, b) => {
           const aFeaturedMatch = isFeaturedMatchForQuery(a, exactFeaturedQueryVariants, condition);
           const bFeaturedMatch = isFeaturedMatchForQuery(b, exactFeaturedQueryVariants, condition);
-          return Number(bFeaturedMatch) - Number(aFeaturedMatch);
+          const featuredMatchDiff = Number(bFeaturedMatch) - Number(aFeaturedMatch);
+          if (featuredMatchDiff !== 0) return featuredMatchDiff;
+          const aNamePriority = getNameMatchPriority(a?.name, normalizedQuery);
+          const bNamePriority = getNameMatchPriority(b?.name, normalizedQuery);
+          const phraseMatchDiff = bNamePriority.phraseMatch - aNamePriority.phraseMatch;
+          if (phraseMatchDiff !== 0) return phraseMatchDiff;
+          const allTokensMatchDiff = bNamePriority.allTokensMatch - aNamePriority.allTokensMatch;
+          if (allTokensMatchDiff !== 0) return allTokensMatchDiff;
+          const tokenCoverageDiff = bNamePriority.tokenCoverage - aNamePriority.tokenCoverage;
+          if (tokenCoverageDiff !== 0) return tokenCoverageDiff;
+          const matchedTokenDiff = bNamePriority.matchedTokenCount - aNamePriority.matchedTokenCount;
+          if (matchedTokenDiff !== 0) return matchedTokenDiff;
+          const aUpdated = a?.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+          const bUpdated = b?.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+          return bUpdated - aUpdated;
         });
       const conditionFilteredProducts = condition === 'new'
         ? rankedFallbackProducts.filter((product) => inferProductCondition(product) !== false)
