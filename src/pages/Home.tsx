@@ -58,6 +58,7 @@ const Home: React.FC = () => {
   const restoredHomeScrollRef = useRef(false);
   const initializedRef = useRef(false);
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const recentFeedSessionRef = useRef<{ signature: string; orderedPool: Product[]; orderedAt: number } | null>(null);
 
   const activeRequestRef = useRef<string | null>(null);
   const inFlightPageRequestsRef = useRef<Set<string>>(new Set());
@@ -229,6 +230,10 @@ const Home: React.FC = () => {
           }
           return a;
         };
+        const buildPoolSignature = (items: Product[], termsHash: string, createdAt: number) => {
+          const ids = items.slice(0, 200).map((item) => normalizeProductId(item?.id)).filter(Boolean).join('|');
+          return `${termsHash}:${createdAt}:${items.length}:${ids}`;
+        };
 
         const cached = readRecentFeed();
         let personalizedPool = cached.items;
@@ -285,9 +290,24 @@ const Home: React.FC = () => {
         }
 
         if (personalizedPool.length > 0) {
+          const poolSignature = buildPoolSignature(personalizedPool, recentTermsHashForFeed, cached.createdAt || 0);
+          const shouldRefreshOrder = !recentFeedSessionRef.current
+            || recentFeedSessionRef.current.signature !== poolSignature
+            || pageNum === 1;
+          if (shouldRefreshOrder) {
+            const featuredRecent = personalizedPool.filter((item) => Boolean(item?.isFeatured));
+            const nonFeaturedRecent = personalizedPool.filter((item) => !item?.isFeatured);
+            const randomizedPool = mergeUniqueProducts(shuffle(featuredRecent), shuffle(nonFeaturedRecent));
+            recentFeedSessionRef.current = {
+              signature: poolSignature,
+              orderedPool: randomizedPool,
+              orderedAt: Date.now()
+            };
+          }
+          const effectivePool = recentFeedSessionRef.current?.orderedPool || personalizedPool;
           const start = (pageNum - 1) * 10;
           const end = start + 10;
-          const chunk = personalizedPool.slice(start, end);
+          const chunk = effectivePool.slice(start, end);
 
           if (isInitial) {
             productsRef.current = chunk;
@@ -303,7 +323,7 @@ const Home: React.FC = () => {
             });
           }
 
-          setHasMore(personalizedPool.length > end);
+          setHasMore(effectivePool.length > end);
           return;
         }
       }
