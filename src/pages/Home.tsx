@@ -681,7 +681,7 @@ const Home: React.FC = () => {
             onClick={() => {
               const input = document.createElement('input');
               input.type = 'file';
-              input.accept = 'image/jpeg, image/png';
+              input.accept = 'image/*,.heic,.heif';
               input.style.display = 'none';
               document.body.appendChild(input);
               const removeInput = () => {

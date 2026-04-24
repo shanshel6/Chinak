@@ -173,6 +173,7 @@ const SearchResults: React.FC = () => {
 
     // Calculate initial box based on actual image dimensions
     const img = new Image();
+    img.decoding = 'async';
     img.src = imageBase64;
     img.onload = () => {
       const width = img.width;
@@ -188,6 +189,10 @@ const SearchResults: React.FC = () => {
       
       setImageOriginalSize({ width, height });
       setDetectedObjects([{ label: 'manual', score: 1, box: [xmin, ymin, xmax, ymax] }]);
+    };
+    img.onerror = () => {
+      setImageOriginalSize(null);
+      setDetectedObjects([]);
     };
   }, [persistImageSearchState]);
 
@@ -805,30 +810,62 @@ const SearchResults: React.FC = () => {
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="image/jpeg, image/png"
+                accept="image/*,.heic,.heif"
                 className="hidden"
                 onChange={async (e) => {
                   const file = e.target.files?.[0];
                   if (!file) return;
-                  
-                  // Convert to standard JPEG before sending
-                  const img = new Image();
-                  const objectUrl = URL.createObjectURL(file);
-                  
-                  img.onload = () => {
-                    const canvas = document.createElement('canvas');
-                    canvas.width = img.width;
-                    canvas.height = img.height;
-                    const ctx = canvas.getContext('2d');
-                    if (ctx) {
-                      ctx.drawImage(img, 0, 0);
-                      const jpegBase64 = canvas.toDataURL('image/jpeg', 0.9);
-                      void startImageSearch(jpegBase64, img.width, img.height);
-                      URL.revokeObjectURL(objectUrl);
+
+                  const fileToDataUrl = (selectedFile: File) => new Promise<string>((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve(String(reader.result || ''));
+                    reader.onerror = () => reject(new Error('read_failed'));
+                    reader.readAsDataURL(selectedFile);
+                  });
+
+                  const fileToJpegDataUrl = (selectedFile: File) => new Promise<string>((resolve, reject) => {
+                    const img = new Image();
+                    img.decoding = 'async';
+                    const objectUrl = URL.createObjectURL(selectedFile);
+                    const cleanup = () => URL.revokeObjectURL(objectUrl);
+
+                    img.onload = () => {
+                      const canvas = document.createElement('canvas');
+                      canvas.width = img.width;
+                      canvas.height = img.height;
+                      const ctx = canvas.getContext('2d');
+                      if (ctx) {
+                        ctx.drawImage(img, 0, 0);
+                        cleanup();
+                        resolve(canvas.toDataURL('image/jpeg', 0.9));
+                        return;
+                      }
+                      cleanup();
+                      reject(new Error('canvas_failed'));
+                    };
+
+                    img.onerror = () => {
+                      cleanup();
+                      reject(new Error('decode_failed'));
+                    };
+
+                    img.src = objectUrl;
+                  });
+
+                  try {
+                    let payload = '';
+                    try {
+                      payload = await fileToJpegDataUrl(file);
+                    } catch {
+                      payload = await fileToDataUrl(file);
                     }
-                  };
-                  img.src = objectUrl;
-                  e.target.value = '';
+
+                    if (payload) {
+                      void startImageSearch(payload);
+                    }
+                  } finally {
+                    e.target.value = '';
+                  }
                 }}
               />
               <Camera size={18} />
