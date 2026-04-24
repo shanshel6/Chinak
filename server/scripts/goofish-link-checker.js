@@ -8,7 +8,7 @@ import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import axios from 'axios';
 import readline from 'readline';
-import { embedImage } from '../services/clipService.js';
+import { ensureProductImageEmbeddings } from '../services/productImageVectorService.js';
 
 console.log('[DEBUG] goofish-link-checker.js: File loaded fresh from rebuild.');
 
@@ -43,12 +43,17 @@ const prisma = prismaDbUrl
   ? new PrismaClient({ datasources: { db: { url: prismaDbUrl } } })
   : new PrismaClient();
 const SILICONFLOW_API_KEY = String(process.env.SILICONFLOW_API_KEY || '').trim();
+const GOOFISH_START_ID = Math.max(0, Number.parseInt(process.env.GOOFISH_START_ID || '0', 10) || 0);
+const GOOFISH_ARCHIVE_UNAVAILABLE = String(process.env.GOOFISH_ARCHIVE_UNAVAILABLE || 'true').toLowerCase() !== 'false';
 const GOOFISH_DB_COOLDOWN_WINDOW_MS = Math.max(1000, Number.parseInt(process.env.GOOFISH_DB_COOLDOWN_WINDOW_MS || '120000', 10) || 120000);
 const GOOFISH_DB_COOLDOWN_THRESHOLD = Math.max(2, Number.parseInt(process.env.GOOFISH_DB_COOLDOWN_THRESHOLD || '4', 10) || 4);
 const GOOFISH_DB_COOLDOWN_SLEEP_MS = Math.max(1000, Number.parseInt(process.env.GOOFISH_DB_COOLDOWN_SLEEP_MS || '15000', 10) || 15000);
 const parsedRecoverWaitMs = Number.parseInt(process.env.GOOFISH_DB_RECOVER_WAIT_MS || '120000', 10);
 const GOOFISH_DB_RECOVER_WAIT_MS = Number.isFinite(parsedRecoverWaitMs) ? Math.max(0, parsedRecoverWaitMs) : 120000;
 const GOOFISH_DB_RECOVER_PING_TIMEOUT_MS = Math.max(1000, Number.parseInt(process.env.GOOFISH_DB_RECOVER_PING_TIMEOUT_MS || '12000', 10) || 12000);
+const GOOFISH_EMBEDDING_STEP_TIMEOUT_MS = Math.max(5000, Number.parseInt(process.env.GOOFISH_EMBEDDING_STEP_TIMEOUT_MS || '90000', 10) || 90000);
+const GOOFISH_EMBEDDING_DB_PING_TIMEOUT_MS = Math.max(1000, Number.parseInt(process.env.GOOFISH_EMBEDDING_DB_PING_TIMEOUT_MS || '5000', 10) || 5000);
+const GOOFISH_HEADLESS = !['0', 'false', 'no', 'off'].includes(String(process.env.GOOFISH_HEADLESS || '1').trim().toLowerCase());
 let activeBrowser = null;
 let shutdownInProgress = false;
 let dbConnectivityFailureTimestamps = [];
@@ -83,15 +88,14 @@ const safeDbConnect = async () => {
 };
 
 const recoverDbConnection = async (label, backoffMs, attemptIndex) => {
-  const recoverWaitMs = Math.max(0, GOOFISH_DB_RECOVER_WAIT_MS);
-  const infiniteWait = recoverWaitMs <= 0;
+  const recoverWaitMs = Math.max(1000, GOOFISH_DB_RECOVER_WAIT_MS || 120000);
   const start = Date.now();
   let lastPauseLogAt = 0;
-  while (infiniteWait || (Date.now() - start < recoverWaitMs)) {
+  while (Date.now() - start < recoverWaitMs) {
     const now = Date.now();
     if (now - lastPauseLogAt >= 15000) {
       const elapsedSec = Math.floor((now - start) / 1000);
-      const waitLabel = infiniteWait ? 'infinite' : `${Math.floor(recoverWaitMs / 1000)}s`;
+      const waitLabel = `${Math.floor(recoverWaitMs / 1000)}s`;
       console.warn(`[DB Pause] ${label}: waiting for reconnect (${elapsedSec}s elapsed, wait=${waitLabel})`);
       lastPauseLogAt = now;
     }
@@ -112,6 +116,15 @@ const recoverDbConnection = async (label, backoffMs, attemptIndex) => {
     }
   }
   return false;
+};
+
+const isDbHealthyQuick = async (label = 'db health check') => {
+  try {
+    await withTimeout(() => prisma.$queryRawUnsafe('SELECT 1'), label, GOOFISH_EMBEDDING_DB_PING_TIMEOUT_MS);
+    return true;
+  } catch {
+    return false;
+  }
 };
 
 const withRetry = async (run, label, retries = 5, timeoutMs = 60000, backoffMs = 1500) => {
@@ -301,6 +314,67 @@ async function writeProgress(progressFilePath, progress) {
   }
 }
 
+async function recreateCheckerPage(browser, configurePage, currentPage = null) {
+  if (currentPage) {
+    try { await currentPage.close({ runBeforeUnload: false }); } catch {}
+  }
+  const nextPage = await browser.newPage();
+  await configurePage(nextPage);
+  return nextPage;
+}
+
+async function ensureProductPageOpen(page, browser, configurePage, targetUrl, options = {}) {
+  const attempts = Math.max(1, Number(options.attempts) || 3);
+  const gotoTimeoutMs = Math.max(5000, Number(options.gotoTimeoutMs) || 60000);
+  const readyTimeoutMs = Math.max(3000, Number(options.readyTimeoutMs) || 15000);
+  const normalizedTargetUrl = String(targetUrl || '').trim();
+  if (!normalizedTargetUrl) {
+    throw new Error('Missing product URL');
+  }
+
+  let workingPage = page;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      if (!workingPage || workingPage.isClosed()) {
+        workingPage = await recreateCheckerPage(browser, configurePage);
+      }
+      await workingPage.goto(normalizedTargetUrl, { waitUntil: 'domcontentloaded', timeout: gotoTimeoutMs });
+      await workingPage.waitForFunction(
+        () => document.readyState === 'interactive' || document.readyState === 'complete',
+        { timeout: readyTimeoutMs }
+      );
+      await workingPage.waitForSelector('body', { timeout: readyTimeoutMs });
+
+      const finalUrl = String(workingPage.url() || '');
+      const finalHost = (() => {
+        try { return new URL(finalUrl).hostname; } catch { return ''; }
+      })();
+      const targetHost = (() => {
+        try { return new URL(normalizedTargetUrl).hostname; } catch { return ''; }
+      })();
+
+      if (!finalUrl || finalUrl === 'about:blank') {
+        throw new Error('Page stayed blank after navigation');
+      }
+      if (targetHost && finalHost && !finalHost.includes(targetHost) && !finalHost.includes('login.taobao.com') && !finalHost.includes('login.tmall.com')) {
+        throw new Error(`Navigation landed on unexpected host: ${finalHost}`);
+      }
+
+      return workingPage;
+    } catch (error) {
+      const isLastAttempt = attempt === attempts;
+      if (isLastAttempt) {
+        throw new Error(`Could not open ${normalizedTargetUrl}: ${error.message}`);
+      }
+      console.warn(`Open URL failed (attempt ${attempt}/${attempts}) for ${normalizedTargetUrl}: ${error.message}`);
+      workingPage = await recreateCheckerPage(browser, configurePage, workingPage);
+      await new Promise((resolve) => setTimeout(resolve, 1500 * attempt));
+    }
+  }
+
+  return workingPage;
+}
+
 async function checkGoofishLinks() {
   console.log('Starting Goofish link checker & image updater...');
   if (SILICONFLOW_API_KEY) {
@@ -318,7 +392,7 @@ async function checkGoofishLinks() {
     const startInput = await askQuestion('Start from Product ID (press Enter for beginning): ');
     startIdRaw = startInput ? parseInt(startInput.trim(), 10) : 0;
   }
-  const startId = Math.max(startIdRaw || 0, resumeProgress.lastId || 0);
+  const startId = Math.max(startIdRaw || 0, resumeProgress.lastId || 0, GOOFISH_START_ID);
 
   console.log(`Starting check from Product ID: ${startId || 'Beginning'}`);
 
@@ -412,17 +486,22 @@ async function checkGoofishLinks() {
 
   const browser = await puppeteer.launch({
     executablePath,
-    headless: false,
+    headless: GOOFISH_HEADLESS ? 'new' : false,
     defaultViewport: null,
     args: [
-      '--start-maximized',
       '--no-sandbox',
       '--disable-setuid-sandbox',
       '--disable-blink-features=AutomationControlled',
       '--disable-infobars',
       '--excludeSwitches=enable-automation',
       '--disable-features=IsolateOrigins,site-per-process',
-      '--incognito'
+      '--incognito',
+      ...(GOOFISH_HEADLESS ? [
+        '--disable-gpu',
+        '--hide-scrollbars',
+        '--mute-audio',
+        '--window-size=1920,1080'
+      ] : ['--start-maximized'])
     ]
   });
   activeBrowser = browser;
@@ -450,7 +529,7 @@ async function checkGoofishLinks() {
   let page = pages.length > 0 ? pages[0] : await browser.newPage();
   await configurePage(page);
 
-  console.log('Browser launched. Processing products...');
+  console.log(`Browser launched in ${GOOFISH_HEADLESS ? 'hidden/headless' : 'visible'} mode. Processing products...`);
 
   let processedCount = 0;
   let updatedCount = 0;
@@ -592,7 +671,11 @@ async function checkGoofishLinks() {
 
       try {
         await withTimeout(async () => {
-          await page.goto(product.purchaseUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+          page = await ensureProductPageOpen(page, browser, configurePage, product.purchaseUrl, {
+            attempts: 3,
+            gotoTimeoutMs: 60000,
+            readyTimeoutMs: 15000
+          });
         
           const delay = Math.floor(Math.random() * 1500) + 1000;
           await new Promise(r => setTimeout(r, delay));
@@ -624,7 +707,10 @@ async function checkGoofishLinks() {
             await withRetry(
               () => prisma.product.update({
                 where: { id: product.id },
-                data: { isActive: false }
+                data: {
+                  isActive: false,
+                  ...(GOOFISH_ARCHIVE_UNAVAILABLE ? { status: 'ARCHIVED' } : {})
+                }
               }),
               `update isActive ${product.id}`,
               mutationRetryCount,
@@ -822,19 +908,133 @@ async function checkGoofishLinks() {
             } else {
               console.log('Checking for images...');
               const images = await page.evaluate(() => {
-                const container = document.querySelector('.item-main-window-list--od7DK4Fm');
-                if (!container) return [];
+                const MAX_GALLERY_IMAGES = 8;
+                const CANDIDATE_ATTRS = [
+                  'src',
+                  'data-src',
+                  'data-lazy-src',
+                  'data-ks-lazyload',
+                  'data-original',
+                  'data-url',
+                  'data-imgurl',
+                ];
+                const BAD_HINTS = ['avatar', 'icon', 'sprite', 'logo', 'gif'];
+                const SIZE_HINT_RE = /_\d+x\d+.*$/;
+                const SMALL_HINT_RE = /(?:^|[_-])(40|48|50|60|72|80|96|100|120|160|180)x\1(?:[_-]|$)/i;
 
-                const imgElements = Array.from(container.querySelectorAll('img.fadeInImg--DnykYtf4'));
-                return imgElements.map(img => img.getAttribute('src')).filter(src => src);
+                const normalize = (value) => {
+                  if (!value) return '';
+                  let url = String(value).trim();
+                  if (!url) return '';
+                  url = url.replace(/^[`'"]+|[`'"]+$/g, '');
+                  if (url.startsWith('//')) url = `https:${url}`;
+                  if (!/^https?:\/\//i.test(url)) return '';
+                  url = url.replace(/[)\]}",:;`]+$/g, '');
+                  url = url.replace(/[#?].*$/, '').replace(SIZE_HINT_RE, '').replace(/\.webp$/i, '');
+                  return url;
+                };
+
+                const looksLikeProductImage = (url) => {
+                  const lower = String(url || '').toLowerCase();
+                  if (!lower.includes('alicdn.com')) return false;
+                  if (SMALL_HINT_RE.test(lower)) return false;
+                  return !BAD_HINTS.some((hint) => lower.includes(hint));
+                };
+
+                const candidates = new Map();
+                const pushUrl = (url, score = 0) => {
+                  const normalized = normalize(url);
+                  if (!normalized) return;
+                  if (!looksLikeProductImage(normalized)) return;
+                  const prev = candidates.get(normalized);
+                  if (!prev || score > prev.score) {
+                    candidates.set(normalized, { url: normalized, score });
+                  }
+                };
+
+                const pushFromNode = (img) => {
+                  if (!img) return;
+                  const rect = img.getBoundingClientRect();
+                  const width = Number(img.naturalWidth || img.width || 0);
+                  const height = Number(img.naturalHeight || img.height || 0);
+                  const nearTop = rect.top > -250 && rect.top < window.innerHeight * 1.8;
+                  const visibleEnough = rect.width >= 80 && rect.height >= 80;
+                  const largeEnough = width === 0 || height === 0 || (width >= 140 && height >= 140);
+                  if (!largeEnough || !visibleEnough) return;
+                  const areaScore = Math.max(0, width * height);
+                  const positionBonus = nearTop ? 120000 : 0;
+                  const score = areaScore + positionBonus;
+                  for (const attr of CANDIDATE_ATTRS) {
+                    pushUrl(img.getAttribute(attr), score);
+                  }
+                  const srcset = img.getAttribute('srcset') || img.getAttribute('data-srcset') || '';
+                  if (srcset) {
+                    for (const part of srcset.split(',')) {
+                      const srcsetUrl = part.trim().split(/\s+/)[0];
+                      pushUrl(srcsetUrl, score - 1000);
+                    }
+                  }
+                };
+
+                const galleryNodes = Array.from(document.querySelectorAll(
+                  '.item-main-window-list--od7DK4Fm img, [class*="item-main-window--"] img, img[class*="fadeInImg"], img[class*="detailPic"]'
+                ));
+                for (const img of galleryNodes) {
+                  pushFromNode(img);
+                }
+
+                if (candidates.size === 0) {
+                  const mainSectionNodes = Array.from(document.querySelectorAll(
+                    '.item-main--N18QxQe1 img, .item-body--P2hJb44_ img, [class*="item-main--"] img'
+                  ));
+                  for (const img of mainSectionNodes) {
+                    pushFromNode(img);
+                  }
+                }
+
+                if (candidates.size === 0) {
+                  const topFoldNodes = Array.from(document.querySelectorAll('img'));
+                  for (const img of topFoldNodes) {
+                    const rect = img.getBoundingClientRect();
+                    const width = Number(img.naturalWidth || img.width || 0);
+                    const height = Number(img.naturalHeight || img.height || 0);
+                    const nearTop = rect.top > -200 && rect.top < window.innerHeight * 1.8;
+                    const bigEnough = width >= 120 && height >= 120;
+                    if (!nearTop || !bigEnough) continue;
+                    pushFromNode(img);
+                  }
+                }
+
+                if (candidates.size === 0) {
+                  const scriptTexts = Array.from(document.querySelectorAll('script'))
+                    .map((s) => s.textContent || '')
+                    .filter(Boolean);
+                  const regex = /https?:\/\/[^"'\s]+alicdn\.com[^"'\s]+/g;
+                  for (const text of scriptTexts) {
+                    const matches = text.match(regex) || [];
+                    for (const matched of matches) {
+                      pushUrl(matched, 1);
+                    }
+                  }
+                }
+
+                return Array.from(candidates.values())
+                  .sort((a, b) => b.score - a.score)
+                  .map((item) => item.url)
+                  .slice(0, MAX_GALLERY_IMAGES);
               });
 
               if (images.length > 0) {
-                const cleanImages = images.map(url => {
+                const cleanImages = Array.from(new Set(images.map(url => {
                   let clean = url;
                   if (clean.startsWith('//')) clean = 'https:' + clean;
-                  return clean.replace(/_\d+x\d+.*$/, '').replace(/\.webp$/, '');
-                });
+                  return clean
+                    .replace(/^[`'"]+|[`'"]+$/g, '')
+                    .replace(/[)\]}",:;`]+$/g, '')
+                    .replace(/[#?].*$/, '')
+                    .replace(/_\d+x\d+.*$/, '')
+                    .replace(/\.webp$/i, '');
+                }))).slice(0, 8);
 
                 const mainImage = cleanImages[0];
 
@@ -900,25 +1100,34 @@ async function checkGoofishLinks() {
               cleanImageToEmbed = cleanImageToEmbed.replace(/_\d+x\d+.*$/, '').replace(/\.webp$/, '');
 
               console.log(`ℹ️ Generating image embedding for Product ${product.id}...`);
+              const dbHealthyForEmbedding = await isDbHealthyQuick(`embedding precheck ${product.id}`);
+              if (!dbHealthyForEmbedding) {
+                console.warn(`⚠️ Skipping embedding for Product ${product.id}: DB connection is not healthy right now.`);
+                return;
+              }
               try {
-                const embedding = await embedImage(cleanImageToEmbed, null);
-                if (embedding && embedding.length > 0) {
-                  const vectorStr = `[${embedding.join(',')}]`;
-                  await withRetry(
-                    () => prisma.$executeRawUnsafe(
-                      `UPDATE "Product" SET "imageEmbedding" = $1::vector WHERE "id" = $2`,
-                      vectorStr,
-                      product.id
+                const embeddingResult = await withTimeout(
+                  () => ensureProductImageEmbeddings({
+                    prisma,
+                    productId: product.id,
+                    productName: null,
+                    fallbackImageUrl: cleanImageToEmbed,
+                    // Keep embedding DB operations fail-fast to avoid long reconnect loops.
+                    runDb: (operation, label) => withTimeout(
+                      operation,
+                      label,
+                      Math.min(12000, mutationTimeoutMs)
                     ),
-                    `update embedding ${product.id}`,
-                    mutationRetryCount,
-                    mutationTimeoutMs,
-                    retryBackoffMs
-                  );
+                    logger: console,
+                  }),
+                  `embedding step ${product.id}`,
+                  GOOFISH_EMBEDDING_STEP_TIMEOUT_MS
+                );
+                if (embeddingResult.embeddedCount > 0) {
                   embeddedCount++;
-                  console.log(`✅ Embedding saved for Product ${product.id}`);
+                  console.log(`✅ Saved ${embeddingResult.embeddedCount} image embeddings for Product ${product.id}`);
                 } else {
-                  console.warn(`⚠️ Empty embedding for Product ${product.id}`);
+                  console.warn(`⚠️ Empty image embeddings for Product ${product.id}`);
                 }
               } catch (embedErr) {
                 console.error(`❌ Embedding error for Product ${product.id}: ${toErrorText(embedErr)}`);
@@ -932,9 +1141,7 @@ async function checkGoofishLinks() {
     } catch (error) {
       console.error(`Error processing Product ${product.id}:`, error.message);
       if (String(error?.message || '').includes(`process product ${product.id} timed out`)) {
-        try { await page.close({ runBeforeUnload: false }); } catch {}
-        page = await browser.newPage();
-        await configurePage(page);
+        page = await recreateCheckerPage(browser, configurePage, page);
         console.warn(`Recreated browser page after timeout on Product ${product.id}.`);
       }
     }

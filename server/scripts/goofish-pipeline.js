@@ -8,7 +8,7 @@ import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { Prisma, PrismaClient } from '@prisma/client';
 import axios from 'axios';
-import { embedImage } from '../services/clipService.js';
+import { ensureProductImageEmbeddings } from '../services/productImageVectorService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -145,7 +145,7 @@ const BATCH_LINKS_PATH = path.join(__dirname, 'goofish-batch-links.json');
 const ITEMS_PER_SEARCH = Math.max(1, parseInt(process.env.GOOFISH_ITEMS_PER_SEARCH || '150', 10) || 150);
 const GOOFISH_LINKS_PER_TERM = Math.max(1, parseInt(process.env.GOOFISH_LINKS_PER_TERM || '90', 10) || 90);
 const GOOFISH_TERMS_PER_BATCH = Math.max(1, parseInt(process.env.GOOFISH_TERMS_PER_BATCH || '50', 10) || 50);
-const KEYWORDS_PER_PRODUCT = Math.max(10, Math.min(50, parseInt(process.env.GOOFISH_KEYWORDS_PER_PRODUCT || '30', 10) || 30));
+const KEYWORDS_PER_PRODUCT = Math.max(8, Math.min(20, parseInt(process.env.GOOFISH_KEYWORDS_PER_PRODUCT || '14', 10) || 14));
 const GOOFISH_AI_TITLE_MAX_CHARS = Math.max(40, parseInt(process.env.GOOFISH_AI_TITLE_MAX_CHARS || '140', 10) || 140);
 const GOOFISH_AI_SECOND_PASS_DESCRIPTION = String(process.env.GOOFISH_AI_SECOND_PASS_DESCRIPTION || 'false').toLowerCase() === 'true';
 const GOOFISH_TRANSLATION_CACHE_FLUSH_EVERY = Math.max(1, parseInt(process.env.GOOFISH_TRANSLATION_CACHE_FLUSH_EVERY || '20', 10) || 20);
@@ -174,10 +174,13 @@ const GOOFISH_PROGRESS_STALL_HARD_EXIT_MS = Math.max(
 const parsedRecoverWaitMs = parseInt(process.env.GOOFISH_DB_RECOVER_WAIT_MS || '120000', 10);
 const GOOFISH_DB_RECOVER_WAIT_MS = Number.isFinite(parsedRecoverWaitMs) ? Math.max(0, parsedRecoverWaitMs) : 120000;
 const GOOFISH_DB_RECOVER_PING_TIMEOUT_MS = Math.max(1000, parseInt(process.env.GOOFISH_DB_RECOVER_PING_TIMEOUT_MS || '12000', 10) || 12000);
+const GOOFISH_EMBEDDING_STEP_TIMEOUT_MS = Math.max(5000, parseInt(process.env.GOOFISH_EMBEDDING_STEP_TIMEOUT_MS || '90000', 10) || 90000);
 const GOOFISH_DB_RECOVER_MAX_CYCLES_PER_OP = Math.max(0, parseInt(process.env.GOOFISH_DB_RECOVER_MAX_CYCLES_PER_OP || '1', 10) || 1);
 const GOOFISH_PROCESS_LINK_TIMEOUT_MS = Math.max(30000, parseInt(process.env.GOOFISH_PROCESS_LINK_TIMEOUT_MS || '120000', 10) || 120000);
 const GOOFISH_AI_CALL_TIMEOUT_MS = Math.max(5000, parseInt(process.env.GOOFISH_AI_CALL_TIMEOUT_MS || '15000', 10) || 15000);
 const GOOFISH_AI_RETRY_MAX_ATTEMPTS = Math.max(1, parseInt(process.env.GOOFISH_AI_RETRY_MAX_ATTEMPTS || '2', 10) || 2);
+const GOOFISH_TERM_AI_CALL_TIMEOUT_MS = Math.max(5000, parseInt(process.env.GOOFISH_TERM_AI_CALL_TIMEOUT_MS || '15000', 10) || 15000);
+const GOOFISH_TERM_AI_MAX_ATTEMPTS = Math.max(1, parseInt(process.env.GOOFISH_TERM_AI_MAX_ATTEMPTS || '1', 10) || 1);
 const GOOFISH_AI_MODEL = String(process.env.GOOFISH_AI_MODEL || 'Qwen/Qwen3-14B').trim() || 'Qwen/Qwen3-14B';
 const GOOFISH_ENABLE_TRANSLATION_RETRY = String(process.env.GOOFISH_ENABLE_TRANSLATION_RETRY || '').toLowerCase() === 'true';
 const GOOFISH_SKIP_ON_TRANSLATION_FAILURE = String(process.env.GOOFISH_SKIP_ON_TRANSLATION_FAILURE || 'true').toLowerCase() !== 'false';
@@ -195,11 +198,17 @@ const UPDATE_EXISTING = String(process.env.GOOFISH_UPDATE_EXISTING || '').toLowe
 const UPDATE_LIMIT = parseInt(process.env.GOOFISH_UPDATE_LIMIT || '', 10);
 const UPDATE_START_ID = parseInt(process.env.GOOFISH_UPDATE_START_ID || '0', 10);
 const UPDATE_BATCH_SIZE = Math.max(1, parseInt(process.env.GOOFISH_UPDATE_BATCH || '25', 10) || 25);
-const UPDATE_DELAY_MIN = Math.max(0, parseInt(process.env.GOOFISH_UPDATE_DELAY_MIN || '800', 10) || 800);
-const UPDATE_DELAY_MAX = Math.max(UPDATE_DELAY_MIN, parseInt(process.env.GOOFISH_UPDATE_DELAY_MAX || '1600', 10) || 1600);
+const parsedUpdateDelayMin = Number.parseInt(process.env.GOOFISH_UPDATE_DELAY_MIN || '800', 10);
+const UPDATE_DELAY_MIN = Number.isFinite(parsedUpdateDelayMin) ? Math.max(0, parsedUpdateDelayMin) : 800;
+const parsedUpdateDelayMax = Number.parseInt(process.env.GOOFISH_UPDATE_DELAY_MAX || '1600', 10);
+const UPDATE_DELAY_MAX = Number.isFinite(parsedUpdateDelayMax) ? Math.max(UPDATE_DELAY_MIN, parsedUpdateDelayMax) : Math.max(UPDATE_DELAY_MIN, 1600);
 const UPDATE_PROGRESS_EVERY = Math.max(1, parseInt(process.env.GOOFISH_UPDATE_PROGRESS_EVERY || '10', 10) || 10);
+const UPDATE_QUERY_TIMEOUT_MS = Math.max(5000, Number.parseInt(process.env.GOOFISH_UPDATE_QUERY_TIMEOUT_MS || '90000', 10) || 90000);
 const UPDATE_PROGRESS_PATH = path.join(__dirname, 'goofish-update-existing-progress.json');
 const UPDATE_RESET_PROGRESS = String(process.env.GOOFISH_UPDATE_RESET_PROGRESS || '').toLowerCase() === 'true';
+const UPDATE_FORCE_REGENERATE = String(process.env.GOOFISH_UPDATE_FORCE_REGENERATE || '').toLowerCase() === 'true';
+const UPDATE_CLEAR_KEYWORDS_FIRST = String(process.env.GOOFISH_UPDATE_CLEAR_KEYWORDS_FIRST || '').toLowerCase() === 'true';
+const UPDATE_PRINT_BATCH_SAMPLE = String(process.env.GOOFISH_UPDATE_PRINT_BATCH_SAMPLE || 'true').toLowerCase() !== 'false';
 const DEFAULT_SEARCH_TERMS = [
   '手机壳', '女包', '斜挎包', '连衣裙', '女鞋', '牛仔裤',
   '男士T恤', '运动鞋', '耳机', '蓝牙音箱', '智能手表', '充电宝',
@@ -260,13 +269,16 @@ if (process.env.NODE_ENV === 'production' && process.env.ALLOW_SCRAPER_IN_PROD !
 }
 
 // Simple SiliconFlow client using axios
-async function callSiliconFlow(messages, temperature = 0.3, maxTokens = 100) {
+async function callSiliconFlow(messages, temperature = 0.3, maxTokens = 100, options = {}) {
   const apiKey = SILICONFLOW_API_KEY;
   if (!apiKey) return null;
-  const maxAttempts = GOOFISH_AI_RETRY_MAX_ATTEMPTS;
+  const timeoutMsRaw = Number.parseInt(String(options?.timeoutMs ?? GOOFISH_AI_CALL_TIMEOUT_MS), 10);
+  const timeoutMs = Number.isFinite(timeoutMsRaw) ? Math.max(5000, timeoutMsRaw) : GOOFISH_AI_CALL_TIMEOUT_MS;
+  const maxAttemptsRaw = Number.parseInt(String(options?.maxAttempts ?? GOOFISH_AI_RETRY_MAX_ATTEMPTS), 10);
+  const maxAttempts = Number.isFinite(maxAttemptsRaw) ? Math.max(1, maxAttemptsRaw) : GOOFISH_AI_RETRY_MAX_ATTEMPTS;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      console.log(`[SiliconFlow] Request attempt ${attempt}/${maxAttempts} (timeout=${GOOFISH_AI_CALL_TIMEOUT_MS}ms)`);
+      console.log(`[SiliconFlow] Request attempt ${attempt}/${maxAttempts} (timeout=${timeoutMs}ms)`);
       const startedAt = Date.now();
       const response = await axios.post('https://api.siliconflow.com/v1/chat/completions', {
         model: GOOFISH_AI_MODEL,
@@ -279,7 +291,7 @@ async function callSiliconFlow(messages, temperature = 0.3, maxTokens = 100) {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${apiKey}`
         },
-        timeout: GOOFISH_AI_CALL_TIMEOUT_MS
+        timeout: timeoutMs
       });
       console.log(`[SiliconFlow] Success in ${Date.now() - startedAt}ms`);
       return response.data.choices[0].message.content.trim();
@@ -370,7 +382,9 @@ function cleanDescriptionText(value) {
 function normalizeArabicKeyword(value) {
   return cleanAiText(value)
     .replace(/[\u0610-\u061A\u0640\u064B-\u065F\u0670\u06D6-\u06ED]/g, '')
-    .replace(/[.,!?:;()"'[\]{}<>«»]/g, ' ')
+    .replace(/[【】「」『』〔〕（）]/g, ' ')
+    .replace(/[\u3400-\u9FFF]+/g, ' ')
+    .replace(/[.,!?:;()"'[\]{}<>«»/\\|]/g, ' ')
     .replace(/،/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
@@ -416,19 +430,87 @@ function normalizeKeywordList(value) {
     'منخفض', 'متوفرة', 'بشكل', 'بالجملة', 'بدون', 'خياطة', 'تحمل', 'للاستخدام', 'احترافي',
     'منافسات', 'يوان'
   ]);
+  const noiseTerms = new Set([
+    'مجانا', 'مجانية', 'مجانيه', 'خدمة', 'خدمات', 'خدمه', 'خدم', 'استلام',
+    'تسليم', 'شامل', 'شاملا', 'امكانية', 'إمكانية', 'امكانيات', 'إمكانيات', 'امكاني', 'إمكاني',
+    'ضمان', 'مرور', 'الم', 'توضيحات', 'تصحيح', 'تمرير', 'منصة', 'يلغى', 'مبلغ',
+    'يمكننا', 'بالنيابة', 'يمكن', 'تفاوض', 'كميات', 'كبيرة', 'مستقر', 'مستقرة',
+    'بدلا', 'بدلاً', 'عبر', 'مدفوع', 'يجب', 'استشارة', 'عملاء', 'لتفاصيل', 'تفاصيل',
+    'ترسل', 'بالصور', 'تستبدل', 'بعد', 'طريقة', 'حساب', 'مباشرة', 'مدفوعة',
+    'لوجستية', 'إنترنت', 'قيود', 'قيمة', 'حد', 'أدنى', 'أقل', 'متعددة', 'أنواع',
+    'شخصي', 'إذا', 'نفس', 'يوم', 'صباحا', 'مساء', 'رقم', 'طلب', 'حجز', 'تتبع',
+    'يرجى', 'تحقق', 'تأكد', 'صور', 'مرفوعة', 'قبلي', 'لرؤية', 'مفصل', 'ببعض',
+    'شيء', 'علامات', 'شخصيا', 'توجد', 'تقريبا', 'جاهزة', 'فور', 'تلقائيا', 'نموذج',
+    'مغلق', 'مغلقة', 'حدات', 'سكنية', 'بكين', 'شانغتشو', 'شانغتشانغ', 'حضرموت',
+    'فوشان', 'جوميوي', 'لولو', 'باليك', 'شارك', 'موضح', 'صورة', 'تشحن', 'للإستخدام',
+    'ذاتي', 'بكمية', 'كبيرة', 'جميعها', 'يدعم', 'خيارات', 'خيار', 'إنتاج', 'تاريخ',
+    'وظائفها', 'تعمل', 'تحمي', 'تساعد', 'بسهولة', 'بأمان', 'اختر', 'حسب', 'معلن',
+    'تحدد', 'إرساله', 'عشوائيا', 'ثانوي', 'جزئيا', 'كنت', 'موافقا', 'استخدامه', 'فتح', 'غلافه', 'قبل',
+    'user', 'مصاحب', 'لمحبي', 'لمحبيه', 'لمحبية', 'لمحبيات', 'احتياجات', 'يناسب', 'مناسبة'
+  ]);
+  const weakSingleTerms = new Set([
+    'مريحة', 'مريح', 'مريحات', 'جديدة', 'جديد', 'مستعملة', 'مستعمل', 'محمول',
+    'خفيف', 'خفيفة', 'سريع', 'سريعة', 'مخصص', 'مخصصة', 'رياضي', 'رياضية',
+    'فوتوغرافي', 'ميداني', 'باردة', 'بارد', 'صعبة', 'صعب', 'نظيف', 'جودة',
+    'مميزة', 'موثوقة', 'جيد', 'جيدة', 'مناسبة', 'مناسب', 'طبيعي', 'صناعي',
+    'ملونة', 'أخضر', 'خضراء', 'برتقالي', 'برتقالية', 'عسكري', 'بسيط', 'دافئة', 'دافئ',
+    'مصنوعة', 'مصنوع', 'قابل', 'مطاطية', 'علوي', 'مرن', 'صلبة', 'مثالي', 'مثالية',
+    'آمنة', 'فعالة', 'متكامل', 'متكاملة', 'مهني', 'مهنية', 'معقولة', 'تنافسية', 'متخصصة',
+    'حديثة', 'حقيقية', 'عالية', 'رخيصة', 'موثوق', 'موثوقة', 'مبتكرة', 'كلاسيكي', 'كلاسيكية'
+  ]);
+  const latinKeywordAllowlist = new Set(['led', 'usb', 'wifi', 'typec', 'type-c']);
+  const strongHeadTerms = new Set([
+    'تنظيف', 'غسيل', 'غسل', 'تعقيم', 'تطهير', 'تجفيف', 'إصلاح', 'تثبيت', 'تخزين', 'حماية', 'تعبئة',
+    'حقيبة', 'شنطة', 'جنطة', 'كاميرا', 'كميرا', 'عدسة', 'عدسات', 'أحذية', 'احذية', 'حذاء', 'ملابس',
+    'فستان', 'سجاد', 'موكيت', 'ستائر', 'مفروشات', 'جهاز', 'هاتف', 'جوال', 'موبايل', 'مصباح', 'بطارية',
+    'قطع', 'غيار', 'شفرات', 'حزام', 'كتف', 'ظهر', 'فندق', 'مكتب', 'منزل', 'غرفة', 'شركة', 'شركات',
+    'إضاءة', 'اضاءة', 'مفتاح', 'طقم', 'سرير', 'طاولة', 'طاوله', 'كرسي', 'صينية', 'سراويل', 'سروال'
+  ]);
+  const hasStrongHeadTerm = (tokens) => tokens.some((token) => strongHeadTerms.has(token));
+  const buildPhraseCandidates = (tokens) => {
+    const contentTokens = tokens.filter((word) => !stopwords.has(word) && !noiseTerms.has(word));
+    const phrases = [];
+    for (let size = 2; size <= 3; size += 1) {
+      for (let start = 0; start <= contentTokens.length - size; start += 1) {
+        const candidate = contentTokens.slice(start, start + size).join(' ').trim();
+        if (isUsefulPhrase(candidate)) phrases.push(candidate);
+      }
+    }
+    return dedupeKeywordsByShape(phrases);
+  };
+  const isUsefulPhrase = (phrase) => {
+    if (!phrase) return false;
+    if (phrase.length < 4 || phrase.length > 40) return false;
+    if (/[\u3400-\u9FFF【】「」『』]/.test(phrase)) return false;
+    const tokens = phrase.split(/\s+/).filter(Boolean);
+    if (tokens.length < 2 || tokens.length > 3) return false;
+    const contentTokens = tokens.filter((token) => !stopwords.has(token) && !noiseTerms.has(token));
+    if (contentTokens.length < 2) return false;
+    if (contentTokens.some((token) => /^[a-z]+$/i.test(token) && !latinKeywordAllowlist.has(token.toLowerCase()))) return false;
+    if (contentTokens.every((token) => weakSingleTerms.has(token))) return false;
+    if (contentTokens.filter((token) => !weakSingleTerms.has(token)).length < 1) return false;
+    if (!hasStrongHeadTerm(contentTokens)) return false;
+    if (contentTokens.filter((token) => weakSingleTerms.has(token)).length > 1) return false;
+    return true;
+  };
   const isUsefulKeyword = (word) => {
     if (!word) return false;
     if (word.length < 2 || word.length > 24) return false;
     if (/^\d+$/.test(word)) return false;
     if (/(.)\1{2,}/.test(word)) return false;
     if (/اات$/.test(word)) return false;
-    if (/^[^a-zA-Z\u0600-\u06FF]+$/.test(word)) return false;
+    if (/[\u3400-\u9FFF【】「」『』]/.test(word)) return false;
+    if (/^[^a-zA-Z\u0600-\u06FF0-9]+$/.test(word)) return false;
+    if (!/[a-zA-Z\u0600-\u06FF]/.test(word)) return false;
+    if (noiseTerms.has(word)) return false;
+    if (weakSingleTerms.has(word)) return false;
+    if (/^[a-z]+$/i.test(word) && !latinKeywordAllowlist.has(word.toLowerCase())) return false;
     return true;
   };
   const splitToWords = (input) => {
     const normalized = normalizeArabicKeyword(input);
     if (!normalized) return [];
-    return normalized
+    const tokens = normalized
       .split(/\s+/)
       .map((word) => word.trim())
       .flatMap((word) => {
@@ -439,7 +521,12 @@ function normalizeKeywordList(value) {
         return [cleaned];
       })
       .map((word) => word.trim())
-      .filter((word) => !stopwords.has(word) && isUsefulKeyword(word));
+      .filter(Boolean);
+    const results = buildPhraseCandidates(tokens);
+    return [
+      ...results,
+      ...tokens.filter((word) => !stopwords.has(word) && isUsefulKeyword(word))
+    ];
   };
   if (Array.isArray(value)) {
     return [...new Set(value.flatMap((k) => splitToWords(k)).filter(Boolean))];
@@ -866,33 +953,28 @@ function expandArabicSingularPlural(list) {
     if (Array.isArray(irregular)) extras.push(...irregular);
     if (token.endsWith('ات') && token.length > 3) {
       const stem = token.slice(0, -2);
-      extras.push(`${stem}ة`, `${stem}ه`);
-    } else if ((token.endsWith('ون') || token.endsWith('ين')) && token.length > 4) {
-      extras.push(token.slice(0, -2));
+      if (stem.length >= 3 && !stem.endsWith('ي')) extras.push(`${stem}ة`, `${stem}ه`);
     } else if ((token.endsWith('ة') || token.endsWith('ه')) && token.length > 3) {
       const stem = token.slice(0, -1);
-      extras.push(`${stem}ات`);
-      extras.push(stem);
-    } else if (token.endsWith('ي') && token.length > 3) {
-      extras.push(`${token}ة`, `${token}ات`);
+      if (stem.length >= 3) extras.push(`${stem}ات`);
     }
   });
   return dedupeKeywordsByShape(extras);
 }
 
 const CATEGORY_KEYWORD_RULES = [
-  { signals: ['مصباح', 'اضاءة', 'إنارة', 'نور', 'ليد', 'LED', 'كشاف', 'فانوس'], keywords: ['انارة', 'مصابيح', 'لمبات', 'كشافات', 'مصباح'] },
-  { signals: ['تخييم', 'رحلات', 'مخيم', 'بر', 'كشتة'], keywords: ['تخييم', 'رحلات', 'معدات تخييم', 'لوازم بر', 'ادوات رحلات'] },
-  { signals: ['حذاء', 'احذية', 'قندرة', 'جواتي', 'شوز'], keywords: ['احذية', 'حذاء رجالي', 'حذاء نسائي', 'احذية رياضية', 'احذية كاجوال'] },
-  { signals: ['شنطة', 'جنطة', 'حقيبة', 'باك'], keywords: ['حقائب', 'شنط', 'حقيبة يد', 'شنطة كتف', 'حقيبة ظهر'] },
-  { signals: ['هاتف', 'موبايل', 'جوال', 'تلفون'], keywords: ['الكترونيات', 'هواتف', 'اكسسوارات موبايل', 'تقنية', 'اتصالات'] },
-  { signals: ['سماعة', 'سماعات', 'سبيكر', 'بلوتوث'], keywords: ['اكسسوارات صوت', 'سماعات', 'الكترونيات', 'بلوتوث', 'صوتيات'] },
-  { signals: ['ساعة', 'ساعات', 'ذكية'], keywords: ['ساعات', 'اكسسوارات', 'ساعة ذكية', 'ساعة يد', 'اكسسوارات الكترونية'] },
-  { signals: ['قميص', 'تيشيرت', 'بلوزة', 'بنطلون', 'فستان', 'عباية', 'ملابس'], keywords: ['ملابس', 'ازياء', 'ملابس رجالية', 'ملابس نسائية', 'ملابس اطفال'] },
-  { signals: ['كنبة', 'اريكة', 'طاولة', 'كرسي', 'خزانة', 'سرير', 'مطبخ'], keywords: ['اثاث', 'منزل', 'ديكور', 'غرفة نوم', 'مطبخ'] },
-  { signals: ['عطر', 'كريم', 'سيروم', 'مكياج', 'ميك اب'], keywords: ['عناية', 'جمال', 'مستحضرات تجميل', 'عطور', 'العناية بالبشرة'] },
-  { signals: ['لعبة', 'العاب', 'اطفال', 'بيبي', 'رضيع'], keywords: ['اطفال', 'العاب', 'مستلزمات اطفال', 'هدايا اطفال', 'ترفيه'] },
-  { signals: ['سيارة', 'سيارات', 'عدة', 'ادوات', 'ورشة'], keywords: ['سيارات', 'اكسسوارات سيارات', 'ادوات', 'معدات', 'ورشة'] }
+  { signals: ['مصباح', 'اضاءة', 'إنارة', 'نور', 'ليد', 'LED', 'كشاف', 'فانوس'], keywords: ['انارة', 'مصابيح', 'لمبات', 'كشافات', 'مصباح'], minSignals: 1 },
+  { signals: ['تخييم', 'مخيم', 'كشتة', 'خيمة', 'رحلات'], keywords: ['تخييم', 'رحلات', 'معدات تخييم', 'لوازم بر', 'ادوات رحلات'], minSignals: 2 },
+  { signals: ['حذاء', 'احذية', 'قندرة', 'جواتي', 'شوز'], keywords: ['احذية', 'حذاء رجالي', 'حذاء نسائي', 'احذية رياضية', 'احذية كاجوال'], minSignals: 1 },
+  { signals: ['شنطة', 'جنطة', 'حقيبة', 'باك'], keywords: ['حقائب', 'شنط', 'حقيبة يد', 'شنطة كتف', 'حقيبة ظهر'], minSignals: 1 },
+  { signals: ['هاتف', 'موبايل', 'جوال', 'تلفون'], keywords: ['الكترونيات', 'هواتف', 'اكسسوارات موبايل', 'تقنية', 'اتصالات'], minSignals: 1 },
+  { signals: ['سماعة', 'سماعات', 'سبيكر', 'بلوتوث'], keywords: ['اكسسوارات صوت', 'سماعات', 'الكترونيات', 'بلوتوث', 'صوتيات'], minSignals: 1 },
+  { signals: ['ساعة', 'ساعات', 'ذكية'], keywords: ['ساعات', 'اكسسوارات', 'ساعة ذكية', 'ساعة يد', 'اكسسوارات الكترونية'], minSignals: 1 },
+  { signals: ['قميص', 'تيشيرت', 'بلوزة', 'بنطلون', 'فستان', 'عباية', 'ملابس'], keywords: ['ملابس', 'ازياء', 'ملابس رجالية', 'ملابس نسائية', 'ملابس اطفال'], minSignals: 1 },
+  { signals: ['كنبة', 'اريكة', 'طاولة', 'كرسي', 'خزانة', 'سرير', 'مطبخ'], keywords: ['اثاث', 'منزل', 'ديكور', 'غرفة نوم', 'مطبخ'], minSignals: 1 },
+  { signals: ['عطر', 'كريم', 'سيروم', 'مكياج', 'ميك اب'], keywords: ['عناية', 'جمال', 'مستحضرات تجميل', 'عطور', 'العناية بالبشرة'], minSignals: 1 },
+  { signals: ['لعبة', 'العاب', 'اطفال', 'بيبي', 'رضيع'], keywords: ['اطفال', 'العاب', 'مستلزمات اطفال', 'هدايا اطفال', 'ترفيه'], minSignals: 1 },
+  { signals: ['سيارة', 'سيارات', 'اطار', 'رافعة', 'تاير'], keywords: ['سيارات', 'اكسسوارات سيارات', 'ادوات', 'معدات', 'ورشة'], minSignals: 1 }
 ];
 
 function inferCategoryKeywords(seedText, list = []) {
@@ -900,32 +982,69 @@ function inferCategoryKeywords(seedText, list = []) {
   if (!haystack) return [];
   const matched = [];
   CATEGORY_KEYWORD_RULES.forEach((rule) => {
-    const hasSignal = rule.signals.some((signal) => haystack.includes(normalizeArabicKeyword(signal)));
-    if (hasSignal) matched.push(...rule.keywords);
+    const signalHits = rule.signals.filter((signal) => haystack.includes(normalizeArabicKeyword(signal)));
+    const requiredHits = Math.max(1, Number(rule.minSignals || 1));
+    if (signalHits.length >= requiredHits) matched.push(...rule.keywords);
   });
-  if (matched.length > 0) return dedupeKeywordsByShape(matched);
-  return ['منتجات', 'تسوق', 'متجر', 'فئة', 'تصنيف'];
+  return dedupeKeywordsByShape(matched);
 }
 
 function ensureKeywordList(value, seedText = '') {
   const normalized = dedupeKeywordsByShape(normalizeKeywordList(value))
-    .filter((k) => k.length >= 2)
-    .slice(0, KEYWORDS_PER_PRODUCT);
+    .filter((k) => k.length >= 2);
   const extras = dedupeKeywordsByShape(buildKeywordCandidatesFromText(seedText));
   const iraqiExtras = expandIraqiKeywords([...normalized, ...extras]);
   const singularPluralExtras = expandArabicSingularPlural([...normalized, ...extras, ...iraqiExtras]);
   const categoryExtras = inferCategoryKeywords(seedText, [...normalized, ...extras, ...iraqiExtras, ...singularPluralExtras]);
-  const merged = dedupeKeywordsByShape([...normalized, ...extras, ...iraqiExtras, ...singularPluralExtras, ...categoryExtras])
+  const actionTerms = new Set(['تنظيف', 'غسيل', 'غسل', 'تعقيم', 'تطهير', 'تجفيف', 'إصلاح', 'تثبيت', 'تخزين', 'حماية', 'تعبئة', 'شحن']);
+  const productTerms = new Set([
+    'حقيبة', 'شنطة', 'جنطة', 'كاميرا', 'كميرا', 'عدسة', 'عدسات', 'أحذية', 'احذية', 'حذاء',
+    'ملابس', 'فستان', 'سجاد', 'موكيت', 'ستائر', 'مفروشات', 'جهاز', 'هاتف', 'جوال', 'موبايل',
+    'مصباح', 'بطارية', 'مفتاح', 'طقم', 'سرير', 'طاولة', 'طاوله', 'كرسي', 'صينية', 'سراويل',
+    'سروال', 'مطبخ', 'طباخ', 'مقلاة', 'صندوق', 'لعبة', 'دمية', 'رداء', 'غطاء'
+  ]);
+  const categoryTerms = new Set([
+    'رياضية', 'رياضي', 'بانورامية', 'منزلية', 'مكتبية', 'نسائية', 'رجالية', 'داخلية',
+    'خارجية', 'لاسلكي', 'كهربائي', 'سيليكون', 'جلدية', 'قطن', 'مصري', 'شموع', 'مطبخ'
+  ]);
+  const scorePhrasePattern = (key) => {
+    const tokens = key.split(/\s+/).filter(Boolean);
+    if (tokens.length < 2 || tokens.length > 3) return 0;
+    const [first, second, third] = tokens;
+    let score = 0;
+    if (actionTerms.has(first) && (productTerms.has(second) || categoryTerms.has(second))) score += 5;
+    if (productTerms.has(first) && (productTerms.has(second) || categoryTerms.has(second))) score += 4;
+    if (categoryTerms.has(first) && productTerms.has(second)) score += 2;
+    if (third) {
+      if (actionTerms.has(first) && productTerms.has(second) && (productTerms.has(third) || categoryTerms.has(third))) score += 4;
+      if (productTerms.has(first) && productTerms.has(second) && categoryTerms.has(third)) score += 3;
+      if (productTerms.has(first) && categoryTerms.has(second) && productTerms.has(third)) score += 2;
+    }
+    if (!tokens.some((token) => actionTerms.has(token) || productTerms.has(token))) score -= 3;
+    return score;
+  };
+  const aiSet = new Set(normalized.map(normalizeArabicKeyword));
+  const textSet = new Set(extras.map(normalizeArabicKeyword));
+  const iraqiSet = new Set(iraqiExtras.map(normalizeArabicKeyword));
+  const variantSet = new Set(singularPluralExtras.map(normalizeArabicKeyword));
+  const categorySet = new Set(categoryExtras.map(normalizeArabicKeyword));
+  return dedupeKeywordsByShape([...normalized, ...extras, ...iraqiExtras, ...singularPluralExtras, ...categoryExtras])
     .filter((k) => k.length >= 2)
+    .map((keyword, index) => {
+      const key = normalizeArabicKeyword(keyword);
+      let score = 0;
+      if (textSet.has(key)) score += 5;
+      if (aiSet.has(key)) score += 4;
+      if (categorySet.has(key)) score += 3;
+      if (iraqiSet.has(key)) score += 2;
+      if (variantSet.has(key)) score += 1;
+      if (key.includes(' ')) score += 3 + scorePhrasePattern(key);
+      if (key.length >= 4) score += 1;
+      return { keyword, score: score - (index * 0.01) };
+    })
+    .sort((a, b) => b.score - a.score)
+    .map(({ keyword }) => keyword)
     .slice(0, KEYWORDS_PER_PRODUCT);
-  if (merged.length >= KEYWORDS_PER_PRODUCT) return merged.slice(0, KEYWORDS_PER_PRODUCT);
-  const padPool = merged.length > 0 ? [...merged] : extras;
-  let idx = 0;
-  while (merged.length < KEYWORDS_PER_PRODUCT && padPool.length > 0) {
-    merged.push(padPool[idx % padPool.length]);
-    idx += 1;
-  }
-  return merged.slice(0, KEYWORDS_PER_PRODUCT);
 }
 
 
@@ -1098,6 +1217,20 @@ function clearBatchLinksQueue() {
   try {
     if (fs.existsSync(BATCH_LINKS_PATH)) fs.unlinkSync(BATCH_LINKS_PATH);
   } catch {}
+}
+
+function hasPendingBatchQueueWork(queue, expectedBatchId = null, expectedTermCount = null) {
+  if (!queue || typeof queue !== 'object') return false;
+  if (expectedBatchId && queue.batchId !== expectedBatchId) return false;
+  if (!Array.isArray(queue.termStates)) return false;
+  if (expectedTermCount != null && queue.termStates.length !== expectedTermCount) return false;
+  const termStates = queue.termStates;
+  const hasQueuedItems = termStates.some((state) => Array.isArray(state?.items) && state.items.length > 0);
+  const hasUncollectedTerms = termStates.some((state) => !state?.collectDone);
+  const phase = String(queue.phase || '').toLowerCase();
+  if (phase === 'collect') return hasUncollectedTerms || hasQueuedItems;
+  if (phase === 'process') return hasQueuedItems || Math.max(0, Number(queue.nextProcessTerm || 0)) < termStates.length;
+  return hasUncollectedTerms || hasQueuedItems;
 }
 
 function getCachedTranslation(cache, title) {
@@ -1390,13 +1523,15 @@ function shuffleTerms(terms) {
 }
 
 async function generateSearchTermsWithAi(existingTerms) {
-  const recentTerms = existingTerms.slice(-400);
-  const existingSet = new Set(recentTerms.map(normalizeSearchTerm));
+  const allNormalizedTerms = existingTerms.map(normalizeSearchTerm).filter(Boolean);
+  const recentTerms = allNormalizedTerms.slice(-400);
+  const existingSet = new Set(allNormalizedTerms);
   const termsToAvoid = recentTerms.slice(-120).join(', ');
 
   let results = [];
   let usedAi = false;
-  for (let attempt = 0; attempt < MAX_AI_ATTEMPTS && results.length < GOOFISH_TERMS_PER_BATCH; attempt += 1) {
+  const termGenAttempts = Math.max(1, Math.min(MAX_AI_ATTEMPTS, GOOFISH_TERM_AI_MAX_ATTEMPTS));
+  for (let attempt = 0; attempt < termGenAttempts && results.length < GOOFISH_TERMS_PER_BATCH; attempt += 1) {
     console.log(`[AI Term Gen] Requesting new terms from SiliconFlow (attempt ${attempt + 1})...`);
     const prompt = [
       {
@@ -1412,10 +1547,13 @@ IMPORTANT: Do NOT use any of the following terms: ${termsToAvoid}.
 Return a JSON array only, no other text or punctuation.`
       }
     ];
-    const raw = await callSiliconFlow(prompt, 0.6, 500);
+    const raw = await callSiliconFlow(prompt, 0.6, 500, {
+      timeoutMs: GOOFISH_TERM_AI_CALL_TIMEOUT_MS,
+      maxAttempts: 1
+    });
     if (!raw) {
       console.log('[AI Term Gen] SiliconFlow returned empty or null response.');
-      continue;
+      break;
     }
     usedAi = true;
     const cleaned = raw.trim().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
@@ -1443,7 +1581,7 @@ Return a JSON array only, no other text or punctuation.`
       if (!term || term.length < 2) continue;
       if (!isChineseTerm(term)) continue;
       if (isFoodTerm(term)) continue;
-      if (existingSet.has(term) && results.length < 20) continue;
+      if (existingSet.has(term)) continue;
       if (!results.includes(term)) results.push(term);
       if (results.length >= GOOFISH_TERMS_PER_BATCH) break;
     }
@@ -1461,13 +1599,34 @@ Return a JSON array only, no other text or punctuation.`
 
 async function getSearchTermsForRun() {
   const history = loadSearchTermHistory();
+  const existingQueue = loadBatchLinksQueue();
   let activeBatch = history.activeBatch;
 
-  // If we have an active batch that is a fallback, but we want AI terms and have a key, discard it.
-  if (activeBatch && activeBatch.source === 'fallback' && SILICONFLOW_API_KEY) {
-    console.log('Found active batch from fallback source, but SiliconFlow Key is present. Discarding fallback batch to try AI generation.');
-    activeBatch = null;
-    clearActiveBatch(null); // Clear any active batch
+  if (!activeBatch && existingQueue?.batchId) {
+    const matchingBatch = (Array.isArray(history.batches) ? history.batches : [])
+      .find((batch) => batch?.id === existingQueue.batchId && Array.isArray(batch?.terms) && batch.terms.length > 0);
+    if (matchingBatch && hasPendingBatchQueueWork(existingQueue, matchingBatch.id, matchingBatch.terms.length)) {
+      activeBatch = {
+        id: matchingBatch.id,
+        generatedAt: matchingBatch.generatedAt || new Date().toISOString(),
+        terms: matchingBatch.terms,
+        nextIndex: Math.max(0, Number(existingQueue.nextCollectTerm || 0) || 0),
+        source: matchingBatch.source || 'resume',
+        checkpoint: null,
+        updatedAt: new Date().toISOString()
+      };
+      saveSearchTermHistory({ ...history, activeBatch });
+    }
+  }
+
+  if (activeBatch && Array.isArray(activeBatch.terms) && activeBatch.terms.length > 0) {
+    const activeNextIndex = Math.max(0, Number(activeBatch.nextIndex || 0) || 0);
+    const hasPendingCheckpoint = Boolean(activeBatch.checkpoint && typeof activeBatch.checkpoint === 'object');
+    const hasPendingQueue = hasPendingBatchQueueWork(existingQueue, activeBatch.id, activeBatch.terms.length);
+    if (activeNextIndex >= activeBatch.terms.length && !hasPendingCheckpoint && !hasPendingQueue) {
+      clearActiveBatch(activeBatch.id);
+      activeBatch = null;
+    }
   }
 
   if (activeBatch && Array.isArray(activeBatch.terms) && activeBatch.terms.length > 0) {
@@ -1485,9 +1644,12 @@ async function getSearchTermsForRun() {
     }
   }
   const existing = Array.isArray(history.used) ? history.used : [];
+  const existingNormalized = new Set(existing.map(normalizeSearchTerm).filter(Boolean));
   const aiResult = await generateSearchTermsWithAi(existing);
   let finalTerms = aiResult.terms;
   let source = aiResult.usedAi ? 'ai' : 'fallback';
+  let historyUsed = existing;
+  let historyUsedNormalized = existingNormalized;
   if (AI_ONLY_TERMS && !SILICONFLOW_API_KEY) {
     throw new Error('AI-only mode is enabled but SILICONFLOW_API_KEY is missing.');
   }
@@ -1497,19 +1659,30 @@ async function getSearchTermsForRun() {
   if (finalTerms.length < GOOFISH_TERMS_PER_BATCH) {
     const fallback = DEFAULT_SEARCH_TERMS
       .map(normalizeSearchTerm)
-      .filter((term) => term && !existing.includes(term) && !isFoodTerm(term));
+      .filter((term) => term && !historyUsedNormalized.has(term) && !isFoodTerm(term));
     finalTerms = [...finalTerms, ...fallback].slice(0, GOOFISH_TERMS_PER_BATCH);
     source = 'fallback';
   }
-  if (finalTerms.length === 0) {
-    finalTerms = DEFAULT_SEARCH_TERMS.slice(0, GOOFISH_TERMS_PER_BATCH);
-    source = 'fallback';
+  if (finalTerms.length < GOOFISH_TERMS_PER_BATCH) {
+    console.warn(
+      `[AI Term Gen] Term history exhausted after ${historyUsedNormalized.size} used terms. Resetting used-term memory and reusing fallback terms.`
+    );
+    historyUsed = [];
+    historyUsedNormalized = new Set();
+    const recycledFallback = DEFAULT_SEARCH_TERMS
+      .map(normalizeSearchTerm)
+      .filter((term) => term && !isFoodTerm(term));
+    finalTerms = [...finalTerms, ...recycledFallback].slice(0, GOOFISH_TERMS_PER_BATCH);
+    source = finalTerms.length > 0 ? 'fallback-reset' : source;
+  }
+  if (finalTerms.length < GOOFISH_TERMS_PER_BATCH) {
+    throw new Error(`Unable to produce ${GOOFISH_TERMS_PER_BATCH} search terms. Default fallback list is empty or fully invalid.`);
   }
   finalTerms = shuffleTerms(finalTerms);
   const batchId = `batch_${Date.now()}`;
   const active = { id: batchId, generatedAt: new Date().toISOString(), terms: finalTerms, nextIndex: 0, source };
   const nextHistory = {
-    used: Array.from(new Set([...existing, ...finalTerms])),
+    used: Array.from(new Set([...historyUsed, ...finalTerms])),
     batches: [
       ...(Array.isArray(history.batches) ? history.batches : []),
       { id: batchId, generatedAt: active.generatedAt, terms: finalTerms, source }
@@ -1824,7 +1997,9 @@ const isRetryableDbError = (error) => {
     || msg.includes('Server has closed the connection')
     || msg.includes('Engine is not yet connected')
     || msg.includes('Response from the Engine was empty')
+    || msg.includes('Unable to start a transaction in the given time')
     || code === 'P2024'
+    || code === 'P2028'
     || code === 'P1017'
     || code === 'P1001';
 };
@@ -1879,6 +2054,15 @@ const shouldRestartPipelineForItemError = (error) => {
   return text.includes('process link ') && text.includes(' timed out after ');
 };
 
+const waitForDbCircuitRecovery = async (maxWaitMs = Math.max(15000, GOOFISH_DB_ENGINE_COOLDOWN_MS + 10000)) => {
+  const startedAt = Date.now();
+  while (isDbCircuitOpen()) {
+    if (Date.now() - startedAt >= maxWaitMs) return false;
+    await delay(1500);
+  }
+  return true;
+};
+
 async function createBrowser() {
   let executablePath = getExecutablePath();
   
@@ -1904,7 +2088,7 @@ async function createBrowser() {
   if (process.env.PROXY_SERVER) {
     launchOptions.args.push(`--proxy-server=${process.env.PROXY_SERVER}`);
   } else if (process.platform === 'win32') {
-    launchOptions.args.push('--proxy-server=http://192.168.2.150:7890');
+    launchOptions.args.push('--proxy-server=http://127.0.0.1:7890');
   }
 
   if (!executablePath && process.platform === 'linux') {
@@ -2034,11 +2218,16 @@ Task:
 - Translate and rewrite the Chinese title into a natural Arabic marketplace product name.
 - title_ar must be concise, product-focused, and suitable as listing title.
 - description_ar must be a clear Arabic product description sentence or short paragraph based only on source title meaning.
-- keywords must contain exactly ${KEYWORDS_PER_PRODUCT} unique Arabic search terms suitable for shopping queries.
+- keywords must contain up to ${KEYWORDS_PER_PRODUCT} unique Arabic search terms suitable for shopping queries.
 
 Rules:
 - Preserve brand names and model numbers exactly.
 - Preserve quantities, dimensions, storage sizes, and condition words.
+- Use only high-intent buyer search terms: product type, common synonyms, category words, and Iraqi dialect variants.
+- Include a mix of strong single terms and natural 2-3 word phrases such as product-plus-category or product-plus-use-case.
+- Prefer phrases like "غسيل أحذية" or "مثبت هاتف" over isolated weak words like "خدمة" or "مريح".
+- Exclude delivery, pickup, free, service, promotional, and sentence-like words.
+- If you only have 8-15 strong keywords, return only those. Never invent filler.
 - Remove marketing fluff, emojis, and shipping chatter.
 - Do not output Chinese text.
 - Do not output markdown.
@@ -2565,6 +2754,19 @@ async function processProductDetails(page, product, detailProgress = null) {
         );
       } else {
         console.log(`✅ Product ${product.id} is AVAILABLE.`);
+        
+        // Ensure we are actually on the product URL before evaluating anything
+        const currentUrl = page.url();
+        const expectedIdMatch = product.url.match(/id=(\d+)/);
+        const expectedId = expectedIdMatch ? expectedIdMatch[1] : null;
+        
+        const isOnProductPage = currentUrl.includes('goofish.com/item') && expectedId && currentUrl.includes(`id=${expectedId}`);
+
+        if (!isOnProductPage) {
+           console.log(`⚠️ Browser not on the correct product page (current: ${currentUrl}). Re-navigating to ${product.url}`);
+           await page.goto(product.url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+           await new Promise(r => setTimeout(r, 2000));
+        }
       
         const newOrOldStatus = await page.evaluate(() => {
           try {
@@ -2754,20 +2956,142 @@ async function processProductDetails(page, product, detailProgress = null) {
           console.log(`ℹ️ Images already checked for Product ${product.id}. Skipping extraction.`);
         } else {
           console.log('Checking for images...');
-          const images = await page.evaluate(() => {
-            const container = document.querySelector('.item-main-window-list--od7DK4Fm');
-            if (!container) return [];
+          
+          // Wait for the image container to appear, using a more generic selector for the item body
+          await page.waitForSelector('.item-main-window-list--od7DK4Fm, img.fadeInImg--DnykYtf4, .item-body--P2hJb44_, .item-main--N18QxQe1, img[src*="alicdn.com"]', { timeout: 5000 }).catch(() => {});
 
-            const imgElements = Array.from(container.querySelectorAll('img.fadeInImg--DnykYtf4'));
-            return imgElements.map(img => img.getAttribute('src')).filter(src => src);
+          const images = await page.evaluate(() => {
+            const MAX_GALLERY_IMAGES = 8;
+            const CANDIDATE_ATTRS = [
+              'src',
+              'data-src',
+              'data-lazy-src',
+              'data-ks-lazyload',
+              'data-original',
+              'data-url',
+              'data-imgurl',
+            ];
+            const BAD_HINTS = ['avatar', 'icon', 'sprite', 'logo', 'gif'];
+            const SIZE_HINT_RE = /_\d+x\d+.*$/;
+            const SMALL_HINT_RE = /(?:^|[_-])(40|48|50|60|72|80|96|100|120|160|180)x\1(?:[_-]|$)/i;
+
+            const normalize = (value) => {
+              if (!value) return '';
+              let url = String(value).trim();
+              if (!url) return '';
+              url = url.replace(/^[`'"]+|[`'"]+$/g, '');
+              if (url.startsWith('//')) url = `https:${url}`;
+              if (!/^https?:\/\//i.test(url)) return '';
+              url = url.replace(/[)\]}",:;`]+$/g, '');
+              url = url.replace(/[#?].*$/, '').replace(SIZE_HINT_RE, '').replace(/\.webp$/i, '');
+              return url;
+            };
+
+            const looksLikeProductImage = (url) => {
+              const lower = String(url || '').toLowerCase();
+              if (!lower.includes('alicdn.com')) return false;
+              if (SMALL_HINT_RE.test(lower)) return false;
+              return !BAD_HINTS.some((hint) => lower.includes(hint));
+            };
+
+            const candidates = new Map();
+            const pushUrl = (url, score = 0) => {
+              const normalized = normalize(url);
+              if (!normalized) return;
+              if (!looksLikeProductImage(normalized)) return;
+              const prev = candidates.get(normalized);
+              if (!prev || score > prev.score) {
+                candidates.set(normalized, { url: normalized, score });
+              }
+            };
+
+            const pushFromNode = (img) => {
+              if (!img) return;
+              const rect = img.getBoundingClientRect();
+              const width = Number(img.naturalWidth || img.width || 0);
+              const height = Number(img.naturalHeight || img.height || 0);
+              const nearTop = rect.top > -250 && rect.top < window.innerHeight * 1.8;
+              const visibleEnough = rect.width >= 80 && rect.height >= 80;
+              const largeEnough = width === 0 || height === 0 || (width >= 140 && height >= 140);
+              if (!largeEnough || !visibleEnough) return;
+              const areaScore = Math.max(0, width * height);
+              const positionBonus = nearTop ? 120000 : 0;
+              const score = areaScore + positionBonus;
+              for (const attr of CANDIDATE_ATTRS) {
+                pushUrl(img.getAttribute(attr), score);
+              }
+              const srcset = img.getAttribute('srcset') || img.getAttribute('data-srcset') || '';
+              if (srcset) {
+                for (const part of srcset.split(',')) {
+                  const srcsetUrl = part.trim().split(/\s+/)[0];
+                  pushUrl(srcsetUrl, score - 1000);
+                }
+              }
+            };
+
+            // 1) Prefer explicit gallery containers.
+            const galleryNodes = Array.from(document.querySelectorAll(
+              '.item-main-window-list--od7DK4Fm img, [class*="item-main-window--"] img, img[class*="fadeInImg"], img[class*="detailPic"]'
+            ));
+            for (const img of galleryNodes) {
+              pushFromNode(img);
+            }
+
+            // 2) Fallback to main product section only.
+            if (candidates.size === 0) {
+              const mainSectionNodes = Array.from(document.querySelectorAll(
+                '.item-main--N18QxQe1 img, .item-body--P2hJb44_ img, [class*="item-main--"] img'
+              ));
+              for (const img of mainSectionNodes) {
+                pushFromNode(img);
+              }
+            }
+
+            // 3) Last DOM fallback: only top-fold visible images (avoids recommendation/gallery pollution).
+            if (candidates.size === 0) {
+              const topFoldNodes = Array.from(document.querySelectorAll('img'));
+              for (const img of topFoldNodes) {
+                const rect = img.getBoundingClientRect();
+                const width = Number(img.naturalWidth || img.width || 0);
+                const height = Number(img.naturalHeight || img.height || 0);
+                const nearTop = rect.top > -200 && rect.top < window.innerHeight * 1.8;
+                const bigEnough = width >= 120 && height >= 120;
+                if (!nearTop || !bigEnough) continue;
+                pushFromNode(img);
+              }
+            }
+
+            // 4) Script JSON fallback only when no DOM image found.
+            if (candidates.size === 0) {
+              const scriptTexts = Array.from(document.querySelectorAll('script'))
+                .map((s) => s.textContent || '')
+                .filter(Boolean);
+              const regex = /https?:\/\/[^"'\s]+alicdn\.com[^"'\s]+/g;
+              for (const text of scriptTexts) {
+                const matches = text.match(regex) || [];
+                for (const matched of matches) {
+                  pushUrl(matched, 1);
+                }
+              }
+            }
+
+            return Array.from(candidates.values())
+              .sort((a, b) => b.score - a.score)
+              .map((item) => item.url)
+              .slice(0, MAX_GALLERY_IMAGES);
           });
 
           if (images.length > 0) {
-            const cleanImages = images.map(url => {
+            const cleanImages = Array.from(new Set(images.map(url => {
               let clean = url;
               if (clean.startsWith('//')) clean = 'https:' + clean;
-              return clean.replace(/_\d+x\d+.*$/, '').replace(/\.webp$/, '');
-            });
+              return clean
+                .replace(/^[`'"]+|[`'"]+$/g, '')
+                .replace(/[)\]}",:;`]+$/g, '')
+                .replace(/[#?].*$/, '')
+                .replace(/_\d+x\d+.*$/, '')
+                .replace(/\.webp$/i, '');
+            }))).slice(0, 8);
 
             mainImage = cleanImages[0];
 
@@ -2847,33 +3171,32 @@ async function processProductDetails(page, product, detailProgress = null) {
           }
         }
 
-        // Now generate embedding
-        // We need an image URL to embed. Either mainImage we just got, or the product.image from DB.
         const imageToEmbed = mainImage || product.image;
         if (imageToEmbed) {
           console.log(`[Pipeline] Generating embedding for Product ${product.id}...`);
           try {
-            const embedding = await embedImage(imageToEmbed, GOOFISH_EMBED_USE_PRODUCT_NAME ? (product.name || null) : null);
-            if (embedding && embedding.length > 0) {
-              const isZero = embedding.every((v) => v === 0);
-              if (isZero) {
-                console.log(`Warning: Zero embedding for product ${product.id}. URL: ${imageToEmbed}`);
-              }
-              const vectorStr = `[${embedding.join(',')}]`;
-              await withRetry(
-                () => prisma.$executeRawUnsafe(`
-                  UPDATE "Product"
-                  SET "imageEmbedding" = $1::vector
-                  WHERE id = $2
-                `, vectorStr, product.id),
-                `update embedding ${product.id}`,
-                embeddingMutationRetryCount,
-                embeddingMutationTimeoutMs,
-                retryBackoffMs
-              );
-              console.log(`✅ Embedding saved for Product ${product.id}`);
+            const embeddingResult = await withTimeout(
+              () => ensureProductImageEmbeddings({
+                prisma,
+                productId: product.id,
+                productName: GOOFISH_EMBED_USE_PRODUCT_NAME ? (product.name || null) : null,
+                fallbackImageUrl: imageToEmbed,
+                runDb: (operation, label) => withRetry(
+                  operation,
+                  label,
+                  embeddingMutationRetryCount,
+                  embeddingMutationTimeoutMs,
+                  retryBackoffMs
+                ),
+                logger: console,
+              }),
+              `embedding step ${product.id}`,
+              GOOFISH_EMBEDDING_STEP_TIMEOUT_MS
+            );
+            if (embeddingResult.embeddedCount > 0) {
+              console.log(`✅ Saved ${embeddingResult.embeddedCount} image embeddings for Product ${product.id}`);
             } else {
-              console.warn(`⚠️ Failed to generate embedding for Product ${product.id}`);
+              console.warn(`⚠️ Failed to generate image embeddings for Product ${product.id}`);
             }
           } catch (embedErr) {
             console.error(`❌ Embedding error for Product ${product.id}: ${embedErr.message}`);
@@ -2994,10 +3317,6 @@ async function run() {
     } catch (e) {
       // Ignore if not found
     }
-
-    // await ask('If you need to log in, do it now. Press ENTER to continue...');
-    console.log('Waiting 5 seconds for manual login check (optional)...');
-    await humanDelay(5000, 5000);
 
     // Save cookies after potential login
     try {
@@ -3220,6 +3539,12 @@ async function run() {
       if (OUTPUT_JSON) allItems.push(itemData);
       const goofishItemId = extractGoofishItemId(resolvedUrl);
       if (isDbCircuitOpen()) {
+        const recovered = await waitForDbCircuitRecovery();
+        if (recovered) {
+          await ensureDbReady();
+        }
+      }
+      if (isDbCircuitOpen()) {
         if (!existingProduct?.id) {
           throw makePipelineRestartError(`db circuit open before save ${goofishItemId || 'n/a'}`);
         }
@@ -3237,7 +3562,7 @@ async function run() {
         dbId = await withRetry(
           () => saveProductToDb(itemData, existingProduct?.id || null),
           `save product ${item.title?.slice(0, 20) || 'item'}`,
-          1,
+          GOOFISH_DB_SAVE_RETRIES,
           GOOFISH_DB_SAVE_TIMEOUT_MS,
           GOOFISH_DB_SAVE_BACKOFF_MS
         );
@@ -3330,6 +3655,7 @@ async function run() {
           const state = queue.termStates[termIndex] || { term, termIndex, items: [], seenUrls: [], collectDone: false, processIndex: 0 };
           const seenUrls = new Set(Array.isArray(state.seenUrls) ? state.seenUrls : []);
           let termCollected = Array.isArray(state.items) ? state.items.length : 0;
+          console.log(`[TermDebug] phase=collect batchId=${batchId} termIndex=${termIndex + 1}/${searchTerms.length} term="${term}"`);
           console.log(`[Collect] ${term} (${termCollected}/${GOOFISH_LINKS_PER_TERM})`);
           await openHomeAndSearch(page, term);
           const ok = await ensureItemsLoaded(term);
@@ -3392,9 +3718,11 @@ async function run() {
           const state = queue.termStates[termIndex];
           if (!state) continue;
           const term = state.term || searchTerms[termIndex];
+          const termPosition = `${termIndex + 1}/${searchTerms.length}`;
           state.items = Array.isArray(state.items) ? state.items : [];
           const processedBeforeTerm = Math.max(0, Number(state.processIndex || 0));
           const totalKnownForTerm = Math.max(state.items.length + processedBeforeTerm, processedBeforeTerm);
+          console.log(`[TermDebug] phase=process batchId=${batchId} termIndex=${termIndex + 1}/${searchTerms.length} term="${term}"`);
           console.log(`[Process] ${term}: ${processedBeforeTerm}/${totalKnownForTerm}`);
           while (state.items.length > 0) {
             markPipelineProgress(`process-start ${term}`);
@@ -3407,7 +3735,7 @@ async function run() {
             const currentTotalForTerm = Math.max(state.items.length + Math.max(0, Number(state.processIndex || 0)), currentProgress);
             const currentItemId = extractGoofishItemId(currentItem?.url);
             const sourceTitle = cleanAiText(String(currentItem?.title || '').slice(0, 80));
-            console.log(`[ProcessItem] term="${term}" progress=${currentProgress}/${currentTotalForTerm} itemId=${currentItemId || 'n/a'} url=${currentItem?.url || ''}`);
+            console.log(`[ProcessItem] termIndex=${termPosition} term="${term}" progress=${currentProgress}/${currentTotalForTerm} itemId=${currentItemId || 'n/a'} url=${currentItem?.url || ''}`);
             if (sourceTitle) {
               console.log(`[ProcessItem] sourceTitle=${sourceTitle}`);
             }
@@ -3446,7 +3774,7 @@ async function run() {
             queue.nextProcessTerm = termIndex;
             queue.updatedAt = new Date().toISOString();
             saveBatchLinksQueue(queue);
-            console.log(`[ProcessItem] completed progress=${state.processIndex}/${Math.max(state.items.length + state.processIndex, state.processIndex)} itemId=${currentItemId || 'n/a'}`);
+            console.log(`[ProcessItem] completed termIndex=${termPosition} progress=${state.processIndex}/${Math.max(state.items.length + state.processIndex, state.processIndex)} itemId=${currentItemId || 'n/a'}`);
             markPipelineProgress(`item-committed ${currentItemId || 'n/a'}`);
           }
           if (reachedProcessLimit) break;
@@ -3514,7 +3842,10 @@ async function updateExistingGoofishProducts() {
     batchSize: UPDATE_BATCH_SIZE,
     delayMin: UPDATE_DELAY_MIN,
     delayMax: UPDATE_DELAY_MAX,
-    progressEvery: UPDATE_PROGRESS_EVERY
+    progressEvery: UPDATE_PROGRESS_EVERY,
+    forceRegenerate: UPDATE_FORCE_REGENERATE,
+    clearKeywordsFirst: UPDATE_CLEAR_KEYWORDS_FIRST,
+    printBatchSample: UPDATE_PRINT_BATCH_SAMPLE
   });
   if (resumeProgress) {
     console.log('Resuming update progress:', {
@@ -3534,20 +3865,31 @@ async function updateExistingGoofishProducts() {
 
   while (scanned < limit) {
     const take = Math.min(UPDATE_BATCH_SIZE, limit - scanned);
+    let batchSamplePrinted = false;
     let products = [];
     try {
-      products = await prisma.$queryRaw`
-        SELECT id, name, "purchaseUrl", "aiMetadata", "keywords"
-        FROM "Product"
-        WHERE id > ${lastId}
-          AND ("purchaseUrl" ILIKE ${'%goofish.com%'} OR "purchaseUrl" ILIKE ${'%xianyu.com%'})
-        ORDER BY id ASC
-        LIMIT ${take}
-      `;
+      console.log(`[UpdateExisting] loading batch ${batchIndex + 1} from id>${lastId} (take=${take})...`);
+      products = await withTimeout(
+        () => prisma.$queryRaw`
+          SELECT id, name, "purchaseUrl", "aiMetadata", "keywords"
+          FROM "Product"
+          WHERE id > ${lastId}
+            AND ("purchaseUrl" ILIKE ${'%goofish.com%'} OR "purchaseUrl" ILIKE ${'%xianyu.com%'})
+          ORDER BY id ASC
+          LIMIT ${take}
+        `,
+        `load update batch ${batchIndex + 1}`,
+        UPDATE_QUERY_TIMEOUT_MS
+      );
     } catch (error) {
       const errMsg = String(error?.message || '');
-      if (error?.code === 'P1017' || error?.code === 'P1001' || errMsg.includes('Engine is not yet connected')) {
-        console.warn('DB connection issue. Reconnecting...');
+      if (
+        error?.code === 'P1017'
+        || error?.code === 'P1001'
+        || errMsg.includes('Engine is not yet connected')
+        || errMsg.includes('timed out after')
+      ) {
+        console.warn(`DB/query issue while loading batch ${batchIndex + 1}. Reconnecting...`);
         await safeReconnect();
         continue;
       }
@@ -3565,6 +3907,7 @@ async function updateExistingGoofishProducts() {
       const originalTitle = typeof aiMetadata?.originalTitle === 'string' ? aiMetadata.originalTitle : '';
       const baseTitle = originalTitle || product.name || '';
       if (!baseTitle) continue;
+      console.log(`[UpdateExisting] batch=${batchIndex + 1} productId=${product.id} scanned=${scanned} updated=${updatedCount} title=${cleanAiText(String(baseTitle).slice(0, 80))}`);
 
       let titleAr = '';
       let descriptionAr = '';
@@ -3576,7 +3919,13 @@ async function updateExistingGoofishProducts() {
       const hasStrongExistingKeywords = Array.isArray(product.keywords) && product.keywords.length >= Math.max(10, Math.floor(KEYWORDS_PER_PRODUCT * 0.7));
 
       if (SILICONFLOW_API_KEY) {
-        if (hasGoodExistingName && hasGoodExistingDescription && hasStrongExistingKeywords) {
+        if (UPDATE_FORCE_REGENERATE) {
+          console.log(`Force regenerating keywords for product ${product.id}...`);
+          const generated = await generateTitleAndKeywords(baseTitle);
+          titleAr = generated.titleAr;
+          descriptionAr = generated.descriptionAr;
+          keywords = generated.keywords;
+        } else if (hasGoodExistingName && hasGoodExistingDescription && hasStrongExistingKeywords) {
           titleAr = normalizedName;
           descriptionAr = existingDescription;
           keywords = ensureKeywordList(product.keywords, `${titleAr} ${descriptionAr}`.trim());
@@ -3598,34 +3947,77 @@ async function updateExistingGoofishProducts() {
         Array.isArray(keywords) && keywords.length > 0 ? keywords : [],
         seedText
       );
+      const fallbackKeywordsFromExisting = ensureKeywordList(
+        beforeKeywords,
+        `${product.name || ''} ${fallbackDescription || ''}`.trim()
+      );
+      const keywordsToPersist = finalKeywords.length > 0 ? finalKeywords : fallbackKeywordsFromExisting;
+      if (finalKeywords.length === 0) {
+        console.warn(`Product ${product.id}: AI/seed produced no keywords, falling back to existing-derived keywords (${keywordsToPersist.length}).`);
+      }
       const nextMetadata = {
         ...aiMetadata,
         translatedDescription: descriptionAr || fallbackDescription || seedText
       };
       const shouldUpdateName = titleAr && (isChineseTerm(product.name) || !hasArabic(product.name));
-      const keywordsSql = Prisma.join(finalKeywords);
+      const keywordsSql = keywordsToPersist.length > 0 ? Prisma.join(keywordsToPersist) : null;
       try {
-        if (shouldUpdateName) {
+        if (UPDATE_CLEAR_KEYWORDS_FIRST) {
           await prisma.$executeRaw`
             UPDATE "Product"
-            SET "name" = ${titleAr},
-                "keywords" = ARRAY[${keywordsSql}],
-                "aiMetadata" = ${JSON.stringify(nextMetadata)}::jsonb,
-                "updatedAt" = NOW()
-            WHERE "id" = ${product.id}
-          `;
-        } else {
-          await prisma.$executeRaw`
-            UPDATE "Product"
-            SET "keywords" = ARRAY[${keywordsSql}],
-                "aiMetadata" = ${JSON.stringify(nextMetadata)}::jsonb,
+            SET "keywords" = ARRAY[]::text[],
                 "updatedAt" = NOW()
             WHERE "id" = ${product.id}
           `;
         }
+        if (shouldUpdateName) {
+          if (keywordsSql) {
+            await prisma.$executeRaw`
+              UPDATE "Product"
+              SET "name" = ${titleAr},
+                  "keywords" = ARRAY[${keywordsSql}],
+                  "aiMetadata" = ${JSON.stringify(nextMetadata)}::jsonb,
+                  "updatedAt" = NOW()
+              WHERE "id" = ${product.id}
+            `;
+          } else {
+            await prisma.$executeRaw`
+              UPDATE "Product"
+              SET "name" = ${titleAr},
+                  "keywords" = ARRAY[]::text[],
+                  "aiMetadata" = ${JSON.stringify(nextMetadata)}::jsonb,
+                  "updatedAt" = NOW()
+              WHERE "id" = ${product.id}
+            `;
+          }
+        } else {
+          if (keywordsSql) {
+            await prisma.$executeRaw`
+              UPDATE "Product"
+              SET "keywords" = ARRAY[${keywordsSql}],
+                  "aiMetadata" = ${JSON.stringify(nextMetadata)}::jsonb,
+                  "updatedAt" = NOW()
+              WHERE "id" = ${product.id}
+            `;
+          } else {
+            await prisma.$executeRaw`
+              UPDATE "Product"
+              SET "keywords" = ARRAY[]::text[],
+                  "aiMetadata" = ${JSON.stringify(nextMetadata)}::jsonb,
+                  "updatedAt" = NOW()
+              WHERE "id" = ${product.id}
+            `;
+          }
+        }
       } catch (error) {
         const errMsg = String(error?.message || '');
-        if (error?.code === 'P1017' || error?.code === 'P1001' || errMsg.includes('Engine is not yet connected')) {
+        if (
+          error?.code === 'P1017'
+          || error?.code === 'P1001'
+          || error?.code === 'P2028'
+          || errMsg.includes('Engine is not yet connected')
+          || errMsg.includes('Unable to start a transaction in the given time')
+        ) {
           console.warn(`DB connection issue while updating product ${product.id}. Reconnecting...`);
           await safeReconnect();
           continue;
@@ -3635,14 +4027,22 @@ async function updateExistingGoofishProducts() {
       updatedCount += 1;
       if (updatedLog.length < 120) {
         const beforePreview = beforeKeywords.slice(0, 12);
-        const afterPreview = finalKeywords.slice(0, 12);
+        const afterPreview = keywordsToPersist.slice(0, 12);
         updatedLog.push({
           id: product.id,
           name: product.name,
           beforeCount: beforeKeywords.length,
-          afterCount: finalKeywords.length,
+          afterCount: keywordsToPersist.length,
           beforePreview,
           afterPreview
+        });
+      }
+      if (UPDATE_PRINT_BATCH_SAMPLE && !batchSamplePrinted) {
+        batchSamplePrinted = true;
+        console.log('[KeywordSample]', {
+          id: product.id,
+          name: shouldUpdateName ? titleAr : product.name,
+          keywords: keywordsToPersist
         });
       }
       if (updatedCount % UPDATE_PROGRESS_EVERY === 0) {
