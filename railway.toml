@@ -1,6 +1,6 @@
 [build]
 builder = "NIXPACKS"
-buildCommand = "node -e \"const fs=require('fs');const cp=require('child_process');const cwd=fs.existsSync('server/package.json')?'server':(fs.existsSync('package.json')?'.':null);if(!cwd){console.error('No package.json found in /app or /app/server');process.exit(1);}const npm=process.platform==='win32'?'npm.cmd':'npm';const result=cp.spawnSync(npm,['install','--no-audit','--no-fund','--legacy-peer-deps'],{cwd,stdio:'inherit',env:process.env});if(result.error){console.error(result.error.message||result.error);process.exit(1);}process.exit(result.status||0);\""
+buildCommand = "npm install --no-audit --no-fund --legacy-peer-deps"
 
 [deploy]
-startCommand = "node -e \"const fs=require('fs');const cp=require('child_process');const cwd=fs.existsSync('server/package.json')?'server':(fs.existsSync('package.json')?'.':null);if(!cwd){console.error('No package.json found in /app or /app/server');process.exit(1);}const npm=process.platform==='win32'?'npm.cmd':'npm';const result=cp.spawnSync(npm,['run','start'],{cwd,stdio:'inherit',env:process.env});if(result.error){console.error(result.error.message||result.error);process.exit(1);}process.exit(result.status||0);\""
+startCommand = "npm run start"
