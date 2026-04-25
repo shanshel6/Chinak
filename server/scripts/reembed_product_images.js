@@ -8,6 +8,12 @@ process.env.HF_ENDPOINT = 'https://hf-mirror.com';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const formatProductLabel = (product) => {
+  const id = Number(product?.id) || 0;
+  const name = String(product?.name || '').replace(/\s+/g, ' ').trim();
+  return name ? `Product ${id} - ${name}` : `Product ${id}`;
+};
+
 const withTimeout = async (promiseFactory, label, timeoutMs = 60000) => {
   let timer;
   let heartbeat = null;
@@ -127,6 +133,7 @@ async function main() {
   console.log(`🚀 Starting embedding process on Database: ${dbHost}`);
   console.log(`=================================================\n`);
 
+  let heartbeat = null;
   try {
     let processed = 0;
     if (resetProgress) {
@@ -238,10 +245,11 @@ async function main() {
         await Promise.all(chunk.map(async (product) => {
           try {
             const imageUrl = String(product.image || '').trim();
+            const productLabel = formatProductLabel(product);
             const result = await ensureProductImageEmbeddings({
               prisma,
               productId: product.id,
-              productName: null,
+              productName: product.name || null,
               fallbackImageUrl: imageUrl,
               runDb: (operation, label) => withRetry(
                 operation,
@@ -253,20 +261,21 @@ async function main() {
               logger: console,
             });
             if (result.embeddedCount === 0) {
-              console.log(`Skipping product ${product.id}: No embeddable product images`);
+              console.log(`Skipping ${productLabel}: No embeddable product images`);
               return;
             }
 
             processed += 1;
+            console.log(`Success: ${productLabel} (${result.embeddedCount} image embedding${result.embeddedCount === 1 ? '' : 's'})`);
             if (processed % 25 === 0) {
-              console.log(`Embedded ${processed} products (last product id=${product.id})`);
+              console.log(`Embedded ${processed} products (last successful=${productLabel})`);
             }
             lastId = product.id;
             if (processed % progressEvery === 0) {
               try { await writeProgress(progressFilePath, { lastId }); } catch {}
             }
           } catch (err) {
-            console.error(`Unexpected error for product ${product.id}: ${err?.message || err}`);
+            console.error(`Unexpected error for ${formatProductLabel(product)}: ${err?.message || err}`);
             lastId = product.id;
             if (processed % progressEvery === 0) {
               try { await writeProgress(progressFilePath, { lastId }); } catch {}

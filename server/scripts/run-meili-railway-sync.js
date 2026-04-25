@@ -51,15 +51,15 @@ function parseBatchSizeSequence(rawValue) {
   const source = String(rawValue || '').trim();
   const parts = source
     ? source.split(',').map((part) => Number.parseInt(String(part).trim(), 10))
-    : [200, 100, 50, 25];
-  const sanitized = Array.from(new Set(parts.filter((value) => Number.isFinite(value) && value >= 10)))
+    : [200, 100, 50, 25, 10, 5];
+  const sanitized = Array.from(new Set(parts.filter((value) => Number.isFinite(value) && value >= 5)))
     .sort((a, b) => b - a);
-  return sanitized.length > 0 ? sanitized : [200, 100, 50, 25];
+  return sanitized.length > 0 ? sanitized : [200, 100, 50, 25, 10, 5];
 }
 
 function getNextLowerBatchSize(currentBatchSize, sequence) {
   const current = Number.isFinite(currentBatchSize) ? currentBatchSize : 0;
-  const seq = Array.isArray(sequence) && sequence.length > 0 ? sequence : [200, 100, 50, 25];
+  const seq = Array.isArray(sequence) && sequence.length > 0 ? sequence : [200, 100, 50, 25, 10, 5];
   for (const candidate of seq) {
     if (candidate < current) return candidate;
   }
@@ -348,7 +348,7 @@ function buildIncompleteCompletionError(status) {
 
 const config = {
   appUrl: trimTrailingSlashes(process.env.APP_URL || 'https://chinak-production.up.railway.app'),
-  batchSize: getEnvNumber('MEILI_REINDEX_BATCH_SIZE', 50, 10),
+  batchSize: getEnvNumber('MEILI_REINDEX_BATCH_SIZE', 5, 5),
   pollSeconds: getEnvNumber('MEILI_REINDEX_POLL_SECONDS', 10, 1),
   statusHeartbeatSeconds: getEnvNumber('MEILI_REINDEX_STATUS_HEARTBEAT_SECONDS', 60, 5),
   retryDelaySeconds: getEnvNumber('MEILI_REINDEX_RETRY_DELAY_SECONDS', 15, 1),

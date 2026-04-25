@@ -633,11 +633,12 @@ const MEILI_INDEX_NAME = process.env.MEILI_INDEX_NAME || 'products';
 const MEILI_HOST = process.env.MEILI_HOST || '';
 const MEILI_ADMIN_API_KEY = process.env.MEILI_ADMIN_API_KEY || process.env.MEILI_MASTER_KEY || '';
 const MEILI_CLIENT_REQUEST_TIMEOUT_MS = Math.max(30000, Number.parseInt(String(process.env.MEILI_CLIENT_REQUEST_TIMEOUT_MS || ''), 10) || 900000);
+const MEILI_SEARCH_TIMEOUT_MS = Math.max(1000, Number.parseInt(String(process.env.MEILI_SEARCH_TIMEOUT_MS || ''), 10) || 8000);
 const MEILI_TASK_TIMEOUT_MS = Math.max(5000, Number.parseInt(String(process.env.MEILI_TASK_TIMEOUT_MS || ''), 10) || 600000);
 const MEILI_TASK_POLL_INTERVAL_MS = Math.max(100, Number.parseInt(String(process.env.MEILI_TASK_POLL_INTERVAL_MS || ''), 10) || 1000);
 const MEILI_TASK_MAX_WAIT_MS = Math.max(0, Number.parseInt(String(process.env.MEILI_TASK_MAX_WAIT_MS || ''), 10) || 0);
 const MEILI_REINDEX_STALE_TASK_MS = Math.max(60000, Number.parseInt(String(process.env.MEILI_REINDEX_STALE_TASK_MS || ''), 10) || 45 * 60 * 1000);
-const MEILI_REINDEX_BATCH_SIZE = Math.max(10, Math.min(1000, Number.parseInt(String(process.env.MEILI_REINDEX_BATCH_SIZE || ''), 10) || 200));
+const MEILI_REINDEX_BATCH_SIZE = Math.max(5, Math.min(1000, Number.parseInt(String(process.env.MEILI_REINDEX_BATCH_SIZE || ''), 10) || 200));
 const MEILI_REINDEX_DEBUG_LOG_LIMIT = Math.max(10, Math.min(200, Number.parseInt(String(process.env.MEILI_REINDEX_DEBUG_LOG_LIMIT || ''), 10) || 60));
 const MEILI_REINDEX_STATE_PATH = path.join(__dirname, 'meili-reindex-state.json');
 let meiliClientSingleton = null;
@@ -645,7 +646,7 @@ let meiliIndexReadyPromise = null;
 const normalizeMeiliReindexBatchSize = (value, fallback = MEILI_REINDEX_BATCH_SIZE) => {
   const parsed = Number.parseInt(String(value ?? ''), 10);
   if (!Number.isFinite(parsed)) return fallback;
-  return Math.max(10, Math.min(1000, parsed));
+  return Math.max(5, Math.min(1000, parsed));
 };
 const createMeiliReindexState = () => ({
   running: false,
@@ -4339,6 +4340,22 @@ const withDbRetry = async (task, attempts = 3) => {
     }
   }
   throw lastError;
+};
+
+const withRequestTimeout = async (task, timeoutMs, label) => {
+  let timeoutId;
+  try {
+    return await Promise.race([
+      Promise.resolve().then(task),
+      new Promise((_, reject) => {
+        timeoutId = setTimeout(() => {
+          reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
 };
 
 const mapProductToRapidItem = (product) => {
@@ -8949,7 +8966,11 @@ app.get('/api/search', async (req, res) => {
 
     try {
       const meiliSetupStartedAt = Date.now();
-      const index = await getMeiliSearchIndex();
+      const index = await withRequestTimeout(
+        () => getMeiliSearchIndex(),
+        MEILI_SEARCH_TIMEOUT_MS,
+        'Meilisearch index setup'
+      );
       perf.log('meili_index_ready', { setupMs: Date.now() - meiliSetupStartedAt });
       const filters = ['status = PUBLISHED', 'isActive = true'];
       if (Number.isFinite(maxPrice) && maxPrice > 0) {
@@ -8964,11 +8985,15 @@ app.get('/api/search', async (req, res) => {
       const meiliSearchStartedAt = Date.now();
       const meiliQuery = expandedSearchTerms.join(' ').trim() || normalizedQuery || q;
       const meiliCandidateLimit = Math.min(1000, Math.max(limit * 5, offset + limit + 100));
-      const searchResult = await index.search(meiliQuery, {
-        limit: meiliCandidateLimit,
-        offset: 0,
-        filter: filters
-      });
+      const searchResult = await withRequestTimeout(
+        () => index.search(meiliQuery, {
+          limit: meiliCandidateLimit,
+          offset: 0,
+          filter: filters
+        }),
+        MEILI_SEARCH_TIMEOUT_MS,
+        'Meilisearch search'
+      );
       perf.log('meili_search_done', {
         meiliMs: Date.now() - meiliSearchStartedAt,
         estimatedTotalHits: Number(searchResult?.estimatedTotalHits || 0),
