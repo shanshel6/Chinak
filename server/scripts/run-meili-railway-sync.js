@@ -47,6 +47,33 @@ function getFatalReindexHint(message) {
   return 'Railway Meilisearch storage is full. Free or expand the Meilisearch volume, then run the sync again.';
 }
 
+function parseBatchSizeSequence(rawValue) {
+  const source = String(rawValue || '').trim();
+  const parts = source
+    ? source.split(',').map((part) => Number.parseInt(String(part).trim(), 10))
+    : [200, 100, 50, 25];
+  const sanitized = Array.from(new Set(parts.filter((value) => Number.isFinite(value) && value >= 10)))
+    .sort((a, b) => b - a);
+  return sanitized.length > 0 ? sanitized : [200, 100, 50, 25];
+}
+
+function getNextLowerBatchSize(currentBatchSize, sequence) {
+  const current = Number.isFinite(currentBatchSize) ? currentBatchSize : 0;
+  const seq = Array.isArray(sequence) && sequence.length > 0 ? sequence : [200, 100, 50, 25];
+  for (const candidate of seq) {
+    if (candidate < current) return candidate;
+  }
+  return null;
+}
+
+function isMeiliTaskStallError(message) {
+  const normalized = String(message || '').toLowerCase();
+  return normalized.includes('appears stalled')
+    || normalized.includes('"phase":"waiting_for_meili_task"')
+    || normalized.includes('while status=processing')
+    || normalized.includes('exceeded max wait');
+}
+
 function isTransientNetworkError(message) {
   const normalized = String(message || '').toLowerCase();
   return normalized.includes('etimedout')
@@ -107,6 +134,7 @@ function buildStatusSummary(status, elapsedMs) {
   if (Number.isFinite(status?.totalProducts) && status.totalProducts > 0) parts.push(`total=${formatNumber(status.totalProducts)}`);
   if (Number.isFinite(status?.processedBatches) && status.processedBatches > 0) parts.push(`batches=${formatNumber(status.processedBatches)}`);
   if (Number.isFinite(status?.currentBatchNumber) && status.currentBatchNumber > 0) parts.push(`currentBatch=${formatNumber(status.currentBatchNumber)}`);
+  if (Number.isFinite(status?.configuredBatchSize) && status.configuredBatchSize > 0) parts.push(`configuredBatchSize=${formatNumber(status.configuredBatchSize)}`);
   if (Number.isFinite(status?.currentBatchSize) && status.currentBatchSize > 0) parts.push(`batchSize=${formatNumber(status.currentBatchSize)}`);
   if (Number.isFinite(status?.lastIndexedId) && status.lastIndexedId > 0) parts.push(`lastIndexedId=${formatNumber(status.lastIndexedId)}`);
   if (status?.currentTaskUid != null && status.currentTaskUid !== '') parts.push(`taskUid=${status.currentTaskUid}`);
@@ -178,17 +206,19 @@ function getPreferredResumeCheckpoint() {
 }
 
 function buildResumeRequestPayload(shouldReset, resumeCheckpoint = null) {
+  const payload = {};
   if (shouldReset) {
-    return { reset: true };
+    payload.reset = true;
   }
   if (resumeCheckpoint?.lastIndexedId > 0) {
-    return {
-      resumeFromId: resumeCheckpoint.lastIndexedId,
-      resumeIndexed: resumeCheckpoint.totalIndexed || 0,
-      resumeProcessedBatches: resumeCheckpoint.processedBatches || 0
-    };
+    payload.resumeFromId = resumeCheckpoint.lastIndexedId;
+    payload.resumeIndexed = resumeCheckpoint.totalIndexed || 0;
+    payload.resumeProcessedBatches = resumeCheckpoint.processedBatches || 0;
   }
-  return {};
+  if (Number.isFinite(config.batchSize) && config.batchSize > 0) {
+    payload.batchSize = config.batchSize;
+  }
+  return payload;
 }
 
 function shouldValidateResumeCheckpoint(status) {
@@ -294,9 +324,33 @@ function getFailureFromStatus(status) {
   return null;
 }
 
+function isReindexComplete(status) {
+  if (!status || typeof status !== 'object') return false;
+  if (typeof status.isComplete === 'boolean') return status.isComplete;
+  const totalProducts = Math.max(0, Number(status.totalProducts) || 0);
+  const totalIndexed = Math.max(0, Number(status.totalIndexed) || 0);
+  if (totalProducts === 0) return true;
+  return totalIndexed >= totalProducts;
+}
+
+function buildIncompleteCompletionError(status) {
+  return new Error(
+    `Reindex stopped before reaching 100%. Final status was ${formatJson({
+      phase: status?.phase ?? null,
+      totalIndexed: status?.totalIndexed ?? null,
+      totalProducts: status?.totalProducts ?? null,
+      progressPercent: status?.progressPercent ?? null,
+      processedBatches: status?.processedBatches ?? null,
+      lastIndexedId: status?.lastIndexedId ?? null
+    })}.`
+  );
+}
+
 const config = {
   appUrl: trimTrailingSlashes(process.env.APP_URL || 'https://chinak-production.up.railway.app'),
+  batchSize: getEnvNumber('MEILI_REINDEX_BATCH_SIZE', 50, 10),
   pollSeconds: getEnvNumber('MEILI_REINDEX_POLL_SECONDS', 10, 1),
+  statusHeartbeatSeconds: getEnvNumber('MEILI_REINDEX_STATUS_HEARTBEAT_SECONDS', 60, 5),
   retryDelaySeconds: getEnvNumber('MEILI_REINDEX_RETRY_DELAY_SECONDS', 15, 1),
   maxAttempts: getEnvNumber('MEILI_REINDEX_MAX_ATTEMPTS', 0, 0),
   reset: getEnvBoolean('MEILI_REINDEX_RESET', true),
@@ -304,8 +358,9 @@ const config = {
   requestTimeoutMs: getEnvNumber('MEILI_REINDEX_REQUEST_TIMEOUT_MS', 30000, 1000),
   maxRunningMinutes: getEnvNumber('MEILI_REINDEX_MAX_RUNNING_MINUTES', 480, 1),
   maxConsecutiveStatusFailures: getEnvNumber('MEILI_REINDEX_MAX_CONSECUTIVE_STATUS_FAILURES', 12, 1),
-  maxStalledMinutes: getEnvNumber('MEILI_REINDEX_MAX_STALLED_MINUTES', 20, 1)
+  maxStalledMinutes: getEnvNumber('MEILI_REINDEX_MAX_STALLED_MINUTES', 45, 1)
 };
+const batchDownshiftSequence = parseBatchSizeSequence(process.env.MEILI_REINDEX_BATCH_DOWNSHIFT_SEQUENCE);
 
 async function getStatus(token) {
   return requestJson('GET', `${config.appUrl}/api/admin/search/reindex-status`, token);
@@ -319,6 +374,9 @@ async function triggerReindex(token, shouldReset, resumeCheckpoint = null) {
     params.set('resumeFromId', String(payload.resumeFromId));
     params.set('resumeIndexed', String(payload.resumeIndexed || 0));
     params.set('resumeProcessedBatches', String(payload.resumeProcessedBatches || 0));
+  }
+  if (Number.isFinite(payload.batchSize) && payload.batchSize > 0) {
+    params.set('batchSize', String(payload.batchSize));
   }
   const query = params.toString();
   const url = `${config.appUrl}/api/admin/search/reindex${query ? `?${query}` : ''}`;
@@ -338,6 +396,8 @@ async function waitForCompletion(token, initialStatus = null, attachedToExisting
   let consecutiveStatusFailures = 0;
   let lastProgressMarker = buildProgressMarker(initialStatus);
   let lastProgressAtMs = Date.now();
+  let lastPrintedStatusMarker = '';
+  let lastStatusPrintAtMs = 0;
 
   if (remoteStartedAtMs && Date.now() - remoteStartedAtMs > config.maxRunningMinutes * 60000) {
     throw buildRunningTooLongError(initialStatus, remoteStartedAtMs, attachedToExistingJob);
@@ -363,7 +423,22 @@ async function waitForCompletion(token, initialStatus = null, attachedToExisting
     const elapsedMs = statusStartedAtMs ? Math.max(0, Date.now() - statusStartedAtMs) : Math.max(0, Date.now() - monitorStartedAtMs);
     rememberResumeCheckpoint(status);
     const summary = buildStatusSummary(status, elapsedMs);
-    console.log(summary ? `Status: ${summary}` : `Status after ${formatMinutes(elapsedMs)} minutes: ${formatJson(status)}`);
+    const statusMarker = [
+      buildProgressMarker(status),
+      Number.isFinite(status?.totalProducts) ? status.totalProducts : '',
+      Number.isFinite(status?.processedBatches) ? status.processedBatches : '',
+      Number.isFinite(status?.currentBatchNumber) ? status.currentBatchNumber : '',
+      Number.isFinite(status?.currentBatchSize) ? status.currentBatchSize : '',
+      Number.isFinite(status?.configuredBatchSize) ? status.configuredBatchSize : ''
+    ].join('|');
+    const now = Date.now();
+    const shouldPrintStatus = statusMarker !== lastPrintedStatusMarker
+      || (now - lastStatusPrintAtMs >= config.statusHeartbeatSeconds * 1000);
+    if (shouldPrintStatus) {
+      console.log(summary ? `Status: ${summary}` : `Status after ${formatMinutes(elapsedMs)} minutes: ${formatJson(status)}`);
+      lastPrintedStatusMarker = statusMarker;
+      lastStatusPrintAtMs = now;
+    }
     const latestDebugEntry = getLatestDebugEntry(status);
     const debugMarker = latestDebugEntry ? `${latestDebugEntry.at}|${latestDebugEntry.message}` : '';
     if (debugMarker && debugMarker !== lastDebugMarker) {
@@ -385,6 +460,9 @@ async function waitForCompletion(token, initialStatus = null, attachedToExisting
     if (!status?.running) {
       const failure = getFailureFromStatus(status);
       if (failure) throw new Error(`Reindex failed: ${failure}`);
+      if (!isReindexComplete(status)) {
+        throw buildIncompleteCompletionError(status);
+      }
       return status;
     }
 
@@ -504,6 +582,16 @@ async function main() {
         console.log(fatalHint);
         process.exitCode = 1;
         return;
+      }
+
+      if (isMeiliTaskStallError(message)) {
+        const nextBatchSize = getNextLowerBatchSize(config.batchSize, batchDownshiftSequence);
+        if (nextBatchSize) {
+          console.log(`Detected Meili task stall; lowering batch size from ${config.batchSize} to ${nextBatchSize} for next retry.`);
+          config.batchSize = nextBatchSize;
+        } else {
+          console.log(`Detected Meili task stall; batch size is already at minimum configured level (${config.batchSize}).`);
+        }
       }
 
       if (config.maxAttempts !== 0 && attemptNumber >= config.maxAttempts) {

@@ -29,6 +29,7 @@ import { buildCategoryIndex } from './services/categoryService.js';
 import { calculateOrderShipping, calculateProductShipping, getAdjustedPrice } from './services/shippingService.js';
 import { setupLinkCheckerCron, checkAllProductLinks } from './services/linkCheckerService.js';
 import { embedImage, analyzeImageObjects, embedImageCrop, embedImageRaw, warmupClipService } from './services/clipService.js';
+import { ensureProductImageEmbeddings, searchProductsByImageVector } from './services/productImageVectorService.js';
 import { createClient } from '@supabase/supabase-js';
 import multer from 'multer';
 
@@ -320,28 +321,24 @@ const runImageEmbeddingJobs = async () => {
           where: { id: productId },
           select: {
             id: true,
+            name: true,
             image: true,
-            images: {
-              select: { url: true, order: true },
-              orderBy: { order: 'asc' },
-              take: 1
-            }
           }
         });
 
-        const imageUrl = String(product?.images?.[0]?.url || product?.image || '').trim();
-        if (!imageUrl) {
+        const imageUrl = String(product?.image || '').trim();
+        if (!product?.id) {
           imageEmbeddingJobAttempts.delete(productId);
           continue;
         }
 
-        const embedding = await embedImage(imageUrl);
-        const vectorStr = `[${embedding.join(',')}]`;
-        await prisma.$executeRawUnsafe(
-          `UPDATE "Product" SET "imageEmbedding" = $1::vector WHERE "id" = $2`,
-          vectorStr,
-          productId
-        );
+        await ensureProductImageEmbeddings({
+          prisma,
+          productId,
+          productName: product?.name || null,
+          fallbackImageUrl: imageUrl,
+          logger: console,
+        });
         imageEmbeddingJobAttempts.delete(productId);
         await sleep(150);
       } catch (err) {
@@ -639,12 +636,17 @@ const MEILI_CLIENT_REQUEST_TIMEOUT_MS = Math.max(30000, Number.parseInt(String(p
 const MEILI_TASK_TIMEOUT_MS = Math.max(5000, Number.parseInt(String(process.env.MEILI_TASK_TIMEOUT_MS || ''), 10) || 600000);
 const MEILI_TASK_POLL_INTERVAL_MS = Math.max(100, Number.parseInt(String(process.env.MEILI_TASK_POLL_INTERVAL_MS || ''), 10) || 1000);
 const MEILI_TASK_MAX_WAIT_MS = Math.max(0, Number.parseInt(String(process.env.MEILI_TASK_MAX_WAIT_MS || ''), 10) || 0);
-const MEILI_REINDEX_STALE_TASK_MS = Math.max(60000, Number.parseInt(String(process.env.MEILI_REINDEX_STALE_TASK_MS || ''), 10) || 20 * 60 * 1000);
+const MEILI_REINDEX_STALE_TASK_MS = Math.max(60000, Number.parseInt(String(process.env.MEILI_REINDEX_STALE_TASK_MS || ''), 10) || 45 * 60 * 1000);
 const MEILI_REINDEX_BATCH_SIZE = Math.max(10, Math.min(1000, Number.parseInt(String(process.env.MEILI_REINDEX_BATCH_SIZE || ''), 10) || 200));
 const MEILI_REINDEX_DEBUG_LOG_LIMIT = Math.max(10, Math.min(200, Number.parseInt(String(process.env.MEILI_REINDEX_DEBUG_LOG_LIMIT || ''), 10) || 60));
 const MEILI_REINDEX_STATE_PATH = path.join(__dirname, 'meili-reindex-state.json');
 let meiliClientSingleton = null;
 let meiliIndexReadyPromise = null;
+const normalizeMeiliReindexBatchSize = (value, fallback = MEILI_REINDEX_BATCH_SIZE) => {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(10, Math.min(1000, parsed));
+};
 const createMeiliReindexState = () => ({
   running: false,
   lastStartedAt: null,
@@ -656,6 +658,7 @@ const createMeiliReindexState = () => ({
   totalProducts: null,
   totalIndexed: 0,
   progressPercent: 0,
+  configuredBatchSize: MEILI_REINDEX_BATCH_SIZE,
   processedBatches: 0,
   currentBatchNumber: 0,
   currentBatchSize: 0,
@@ -677,6 +680,7 @@ const sanitizeMeiliReindexState = (rawState) => {
     totalProducts: Number.isFinite(Number(rawState.totalProducts)) ? Number(rawState.totalProducts) : baseState.totalProducts,
     totalIndexed: Number.isFinite(Number(rawState.totalIndexed)) ? Number(rawState.totalIndexed) : 0,
     progressPercent: Number.isFinite(Number(rawState.progressPercent)) ? Number(rawState.progressPercent) : 0,
+    configuredBatchSize: normalizeMeiliReindexBatchSize(rawState.configuredBatchSize, baseState.configuredBatchSize),
     processedBatches: Number.isFinite(Number(rawState.processedBatches)) ? Number(rawState.processedBatches) : 0,
     currentBatchNumber: Number.isFinite(Number(rawState.currentBatchNumber)) ? Number(rawState.currentBatchNumber) : 0,
     currentBatchSize: Number.isFinite(Number(rawState.currentBatchSize)) ? Number(rawState.currentBatchSize) : 0,
@@ -1210,6 +1214,7 @@ const getMeiliReindexStatus = () => ({
   totalProducts: meiliReindexState.totalProducts,
   totalIndexed: meiliReindexState.totalIndexed,
   progressPercent: meiliReindexState.progressPercent,
+  configuredBatchSize: meiliReindexState.configuredBatchSize,
   processedBatches: meiliReindexState.processedBatches,
   currentBatchNumber: meiliReindexState.currentBatchNumber,
   currentBatchSize: meiliReindexState.currentBatchSize,
@@ -1219,8 +1224,19 @@ const getMeiliReindexStatus = () => ({
   currentBatchLastId: meiliReindexState.currentBatchLastId,
   lastIndexedId: meiliReindexState.lastIndexedId,
   lastIndexedAt: meiliReindexState.lastIndexedAt,
+  isComplete: (
+    Number(meiliReindexState.totalProducts) <= 0
+    || Number(meiliReindexState.totalIndexed) >= Number(meiliReindexState.totalProducts)
+  ),
   debugLog: meiliReindexState.debugLog
 });
+
+const isMeiliReindexComplete = (statusLike) => {
+  const totalProducts = Math.max(0, Number(statusLike?.totalProducts) || 0);
+  const totalIndexed = Math.max(0, Number(statusLike?.totalIndexed) || 0);
+  if (totalProducts === 0) return true;
+  return totalIndexed >= totalProducts;
+};
 
 const applyCompletedMeiliBatchProgress = (batchNumber, batchSize, lastBatchId) => {
   meiliReindexState.totalIndexed += batchSize;
@@ -1321,17 +1337,18 @@ const syncProductsToMeili = async (options = {}) => {
   const requestedResumeFromId = shouldReset ? 0 : Math.max(0, Number(options?.resumeFromId) || 0);
   const requestedResumeIndexed = shouldReset ? 0 : Math.max(0, Number(options?.resumeIndexed) || 0);
   const requestedResumeProcessedBatches = shouldReset ? 0 : Math.max(0, Number(options?.resumeProcessedBatches) || 0);
+  const pageSize = normalizeMeiliReindexBatchSize(options?.batchSize, MEILI_REINDEX_BATCH_SIZE);
   meiliReindexState.phase = shouldReset ? 'resetting_index' : 'ensuring_index_settings';
   meiliReindexState.reset = shouldReset;
+  meiliReindexState.configuredBatchSize = pageSize;
   persistMeiliReindexState();
   pushMeiliReindexDebug('Preparing Meilisearch index', {
     reset: shouldReset,
-    batchSize: MEILI_REINDEX_BATCH_SIZE
+    batchSize: pageSize
   });
   const index = shouldReset
     ? await resetMeiliIndex()
     : await ensureMeiliIndexSettings();
-  const pageSize = MEILI_REINDEX_BATCH_SIZE;
   meiliReindexState.phase = 'counting_products';
   meiliReindexState.totalProducts = await prisma.product.count({
     where: { status: { not: 'DELETED' } }
@@ -1380,6 +1397,7 @@ const syncProductsToMeili = async (options = {}) => {
   let lastId = shouldReset ? 0 : Math.max(0, Number(meiliReindexState.lastIndexedId) || 0);
   let totalIndexed = shouldReset ? 0 : Math.max(0, Number(meiliReindexState.totalIndexed) || 0);
   let processedBatches = shouldReset ? 0 : Math.max(0, Number(meiliReindexState.processedBatches) || 0);
+  let restartedForCoverageRecovery = false;
   while (true) {
     meiliReindexState.phase = 'loading_batch';
     persistMeiliReindexState();
@@ -1402,6 +1420,36 @@ const syncProductsToMeili = async (options = {}) => {
       }
     });
     if (batch.length === 0) {
+      if (!isMeiliReindexComplete(meiliReindexState)) {
+        if (!restartedForCoverageRecovery) {
+          restartedForCoverageRecovery = true;
+          const missingDocuments = Math.max(0, Number(meiliReindexState.totalProducts) - totalIndexed);
+          meiliReindexState.totalIndexed = 0;
+          meiliReindexState.processedBatches = 0;
+          meiliReindexState.currentBatchNumber = 0;
+          meiliReindexState.currentBatchSize = 0;
+          meiliReindexState.currentTaskUid = null;
+          meiliReindexState.currentBatchStartedAt = null;
+          meiliReindexState.currentBatchFirstId = 0;
+          meiliReindexState.currentBatchLastId = 0;
+          meiliReindexState.lastIndexedId = 0;
+          meiliReindexState.lastIndexedAt = null;
+          meiliReindexState.phase = 'recovering_incomplete_coverage';
+          refreshMeiliReindexProgress();
+          persistMeiliReindexState();
+          pushMeiliReindexDebug('Reached end of ID range before indexing all products; restarting full pass from the beginning', {
+            previousTotalIndexed: totalIndexed,
+            totalProducts: meiliReindexState.totalProducts,
+            missingDocuments,
+            previousLastIndexedId: lastId
+          });
+          lastId = 0;
+          totalIndexed = 0;
+          processedBatches = 0;
+          continue;
+        }
+        throw new Error(`Meili reindex did not reach full coverage after recovery pass (indexed ${totalIndexed} of ${meiliReindexState.totalProducts}, lastIndexedId ${lastId}).`);
+      }
       meiliReindexState.phase = 'finalizing';
       meiliReindexState.currentBatchSize = 0;
       meiliReindexState.currentTaskUid = null;
@@ -1502,6 +1550,7 @@ const syncProductsToMeili = async (options = {}) => {
 const startMeiliReindexInBackground = (options = {}) => {
   if (meiliReindexState.running) return false;
   const shouldReset = options?.reset === true;
+  const batchSize = normalizeMeiliReindexBatchSize(options?.batchSize, MEILI_REINDEX_BATCH_SIZE);
   const nextState = shouldReset
     ? createMeiliReindexState()
     : sanitizeMeiliReindexState(meiliReindexState);
@@ -1509,6 +1558,7 @@ const startMeiliReindexInBackground = (options = {}) => {
     running: true,
     phase: 'starting',
     reset: shouldReset,
+    configuredBatchSize: batchSize,
     lastFinishedAt: null,
     lastError: null,
     lastResult: null,
@@ -1517,7 +1567,7 @@ const startMeiliReindexInBackground = (options = {}) => {
   persistMeiliReindexState();
   pushMeiliReindexDebug('Background Meili reindex started', {
     reset: meiliReindexState.reset,
-    batchSize: MEILI_REINDEX_BATCH_SIZE
+    batchSize
   });
   void syncProductsToMeili(options)
     .then((result) => {
@@ -5576,28 +5626,12 @@ app.post('/api/search/image', async (req, res) => {
       throw new Error('Failed to generate embedding array');
     }
 
-    const vectorStr = `[${embedding.join(',')}]`;
     console.log(`[CLIP] Vector generated. Querying similar products...`);
     
     // Fallback if cached settings aren't defined here
     // Removed duplicate storeSettings declaration above
-    const rows = await prisma.$queryRawUnsafe(
-      `
-        SELECT "id", ("imageEmbedding" <=> $1::vector) AS distance
-        FROM "Product"
-        WHERE "imageEmbedding" IS NOT NULL
-          AND "status" = 'PUBLISHED'
-          AND "isActive" = true
-        ORDER BY "imageEmbedding" <=> $1::vector
-        LIMIT $2
-      `,
-      vectorStr,
-      limit
-    );
-
-    const ids = Array.isArray(rows)
-      ? rows.map((r) => Number(r?.id)).filter((id) => Number.isFinite(id))
-      : [];
+    const matches = await searchProductsByImageVector(prisma, embedding, limit);
+    const ids = matches.map((match) => match.id).filter((id) => Number.isFinite(id));
 
     if (ids.length === 0) {
       return res.json({ products: [], total: 0, engine: 'clip' });
@@ -5652,18 +5686,30 @@ app.post('/api/search/image', async (req, res) => {
     });
 
     const byId = new Map(productsFromDb.map((p) => [p.id, p]));
+    const matchById = new Map(matches.map((match) => [match.id, match]));
     const ranked = ids
-      .map((id) => byId.get(id))
-      .filter(Boolean)
-      .map((product) => {
+      .map((id) => {
+        const product = byId.get(id);
+        const match = matchById.get(id);
+        if (!product || !match) return null;
         const aiMetadata = parseAiMetadata(product.aiMetadata);
         const processed = applyDynamicPricingToProduct(product, shippingRates);
         const isRealBrand = typeof aiMetadata?.isRealBrand === 'boolean' ? aiMetadata.isRealBrand : null;
         const neworold = (product.neworold !== null && product.neworold !== undefined)
           ? product.neworold
           : extractNewOrOld(aiMetadata);
-        return { ...processed, aiMetadata, isRealBrand, neworold };
-      });
+        return {
+          ...processed,
+          aiMetadata,
+          isRealBrand,
+          neworold,
+          imageSimilarity: match.similarity,
+          matchedImageId: match.matchedImageId,
+          matchedImageUrl: match.matchedImageUrl,
+          matchedImageOrder: match.matchedImageOrder,
+        };
+      })
+      .filter(Boolean);
 
     return res.json({ products: ranked, total: ranked.length, engine: 'clip' });
   } catch (error) {
@@ -5771,24 +5817,43 @@ app.post('/api/search/image-crop', upload.single('image'), async (req, res) => {
 
 // Helper function for vector search (moved from /api/products)
 async function searchProductsByVector(vector, limit = 20) {
-  // Use pgvector or meilisearch
-  // Assuming pgvector for now based on previous context
-  const vectorStr = `[${vector.join(',')}]`;
-  const products = await prisma.$queryRawUnsafe(`
-    SELECT id, name, price, image, "basePriceIQD", 
-    1 - (("imageEmbedding" <=> '${vectorStr}')) as similarity
-    FROM "Product"
-    WHERE "imageEmbedding" IS NOT NULL
-    ORDER BY "imageEmbedding" <=> '${vectorStr}'
-    LIMIT ${limit}
-  `);
+  const matches = await searchProductsByImageVector(prisma, vector, limit);
+  const ids = matches.map((match) => match.id).filter((id) => Number.isFinite(id));
+  if (ids.length === 0) {
+    return { products: [] };
+  }
+
+  const products = await prisma.product.findMany({
+    where: {
+      id: { in: ids },
+      status: 'PUBLISHED',
+      isActive: true
+    },
+    select: {
+      id: true,
+      name: true,
+      price: true,
+      image: true,
+      basePriceIQD: true
+    }
+  });
+  const byId = new Map(products.map((product) => [product.id, product]));
   
   return {
-    products: products.map(p => ({
-      ...p,
-      id: Number(p.id),
-      similarity: Number(p.similarity)
-    }))
+    products: matches
+      .map((match) => {
+        const product = byId.get(match.id);
+        if (!product) return null;
+        return {
+          ...product,
+          id: Number(product.id),
+          similarity: Number(match.similarity),
+          matchedImageId: match.matchedImageId,
+          matchedImageUrl: match.matchedImageUrl,
+          matchedImageOrder: match.matchedImageOrder
+        };
+      })
+      .filter(Boolean)
   };
 }
 
@@ -8765,11 +8830,13 @@ app.post('/api/admin/search/reindex', authenticateToken, isAdmin, hasPermission(
     const resumeFromId = shouldReset ? 0 : Math.max(0, Number.parseInt(String(_req.query.resumeFromId || _req.body?.resumeFromId || '0'), 10) || 0);
     const resumeIndexed = shouldReset ? 0 : Math.max(0, Number.parseInt(String(_req.query.resumeIndexed || _req.body?.resumeIndexed || '0'), 10) || 0);
     const resumeProcessedBatches = shouldReset ? 0 : Math.max(0, Number.parseInt(String(_req.query.resumeProcessedBatches || _req.body?.resumeProcessedBatches || '0'), 10) || 0);
+    const batchSize = normalizeMeiliReindexBatchSize(_req.query.batchSize || _req.body?.batchSize, MEILI_REINDEX_BATCH_SIZE);
     const started = startMeiliReindexInBackground({
       reset: shouldReset,
       resumeFromId,
       resumeIndexed,
-      resumeProcessedBatches
+      resumeProcessedBatches,
+      batchSize
     });
     return res.json({
       ok: true,
