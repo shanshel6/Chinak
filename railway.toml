@@ -1,6 +1,6 @@
 [build]
 builder = "NIXPACKS"
-buildCommand = "npm install --no-audit --no-fund --legacy-peer-deps"
+buildCommand = "node -e \"const fs=require('fs');const cp=require('child_process');const npm=process.platform==='win32'?'npm.cmd':'npm';const run=(args,cwd='.')=>{const result=cp.spawnSync(npm,args,{cwd,stdio:'inherit',env:process.env});if(result.error){console.error(result.error.message||result.error);process.exit(1);}if((result.status??0)!==0){process.exit(result.status??1);}};const hasRoot=fs.existsSync('package.json');const hasServer=fs.existsSync('server/package.json');if(!hasRoot&&!hasServer){console.error('No package.json found in /app or /app/server');process.exit(1);}if(hasRoot){run(['install','--no-audit','--no-fund','--legacy-peer-deps']);}if(hasServer){run(['--prefix','server','install','--no-audit','--no-fund','--legacy-peer-deps']);}\""
 
 [deploy]
-startCommand = "npm run start"
+startCommand = "node -e \"const fs=require('fs');const cp=require('child_process');const npm=process.platform==='win32'?'npm.cmd':'npm';const hasServer=fs.existsSync('server/package.json');const hasRoot=fs.existsSync('package.json');let args;if(hasServer){args=['--prefix','server','run','start'];}else if(hasRoot){args=['run','start'];}else{console.error('No package.json found in /app or /app/server');process.exit(1);}const result=cp.spawnSync(npm,args,{stdio:'inherit',env:process.env});if(result.error){console.error(result.error.message||result.error);process.exit(1);}process.exit(result.status??0);\""

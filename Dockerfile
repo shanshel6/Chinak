@@ -2,7 +2,8 @@ FROM node:20
 
 WORKDIR /app
 
-# Copy backend package files and prisma schema
+# Copy root and backend manifests so Railway custom start commands can run from /app
+COPY package*.json ./
 COPY server/package*.json ./server/
 COPY server/prisma ./server/prisma
 
@@ -28,6 +29,10 @@ ENV npm_config_cache=/data/.npm
 # Railway will need a volume mounted at /app/models or /data
 ENV TRANSFORMERS_CACHE_DIR=/app/models
 
+# Install backend production dependencies during image build so runtime start does not
+# depend on Docker CMD execution.
+RUN cd server && npm install --omit=dev --omit=optional --no-audit --no-fund --legacy-peer-deps --verbose && npm rebuild sharp --verbose && npx prisma generate
+
 # Copy backend source files
 COPY server/ ./server/
 
@@ -37,4 +42,4 @@ ENV NODE_ENV=production
 EXPOSE 7860
 
 # Start the server
-CMD ["sh", "-c", "cd server && npm install --omit=dev --omit=optional --no-audit --no-fund --ignore-scripts --legacy-peer-deps --verbose && npm rebuild sharp --verbose && npx prisma generate && node index.js"]
+CMD ["npm", "run", "start"]
