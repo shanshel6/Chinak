@@ -1,0 +1,17 @@
+{
+  "result": {
+    "status": {
+      "data": "error",
+      "code": 205,
+      "msg": {
+        "data-error": "request successfully formed, but no results were found"
+      },
+      "endpoint": "item_detail",
+      "params": {
+        "itemIdStr": "Q0AA32NPsQtBJrGgwnduQBdcatQ-pnOBKXi2grqNy7Xhjn",
+        "itemId": "972120743942",
+        "areaId": ""
+      }
+    }
+  }
+}

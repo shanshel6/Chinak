@@ -100,8 +100,8 @@ model Product {
   scrapedReviews    Json?                  // New field for scraped reviews
   generated_options Json?                  // New field for generated options
   neworold          Boolean?
-  embedding         Unsupported("vector")?
-  imageEmbedding    Unsupported("vector")?
+  embedding         Unsupported("vector(512)")?
+  imageEmbedding    Unsupported("vector(512)")?
   domesticShippingFee Float?
   isAirRestricted   Boolean                @default(false)
   imagesChecked     Boolean?               @default(false) // Changed to optional to handle existing nulls
@@ -127,9 +127,12 @@ model ProductImage {
   url       String
   order     Int      @default(0)
   type      String   @default("GALLERY")
+  imageEmbedding Unsupported("vector(512)")?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId, order])
 }
 
 model ProductOption {

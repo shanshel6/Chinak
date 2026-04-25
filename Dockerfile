@@ -3,8 +3,8 @@ FROM node:20
 WORKDIR /app
 
 # Copy backend package files and prisma schema
-COPY server/package*.json ./
-COPY server/prisma ./prisma
+COPY server/package*.json ./server/
+COPY server/prisma ./server/prisma
 
 # Install production dependencies
 ENV PUPPETEER_SKIP_DOWNLOAD=true
@@ -29,7 +29,7 @@ ENV npm_config_cache=/data/.npm
 ENV TRANSFORMERS_CACHE_DIR=/app/models
 
 # Copy backend source files
-COPY server/ .
+COPY server/ ./server/
 
 # Hugging Face Spaces environment
 ENV PORT=7860
@@ -37,4 +37,4 @@ ENV NODE_ENV=production
 EXPOSE 7860
 
 # Start the server
-CMD ["sh", "-c", "npm install --omit=dev --omit=optional --no-audit --no-fund --ignore-scripts --legacy-peer-deps --verbose && npm rebuild sharp --verbose && npx prisma generate && node index.js"]
+CMD ["sh", "-c", "cd server && npm install --omit=dev --omit=optional --no-audit --no-fund --ignore-scripts --legacy-peer-deps --verbose && npm rebuild sharp --verbose && npx prisma generate && node index.js"]

@@ -1,0 +1,26 @@
+{
+  "isIndexing": false,
+  "totalDocuments": 7500,
+  "pendingTasks": 0,
+  "stats": {
+    "numberOfDocuments": 7500,
+    "rawDocumentDbSize": 5906432,
+    "avgDocumentSize": 779,
+    "isIndexing": false,
+    "numberOfEmbeddings": 0,
+    "numberOfEmbeddedDocuments": 0,
+    "fieldDistribution": {
+      "description": 7500,
+      "id": 7500,
+      "isActive": 7500,
+      "keywords": 7500,
+      "name": 7500,
+      "neworold": 7500,
+      "normalizedSearchText": 7500,
+      "price": 7500,
+      "searchText": 7500,
+      "status": 7500,
+      "updatedAt": 7500
+    }
+  }
+}

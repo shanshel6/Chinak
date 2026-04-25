@@ -59,7 +59,7 @@ server/test_chrome_data/
 server/*.traineddata
 server/*.png
 server/*.html
-server/*.json
+# server/*.json
 !server/package.json
 !server/package-lock.json
 !server/tsconfig.json

@@ -1326,7 +1326,7 @@ async function createBrowser() {
       '--excludeSwitches=enable-automation',
       '--disable-features=IsolateOrigins,site-per-process',
       '--incognito',
-      '--proxy-server=http://192.168.2.150:7890',
+      '--proxy-server=http://127.0.0.1:7890',
       '--disable-dev-shm-usage',
       '--disable-accelerated-2d-canvas',
       '--disable-gpu'

@@ -1,5 +1,5 @@
 import prisma from '../prismaClient.js';
-import { embedImage } from '../services/clipService.js';
+import { ensureProductImageEmbeddings, MAX_PRODUCT_IMAGE_EMBEDDINGS } from '../services/productImageVectorService.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
@@ -177,9 +177,19 @@ async function main() {
       const remaining = maxItems - processed;
       const take = Math.min(batchSize, remaining);
       
-      const whereClause = forceAll 
-        ? `WHERE id > ${lastId}` 
-        : `WHERE id > ${lastId} AND "imageEmbedding" IS NULL`;
+      const whereClause = forceAll
+        ? `WHERE id > ${lastId}`
+        : `WHERE id > ${lastId}
+            AND (
+              "imageEmbedding" IS NULL
+              OR EXISTS (
+                SELECT 1
+                FROM "ProductImage" pi
+                WHERE pi."productId" = "Product".id
+                  AND pi."order" < ${MAX_PRODUCT_IMAGE_EMBEDDINGS}
+                  AND pi."imageEmbedding" IS NULL
+              )
+            )`;
 
       console.log(`Fetching next batch with lastId=${lastId}...`);
       const rows = await withRetry(
@@ -228,34 +238,28 @@ async function main() {
         await Promise.all(chunk.map(async (product) => {
           try {
             const imageUrl = String(product.image || '').trim();
-            if (!imageUrl || imageUrl === 'null' || imageUrl === 'undefined') {
-              console.log(`Skipping product ${product.id}: No valid image URL`);
-              return;
-            }
-
-            // Pass null for product name to disable context-aware object detection (as requested)
-            const embedding = await embedImage(imageUrl, null);
-
-            if (embedding.every((v) => v === 0)) {
-              console.log(`Warning: Zero embedding for product ${product.id}. URL: ${imageUrl}`);
-              return;
-            }
-
-            const vectorStr = `[${embedding.join(',')}]`;
-            await withRetry(
-              () => prisma.$executeRawUnsafe(
-                `UPDATE "Product" SET "imageEmbedding" = $1::vector WHERE "id" = $2`,
-                vectorStr,
-                product.id
+            const result = await ensureProductImageEmbeddings({
+              prisma,
+              productId: product.id,
+              productName: null,
+              fallbackImageUrl: imageUrl,
+              runDb: (operation, label) => withRetry(
+                operation,
+                label,
+                retryCount,
+                updateTimeoutMs,
+                retryBackoffMs
               ),
-              `update product ${product.id}`,
-              retryCount,
-              updateTimeoutMs,
-              retryBackoffMs
-            );
+              logger: console,
+            });
+            if (result.embeddedCount === 0) {
+              console.log(`Skipping product ${product.id}: No embeddable product images`);
+              return;
+            }
+
             processed += 1;
             if (processed % 25 === 0) {
-              console.log(`Embedded ${processed} images (last product id=${product.id})`);
+              console.log(`Embedded ${processed} products (last product id=${product.id})`);
             }
             lastId = product.id;
             if (processed % progressEvery === 0) {
@@ -284,7 +288,7 @@ async function main() {
     }
 
     if (heartbeat) clearInterval(heartbeat);
-    console.log(`Done. Embedded ${processed} product images.`);
+    console.log(`Done. Embedded image vectors for ${processed} products.`);
   } finally {
     if (heartbeat) clearInterval(heartbeat);
     await prisma.$disconnect();

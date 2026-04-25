@@ -63,6 +63,8 @@ let odProcessorPromise = null;
 let odModelPromise = null;
 let zsProcessorPromise = null;
 let zsModelPromise = null;
+let zeroShotFailureCount = 0;
+let zeroShotDisabledForRun = String(process.env.CLIP_DISABLE_ZERO_SHOT || 'false').toLowerCase() === 'true';
 
 const getProcessor = async () => {
   ensureCacheDir();
@@ -204,11 +206,48 @@ function normalizeDetectionResult(result) {
   };
 }
 
+async function buildZeroShotInputs(processor, image, textQueries) {
+  const normalizedQueries = (Array.isArray(textQueries) ? textQueries : [textQueries])
+    .map((q) => String(q || '').trim())
+    .filter(Boolean);
+  if (normalizedQueries.length === 0) {
+    throw new Error('Missing zero-shot text query');
+  }
+
+  // Different transformers.js versions accept different batching/signatures.
+  // OWL-ViT often expects one list of queries per image (nested text array).
+  const inputBuilders = [
+    () => processor({ images: image, text: [normalizedQueries] }),
+    () => processor({ images: image, text: normalizedQueries }),
+    () => processor({ images: [image], text: [normalizedQueries] }),
+    () => processor({ images: [image], text: normalizedQueries }),
+    () => processor(normalizedQueries, image),
+    () => processor(image, normalizedQueries),
+  ];
+
+  let lastError = null;
+  for (const build of inputBuilders) {
+    try {
+      const inputs = await build();
+      if (inputs?.input_ids && inputs?.attention_mask) {
+        return inputs;
+      }
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  const message = lastError?.message
+    ? String(lastError.message)
+    : 'processor did not return input_ids/attention_mask';
+  throw new Error(`Failed to build zero-shot inputs: ${message}`);
+}
+
 async function detectAndCropObject(image, productName = null) {
   try {
     let result = null;
 
-    if (productName) {
+    if (productName && !zeroShotDisabledForRun) {
       // Use Zero-Shot Object Detection (OWL-ViT) with product name
       console.log(`[CLIP Service] Using Zero-Shot Object Detection for "${productName}"...`);
       try {
@@ -222,7 +261,7 @@ async function detectAndCropObject(image, productName = null) {
         // For now, use the full name but truncated to first few words to avoid noise.
         const textQueries = [productName.split(' ').slice(0, 4).join(' ')];
 
-        const zsInputs = await processor(image, textQueries);
+        const zsInputs = await buildZeroShotInputs(processor, image, textQueries);
         const { original_sizes } = zsInputs;
         const outputs = await model(zsInputs);
         
@@ -245,10 +284,20 @@ async function detectAndCropObject(image, productName = null) {
           .map(normalizeDetectionResult);
         if (normalizedResults.length > 0 && normalizedResults[0].boxes.length > 0) {
           result = normalizedResults[0];
+          zeroShotFailureCount = 0;
           console.log(`[CLIP Service] Zero-Shot found ${result.boxes.length} candidates for "${textQueries[0]}"`);
         }
       } catch (zsError) {
-        console.warn('[CLIP Service] Zero-Shot Detection failed:', zsError.message);
+        const zsMessage = String(zsError?.message || '');
+        zeroShotFailureCount += 1;
+        if (zsMessage.includes('undefined is not iterable')) {
+          zeroShotFailureCount = 3;
+        }
+        if (zeroShotFailureCount >= 3) {
+          zeroShotDisabledForRun = true;
+          console.warn('[CLIP Service] Zero-Shot disabled for this run after repeated preprocessing failures. Using DETR fallback.');
+        }
+        console.warn('[CLIP Service] Zero-Shot Detection failed:', zsMessage || zsError);
       }
     }
 
@@ -557,6 +606,20 @@ function getDetectionTargetSizes(image, original_sizes) {
   return [[Math.max(1, Math.round(image.height)), Math.max(1, Math.round(image.width))]];
 }
 
+function sanitizeImageUrl(input) {
+  if (typeof input !== 'string') return input;
+  let url = input.trim();
+  url = url.replace(/^[`'"]+|[`'"]+$/g, '');
+  if (url.startsWith('//')) url = `https:${url}`;
+  // Remove trailing punctuation frequently captured from script blobs/log formatting.
+  url = url.replace(/[)\]}",:;`]+$/g, '');
+  if (!/^https?:\/\//i.test(url)) return url;
+  // Drop query/hash to reduce malformed variants and dedupe better.
+  url = url.replace(/[#?].*$/, '');
+  url = url.replace(/_\d+x\d+.*$/, '').replace(/\.webp$/i, '');
+  return url;
+}
+
 async function fetchWithRetry(url, options = {}, retries = 3) {
   // Use axios first
   try {
@@ -617,7 +680,7 @@ export async function testCropObject(input) {
     let image;
     
     if (isUrl) {
-      let cleanInput = input;
+      let cleanInput = sanitizeImageUrl(input);
       if (cleanInput.endsWith('_.webp')) cleanInput = cleanInput.slice(0, -6);
       
       const response = await fetchWithRetry(cleanInput, {
@@ -653,7 +716,7 @@ export async function embedImageRaw(input) {
     let image;
 
     if (isUrl) {
-      let cleanInput = input;
+      let cleanInput = sanitizeImageUrl(input);
       if (cleanInput.endsWith('_.webp')) {
         cleanInput = cleanInput.slice(0, -6);
       }
@@ -724,7 +787,7 @@ export async function embedImage(input, productName = null) {
     if (isUrl) {
       // Clean URL: remove _.webp suffix if present to get original JPEG/PNG
       // This helps avoiding WebP format which Jimp doesn't support, and Sharp is broken on Windows/Node24
-      let cleanInput = input;
+      let cleanInput = sanitizeImageUrl(input);
       if (cleanInput.endsWith('_.webp')) {
         cleanInput = cleanInput.slice(0, -6);
       }
