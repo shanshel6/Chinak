@@ -1,5 +1,6 @@
 [build]
 builder = "NIXPACKS"
+buildCommand = "npm --prefix server install --no-audit --no-fund --legacy-peer-deps"
 
 [deploy]
-startCommand = "node -e \"const fs=require('fs');const cp=require('child_process');const hasRoot=fs.existsSync('package.json');const hasServer=fs.existsSync('server/package.json');const cwd=hasServer?'server':(hasRoot?'.':null);if(!cwd){console.error('No package.json found in /app or /app/server');process.exit(1);}const npm=process.platform==='win32'?'npm.cmd':'npm';const install=cp.spawnSync(npm,['install'],{cwd,stdio:'inherit'});if(install.error){console.error(install.error.message||install.error);process.exit(1);}if(install.status!==0)process.exit(install.status||1);const start=cp.spawnSync(npm,['run','start'],{cwd,stdio:'inherit',env:process.env});if(start.error){console.error(start.error.message||start.error);process.exit(1);}process.exit(start.status||0);\""
+startCommand = "npm --prefix server run start"
