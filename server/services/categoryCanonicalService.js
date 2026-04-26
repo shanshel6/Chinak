@@ -38,6 +38,35 @@ const loadCanonicalCategories = () => {
   return [];
 };
 
+const flattenCanonicalCategories = (nodes, list = [], parent = null, parentPath = []) => {
+  if (!Array.isArray(nodes)) return list;
+  for (const node of nodes) {
+    if (!node || !node.slug) continue;
+    const nameAr = node.name_ar || node.nameAr || node.name || node.slug;
+    const currentPath = [...parentPath, {
+      slug: node.slug,
+      name_ar: nameAr
+    }];
+    list.push({
+      slug: node.slug,
+      name_ar: nameAr,
+      aliases: Array.isArray(node.aliases) ? node.aliases : [],
+      parentSlug: parent?.slug || null,
+      parentNameAr: parent?.name_ar || null,
+      path: currentPath,
+      pathSlugs: currentPath.map((entry) => entry.slug),
+      pathNamesAr: currentPath.map((entry) => entry.name_ar)
+    });
+    const children = Array.isArray(node.children)
+      ? node.children
+      : (Array.isArray(node.subcategories) ? node.subcategories : []);
+    if (children.length > 0) {
+      flattenCanonicalCategories(children, list, { slug: node.slug, name_ar: nameAr }, currentPath);
+    }
+  }
+  return list;
+};
+
 const buildAliasLookup = (categories) => {
   const map = new Map();
   for (const category of categories) {
@@ -55,7 +84,7 @@ const buildAliasLookup = (categories) => {
   return map;
 };
 
-const canonicalCategories = loadCanonicalCategories();
+const canonicalCategories = flattenCanonicalCategories(loadCanonicalCategories());
 const aliasLookup = buildAliasLookup(canonicalCategories);
 
 const mapToCanonicalCategory = (input) => {

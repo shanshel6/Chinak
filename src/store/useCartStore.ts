@@ -76,6 +76,11 @@ interface CartState {
   getSubtotal: (method?: 'air' | 'sea') => number;
 }
 
+const isGuestCartSession = (token?: string | null) => {
+  const normalizedToken = String(token ?? '').trim();
+  return normalizedToken.startsWith('guest-token-');
+};
+
 export const useCartStore = create<CartState>()(
   persist(
     (set, get) => ({
@@ -112,8 +117,8 @@ export const useCartStore = create<CartState>()(
       },
 
       fetchCart: async (silent = false) => {
-        const token = localStorage.getItem('auth_token');
-        if (!token) {
+        const token = localStorage.getItem('auth_token')?.trim();
+        if (!token || isGuestCartSession(token)) {
           return; // Stay local if not logged in
         }
 
@@ -250,6 +255,10 @@ export const useCartStore = create<CartState>()(
           
           // Background sync
           try {
+            const token = localStorage.getItem('auth_token')?.trim();
+            if (!token || isGuestCartSession(token)) {
+              return;
+            }
             addToCart(productId, quantity, variantId, selectedOptions, shippingMethod).then(response => {
               if (response && response.id) {
                 // Update the local item with the server ID to keep them in sync
@@ -275,7 +284,9 @@ export const useCartStore = create<CartState>()(
          });
  
          // Background sync
+         const token = localStorage.getItem('auth_token')?.trim();
          if (typeof itemId === 'string' && itemId.startsWith('local-')) return;
+         if (!token || isGuestCartSession(token)) return;
  
          try {
            set((state) => ({ 
@@ -303,7 +314,9 @@ export const useCartStore = create<CartState>()(
          });
  
          // Background sync
+         const token = localStorage.getItem('auth_token')?.trim();
          if (typeof itemId === 'string' && itemId.startsWith('local-')) return;
+         if (!token || isGuestCartSession(token)) return;
  
          try {
            removeFromCart(itemId).catch(() => {});
@@ -318,6 +331,8 @@ export const useCartStore = create<CartState>()(
  
          // Background sync
          try {
+           const token = localStorage.getItem('auth_token')?.trim();
+           if (!token || isGuestCartSession(token)) return;
            const serverIds = itemIds.filter(id => !(typeof id === 'string' && id.startsWith('local-')));
            if (serverIds.length > 0) {
              Promise.all(serverIds.map(id => removeFromCart(id))).catch(() => {});

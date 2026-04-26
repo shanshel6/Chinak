@@ -21,7 +21,6 @@ import { createServer } from 'http';
 import { Server } from 'socket.io';
 import path from 'path';
 import axios from 'axios';
-import { MeiliSearch } from 'meilisearch';
 import { fileURLToPath } from 'url';
 import prisma from './prismaClient.js';
 import { processProductAI, processProductEmbedding, hybridSearch, estimateProductPhysicals, normalizeArabic } from './services/aiService.js';
@@ -83,6 +82,9 @@ const ENABLE_CLIP_WARMUP = ['true', '1', 'yes', 'on'].includes(String(process.en
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const categorySearchIndex = buildCategoryIndex();
+const categorySearchList = Array.isArray(categorySearchIndex?.list) ? categorySearchIndex.list : [];
+const categorySearchMap = categorySearchIndex?.map instanceof Map ? categorySearchIndex.map : new Map();
 
 const { PrismaClient } = pkg;
 // Note: We use the singleton 'prisma' from prismaClient.js instead of creating new instances
@@ -629,114 +631,6 @@ const inferProductCondition = (productLike) => {
   return null;
 };
 
-const MEILI_INDEX_NAME = process.env.MEILI_INDEX_NAME || 'products';
-const MEILI_HOST = process.env.MEILI_HOST || '';
-const MEILI_ADMIN_API_KEY = process.env.MEILI_ADMIN_API_KEY || process.env.MEILI_MASTER_KEY || '';
-const MEILI_CLIENT_REQUEST_TIMEOUT_MS = Math.max(30000, Number.parseInt(String(process.env.MEILI_CLIENT_REQUEST_TIMEOUT_MS || ''), 10) || 900000);
-const MEILI_SEARCH_TIMEOUT_MS = Math.max(1000, Number.parseInt(String(process.env.MEILI_SEARCH_TIMEOUT_MS || ''), 10) || 8000);
-const MEILI_TASK_TIMEOUT_MS = Math.max(5000, Number.parseInt(String(process.env.MEILI_TASK_TIMEOUT_MS || ''), 10) || 600000);
-const MEILI_TASK_POLL_INTERVAL_MS = Math.max(100, Number.parseInt(String(process.env.MEILI_TASK_POLL_INTERVAL_MS || ''), 10) || 1000);
-const MEILI_TASK_MAX_WAIT_MS = Math.max(0, Number.parseInt(String(process.env.MEILI_TASK_MAX_WAIT_MS || ''), 10) || 0);
-const MEILI_REINDEX_STALE_TASK_MS = Math.max(60000, Number.parseInt(String(process.env.MEILI_REINDEX_STALE_TASK_MS || ''), 10) || 45 * 60 * 1000);
-const MEILI_REINDEX_BATCH_SIZE = Math.max(5, Math.min(1000, Number.parseInt(String(process.env.MEILI_REINDEX_BATCH_SIZE || ''), 10) || 5));
-const MEILI_REINDEX_DEBUG_LOG_LIMIT = Math.max(10, Math.min(200, Number.parseInt(String(process.env.MEILI_REINDEX_DEBUG_LOG_LIMIT || ''), 10) || 60));
-const MEILI_REINDEX_STATE_PATH = path.join(__dirname, 'meili-reindex-state.json');
-let meiliClientSingleton = null;
-let meiliIndexReadyPromise = null;
-const normalizeMeiliReindexBatchSize = (value, fallback = MEILI_REINDEX_BATCH_SIZE) => {
-  const parsed = Number.parseInt(String(value ?? ''), 10);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.max(5, Math.min(1000, parsed));
-};
-const createMeiliReindexState = () => ({
-  running: false,
-  lastStartedAt: null,
-  lastFinishedAt: null,
-  lastError: null,
-  lastResult: null,
-  phase: 'idle',
-  reset: false,
-  totalProducts: null,
-  totalIndexed: 0,
-  progressPercent: 0,
-  configuredBatchSize: MEILI_REINDEX_BATCH_SIZE,
-  processedBatches: 0,
-  currentBatchNumber: 0,
-  currentBatchSize: 0,
-  currentBatchStartedAt: null,
-  currentTaskUid: null,
-  currentBatchFirstId: 0,
-  currentBatchLastId: 0,
-  lastIndexedId: 0,
-  lastIndexedAt: null,
-  debugLog: []
-});
-const sanitizeMeiliReindexState = (rawState) => {
-  const baseState = createMeiliReindexState();
-  if (!rawState || typeof rawState !== 'object') return baseState;
-  return {
-    ...baseState,
-    ...rawState,
-    running: false,
-    totalProducts: Number.isFinite(Number(rawState.totalProducts)) ? Number(rawState.totalProducts) : baseState.totalProducts,
-    totalIndexed: Number.isFinite(Number(rawState.totalIndexed)) ? Number(rawState.totalIndexed) : 0,
-    progressPercent: Number.isFinite(Number(rawState.progressPercent)) ? Number(rawState.progressPercent) : 0,
-    configuredBatchSize: normalizeMeiliReindexBatchSize(rawState.configuredBatchSize, baseState.configuredBatchSize),
-    processedBatches: Number.isFinite(Number(rawState.processedBatches)) ? Number(rawState.processedBatches) : 0,
-    currentBatchNumber: Number.isFinite(Number(rawState.currentBatchNumber)) ? Number(rawState.currentBatchNumber) : 0,
-    currentBatchSize: Number.isFinite(Number(rawState.currentBatchSize)) ? Number(rawState.currentBatchSize) : 0,
-    currentTaskUid: rawState.currentTaskUid ?? null,
-    currentBatchFirstId: Number.isFinite(Number(rawState.currentBatchFirstId)) ? Number(rawState.currentBatchFirstId) : 0,
-    currentBatchLastId: Number.isFinite(Number(rawState.currentBatchLastId)) ? Number(rawState.currentBatchLastId) : 0,
-    lastIndexedId: Number.isFinite(Number(rawState.lastIndexedId)) ? Number(rawState.lastIndexedId) : 0,
-    debugLog: Array.isArray(rawState.debugLog) ? rawState.debugLog.slice(-MEILI_REINDEX_DEBUG_LOG_LIMIT) : []
-  };
-};
-const loadPersistedMeiliReindexState = () => {
-  try {
-    if (!fs.existsSync(MEILI_REINDEX_STATE_PATH)) return createMeiliReindexState();
-    const raw = fs.readFileSync(MEILI_REINDEX_STATE_PATH, 'utf8');
-    return sanitizeMeiliReindexState(JSON.parse(raw));
-  } catch {
-    return createMeiliReindexState();
-  }
-};
-const meiliReindexState = loadPersistedMeiliReindexState();
-const persistMeiliReindexState = () => {
-  try {
-    fs.writeFileSync(MEILI_REINDEX_STATE_PATH, JSON.stringify({
-      ...meiliReindexState,
-      running: false
-    }, null, 2));
-  } catch (error) {
-    console.warn('[Meili] failed to persist reindex state:', error?.message || error);
-  }
-};
-
-const pushMeiliReindexDebug = (message, data = null) => {
-  const entry = {
-    at: new Date().toISOString(),
-    message
-  };
-  if (data && typeof data === 'object') entry.data = data;
-  meiliReindexState.debugLog = [...meiliReindexState.debugLog, entry].slice(-MEILI_REINDEX_DEBUG_LOG_LIMIT);
-  persistMeiliReindexState();
-  return entry;
-};
-
-const refreshMeiliReindexProgress = () => {
-  if (Number(meiliReindexState.totalProducts) > 0) {
-    meiliReindexState.progressPercent = Number(((meiliReindexState.totalIndexed / meiliReindexState.totalProducts) * 100).toFixed(1));
-    return;
-  }
-  meiliReindexState.progressPercent = 0;
-};
-
-const parseIsoTimestamp = (value) => {
-  if (!value) return null;
-  const parsed = Date.parse(String(value));
-  return Number.isNaN(parsed) ? null : parsed;
-};
 
 const normalizeSearchText = (value) => {
   if (!value) return '';
@@ -752,6 +646,81 @@ const normalizeSearchText = (value) => {
     .replace(/[^\p{L}\p{N}\s]/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+};
+
+const splitCategoryPath = (value) => String(value || '')
+  .split('>')
+  .map((segment) => String(segment || '').trim())
+  .filter(Boolean);
+
+const categorySuggestionIndex = categorySearchList.map((entry) => {
+  const pathSegmentsAr = splitCategoryPath(entry?.pathAr);
+  const pathSegmentsEn = splitCategoryPath(entry?.pathEn);
+  const aliases = Array.isArray(entry?.aliases) ? entry.aliases : [];
+  
+  const candidates = [
+    { raw: entry?.nameAr || '', isLeafName: true, isArabic: true },
+    { raw: entry?.pathAr || '', isLeafName: false, isArabic: true },
+    { raw: entry?.nameEn || '', isLeafName: true, isArabic: false },
+    { raw: entry?.pathEn || '', isLeafName: false, isArabic: false },
+    ...pathSegmentsAr.map((segment, index) => ({ raw: segment, isLeafName: index === pathSegmentsAr.length - 1, isArabic: true })),
+    ...pathSegmentsEn.map((segment, index) => ({ raw: segment, isLeafName: index === pathSegmentsEn.length - 1, isArabic: false })),
+    ...aliases.map(alias => ({ raw: alias, isLeafName: true, isArabic: /[\u0600-\u06FF]/.test(alias) }))
+  ]
+    .map((candidate) => {
+      const normalized = normalizeSearchText(candidate.raw);
+      return normalized
+        ? { ...candidate, normalized, compact: normalized.replace(/\s+/g, '') }
+        : null;
+    })
+    .filter(Boolean);
+  return {
+    ...entry,
+    pathSegmentsAr,
+    pathSegmentsEn,
+    candidates
+  };
+});
+
+const scoreCategorySuggestion = (entry, query) => {
+  const normalizedQuery = normalizeSearchText(query);
+  if (!normalizedQuery) return { score: 0, matchedText: '' };
+  const compactQuery = normalizedQuery.replace(/\s+/g, '');
+  const pathDepth = Math.max(
+    Array.isArray(entry?.pathSegmentsAr) ? entry.pathSegmentsAr.length : 0,
+    Array.isArray(entry?.pathSegmentsEn) ? entry.pathSegmentsEn.length : 0,
+    1
+  );
+  let bestScore = 0;
+  let matchedText = entry?.nameAr || entry?.pathAr || entry?.nameEn || entry?.pathEn || '';
+
+  for (const candidate of entry?.candidates || []) {
+    const normalizedCandidate = candidate.normalized;
+    const compactCandidate = candidate.compact;
+    if (!normalizedCandidate || !compactCandidate) continue;
+
+    let score = 0;
+    if (normalizedCandidate === normalizedQuery || compactCandidate === compactQuery) {
+      score = 1000;
+    } else if (normalizedCandidate.startsWith(normalizedQuery) || compactCandidate.startsWith(compactQuery)) {
+      score = 820;
+    } else if (normalizedCandidate.includes(normalizedQuery) || compactCandidate.includes(compactQuery)) {
+      score = 520;
+    }
+
+    if (!score) continue;
+    if (candidate.isLeafName) score += 40;
+    if (candidate.isArabic) score += 20;
+    score += Math.min(normalizedQuery.length, 24);
+    score += Math.min((pathDepth - 1) * 18, 72);
+
+    if (score > bestScore) {
+      bestScore = score;
+      matchedText = candidate.raw;
+    }
+  }
+
+  return { score: bestScore, matchedText };
 };
 
 const sanitizeFeaturedSearchSentences = (input) => {
@@ -881,7 +850,7 @@ const ARABIC_SYNONYM_GROUPS = [
   ['مستعمل', 'استخدام خفيف', 'used', 'second hand', 'secondhand']
 ];
 
-const buildMeiliSynonyms = (groups) => {
+const buildTextSearchSynonyms = (groups) => {
   const synonymMap = {};
   for (const group of groups) {
     const expanded = new Set();
@@ -901,7 +870,7 @@ const buildMeiliSynonyms = (groups) => {
   return synonymMap;
 };
 
-const MEILI_ARABIC_SYNONYMS = buildMeiliSynonyms(ARABIC_SYNONYM_GROUPS);
+const ARABIC_TEXT_SYNONYMS = buildTextSearchSynonyms(ARABIC_SYNONYM_GROUPS);
 
 const IRAQI_SLANG_NORMALIZATION_MAP = {
   كنتور: ['دولاب', 'خزانة', 'خزانه', 'دولاب ملابس', 'خزانة ملابس'],
@@ -935,7 +904,7 @@ const expandSearchTermsForIraqiSlang = (query) => {
         terms.add(normalizeSearchText(cleanCandidate));
       }
     }
-    const synonymMapped = MEILI_ARABIC_SYNONYMS[key];
+    const synonymMapped = ARABIC_TEXT_SYNONYMS[key];
     if (Array.isArray(synonymMapped)) {
       for (const candidate of synonymMapped) {
         const cleanCandidate = String(candidate || '').trim();
@@ -1069,601 +1038,6 @@ const buildSearchDocument = (product) => {
   };
 };
 
-const getMeiliClient = () => {
-  if (!MEILI_HOST || !MEILI_ADMIN_API_KEY) {
-    const configError = new Error('Meilisearch is not configured. Set MEILI_HOST and MEILI_ADMIN_API_KEY.');
-    configError.status = 503;
-    throw configError;
-  }
-  if (!meiliClientSingleton) {
-    meiliClientSingleton = new MeiliSearch({
-      host: MEILI_HOST,
-      apiKey: MEILI_ADMIN_API_KEY,
-      timeout: MEILI_CLIENT_REQUEST_TIMEOUT_MS,
-      defaultWaitOptions: {
-        timeout: MEILI_TASK_TIMEOUT_MS,
-        interval: MEILI_TASK_POLL_INTERVAL_MS
-      }
-    });
-  }
-  return meiliClientSingleton;
-};
-
-const getMeiliIndex = async () => {
-  const client = getMeiliClient();
-  const index = client.index(MEILI_INDEX_NAME);
-  try {
-    await index.getRawInfo();
-  } catch (_error) {
-    await client.createIndex(MEILI_INDEX_NAME, { primaryKey: 'id' });
-  }
-  return client.index(MEILI_INDEX_NAME);
-};
-
-const resetMeiliIndex = async () => {
-  const client = getMeiliClient();
-  try {
-    await client.deleteIndex(MEILI_INDEX_NAME);
-  } catch (error) {
-    const message = String(error?.message || '');
-    const statusCode = Number(error?.cause?.response?.status || error?.response?.status || 0);
-    if (statusCode !== 404 && !message.includes('index_not_found') && !message.includes('not found')) {
-      throw error;
-    }
-  }
-  meiliIndexReadyPromise = null;
-  return ensureMeiliIndexSettings({ forceRefresh: true });
-};
-
-const applyMeiliIndexSettings = async (index) => {
-  const settingsTasks = await Promise.all([
-    index.updateSearchableAttributes(['name', 'aiTitle', 'originalTitle', 'searchText', 'normalizedSearchText', 'description', 'keywords']),
-    index.updateFilterableAttributes(['status', 'isActive', 'neworold', 'price']),
-    index.updateSortableAttributes(['isFeatured', 'price', 'updatedAt']),
-    index.updateSynonyms(MEILI_ARABIC_SYNONYMS),
-    index.updateRankingRules([
-      'words',
-      'typo',
-      'proximity',
-      'attribute',
-      'sort',
-      'exactness'
-    ])
-  ]);
-  for (const task of settingsTasks) {
-    if (task?.taskUid != null) {
-      await waitForMeiliTask(index, task.taskUid);
-    }
-  }
-  return index;
-};
-
-const ensureMeiliIndexSettings = async ({ forceRefresh = false } = {}) => {
-  if (forceRefresh) {
-    meiliIndexReadyPromise = null;
-  }
-  if (!meiliIndexReadyPromise) {
-    meiliIndexReadyPromise = (async () => {
-      const index = await getMeiliIndex();
-      await applyMeiliIndexSettings(index);
-      return index;
-    })().catch((error) => {
-      meiliIndexReadyPromise = null;
-      throw error;
-    });
-  }
-  return meiliIndexReadyPromise;
-};
-
-const getMeiliSearchIndex = async () => {
-  const index = await getMeiliIndex();
-  if (meiliIndexReadyPromise) {
-    await meiliIndexReadyPromise;
-  }
-  return index;
-};
-
-const getMeiliTaskErrorMessage = (task) => {
-  const candidate = task?.error?.message
-    || task?.error?.code
-    || task?.details?.error
-    || task?.details?.message
-    || task?.error;
-  if (!candidate) return 'Unknown Meilisearch task error';
-  return String(candidate);
-};
-
-const waitForMeiliTask = async (index, taskUid, options = {}) => {
-  const startedAt = Number.isFinite(Number(options.startedAtMs)) ? Number(options.startedAtMs) : Date.now();
-  const maxWaitMs = Number.isFinite(Number(options.maxWaitMs)) ? Number(options.maxWaitMs) : MEILI_TASK_MAX_WAIT_MS;
-  try {
-    return await index.waitForTask(taskUid, {
-      timeout: MEILI_TASK_TIMEOUT_MS,
-      interval: MEILI_TASK_POLL_INTERVAL_MS
-    });
-  } catch (error) {
-    const message = String(error?.message || error || '');
-    if (!message.toLowerCase().includes('timeout')) {
-      throw error;
-    }
-  }
-
-  while (true) {
-    const task = await index.getTask(taskUid);
-    const status = String(task?.status || '').toLowerCase();
-    if (status === 'succeeded') return task;
-    if (status === 'failed' || status === 'canceled') {
-      throw new Error(`Meilisearch task ${taskUid} ${status}: ${getMeiliTaskErrorMessage(task)}`);
-    }
-
-    if (maxWaitMs > 0 && Date.now() - startedAt > maxWaitMs) {
-      throw new Error(`Meilisearch task ${taskUid} exceeded max wait ${maxWaitMs}ms while status=${status || 'unknown'}`);
-    }
-
-    await sleep(MEILI_TASK_POLL_INTERVAL_MS);
-  }
-};
-
-const getMeiliReindexStatus = () => ({
-  running: meiliReindexState.running,
-  lastStartedAt: meiliReindexState.lastStartedAt,
-  lastFinishedAt: meiliReindexState.lastFinishedAt,
-  lastError: meiliReindexState.lastError,
-  lastResult: meiliReindexState.lastResult,
-  phase: meiliReindexState.phase,
-  reset: meiliReindexState.reset,
-  totalProducts: meiliReindexState.totalProducts,
-  totalIndexed: meiliReindexState.totalIndexed,
-  progressPercent: meiliReindexState.progressPercent,
-  configuredBatchSize: meiliReindexState.configuredBatchSize,
-  processedBatches: meiliReindexState.processedBatches,
-  currentBatchNumber: meiliReindexState.currentBatchNumber,
-  currentBatchSize: meiliReindexState.currentBatchSize,
-  currentBatchStartedAt: meiliReindexState.currentBatchStartedAt,
-  currentTaskUid: meiliReindexState.currentTaskUid,
-  currentBatchFirstId: meiliReindexState.currentBatchFirstId,
-  currentBatchLastId: meiliReindexState.currentBatchLastId,
-  lastIndexedId: meiliReindexState.lastIndexedId,
-  lastIndexedAt: meiliReindexState.lastIndexedAt,
-  isComplete: (
-    Number(meiliReindexState.totalProducts) <= 0
-    || Number(meiliReindexState.totalIndexed) >= Number(meiliReindexState.totalProducts)
-  ),
-  debugLog: meiliReindexState.debugLog
-});
-
-const isMeiliReindexComplete = (statusLike) => {
-  const totalProducts = Math.max(0, Number(statusLike?.totalProducts) || 0);
-  const totalIndexed = Math.max(0, Number(statusLike?.totalIndexed) || 0);
-  if (totalProducts === 0) return true;
-  return totalIndexed >= totalProducts;
-};
-
-const applyCompletedMeiliBatchProgress = (batchNumber, batchSize, lastBatchId) => {
-  meiliReindexState.totalIndexed += batchSize;
-  meiliReindexState.processedBatches = Math.max(meiliReindexState.processedBatches, batchNumber);
-  meiliReindexState.lastIndexedId = lastBatchId;
-  meiliReindexState.lastIndexedAt = new Date().toISOString();
-  meiliReindexState.currentTaskUid = null;
-  meiliReindexState.currentBatchStartedAt = null;
-  meiliReindexState.currentBatchFirstId = 0;
-  meiliReindexState.currentBatchLastId = 0;
-  meiliReindexState.phase = 'batch_completed';
-  refreshMeiliReindexProgress();
-  persistMeiliReindexState();
-};
-
-const resumePendingMeiliBatchIfNeeded = async (index) => {
-  const pendingTaskUid = meiliReindexState.currentTaskUid;
-  const pendingLastId = meiliReindexState.currentBatchLastId;
-  const pendingBatchSize = meiliReindexState.currentBatchSize;
-  const pendingBatchNumber = meiliReindexState.currentBatchNumber;
-  const pendingStartedAtMs = parseIsoTimestamp(meiliReindexState.currentBatchStartedAt);
-  if (!pendingTaskUid || !pendingLastId || pendingLastId <= meiliReindexState.lastIndexedId) return;
-  meiliReindexState.phase = 'resuming_meili_task';
-  persistMeiliReindexState();
-  pushMeiliReindexDebug('Resuming pending Meilisearch task', {
-    taskUid: pendingTaskUid,
-    batchNumber: pendingBatchNumber,
-    batchSize: pendingBatchSize,
-    firstId: meiliReindexState.currentBatchFirstId,
-    lastId: pendingLastId
-  });
-  let task = null;
-  try {
-    task = await index.getTask(pendingTaskUid);
-  } catch (error) {
-    pushMeiliReindexDebug('Could not fetch pending Meilisearch task status, will re-submit batch', {
-      taskUid: pendingTaskUid,
-      error: error?.message || String(error)
-    });
-    meiliReindexState.currentTaskUid = null;
-    meiliReindexState.currentBatchStartedAt = null;
-    meiliReindexState.currentBatchFirstId = 0;
-    meiliReindexState.currentBatchLastId = 0;
-    persistMeiliReindexState();
-    return;
-  }
-  const status = String(task?.status || '').toLowerCase();
-  const pendingElapsedMs = pendingStartedAtMs ? Date.now() - pendingStartedAtMs : 0;
-  if (status !== 'succeeded' && status !== 'failed' && status !== 'canceled' && pendingElapsedMs > MEILI_REINDEX_STALE_TASK_MS) {
-    pushMeiliReindexDebug('Pending Meilisearch task appears stale, re-submitting batch', {
-      taskUid: pendingTaskUid,
-      status: status || 'unknown',
-      elapsedMs: pendingElapsedMs,
-      staleAfterMs: MEILI_REINDEX_STALE_TASK_MS,
-      batchNumber: pendingBatchNumber,
-      firstId: meiliReindexState.currentBatchFirstId,
-      lastId: pendingLastId
-    });
-    meiliReindexState.currentTaskUid = null;
-    meiliReindexState.currentBatchStartedAt = null;
-    meiliReindexState.currentBatchFirstId = 0;
-    meiliReindexState.currentBatchLastId = 0;
-    persistMeiliReindexState();
-    return;
-  }
-  if (status === 'failed' || status === 'canceled') {
-    pushMeiliReindexDebug('Pending Meilisearch task did not complete, re-submitting batch', {
-      taskUid: pendingTaskUid,
-      status,
-      error: getMeiliTaskErrorMessage(task)
-    });
-    meiliReindexState.currentTaskUid = null;
-    meiliReindexState.currentBatchStartedAt = null;
-    meiliReindexState.currentBatchFirstId = 0;
-    meiliReindexState.currentBatchLastId = 0;
-    persistMeiliReindexState();
-    return;
-  }
-  if (status !== 'succeeded') {
-    await waitForMeiliTask(index, pendingTaskUid, {
-      startedAtMs: pendingStartedAtMs,
-      maxWaitMs: MEILI_REINDEX_STALE_TASK_MS
-    });
-  }
-  applyCompletedMeiliBatchProgress(pendingBatchNumber, pendingBatchSize, pendingLastId);
-  pushMeiliReindexDebug('Recovered completed Meilisearch batch after retry', {
-    batchNumber: pendingBatchNumber,
-    batchSize: pendingBatchSize,
-    totalIndexed: meiliReindexState.totalIndexed,
-    totalProducts: meiliReindexState.totalProducts,
-    progressPercent: meiliReindexState.progressPercent,
-    lastIndexedId: pendingLastId
-  });
-};
-
-const syncProductsToMeili = async (options = {}) => {
-  const shouldReset = options?.reset === true;
-  const requestedResumeFromId = shouldReset ? 0 : Math.max(0, Number(options?.resumeFromId) || 0);
-  const requestedResumeIndexed = shouldReset ? 0 : Math.max(0, Number(options?.resumeIndexed) || 0);
-  const requestedResumeProcessedBatches = shouldReset ? 0 : Math.max(0, Number(options?.resumeProcessedBatches) || 0);
-  const pageSize = normalizeMeiliReindexBatchSize(options?.batchSize, MEILI_REINDEX_BATCH_SIZE);
-  meiliReindexState.phase = shouldReset ? 'resetting_index' : 'ensuring_index_settings';
-  meiliReindexState.reset = shouldReset;
-  meiliReindexState.configuredBatchSize = pageSize;
-  persistMeiliReindexState();
-  pushMeiliReindexDebug('Preparing Meilisearch index', {
-    reset: shouldReset,
-    batchSize: pageSize
-  });
-  const index = shouldReset
-    ? await resetMeiliIndex()
-    : await ensureMeiliIndexSettings();
-  meiliReindexState.phase = 'counting_products';
-  meiliReindexState.totalProducts = await prisma.product.count({
-    where: { status: { not: 'DELETED' } }
-  });
-  refreshMeiliReindexProgress();
-  persistMeiliReindexState();
-  pushMeiliReindexDebug('Loaded product count for reindex', {
-    totalProducts: meiliReindexState.totalProducts,
-    batchSize: pageSize
-  });
-  if (!shouldReset && requestedResumeFromId > 0) {
-    meiliReindexState.totalIndexed = requestedResumeIndexed;
-    meiliReindexState.processedBatches = requestedResumeProcessedBatches;
-    meiliReindexState.currentBatchNumber = requestedResumeProcessedBatches + 1;
-    meiliReindexState.currentBatchSize = 0;
-    meiliReindexState.currentTaskUid = null;
-    meiliReindexState.currentBatchStartedAt = null;
-    meiliReindexState.currentBatchFirstId = 0;
-    meiliReindexState.currentBatchLastId = 0;
-    meiliReindexState.lastIndexedId = requestedResumeFromId;
-    meiliReindexState.lastIndexedAt = new Date().toISOString();
-    meiliReindexState.phase = 'resuming_from_checkpoint';
-    refreshMeiliReindexProgress();
-    persistMeiliReindexState();
-    pushMeiliReindexDebug('Resuming Meilisearch reindex from checkpoint', {
-      resumeFromId: requestedResumeFromId,
-      totalIndexed: requestedResumeIndexed,
-      processedBatches: requestedResumeProcessedBatches
-    });
-  } else if (!shouldReset) {
-    await resumePendingMeiliBatchIfNeeded(index);
-  } else {
-    meiliReindexState.totalIndexed = 0;
-    meiliReindexState.processedBatches = 0;
-    meiliReindexState.currentBatchNumber = 0;
-    meiliReindexState.currentBatchSize = 0;
-    meiliReindexState.currentTaskUid = null;
-    meiliReindexState.currentBatchStartedAt = null;
-    meiliReindexState.currentBatchFirstId = 0;
-    meiliReindexState.currentBatchLastId = 0;
-    meiliReindexState.lastIndexedId = 0;
-    meiliReindexState.lastIndexedAt = null;
-    refreshMeiliReindexProgress();
-    persistMeiliReindexState();
-  }
-  let lastId = shouldReset ? 0 : Math.max(0, Number(meiliReindexState.lastIndexedId) || 0);
-  let totalIndexed = shouldReset ? 0 : Math.max(0, Number(meiliReindexState.totalIndexed) || 0);
-  let processedBatches = shouldReset ? 0 : Math.max(0, Number(meiliReindexState.processedBatches) || 0);
-  let restartedForCoverageRecovery = false;
-  while (true) {
-    meiliReindexState.phase = 'loading_batch';
-    persistMeiliReindexState();
-    const batch = await prisma.product.findMany({
-      where: { id: { gt: lastId }, status: { not: 'DELETED' } },
-      orderBy: { id: 'asc' },
-      take: pageSize,
-      select: {
-        id: true,
-        name: true,
-        keywords: true,
-        featuredSearchSentences: true,
-        aiMetadata: true,
-        price: true,
-        status: true,
-        isActive: true,
-        isFeatured: true,
-        neworold: true,
-        updatedAt: true
-      }
-    });
-    if (batch.length === 0) {
-      if (!isMeiliReindexComplete(meiliReindexState)) {
-        if (!restartedForCoverageRecovery) {
-          restartedForCoverageRecovery = true;
-          const missingDocuments = Math.max(0, Number(meiliReindexState.totalProducts) - totalIndexed);
-          meiliReindexState.totalIndexed = 0;
-          meiliReindexState.processedBatches = 0;
-          meiliReindexState.currentBatchNumber = 0;
-          meiliReindexState.currentBatchSize = 0;
-          meiliReindexState.currentTaskUid = null;
-          meiliReindexState.currentBatchStartedAt = null;
-          meiliReindexState.currentBatchFirstId = 0;
-          meiliReindexState.currentBatchLastId = 0;
-          meiliReindexState.lastIndexedId = 0;
-          meiliReindexState.lastIndexedAt = null;
-          meiliReindexState.phase = 'recovering_incomplete_coverage';
-          refreshMeiliReindexProgress();
-          persistMeiliReindexState();
-          pushMeiliReindexDebug('Reached end of ID range before indexing all products; restarting full pass from the beginning', {
-            previousTotalIndexed: totalIndexed,
-            totalProducts: meiliReindexState.totalProducts,
-            missingDocuments,
-            previousLastIndexedId: lastId
-          });
-          lastId = 0;
-          totalIndexed = 0;
-          processedBatches = 0;
-          continue;
-        }
-        throw new Error(`Meili reindex did not reach full coverage after recovery pass (indexed ${totalIndexed} of ${meiliReindexState.totalProducts}, lastIndexedId ${lastId}).`);
-      }
-      meiliReindexState.phase = 'finalizing';
-      meiliReindexState.currentBatchSize = 0;
-      meiliReindexState.currentTaskUid = null;
-      meiliReindexState.currentBatchStartedAt = null;
-      meiliReindexState.currentBatchFirstId = 0;
-      meiliReindexState.currentBatchLastId = 0;
-      persistMeiliReindexState();
-      pushMeiliReindexDebug('No more products left to index', {
-        totalIndexed,
-        processedBatches
-      });
-      break;
-    }
-    processedBatches += 1;
-    const firstBatchId = batch[0].id;
-    const lastBatchId = batch[batch.length - 1].id;
-    meiliReindexState.currentBatchNumber = processedBatches;
-    meiliReindexState.currentBatchSize = batch.length;
-    meiliReindexState.currentBatchStartedAt = new Date().toISOString();
-    meiliReindexState.currentBatchFirstId = firstBatchId;
-    meiliReindexState.currentBatchLastId = lastBatchId;
-    meiliReindexState.phase = 'preparing_batch';
-    persistMeiliReindexState();
-    pushMeiliReindexDebug('Loaded product batch from database', {
-      batchNumber: processedBatches,
-      batchSize: batch.length,
-      firstId: firstBatchId,
-      lastId: lastBatchId
-    });
-    const docs = batch.map(buildSearchDocument);
-    if (docs.length > 0) {
-      meiliReindexState.phase = 'uploading_batch';
-      const task = await index.addDocuments(docs, { primaryKey: 'id' });
-      meiliReindexState.currentTaskUid = task.taskUid;
-      persistMeiliReindexState();
-      pushMeiliReindexDebug('Submitted batch to Meilisearch', {
-        batchNumber: processedBatches,
-        batchSize: docs.length,
-        taskUid: task.taskUid,
-        firstId: firstBatchId,
-        lastId: lastBatchId
-      });
-      meiliReindexState.phase = 'waiting_for_meili_task';
-      persistMeiliReindexState();
-      await waitForMeiliTask(index, task.taskUid, {
-        startedAtMs: parseIsoTimestamp(meiliReindexState.currentBatchStartedAt),
-        maxWaitMs: MEILI_REINDEX_STALE_TASK_MS
-      });
-      lastId = lastBatchId;
-      applyCompletedMeiliBatchProgress(processedBatches, docs.length, lastBatchId);
-      totalIndexed = meiliReindexState.totalIndexed;
-      processedBatches = meiliReindexState.processedBatches;
-      pushMeiliReindexDebug('Completed Meilisearch batch', {
-        batchNumber: processedBatches,
-        batchSize: docs.length,
-        totalIndexed,
-        totalProducts: meiliReindexState.totalProducts,
-        progressPercent: meiliReindexState.progressPercent,
-        lastIndexedId: lastBatchId
-      });
-    } else {
-      lastId = lastBatchId;
-      meiliReindexState.processedBatches = processedBatches;
-      meiliReindexState.lastIndexedId = lastBatchId;
-      meiliReindexState.lastIndexedAt = new Date().toISOString();
-      meiliReindexState.currentBatchStartedAt = null;
-      meiliReindexState.currentTaskUid = null;
-      meiliReindexState.currentBatchFirstId = 0;
-      meiliReindexState.currentBatchLastId = 0;
-      meiliReindexState.phase = 'batch_skipped';
-      persistMeiliReindexState();
-      pushMeiliReindexDebug('Skipped empty transformed batch', {
-        batchNumber: processedBatches,
-        batchSize: batch.length,
-        firstId: firstBatchId,
-        lastId: lastBatchId
-      });
-    }
-  }
-  meiliReindexState.currentBatchSize = 0;
-  meiliReindexState.currentTaskUid = null;
-  meiliReindexState.currentBatchStartedAt = null;
-  meiliReindexState.currentBatchFirstId = 0;
-  meiliReindexState.currentBatchLastId = 0;
-  meiliReindexState.phase = 'completed';
-  refreshMeiliReindexProgress();
-  persistMeiliReindexState();
-  return {
-    totalIndexed,
-    totalProducts: meiliReindexState.totalProducts,
-    processedBatches,
-    lastIndexedId: meiliReindexState.lastIndexedId,
-    indexName: MEILI_INDEX_NAME,
-    reset: shouldReset
-  };
-};
-
-const startMeiliReindexInBackground = (options = {}) => {
-  if (meiliReindexState.running) return false;
-  const shouldReset = options?.reset === true;
-  const batchSize = normalizeMeiliReindexBatchSize(options?.batchSize, MEILI_REINDEX_BATCH_SIZE);
-  const nextState = shouldReset
-    ? createMeiliReindexState()
-    : sanitizeMeiliReindexState(meiliReindexState);
-  Object.assign(meiliReindexState, nextState, {
-    running: true,
-    phase: 'starting',
-    reset: shouldReset,
-    configuredBatchSize: batchSize,
-    lastFinishedAt: null,
-    lastError: null,
-    lastResult: null,
-    lastStartedAt: new Date().toISOString()
-  });
-  persistMeiliReindexState();
-  pushMeiliReindexDebug('Background Meili reindex started', {
-    reset: meiliReindexState.reset,
-    batchSize
-  });
-  void syncProductsToMeili(options)
-    .then((result) => {
-      meiliReindexState.lastResult = result;
-      meiliReindexState.lastFinishedAt = new Date().toISOString();
-      meiliReindexState.phase = 'completed';
-      refreshMeiliReindexProgress();
-      pushMeiliReindexDebug('Background Meili reindex completed', result);
-      console.log('[Meili] background reindex completed:', result);
-    })
-    .catch((error) => {
-      meiliReindexState.lastError = error?.message || 'Unknown error';
-      meiliReindexState.lastFinishedAt = new Date().toISOString();
-      meiliReindexState.phase = 'failed';
-      persistMeiliReindexState();
-      pushMeiliReindexDebug('Background Meili reindex failed', {
-        error: meiliReindexState.lastError
-      });
-      console.error('[Meili] background reindex failed:', error);
-    })
-    .finally(() => {
-      meiliReindexState.running = false;
-      persistMeiliReindexState();
-    });
-  return true;
-};
-
-const syncProductToMeiliById = async (productId) => {
-  const normalizedId = safeParseId(productId);
-  if (!normalizedId) return;
-  const product = await prisma.product.findUnique({
-    where: { id: normalizedId },
-    select: {
-      id: true,
-      name: true,
-      keywords: true,
-      featuredSearchSentences: true,
-      aiMetadata: true,
-      price: true,
-      status: true,
-      isActive: true,
-      isFeatured: true,
-      neworold: true,
-      updatedAt: true
-    }
-  });
-  const index = await ensureMeiliIndexSettings();
-  if (!product || product.status === 'DELETED') {
-    await index.deleteDocument(normalizedId);
-    return;
-  }
-  const doc = buildSearchDocument(product);
-  const task = await index.addDocuments([doc], { primaryKey: 'id' });
-  await waitForMeiliTask(index, task.taskUid);
-};
-
-const deleteProductFromMeiliById = async (productId) => {
-  const normalizedId = safeParseId(productId);
-  if (!normalizedId) return;
-  const index = await ensureMeiliIndexSettings();
-  const task = await index.deleteDocument(normalizedId);
-  await waitForMeiliTask(index, task.taskUid);
-};
-
-const ensureMeiliIndexed = async () => {
-  try {
-    const index = await ensureMeiliIndexSettings();
-    const stats = await index.getStats();
-    if ((stats?.numberOfDocuments || 0) > 0) return;
-    await syncProductsToMeili();
-  } catch (error) {
-    const message = String(error?.message || '');
-    const code = String(error?.code || '');
-    const isDbIssue = error?.name === 'PrismaClientInitializationError'
-      || code === 'P1001'
-      || code === 'P1017'
-      || code === 'P2024'
-      || message.includes("Can't reach database server")
-      || message.includes('Server has closed the connection')
-      || message.includes('timed out');
-    const isMeiliIssue = message.includes('127.0.0.1:7700')
-      || message.includes('ECONNREFUSED')
-      || message.includes('failed to fetch')
-      || message.includes('fetch failed');
-    if (isDbIssue) {
-      console.warn('[Meili] Startup indexing skipped: database unavailable.');
-      return;
-    }
-    if (isMeiliIssue) {
-      console.warn('[Meili] Startup indexing skipped: Meilisearch unavailable.');
-      return;
-    }
-    console.error('[Meili] ensureMeiliIndexed failed:', error?.message || error);
-  }
-};
 
 const extractGeneratedOptionEntries = (opt) => {
   const out = [];
@@ -5609,6 +4983,8 @@ app.post('/api/tools/rapid/search-image', async (req, res) => {
 app.post('/api/search/image', async (req, res) => {
   try {
     const limit = Math.min(60, Math.max(1, parseInt(String(req.body?.limit || req.body?.pageSize || '20'), 10) || 20));
+    const page = Math.max(1, parseInt(String(req.body?.page || '1'), 10) || 1);
+    const offset = (page - 1) * limit;
     let input = req.body?.imageUrl || req.body?.imgUrl || req.body?.url || req.body?.image;
     if (typeof input !== 'string') input = '';
     input = input.trim();
@@ -5647,11 +5023,13 @@ app.post('/api/search/image', async (req, res) => {
     
     // Fallback if cached settings aren't defined here
     // Removed duplicate storeSettings declaration above
-    const matches = await searchProductsByImageVector(prisma, embedding, limit);
-    const ids = matches.map((match) => match.id).filter((id) => Number.isFinite(id));
+    const matches = await searchProductsByImageVector(prisma, embedding, limit + 1, offset);
+    const visibleMatches = matches.slice(0, limit);
+    const hasMore = matches.length > limit;
+    const ids = visibleMatches.map((match) => match.id).filter((id) => Number.isFinite(id));
 
     if (ids.length === 0) {
-      return res.json({ products: [], total: 0, engine: 'clip' });
+      return res.json({ products: [], total: 0, hasMore: false, engine: 'clip' });
     }
 
     const shippingRates = {
@@ -5703,7 +5081,7 @@ app.post('/api/search/image', async (req, res) => {
     });
 
     const byId = new Map(productsFromDb.map((p) => [p.id, p]));
-    const matchById = new Map(matches.map((match) => [match.id, match]));
+    const matchById = new Map(visibleMatches.map((match) => [match.id, match]));
     const ranked = ids
       .map((id) => {
         const product = byId.get(id);
@@ -5728,7 +5106,7 @@ app.post('/api/search/image', async (req, res) => {
       })
       .filter(Boolean);
 
-    return res.json({ products: ranked, total: ranked.length, engine: 'clip' });
+    return res.json({ products: ranked, total: ranked.length, hasMore, engine: 'clip' });
   } catch (error) {
     console.error('[CLIP image search] error details:', error);
     console.error(error.stack);
@@ -5768,6 +5146,8 @@ app.post('/api/search/analyze-image', upload.single('image'), async (req, res) =
 
 app.post('/api/search/image-crop', upload.single('image'), async (req, res) => {
   try {
+    const limit = Math.min(60, Math.max(1, parseInt(String(req.body?.limit || req.body?.pageSize || '20'), 10) || 20));
+    const page = Math.max(1, parseInt(String(req.body?.page || '1'), 10) || 1);
     let input;
     let isRawUpload = false;
     
@@ -5798,7 +5178,7 @@ app.post('/api/search/image-crop', upload.single('image'), async (req, res) => {
     if (isRawUpload && !box) {
       console.log('[Image Crop] Fast path: embedding raw image without backend crop detection');
       const embedding = await runClipTask(() => embedImageRaw(input));
-      const results = await searchProductsByVector(embedding);
+      const results = await searchProductsByVector(embedding, limit, page);
       return res.json(results);
     }
 
@@ -5823,7 +5203,7 @@ app.post('/api/search/image-crop', upload.single('image'), async (req, res) => {
     // Let's refactor search logic into a helper function in a moment.
     // For now, let's assume we can call `searchByVector`.
     
-    const results = await searchProductsByVector(embedding);
+    const results = await searchProductsByVector(embedding, limit, page);
     res.json(results);
 
   } catch (error) {
@@ -5833,11 +5213,16 @@ app.post('/api/search/image-crop', upload.single('image'), async (req, res) => {
 });
 
 // Helper function for vector search (moved from /api/products)
-async function searchProductsByVector(vector, limit = 20) {
-  const matches = await searchProductsByImageVector(prisma, vector, limit);
-  const ids = matches.map((match) => match.id).filter((id) => Number.isFinite(id));
+async function searchProductsByVector(vector, limit = 20, page = 1) {
+  const safeLimit = Math.min(60, Math.max(1, parseInt(String(limit || '20'), 10) || 20));
+  const safePage = Math.max(1, parseInt(String(page || '1'), 10) || 1);
+  const offset = (safePage - 1) * safeLimit;
+  const matches = await searchProductsByImageVector(prisma, vector, safeLimit + 1, offset);
+  const visibleMatches = matches.slice(0, safeLimit);
+  const hasMore = matches.length > safeLimit;
+  const ids = visibleMatches.map((match) => match.id).filter((id) => Number.isFinite(id));
   if (ids.length === 0) {
-    return { products: [] };
+    return { products: [], total: 0, hasMore: false };
   }
 
   const products = await prisma.product.findMany({
@@ -5857,7 +5242,7 @@ async function searchProductsByVector(vector, limit = 20) {
   const byId = new Map(products.map((product) => [product.id, product]));
   
   return {
-    products: matches
+    products: visibleMatches
       .map((match) => {
         const product = byId.get(match.id);
         if (!product) return null;
@@ -5870,7 +5255,9 @@ async function searchProductsByVector(vector, limit = 20) {
           matchedImageOrder: match.matchedImageOrder
         };
       })
-      .filter(Boolean)
+      .filter(Boolean),
+    total: visibleMatches.length,
+    hasMore
   };
 }
 
@@ -6797,9 +6184,6 @@ async function runBulkProductsImport(products, { onProgress } = {}) {
 
       enqueueEmbeddingJob(product.id);
       enqueueImageEmbeddingJob(product.id);
-      void syncProductToMeiliById(product.id).catch((meiliError) => {
-        console.error('[Meili] bulk product sync failed:', meiliError?.message || meiliError);
-      });
 
       results.imported++;
       maybeReportProgress();
@@ -7199,9 +6583,6 @@ app.post('/api/products', authenticateToken, isAdmin, hasPermission('manage_prod
 
     enqueueEmbeddingJob(product.id);
     enqueueImageEmbeddingJob(product.id);
-    void syncProductToMeiliById(product.id).catch((meiliError) => {
-      console.error('[Meili] create product sync failed:', meiliError?.message || meiliError);
-    });
 
     res.status(201).json(product);
   } catch (error) {
@@ -8832,40 +8213,426 @@ app.get('/api/products/:id/check-purchase', authenticateToken, async (req, res) 
   }
 });
 
+const getSearchProductSelect = () => ({
+  id: true,
+  name: true,
+  price: true,
+  basePriceIQD: true,
+  image: true,
+  aiMetadata: true,
+  neworold: true,
+  domesticShippingFee: true,
+  deliveryTime: true,
+  updatedAt: true,
+  keywords: true,
+  variants: {
+    select: {
+      id: true,
+      combination: true,
+      price: true,
+      basePriceIQD: true,
+      image: true
+    }
+  }
+});
+
+const getSearchShippingRates = async () => {
+  if (!cachedStoreSettings || (Date.now() - cachedStoreSettingsTime > 60000)) {
+    try {
+      cachedStoreSettings = await withDbRetry(() => prisma.storeSettings.findUnique({ where: { id: 1 } }));
+      cachedStoreSettingsTime = Date.now();
+    } catch (settingsError) {
+      if (!isDbConnectionError(settingsError)) {
+        throw settingsError;
+      }
+      if (!cachedStoreSettings) {
+        cachedStoreSettings = null;
+        cachedStoreSettingsTime = Date.now();
+      }
+    }
+  }
+
+  return {
+    airShippingRate: cachedStoreSettings?.airShippingRate,
+    seaShippingRate: cachedStoreSettings?.seaShippingRate,
+    airShippingMinFloor: cachedStoreSettings?.airShippingMinFloor
+  };
+};
+
+const mapSearchProduct = (product, shippingRates) => {
+  const aiMetadata = parseAiMetadata(product.aiMetadata);
+  const processed = applyDynamicPricingToProduct(product, shippingRates);
+  const isRealBrand = typeof aiMetadata?.isRealBrand === 'boolean' ? aiMetadata.isRealBrand : null;
+  const neworold = (product.neworold !== null && product.neworold !== undefined)
+    ? product.neworold
+    : extractNewOrOld(aiMetadata);
+  return { ...processed, aiMetadata, isRealBrand, neworold };
+};
+
+const getAssignedCategorySlugs = (entry, fallbackId) => {
+  const entryId = String(entry?.id || fallbackId || '').trim();
+  const entryPath = String(entry?.pathAr || '').trim();
+  const slugs = new Set();
+
+  for (const candidate of categorySearchList) {
+    const candidateId = String(candidate?.id || '').trim();
+    const candidatePath = String(candidate?.pathAr || '').trim();
+    if (!candidateId || !candidatePath) continue;
+    if (
+      candidateId === entryId
+      || (entryPath && candidatePath === entryPath)
+      || (entryPath && candidatePath.startsWith(`${entryPath} > `))
+    ) {
+      slugs.add(candidateId);
+    }
+  }
+
+  if (slugs.size === 0 && entryId) {
+    slugs.add(entryId);
+  }
+
+  return Array.from(slugs);
+};
+
+const searchProductsByAssignedCategories = async ({
+  categorySlugs,
+  page,
+  limit,
+  maxPrice,
+  condition,
+  engine
+}) => {
+  const offset = (page - 1) * limit;
+  const slugs = Array.from(new Set(
+    (Array.isArray(categorySlugs) ? categorySlugs : [])
+      .map((value) => String(value || '').trim())
+      .filter(Boolean)
+  ));
+
+  if (slugs.length === 0) {
+    return { products: [], total: 0, page, totalPages: 0, hasMore: false, engine };
+  }
+
+  const andFilters = [
+    {
+      OR: slugs.map((slug) => ({
+        aiMetadata: {
+          path: ['categorySlug'],
+          equals: slug
+        }
+      }))
+    }
+  ];
+
+  if (Number.isFinite(maxPrice) && maxPrice > 0) {
+    andFilters.push({ price: { lte: maxPrice } });
+  }
+
+  if (condition === 'new') {
+    andFilters.push({ neworold: true });
+  } else if (condition === 'used') {
+    andFilters.push({ OR: [{ neworold: false }, { neworold: null }] });
+  }
+
+  const where = {
+    status: 'PUBLISHED',
+    isActive: true,
+    AND: andFilters
+  };
+
+  const [total, productsFromDb, shippingRates] = await Promise.all([
+    withDbRetry(() => prisma.product.count({ where })),
+    withDbRetry(() => prisma.product.findMany({
+      where,
+      skip: offset,
+      take: limit,
+      orderBy: [{ updatedAt: 'desc' }],
+      select: getSearchProductSelect()
+    })),
+    getSearchShippingRates()
+  ]);
+
+  return {
+    products: productsFromDb.map((product) => mapSearchProduct(product, shippingRates)),
+    total,
+    page,
+    totalPages: Math.ceil(total / limit),
+    hasMore: offset + productsFromDb.length < total,
+    engine
+  };
+};
+
+const buildSearchWhereClause = ({ query, rankingQuery, maxPrice, condition }) => {
+  const rawQuery = String(query || '').trim();
+  const rawRanking = String(rankingQuery || '').trim();
+  
+  const queryTokens = rawQuery.split(/\s+/).filter(t => t.length > 1);
+  const rankingTokens = rawRanking.split(/\s+/).filter(t => t.length > 1);
+
+  const searchTerms = Array.from(new Set([
+    rawQuery,
+    rawRanking,
+    normalizeSearchText(rawQuery),
+    normalizeSearchText(rawRanking),
+    ...queryTokens,
+    ...rankingTokens,
+    ...queryTokens.map(t => normalizeSearchText(t)),
+    ...rankingTokens.map(t => normalizeSearchText(t)),
+    ...expandSearchTermsForIraqiSlang(rawQuery),
+    ...expandSearchTermsForIraqiSlang(rawRanking)
+  ].map((value) => String(value || '').trim()).filter(Boolean)));
+  const keywordSearchTerms = Array.from(new Set([
+    ...buildKeywordSearchTerms(query),
+    ...buildKeywordSearchTerms(rankingQuery)
+  ].map((value) => String(value || '').trim()).filter(Boolean)));
+  const andFilters = [];
+
+  if (searchTerms.length > 0) {
+    andFilters.push({
+      OR: [
+        ...searchTerms.map((term) => ({ name: { contains: term, mode: 'insensitive' } })),
+        ...(keywordSearchTerms.length > 0 ? [{ keywords: { hasSome: keywordSearchTerms } }] : [])
+      ]
+    });
+  }
+
+  if (Number.isFinite(maxPrice) && maxPrice > 0) {
+    andFilters.push({ price: { lte: maxPrice } });
+  }
+
+  if (condition === 'new') {
+    andFilters.push({ neworold: true });
+  } else if (condition === 'used') {
+    andFilters.push({ OR: [{ neworold: false }, { neworold: null }] });
+  }
+
+  return {
+    status: 'PUBLISHED',
+    isActive: true,
+    ...(andFilters.length > 0 ? { AND: andFilters } : {})
+  };
+};
+
+const searchProductsFromDatabase = async ({
+  query,
+  rankingQuery,
+  page,
+  limit,
+  maxPrice,
+  condition,
+  engine,
+  perf
+}) => {
+  const offset = (page - 1) * limit;
+  const effectiveQuery = String(query || '').trim();
+  const effectiveRankingQuery = String(rankingQuery || effectiveQuery).trim();
+
+  if (!effectiveQuery) {
+    return { products: [], total: 0, page, totalPages: 0, hasMore: false, engine };
+  }
+
+  const normalizedRankingQuery = normalizeSearchText(effectiveRankingQuery || effectiveQuery);
+  const where = buildSearchWhereClause({
+    query: effectiveQuery,
+    rankingQuery: effectiveRankingQuery,
+    maxPrice,
+    condition
+  });
+
+  const total = await withDbRetry(() => prisma.product.count({ where }));
+  perf?.log?.('db_count_done', { total });
+  if (!total) {
+    return { products: [], total: 0, page, totalPages: 0, hasMore: false, engine };
+  }
+
+  const candidateTake = Math.min(400, Math.max(limit * 4, offset + limit + 80));
+  const productsFromDb = await withDbRetry(() => prisma.product.findMany({
+    where,
+    take: candidateTake,
+    orderBy: [{ updatedAt: 'desc' }],
+    select: getSearchProductSelect()
+  }));
+  perf?.log?.('db_find_done', { productsCount: productsFromDb.length, candidateTake });
+
+  const shippingRates = await getSearchShippingRates();
+  perf?.log?.('store_settings_ready', { cacheAgeMs: Date.now() - cachedStoreSettingsTime });
+  const rankedProducts = productsFromDb
+    .map((product) => mapSearchProduct(product, shippingRates))
+    .sort((a, b) => {
+      const aPriority = getNameMatchPriority(a?.name, normalizedRankingQuery);
+      const bPriority = getNameMatchPriority(b?.name, normalizedRankingQuery);
+      const phraseMatchDiff = bPriority.phraseMatch - aPriority.phraseMatch;
+      if (phraseMatchDiff !== 0) return phraseMatchDiff;
+      const allTokensMatchDiff = bPriority.allTokensMatch - aPriority.allTokensMatch;
+      if (allTokensMatchDiff !== 0) return allTokensMatchDiff;
+      const tokenCoverageDiff = bPriority.tokenCoverage - aPriority.tokenCoverage;
+      if (tokenCoverageDiff !== 0) return tokenCoverageDiff;
+      const matchedTokenDiff = bPriority.matchedTokenCount - aPriority.matchedTokenCount;
+      if (matchedTokenDiff !== 0) return matchedTokenDiff;
+      const aUpdated = a?.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+      const bUpdated = b?.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+      return bUpdated - aUpdated;
+    });
+
+  const filteredProducts = condition === 'new'
+    ? rankedProducts.filter((product) => inferProductCondition(product) !== false)
+    : condition === 'used'
+      ? rankedProducts.filter((product) => inferProductCondition(product) !== true)
+      : rankedProducts;
+  const pagedProducts = filteredProducts.slice(offset, offset + limit);
+
+  return {
+    products: pagedProducts,
+    total,
+    page,
+    totalPages: Math.ceil(total / limit),
+    hasMore: offset + pagedProducts.length < total,
+    engine
+  };
+};
+
+const buildCategorySearchQuery = (entry, fallbackName, fallbackPath) => {
+  const pathSegments = splitCategoryPath(entry?.pathAr || fallbackPath);
+  const aliases = Array.isArray(entry?.aliases) ? entry.aliases : [];
+  const searchParts = Array.from(new Set([
+    entry?.nameAr,
+    fallbackName,
+    ...pathSegments.slice(-3),
+    ...aliases,
+    entry?.pathAr,
+    fallbackPath
+  ].map((value) => String(value || '').trim()).filter(Boolean)));
+  const displayName = String(entry?.nameAr || fallbackName || pathSegments[pathSegments.length - 1] || '').trim();
+  const displayPath = String(entry?.pathAr || fallbackPath || displayName).trim();
+  return {
+    displayName,
+    displayPath,
+    searchText: searchParts.join(' ')
+  };
+};
+
 app.get('/api/admin/search/reindex-status', authenticateToken, isAdmin, hasPermission('manage_products'), async (_req, res) => {
   return res.json({
     ok: true,
-    engine: 'meili',
-    ...getMeiliReindexStatus()
+    engine: 'category-db',
+    disabled: true,
+    state: 'disabled',
+    message: 'Traditional text search indexing is no longer required.'
   });
 });
 
 app.post('/api/admin/search/reindex', authenticateToken, isAdmin, hasPermission('manage_products'), async (_req, res) => {
+  return res.status(410).json({
+    error: 'Text search indexing has been disabled',
+    engine: 'category-db'
+  });
+});
+
+app.get('/api/search/categories', async (req, res) => {
   try {
-    const shouldReset = String(_req.query.reset || _req.body?.reset || '').trim() === '1'
-      || _req.body?.reset === true;
-    const resumeFromId = shouldReset ? 0 : Math.max(0, Number.parseInt(String(_req.query.resumeFromId || _req.body?.resumeFromId || '0'), 10) || 0);
-    const resumeIndexed = shouldReset ? 0 : Math.max(0, Number.parseInt(String(_req.query.resumeIndexed || _req.body?.resumeIndexed || '0'), 10) || 0);
-    const resumeProcessedBatches = shouldReset ? 0 : Math.max(0, Number.parseInt(String(_req.query.resumeProcessedBatches || _req.body?.resumeProcessedBatches || '0'), 10) || 0);
-    const batchSize = normalizeMeiliReindexBatchSize(_req.query.batchSize || _req.body?.batchSize, MEILI_REINDEX_BATCH_SIZE);
-    const started = startMeiliReindexInBackground({
-      reset: shouldReset,
-      resumeFromId,
-      resumeIndexed,
-      resumeProcessedBatches,
-      batchSize
+    const q = String(req.query.q || '').trim();
+    const limit = Math.min(20, Math.max(1, parseInt(req.query.limit, 10) || 20));
+
+    if (!q) {
+      return res.json({ categories: [] });
+    }
+
+    const categories = categorySuggestionIndex
+      .map((entry) => {
+        const { score, matchedText } = scoreCategorySuggestion(entry, q);
+        return score > 0
+          ? {
+              id: entry.id,
+              nameAr: entry.nameAr,
+              pathAr: entry.pathAr,
+              nameEn: entry.nameEn,
+              pathEn: entry.pathEn,
+              matchedText,
+              score,
+              depth: entry.pathSegmentsAr.length || splitCategoryPath(entry.pathAr).length
+            }
+          : null;
+      })
+      .filter(Boolean)
+      .sort((a, b) => {
+        const scoreDiff = b.score - a.score;
+        if (scoreDiff !== 0) return scoreDiff;
+        const depthDiff = b.depth - a.depth;
+        if (depthDiff !== 0) return depthDiff;
+        return String(a.pathAr || '').localeCompare(String(b.pathAr || ''), 'ar');
+      })
+      .slice(0, limit)
+      .map(({ score, depth, matchedText, ...entry }) => entry);
+
+    return res.json({ categories });
+  } catch (error) {
+    console.error('Category suggestion search failed:', error);
+    return res.status(500).json({
+      error: 'Failed to load category suggestions',
+      details: error?.message || 'Unknown error'
     });
+  }
+});
+
+app.get('/api/search/category-products', async (req, res) => {
+  try {
+    const categoryId = String(req.query.categoryId || '').trim();
+    const categoryName = String(req.query.categoryName || '').trim();
+    const categoryPath = String(req.query.categoryPath || '').trim();
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+    const maxPrice = req.query.maxPrice ? Number.parseFloat(String(req.query.maxPrice)) : null;
+    const condition = String(req.query.condition || '').trim();
+    const categoryEntry = categoryId ? categorySearchMap.get(categoryId) : null;
+    const categoryQuery = buildCategorySearchQuery(categoryEntry, categoryName, categoryPath);
+    const assignedCategorySlugs = getAssignedCategorySlugs(categoryEntry, categoryId);
+
+    if (!categoryQuery.searchText && assignedCategorySlugs.length === 0) {
+      return res.json({
+        products: [],
+        total: 0,
+        page,
+        totalPages: 0,
+        hasMore: false,
+        engine: 'category-db'
+      });
+    }
+
+    let result = assignedCategorySlugs.length > 0
+      ? await searchProductsByAssignedCategories({
+          categorySlugs: assignedCategorySlugs,
+          page,
+          limit,
+          maxPrice,
+          condition,
+          engine: 'category-assigned-db'
+        })
+      : null;
+
+    if (!result || (result.total === 0 && categoryQuery.searchText)) {
+      result = await searchProductsFromDatabase({
+        query: categoryQuery.searchText,
+        rankingQuery: categoryQuery.displayName || categoryQuery.searchText,
+        page,
+        limit,
+        maxPrice,
+        condition,
+        engine: 'category-db'
+      });
+    }
+
     return res.json({
-      ok: true,
-      engine: 'meili',
-      started,
-      reset: shouldReset,
-      ...getMeiliReindexStatus()
+      ...result,
+      category: {
+        id: categoryId || categoryEntry?.id || '',
+        nameAr: categoryQuery.displayName,
+        pathAr: categoryQuery.displayPath
+      }
     });
   } catch (error) {
-    console.error('[Meili] reindex failed to start:', error);
-    return res.status(503).json({
-      error: 'Meilisearch reindex failed to start',
+    console.error('Category product search failed:', error);
+    return res.status(500).json({
+      error: 'Failed to load category products',
       details: error?.message || 'Unknown error'
     });
   }
@@ -8875,326 +8642,36 @@ app.get('/api/search', async (req, res) => {
   const forcePerf = String(req.query.perf || req.headers['x-perf-log'] || '').trim() === '1';
   const perf = createPerfLog('search', ENABLE_SEARCH_PERF_LOGS || forcePerf);
   perf.log('start', { query: req.query });
+
   try {
     const q = String(req.query.q || '').trim();
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
-    const offset = (page - 1) * limit;
     const maxPrice = req.query.maxPrice ? Number.parseFloat(String(req.query.maxPrice)) : null;
     const condition = String(req.query.condition || '').trim();
 
     if (!q) {
       perf.log('empty_query');
-      return res.json({ products: [], total: 0, page, totalPages: 0, hasMore: false, engine: 'meili' });
+      return res.json({ products: [], total: 0, page, totalPages: 0, hasMore: false, engine: 'db' });
     }
 
-    const normalizedQuery = normalizeSearchText(q);
-    const expandedSearchTerms = expandSearchTermsForIraqiSlang(q);
-    const keywordSearchTerms = buildKeywordSearchTerms(q);
-    const exactFeaturedQueryVariants = buildExactFeaturedSentenceVariants(q);
-    const productSelect = {
-      id: true,
-      name: true,
-      price: true,
-      basePriceIQD: true,
-      image: true,
-      aiMetadata: true,
-      neworold: true,
-      isFeatured: true,
-      featuredSearchSentences: true,
-      domesticShippingFee: true,
-      deliveryTime: true,
-      updatedAt: true,
-      variants: {
-        select: {
-          id: true,
-          combination: true,
-          price: true,
-          basePriceIQD: true,
-          image: true
-        }
-      }
-    };
-
-    if (!cachedStoreSettings || (Date.now() - cachedStoreSettingsTime > 60000)) {
-      try {
-        cachedStoreSettings = await withDbRetry(() => prisma.storeSettings.findUnique({ where: { id: 1 } }));
-        cachedStoreSettingsTime = Date.now();
-      } catch (settingsError) {
-        if (!isDbConnectionError(settingsError)) {
-          throw settingsError;
-        }
-        if (!cachedStoreSettings) {
-          cachedStoreSettings = null;
-          cachedStoreSettingsTime = Date.now();
-        }
-      }
-    }
-    const storeSettings = cachedStoreSettings;
-    perf.log('store_settings_ready', { cacheAgeMs: Date.now() - cachedStoreSettingsTime });
-    const shippingRates = {
-      airShippingRate: storeSettings?.airShippingRate,
-      seaShippingRate: storeSettings?.seaShippingRate,
-      airShippingMinFloor: storeSettings?.airShippingMinFloor
-    };
-    const featuredWhere = {
-      status: 'PUBLISHED',
-      isActive: true,
-      featuredSearchSentences: {
-        isEmpty: false
-      },
-      ...(Number.isFinite(maxPrice) && maxPrice > 0 ? { price: { lte: maxPrice } } : {}),
-      ...(condition === 'new'
-        ? { neworold: true }
-        : condition === 'used'
-          ? { OR: [{ neworold: false }, { neworold: null }] }
-          : {})
-    };
-    const featuredCandidates = await withDbRetry(() => prisma.product.findMany({
-      where: featuredWhere,
-      select: productSelect
-    }));
-    const featuredMatchedProducts = featuredCandidates
-      .filter((product) => isFeaturedMatchForQuery(product, exactFeaturedQueryVariants, condition))
-      .sort((a, b) => {
-        const aUpdated = a?.updatedAt ? new Date(a.updatedAt).getTime() : 0;
-        const bUpdated = b?.updatedAt ? new Date(b.updatedAt).getTime() : 0;
-        return bUpdated - aUpdated;
-      });
-    const featuredMatchedIdSet = new Set(featuredMatchedProducts.map((product) => Number(product.id)).filter((id) => Number.isFinite(id)));
-    perf.log('featured_matches_ready', { featuredMatches: featuredMatchedProducts.length });
-
-    try {
-      const meiliSetupStartedAt = Date.now();
-      const index = await withRequestTimeout(
-        () => getMeiliSearchIndex(),
-        MEILI_SEARCH_TIMEOUT_MS,
-        'Meilisearch index setup'
-      );
-      perf.log('meili_index_ready', { setupMs: Date.now() - meiliSetupStartedAt });
-      const filters = ['status = PUBLISHED', 'isActive = true'];
-      if (Number.isFinite(maxPrice) && maxPrice > 0) {
-        filters.push(`price <= ${maxPrice}`);
-      }
-      if (condition === 'new') {
-        filters.push('neworold = true');
-      } else if (condition === 'used') {
-        filters.push('(neworold = false OR neworold IS NULL)');
-      }
-
-      const meiliSearchStartedAt = Date.now();
-      const meiliQuery = expandedSearchTerms.join(' ').trim() || normalizedQuery || q;
-      const meiliCandidateLimit = Math.min(1000, Math.max(limit * 5, offset + limit + 100));
-      const searchResult = await withRequestTimeout(
-        () => index.search(meiliQuery, {
-          limit: meiliCandidateLimit,
-          offset: 0,
-          filter: filters
-        }),
-        MEILI_SEARCH_TIMEOUT_MS,
-        'Meilisearch search'
-      );
-      perf.log('meili_search_done', {
-        meiliMs: Date.now() - meiliSearchStartedAt,
-        estimatedTotalHits: Number(searchResult?.estimatedTotalHits || 0),
-        candidateLimit: meiliCandidateLimit
-      });
-
-      const hitIds = Array.isArray(searchResult?.hits)
-        ? searchResult.hits.map((hit) => Number(hit?.id)).filter((id) => Number.isFinite(id))
-        : [];
-      perf.log('meili_hits_ready', { hitIdsCount: hitIds.length });
-
-      const dbFetchStartedAt = Date.now();
-      const productsFromDb = await withDbRetry(() => prisma.product.findMany({
-        where: {
-          id: { in: hitIds },
-          status: 'PUBLISHED',
-          isActive: true
-        },
-        select: productSelect
-      }));
-      perf.log('db_fetch_for_meili_done', { dbMs: Date.now() - dbFetchStartedAt, productsCount: productsFromDb.length });
-
-      const rankIndex = new Map(hitIds.map((id, indexPosition) => [id, indexPosition]));
-      const namePriorityById = new Map(productsFromDb.map((product) => [Number(product?.id), getNameMatchPriority(product?.name, normalizedQuery)]));
-      const rankedProducts = productsFromDb
-        .slice()
-        .sort((a, b) => {
-          const aFeaturedMatch = isFeaturedMatchForQuery(a, exactFeaturedQueryVariants, condition);
-          const bFeaturedMatch = isFeaturedMatchForQuery(b, exactFeaturedQueryVariants, condition);
-          const featuredMatchDiff = Number(bFeaturedMatch) - Number(aFeaturedMatch);
-          if (featuredMatchDiff !== 0) return featuredMatchDiff;
-          const aNamePriority = namePriorityById.get(Number(a?.id)) || { phraseMatch: 0, allTokensMatch: 0, tokenCoverage: 0, matchedTokenCount: 0 };
-          const bNamePriority = namePriorityById.get(Number(b?.id)) || { phraseMatch: 0, allTokensMatch: 0, tokenCoverage: 0, matchedTokenCount: 0 };
-          const phraseMatchDiff = bNamePriority.phraseMatch - aNamePriority.phraseMatch;
-          if (phraseMatchDiff !== 0) return phraseMatchDiff;
-          const allTokensMatchDiff = bNamePriority.allTokensMatch - aNamePriority.allTokensMatch;
-          if (allTokensMatchDiff !== 0) return allTokensMatchDiff;
-          const tokenCoverageDiff = bNamePriority.tokenCoverage - aNamePriority.tokenCoverage;
-          if (tokenCoverageDiff !== 0) return tokenCoverageDiff;
-          const matchedTokenDiff = bNamePriority.matchedTokenCount - aNamePriority.matchedTokenCount;
-          if (matchedTokenDiff !== 0) return matchedTokenDiff;
-          return (rankIndex.get(a.id) ?? 999999) - (rankIndex.get(b.id) ?? 999999);
-        })
-        .map((product) => {
-          const aiMetadata = parseAiMetadata(product.aiMetadata);
-          const processed = applyDynamicPricingToProduct(product, shippingRates);
-          const isRealBrand = typeof aiMetadata?.isRealBrand === 'boolean' ? aiMetadata.isRealBrand : null;
-          const neworold = (product.neworold !== null && product.neworold !== undefined)
-            ? product.neworold
-            : extractNewOrOld(aiMetadata);
-          return { ...processed, aiMetadata, isRealBrand, neworold };
-        });
-      const conditionFilteredProducts = condition === 'new'
-        ? rankedProducts.filter((product) => inferProductCondition(product) !== false)
-        : condition === 'used'
-          ? rankedProducts.filter((product) => inferProductCondition(product) !== true)
-          : rankedProducts;
-      const mergedProducts = [];
-      const mergedSeenIds = new Set();
-      for (const product of featuredMatchedProducts) {
-        const id = Number(product?.id);
-        if (!Number.isFinite(id) || mergedSeenIds.has(id)) continue;
-        mergedSeenIds.add(id);
-        mergedProducts.push(product);
-      }
-      for (const product of conditionFilteredProducts) {
-        const id = Number(product?.id);
-        if (!Number.isFinite(id) || mergedSeenIds.has(id)) continue;
-        mergedSeenIds.add(id);
-        mergedProducts.push(product);
-      }
-      const pagedProducts = mergedProducts.slice(offset, offset + limit);
-      const additionalFeaturedCount = Array.from(featuredMatchedIdSet).filter((id) => !rankIndex.has(id)).length;
-      const estimatedTotal = Number(searchResult?.estimatedTotalHits || 0) + additionalFeaturedCount;
-      const total = Math.max(estimatedTotal, mergedProducts.length);
-      perf.log('response_sent', { engine: 'meili', returned: pagedProducts.length, total });
-      return res.json({
-        products: pagedProducts,
-        total,
-        page,
-        totalPages: Math.ceil(total / limit),
-        hasMore: offset + pagedProducts.length < total,
-        engine: 'meili'
-      });
-    } catch (meiliError) {
-      perf.log('meili_fallback', { reason: meiliError?.message || String(meiliError) });
-      console.warn('[Meili] search fallback to db:', meiliError?.message || meiliError);
-      const searchTerms = Array.from(new Set([
-        ...expandedSearchTerms,
-        q,
-        normalizedQuery
-      ].map((v) => String(v || '').trim()).filter(Boolean)));
-      const andFilters = [];
-      if (searchTerms.length > 0) {
-        andFilters.push({
-          OR: [
-            ...searchTerms.map((term) => ({ name: { contains: term, mode: 'insensitive' } })),
-            ...(keywordSearchTerms.length > 0 ? [{ keywords: { hasSome: keywordSearchTerms } }] : [])
-          ]
-        });
-      }
-      if (Number.isFinite(maxPrice) && maxPrice > 0) {
-        andFilters.push({ price: { lte: maxPrice } });
-      }
-      if (condition === 'new') {
-        andFilters.push({ neworold: true });
-      } else if (condition === 'used') {
-        andFilters.push({ OR: [{ neworold: false }, { neworold: null }] });
-      }
-
-      const where = {
-        status: 'PUBLISHED',
-        isActive: true,
-        ...(andFilters.length > 0 ? { AND: andFilters } : {})
-      };
-
-      const dbCountStartedAt = Date.now();
-      const total = await withDbRetry(() => prisma.product.count({ where }));
-      perf.log('db_fallback_count_done', { dbCountMs: Date.now() - dbCountStartedAt, total });
-      if (!total) {
-        perf.log('response_sent', { engine: 'db', returned: 0, total: 0 });
-        return res.json({ products: [], total: 0, page, totalPages: 0, hasMore: false, engine: 'db' });
-      }
-
-      const dbFindStartedAt = Date.now();
-      const productsFromDb = await withDbRetry(() => prisma.product.findMany({
-        where,
-        skip: offset,
-        take: limit,
-        orderBy: [{ updatedAt: 'desc' }],
-        select: productSelect
-      }));
-      perf.log('db_fallback_find_done', { dbFindMs: Date.now() - dbFindStartedAt, productsCount: productsFromDb.length });
-
-      const processedProducts = productsFromDb.map((product) => {
-        const aiMetadata = parseAiMetadata(product.aiMetadata);
-        const processed = applyDynamicPricingToProduct(product, shippingRates);
-        const isRealBrand = typeof aiMetadata?.isRealBrand === 'boolean' ? aiMetadata.isRealBrand : null;
-        const neworold = (product.neworold !== null && product.neworold !== undefined)
-          ? product.neworold
-          : extractNewOrOld(aiMetadata);
-        return { ...processed, aiMetadata, isRealBrand, neworold };
-      });
-      const rankedFallbackProducts = processedProducts
-        .slice()
-        .sort((a, b) => {
-          const aFeaturedMatch = isFeaturedMatchForQuery(a, exactFeaturedQueryVariants, condition);
-          const bFeaturedMatch = isFeaturedMatchForQuery(b, exactFeaturedQueryVariants, condition);
-          const featuredMatchDiff = Number(bFeaturedMatch) - Number(aFeaturedMatch);
-          if (featuredMatchDiff !== 0) return featuredMatchDiff;
-          const aNamePriority = getNameMatchPriority(a?.name, normalizedQuery);
-          const bNamePriority = getNameMatchPriority(b?.name, normalizedQuery);
-          const phraseMatchDiff = bNamePriority.phraseMatch - aNamePriority.phraseMatch;
-          if (phraseMatchDiff !== 0) return phraseMatchDiff;
-          const allTokensMatchDiff = bNamePriority.allTokensMatch - aNamePriority.allTokensMatch;
-          if (allTokensMatchDiff !== 0) return allTokensMatchDiff;
-          const tokenCoverageDiff = bNamePriority.tokenCoverage - aNamePriority.tokenCoverage;
-          if (tokenCoverageDiff !== 0) return tokenCoverageDiff;
-          const matchedTokenDiff = bNamePriority.matchedTokenCount - aNamePriority.matchedTokenCount;
-          if (matchedTokenDiff !== 0) return matchedTokenDiff;
-          const aUpdated = a?.updatedAt ? new Date(a.updatedAt).getTime() : 0;
-          const bUpdated = b?.updatedAt ? new Date(b.updatedAt).getTime() : 0;
-          return bUpdated - aUpdated;
-        });
-      const conditionFilteredProducts = condition === 'new'
-        ? rankedFallbackProducts.filter((product) => inferProductCondition(product) !== false)
-        : condition === 'used'
-          ? rankedFallbackProducts.filter((product) => inferProductCondition(product) !== true)
-          : rankedFallbackProducts;
-
-      const mergedProducts = [];
-      const mergedSeenIds = new Set();
-      for (const product of featuredMatchedProducts) {
-        const id = Number(product?.id);
-        if (!Number.isFinite(id) || mergedSeenIds.has(id)) continue;
-        mergedSeenIds.add(id);
-        mergedProducts.push(product);
-      }
-      for (const product of conditionFilteredProducts) {
-        const id = Number(product?.id);
-        if (!Number.isFinite(id) || mergedSeenIds.has(id)) continue;
-        mergedSeenIds.add(id);
-        mergedProducts.push(product);
-      }
-      const pagedProducts = mergedProducts.slice(offset, offset + limit);
-      const combinedTotal = Math.max(total + Array.from(featuredMatchedIdSet).filter((id) => !processedProducts.some((product) => Number(product?.id) === id)).length, mergedProducts.length);
-      perf.log('response_sent', { engine: 'db', returned: pagedProducts.length, total: combinedTotal });
-      return res.json({
-        products: pagedProducts,
-        total: combinedTotal,
-        page,
-        totalPages: Math.ceil(combinedTotal / limit),
-        hasMore: offset + pagedProducts.length < combinedTotal,
-        engine: 'db'
-      });
-    }
+    const result = await searchProductsFromDatabase({
+      query: q,
+      rankingQuery: q,
+      page,
+      limit,
+      maxPrice,
+      condition,
+      engine: 'db',
+      perf
+    });
+    perf.log('response_sent', { engine: result.engine, returned: result.products.length, total: result.total });
+    return res.json(result);
   } catch (error) {
     perf.log('error', { message: error?.message, name: error?.name });
-    console.error('[Meili] search failed:', error);
+    console.error('Search failed:', error);
     return res.status(503).json({
-      error: 'Meilisearch search failed',
+      error: 'Search failed',
       details: error?.message || 'Unknown error'
     });
   }
@@ -10609,9 +10086,6 @@ app.put('/api/products/:id', authenticateToken, isAdmin, hasPermission('manage_p
 
     enqueueEmbeddingJob(product.id);
     enqueueImageEmbeddingJob(product.id);
-    void syncProductToMeiliById(product.id).catch((meiliError) => {
-      console.error('[Meili] update product sync failed:', meiliError?.message || meiliError);
-    });
 
     res.json(product);
   } catch (error) {
@@ -10638,9 +10112,6 @@ app.delete('/api/products/:id', authenticateToken, isAdmin, hasPermission('manag
     ]);
 
     await prisma.product.delete({ where: { id: productId } });
-    void deleteProductFromMeiliById(productId).catch((meiliError) => {
-      console.error('[Meili] delete product sync failed:', meiliError?.message || meiliError);
-    });
 
     await logActivity(
       req.user.id,
@@ -11962,19 +11433,6 @@ console.log('[Perf] ENABLE_SEARCH_PERF_LOGS =', ENABLE_SEARCH_PERF_LOGS, `(raw: 
 
 const server = httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`Server is running on port ${PORT} (accessible from network)`);
-  
-  // Trigger MeiliSearch indexing on startup
-  setTimeout(() => {
-    console.log('[Meili Debug] Triggering startup index check...');
-    ensureMeiliIndexed().catch(err => {
-      // Don't crash the server or flood logs if DB is down at startup
-      if (err.name === 'PrismaClientInitializationError') {
-        console.error('[Meili Debug] Startup index check skipped: Database connection unavailable (Will retry automatically on next request)');
-      } else {
-        console.error('[Meili Debug] Startup index check failed:', err.message);
-      }
-    });
-  }, 5000);
 });
 
 server.on('error', (e) => {

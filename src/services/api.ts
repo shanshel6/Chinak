@@ -1072,6 +1072,14 @@ export async function fetchProductById(id: number | string) {
   return data;
 }
 
+export interface CategorySuggestion {
+  id: string;
+  nameAr: string;
+  pathAr: string;
+  nameEn?: string;
+  pathEn?: string;
+}
+
 export async function searchProducts(query: string, page = 1, limit = 20, maxPrice?: number, condition?: 'new' | 'used') {
   const params = new URLSearchParams({
     q: String(query || ''),
@@ -1089,7 +1097,47 @@ export async function searchProducts(query: string, page = 1, limit = 20, maxPri
     products: Array.isArray(response?.products) ? response.products : [],
     total: Number(response?.total || 0),
     hasMore: Boolean(response?.hasMore),
-    engine: response?.engine || 'meili'
+    engine: response?.engine || 'db'
+  };
+}
+
+export async function searchCategorySuggestions(query: string, limit = 20) {
+  const params = new URLSearchParams({
+    q: String(query || ''),
+    limit: String(limit)
+  });
+  const response = await request(`/search/categories?${params.toString()}`, { skipCache: true });
+  return {
+    categories: Array.isArray(response?.categories) ? response.categories as CategorySuggestion[] : []
+  };
+}
+
+export async function searchProductsByCategory(
+  category: Pick<CategorySuggestion, 'id' | 'nameAr' | 'pathAr'>,
+  page = 1,
+  limit = 20,
+  maxPrice?: number,
+  condition?: 'new' | 'used'
+) {
+  const params = new URLSearchParams({
+    categoryId: String(category?.id || ''),
+    categoryName: String(category?.nameAr || ''),
+    categoryPath: String(category?.pathAr || ''),
+    page: String(page),
+    limit: String(limit)
+  });
+  if (typeof maxPrice === 'number' && Number.isFinite(maxPrice) && maxPrice > 0) {
+    params.append('maxPrice', String(maxPrice));
+  }
+  if (condition) {
+    params.append('condition', condition);
+  }
+  const response = await request(`/search/category-products?${params.toString()}`, { skipCache: true });
+  return {
+    products: Array.isArray(response?.products) ? response.products : [],
+    total: Number(response?.total || 0),
+    hasMore: Boolean(response?.hasMore),
+    engine: response?.engine || 'db-category'
   };
 }
 
@@ -1112,7 +1160,7 @@ export async function analyzeImageObjects() {
   return [];
 }
 
-export async function searchProductsByImageCrop(imageBase64: string, box: number[]) {
+export async function searchProductsByImageCrop(imageBase64: string, box: number[], page = 1, limit = 30) {
   const cropToJpeg = async () => {
     const img = new Image();
     img.decoding = 'async';
@@ -1161,6 +1209,8 @@ export async function searchProductsByImageCrop(imageBase64: string, box: number
     const cropBlob = await cropToJpeg();
     const formData = new FormData();
     formData.append('image', cropBlob, 'crop.jpg');
+    formData.append('page', String(page));
+    formData.append('limit', String(limit));
     // Only send the raw cropped image blob via FormData. Do not append the original Base64.
     
     const response = await request('/search/image-crop', {
@@ -1181,7 +1231,7 @@ export async function searchProductsByImageCrop(imageBase64: string, box: number
     // If the local crop fails for whatever reason, fall back to sending the Base64 to the backend
     const response = await request('/search/image-crop', {
       method: 'POST',
-      body: JSON.stringify({ imageBase64, box }),
+      body: JSON.stringify({ imageBase64, box, page, limit }),
       skipCache: true
     });
     return {

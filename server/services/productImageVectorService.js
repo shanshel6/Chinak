@@ -143,8 +143,9 @@ export async function ensureProductImageEmbeddings({
   };
 }
 
-export async function searchProductsByImageVector(prisma, vector, limit = 20) {
+export async function searchProductsByImageVector(prisma, vector, limit = 20, offset = 0) {
   const safeLimit = Math.min(100, Math.max(1, Number.parseInt(String(limit || '20'), 10) || 20));
+  const safeOffset = Math.max(0, Number.parseInt(String(offset || '0'), 10) || 0);
   const vectorLiteral = vectorToSqlLiteral(vector);
   const rows = await prisma.$queryRawUnsafe(
     `
@@ -203,9 +204,11 @@ export async function searchProductsByImageVector(prisma, vector, limit = 20) {
       WHERE rn = 1
       ORDER BY distance ASC, id ASC
       LIMIT $2
+      OFFSET $3
     `,
     vectorLiteral,
-    safeLimit
+    safeLimit,
+    safeOffset
   );
 
   return Array.isArray(rows)

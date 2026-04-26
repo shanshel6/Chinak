@@ -30,7 +30,6 @@
     "https-proxy-agent": "^7.0.6",
     "jimp": "^1.6.0",
     "jsonwebtoken": "^9.0.3",
-    "meilisearch": "^0.48.0",
     "multer": "^2.1.1",
     "node-cron": "^4.2.1",
     "node-fetch": "^3.3.2",

@@ -1,7 +1,7 @@
 import React from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useCartStore } from '../store/useCartStore';
-import { Home, ShoppingBag, ShoppingCart, User, LayoutGrid } from 'lucide-react';
+import { Home, ShoppingBag, ShoppingCart, User, Heart } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface BottomNavProps {
@@ -17,7 +17,7 @@ const BottomNav: React.FC<BottomNavProps> = ({ className = '' }) => {
     { id: 'home', label: 'الرئيسية', icon: Home, path: '/' },
     { id: 'orders', label: 'طلباتي', icon: ShoppingBag, path: '/orders' },
     { id: 'cart', label: 'السلة', icon: ShoppingCart, path: '/cart', badge: cartItemsCount },
-    { id: 'categories', label: 'التصنيفات', icon: LayoutGrid, path: '/categories' },
+    { id: 'favorites', label: 'المفضلة', icon: Heart, path: '/favorites' },
     { id: 'profile', label: 'حسابي', icon: User, path: '/profile' },
   ];
 

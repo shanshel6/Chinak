@@ -21,8 +21,11 @@ interface AuthState {
   setAuth: (token: string, user: User) => void;
   logout: () => Promise<void>;
   checkAuth: () => Promise<void>;
+  ensureGuestSession: () => void;
   updateUser: (user: User) => void;
 }
+
+const GUEST_AUTOLOGIN_DISABLED_KEY = 'guest_autologin_disabled_v1';
 
 const buildGuestUser = (): User => ({
   id: 'guest-user',
@@ -31,6 +34,8 @@ const buildGuestUser = (): User => ({
   role: 'GUEST',
   email: 'guest@local.app'
 });
+
+const buildGuestToken = () => `guest-token-${Date.now()}`;
 
 export const useAuthStore = create<AuthState>((set) => ({
   user: null,
@@ -41,6 +46,7 @@ export const useAuthStore = create<AuthState>((set) => ({
   setAuth: (token, user) => {
     try {
       const trimmedToken = token?.trim();
+      localStorage.removeItem(GUEST_AUTOLOGIN_DISABLED_KEY);
       localStorage.setItem('auth_token', trimmedToken);
       set({ token: trimmedToken, user, isAuthenticated: true, isLoading: false });
     } catch (_e) {
@@ -48,6 +54,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       performCacheMaintenance();
       try {
         const trimmedToken = token?.trim();
+        localStorage.removeItem(GUEST_AUTOLOGIN_DISABLED_KEY);
         localStorage.setItem('auth_token', trimmedToken);
         set({ token: trimmedToken, user, isAuthenticated: true, isLoading: false });
       } catch (_retryError) {
@@ -62,6 +69,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     } catch (_e) {
       // ignore
     }
+    localStorage.setItem(GUEST_AUTOLOGIN_DISABLED_KEY, '1');
     useCartStore.getState().clearCart();
     useWishlistStore.getState().clearWishlist();
     set({ user: null, token: null, isAuthenticated: false, isLoading: false });
@@ -71,6 +79,13 @@ export const useAuthStore = create<AuthState>((set) => ({
     try {
       const token = localStorage.getItem('auth_token');
       if (!token) {
+        const guestDisabled = localStorage.getItem(GUEST_AUTOLOGIN_DISABLED_KEY) === '1';
+        if (!guestDisabled) {
+          const guestToken = buildGuestToken();
+          localStorage.setItem('auth_token', guestToken);
+          set({ user: buildGuestUser(), token: guestToken, isAuthenticated: true, isLoading: false });
+          return;
+        }
         set({ user: null, token: null, isAuthenticated: false, isLoading: false });
         return;
       }
@@ -109,6 +124,15 @@ export const useAuthStore = create<AuthState>((set) => ({
       localStorage.removeItem('auth_token');
       set({ user: null, token: null, isAuthenticated: false, isLoading: false });
     }
+  },
+
+  ensureGuestSession: () => {
+    const token = localStorage.getItem('auth_token')?.trim();
+    const guestDisabled = localStorage.getItem(GUEST_AUTOLOGIN_DISABLED_KEY) === '1';
+    if (token || guestDisabled) return;
+    const guestToken = buildGuestToken();
+    localStorage.setItem('auth_token', guestToken);
+    set({ user: buildGuestUser(), token: guestToken, isAuthenticated: true, isLoading: false });
   },
 
   updateUser: (user) => {

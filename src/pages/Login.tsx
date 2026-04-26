@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { Phone, User as UserIcon, ArrowLeft, Mail, Lock, Home } from 'lucide-react';
 import { sendWhatsAppOTP, checkUser, checkEmail, loginWithEmail, signupWithEmail, verifyEmailOTP, forgotPassword, resetPassword, resendEmailOTP, loginWithPhone, resetPhonePassword } from '../services/api';
@@ -12,6 +12,8 @@ import Logo from '../components/Logo';
 const Login: React.FC = () => {
   const navigate = useNavigate();
   const setAuth = useAuthStore((state) => state.setAuth);
+  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const isAuthLoading = useAuthStore((state) => state.isLoading);
   const showToast = useToastStore((state) => state.showToast);
   
   const [method, setMethod] = useState<'phone' | 'email'>('phone');
@@ -471,6 +473,12 @@ const Login: React.FC = () => {
     showToast('تم تسجيل الدخول كضيف', 'success');
     navigate('/');
   };
+
+  useEffect(() => {
+    if (!isAuthLoading && isAuthenticated) {
+      navigate('/', { replace: true });
+    }
+  }, [isAuthenticated, isAuthLoading, navigate]);
 
 
   return (

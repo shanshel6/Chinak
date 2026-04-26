@@ -1,5 +1,5 @@
 import { useEffect, lazy, Suspense, useRef } from 'react';
-import { BrowserRouter as Router, Routes, Route, useLocation, useNavigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, useLocation, useNavigate, Navigate } from 'react-router-dom';
 import { AnimatePresence } from 'framer-motion';
 import { useShallow } from 'zustand/react/shallow';
 import PageTransition from './components/PageTransition';
@@ -30,7 +30,6 @@ const CartEmpty = lazy(() => import('./pages/CartEmpty'));
 const Profile = lazy(() => import('./pages/Profile'));
 const MyOrders = lazy(() => import('./pages/MyOrders'));
 const Favorites = lazy(() => import('./pages/Favorites'));
-const Categories = lazy(() => import('./pages/Categories'));
 const Notifications = lazy(() => import('./pages/Notifications'));
 const SearchResults = lazy(() => import('./pages/SearchResults'));
 const ShippingTracking = lazy(() => import('./pages/ShippingTracking'));
@@ -203,7 +202,7 @@ function AnimatedRoutes() {
           </ProtectedRoute>
         } />
         <Route path="/cart/empty" element={<PageTransition><CartEmpty /></PageTransition>} />
-        <Route path="/categories" element={<PageTransition><Categories /></PageTransition>} />
+        <Route path="/categories" element={<Navigate to="/" replace />} />
         <Route path="/search" element={<PageTransition><SearchResults /></PageTransition>} />
         <Route path="/order-not-found" element={<PageTransition><OrderNotFound /></PageTransition>} />
         <Route path="/login" element={<PageTransition><Login /></PageTransition>} />
@@ -300,6 +299,7 @@ function AnimatedRoutes() {
 
 function App() {
   const checkAuth = useAuthStore((state) => state.checkAuth);
+  const ensureGuestSession = useAuthStore((state) => state.ensureGuestSession);
   const fetchCart = useCartStore((state) => state.fetchCart);
   const fetchWishlist = useWishlistStore((state) => state.fetchWishlist);
   
@@ -321,6 +321,7 @@ function App() {
 
   useEffect(() => {
     performCacheMaintenance();
+    ensureGuestSession();
     checkAuth();
     initChatSocket();
 
@@ -334,7 +335,7 @@ function App() {
     return () => {
       window.removeEventListener('auth-unauthorized', handleUnauthorized);
     };
-  }, [checkAuth, initChatSocket]);
+  }, [checkAuth, ensureGuestSession, initChatSocket]);
 
   useEffect(() => {
     if (isDarkMode) {

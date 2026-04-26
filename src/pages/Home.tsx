@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { fetchProducts, searchProducts } from '../services/api';
+import { fetchProducts, searchProducts, searchProductsByCategory } from '../services/api';
+import type { CategorySuggestion } from '../services/api';
 import { useAuthStore } from '../store/useAuthStore';
 import { normalizeWishlistProductId, useWishlistStore } from '../store/useWishlistStore';
 import { usePageCacheStore } from '../store/usePageCacheStore';
@@ -14,7 +15,10 @@ import type { Product } from '../types/product';
 
 const HOME_CATEGORY_CACHE_KEY = 'home_category_cached_products_v1';
 const RECENT_SEARCH_TERMS_KEY = 'recent_search_terms_v1';
+const RECENT_CATEGORY_CLICKS_KEY = 'recent_category_clicks_v1';
 const HOME_RECENT_FEED_KEY = 'home_recent_feed_v1';
+
+type RecentCategoryEntry = Pick<CategorySuggestion, 'id' | 'nameAr' | 'pathAr'>;
 
 const Home: React.FC = () => {
   const { t } = useTranslation();
@@ -89,6 +93,27 @@ const Home: React.FC = () => {
       parsed[categoryId] = items;
       localStorage.setItem(HOME_CATEGORY_CACHE_KEY, JSON.stringify(parsed));
     } catch {}
+  }, []);
+
+  const readRecentCategories = useCallback((): RecentCategoryEntry[] => {
+    try {
+      const raw = localStorage.getItem(RECENT_CATEGORY_CLICKS_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      const list = Array.isArray(parsed) ? parsed : [];
+      return list
+        .map((entry) => {
+          if (!entry || typeof entry !== 'object') return null;
+          const id = String(entry.id || '').trim();
+          const nameAr = String(entry.nameAr || entry.pathAr || '').trim();
+          const pathAr = String(entry.pathAr || entry.nameAr || '').trim();
+          if (!id || !nameAr) return null;
+          return { id, nameAr, pathAr: pathAr || nameAr };
+        })
+        .filter((entry): entry is RecentCategoryEntry => Boolean(entry))
+        .slice(0, 12);
+    } catch {
+      return [];
+    }
   }, []);
 
   const normalizeCachedProduct = useCallback((raw: any): Product | null => {
@@ -237,22 +262,28 @@ const Home: React.FC = () => {
 
         const cached = readRecentFeed();
         let personalizedPool = cached.items;
-        const recentTermsHashForFeed = (() => {
+        const recentFeedHash = (() => {
           try {
-            const raw = localStorage.getItem(RECENT_SEARCH_TERMS_KEY);
-            const parsed = raw ? JSON.parse(raw) : [];
-            const terms = Array.isArray(parsed) ? parsed.map((t) => String(t).trim()).filter(Boolean).slice(0, 30) : [];
+            const terms = (() => {
+              const raw = localStorage.getItem(RECENT_SEARCH_TERMS_KEY);
+              const parsed = raw ? JSON.parse(raw) : [];
+              return Array.isArray(parsed) ? parsed.map((t) => String(t).trim()).filter(Boolean).slice(0, 30) : [];
+            })();
+            const categories = readRecentCategories()
+              .map((category) => `${category.id}:${category.nameAr}`)
+              .join('|');
             const authKey = isAuthenticated ? 'auth' : 'guest';
-            return `${authKey}:${terms.join('|')}`;
+            return `${authKey}:terms:${terms.join('|')}:categories:${categories}`;
           } catch {
-            return isAuthenticated ? 'auth:' : 'guest:';
+            return isAuthenticated ? 'auth:terms::categories:' : 'guest:terms::categories:';
           }
         })();
         const cacheExpired = !cached.createdAt || (Date.now() - cached.createdAt) > FEED_EXPIRY_MS;
-        const termsChanged = cached.termsHash !== recentTermsHashForFeed;
+        const termsChanged = cached.termsHash !== recentFeedHash;
 
         if (pageNum === 1 && (personalizedPool.length === 0 || cacheExpired || termsChanged)) {
           let recentTerms: string[] = [];
+          let recentCategories: RecentCategoryEntry[] = [];
           try {
             const raw = localStorage.getItem(RECENT_SEARCH_TERMS_KEY);
             const parsed = raw ? JSON.parse(raw) : [];
@@ -260,21 +291,33 @@ const Home: React.FC = () => {
           } catch {
             recentTerms = [];
           }
+          recentCategories = readRecentCategories();
 
-          if (recentTerms.length > 0) {
-            const batches = await Promise.all(
-              recentTerms.slice(0, 12).map((term) => {
-                const randomPage = Math.floor(Math.random() * 3) + 1;
-                return searchProducts(term, randomPage, 18).catch(() => ({ products: [] as Product[] }));
-              })
-            );
-            const mergedRecent = batches.flatMap((batch) => (Array.isArray(batch.products) ? batch.products : []));
+          if (recentTerms.length > 0 || recentCategories.length > 0) {
+            const [categoryBatches, termBatches] = await Promise.all([
+              Promise.all(
+                recentCategories.slice(0, 8).map((category) => {
+                  const randomPage = Math.floor(Math.random() * 2) + 1;
+                  return searchProductsByCategory(category, randomPage, 18).catch(() => ({ products: [] as Product[] }));
+                })
+              ),
+              Promise.all(
+                recentTerms.slice(0, 8).map((term) => {
+                  const randomPage = Math.floor(Math.random() * 3) + 1;
+                  return searchProducts(term, randomPage, 18).catch(() => ({ products: [] as Product[] }));
+                })
+              )
+            ]);
+            const mergedRecent = [
+              ...categoryBatches.flatMap((batch) => (Array.isArray(batch.products) ? batch.products : [])),
+              ...termBatches.flatMap((batch) => (Array.isArray(batch.products) ? batch.products : []))
+            ];
             const mergedUnique = mergeUniqueProducts(mergedRecent, []);
             const featuredRecent = mergedUnique.filter((item) => Boolean(item?.isFeatured));
             const nonFeaturedRecent = mergedUnique.filter((item) => !item?.isFeatured);
             personalizedPool = mergeUniqueProducts(shuffle(featuredRecent), shuffle(nonFeaturedRecent));
             if (personalizedPool.length > 0) {
-              writeRecentFeed(personalizedPool, recentTermsHashForFeed);
+              writeRecentFeed(personalizedPool, recentFeedHash);
             }
           } else {
             const randomPages = Array.from({ length: 4 }, () => Math.floor(Math.random() * 12) + 1);
@@ -284,13 +327,13 @@ const Home: React.FC = () => {
             const randomPool = randomBatches.flat();
             personalizedPool = shuffle(mergeUniqueProducts(randomPool, []));
             if (personalizedPool.length > 0) {
-              writeRecentFeed(personalizedPool, recentTermsHashForFeed);
+              writeRecentFeed(personalizedPool, recentFeedHash);
             }
           }
         }
 
         if (personalizedPool.length > 0) {
-          const poolSignature = buildPoolSignature(personalizedPool, recentTermsHashForFeed, cached.createdAt || 0);
+          const poolSignature = buildPoolSignature(personalizedPool, recentFeedHash, cached.createdAt || 0);
           const shouldRefreshOrder = !recentFeedSessionRef.current
             || recentFeedSessionRef.current.signature !== poolSignature
             || pageNum === 1;

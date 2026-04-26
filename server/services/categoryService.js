@@ -20,23 +20,37 @@ const tryLoadJson = (filePath) => {
 };
 
 const getCategorySources = () => {
+  const canonicalPath = path.join(serverRoot, 'scripts', 'canonical-categories.seed.json');
+  const canonicalParsed = tryLoadJson(canonicalPath);
+  if (Array.isArray(canonicalParsed) && canonicalParsed.length > 0) {
+    return canonicalParsed;
+  }
+
   const candidates = [
     path.join(serverRoot, 'data', 'categories_translated_export.json'),
     path.join(serverRoot, 'all_categories_full.json')
   ];
+  const allSources = [];
   for (const filePath of candidates) {
     const parsed = tryLoadJson(filePath);
-    if (parsed) return parsed;
+    if (parsed) {
+      if (Array.isArray(parsed)) {
+        allSources.push(...parsed);
+      } else {
+        allSources.push(parsed);
+      }
+    }
   }
-  return [];
+  return allSources;
 };
 
 const normalizeNode = (node, index, parentId) => {
-  const nameEn = node?.nameEn || node?.name_en || node?.name || node?.title || '';
-  const nameAr = node?.nameAr || node?.name_ar || node?.name || node?.title || '';
-  const id = node?.id ?? node?.categoryId ?? `${parentId || 'root'}-${index}`;
+  const nameEn = node?.nameEn || node?.name_en || node?.name || node?.title || node?.slug || '';
+  const nameAr = node?.nameAr || node?.name_ar || node?.name_ar || node?.name || node?.title || '';
+  const id = node?.id ?? node?.categoryId ?? node?.slug ?? `${parentId || 'root'}-${index}`;
   const children = Array.isArray(node?.children) ? node.children : (Array.isArray(node?.subcategories) ? node.subcategories : []);
-  return { id: String(id), nameEn: String(nameEn), nameAr: String(nameAr), children };
+  const aliases = Array.isArray(node?.aliases) ? node.aliases : [];
+  return { id: String(id), nameEn: String(nameEn), nameAr: String(nameAr), children, aliases };
 };
 
 const buildIndex = (nodes, parentPathEn = '', parentPathAr = '', parentId = 'root') => {
@@ -52,7 +66,8 @@ const buildIndex = (nodes, parentPathEn = '', parentPathAr = '', parentId = 'roo
         nameEn: node.nameEn,
         nameAr: node.nameAr,
         pathEn: currentPathEn,
-        pathAr: currentPathAr
+        pathAr: currentPathAr,
+        aliases: node.aliases
       };
       list.push(entry);
       map.set(node.id, entry);
