@@ -77,15 +77,35 @@ workflows:
             exit 1
           fi
 
-          PRIVATE_KEY_VALUE="${APP_STORE_CONNECT_PRIVATE_KEY:-${APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY:-}}"
-          if [ -z "${PRIVATE_KEY_VALUE:-}" ]; then
+          if [ -z "${APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY:-}" ] && [ -z "${APP_STORE_CONNECT_PRIVATE_KEY:-}" ]; then
             echo "App Store Connect private key env var is missing"
             exit 1
           fi
 
           mkdir -p "$HOME/.appstoreconnect/private_keys"
           KEY_FILE="$HOME/.appstoreconnect/private_keys/AuthKey_${APP_STORE_CONNECT_KEY_IDENTIFIER}.p8"
-          printf '%s' "$PRIVATE_KEY_VALUE" > "$KEY_FILE"
+          python3 - "$KEY_FILE" <<'PY'
+          import os
+          import sys
+
+          key = os.environ.get("APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY") or os.environ.get("APP_STORE_CONNECT_PRIVATE_KEY") or ""
+          key = key.strip()
+
+          if key.startswith('"') and key.endswith('"'):
+              key = key[1:-1]
+
+          key = key.replace("\r\n", "\n").replace("\r", "\n")
+          if "\\n" in key and "-----BEGIN PRIVATE KEY-----" in key:
+              key = key.replace("\\n", "\n")
+
+          if "-----BEGIN PRIVATE KEY-----" not in key or "-----END PRIVATE KEY-----" not in key:
+              raise SystemExit("App Store Connect private key format is invalid")
+
+          with open(sys.argv[1], "w", encoding="utf-8", newline="\n") as fh:
+              fh.write(key)
+              if not key.endswith("\n"):
+                  fh.write("\n")
+          PY
           chmod 600 "$KEY_FILE"
 
           BUILD_NUMBER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' ios/App/App/Info.plist)"
