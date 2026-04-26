@@ -77,7 +77,7 @@ workflows:
             exit 1
           fi
 
-          if [ -z "${APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY:-}" ] && [ -z "${APP_STORE_CONNECT_PRIVATE_KEY:-}" ]; then
+          if [ -z "${APP_STORE_CONNECT_PRIVATE_KEY:-}" ]; then
             echo "App Store Connect private key env var is missing"
             exit 1
           fi
@@ -85,21 +85,32 @@ workflows:
           mkdir -p "$HOME/.appstoreconnect/private_keys"
           KEY_FILE="$HOME/.appstoreconnect/private_keys/AuthKey_${APP_STORE_CONNECT_KEY_IDENTIFIER}.p8"
           python3 - "$KEY_FILE" <<'PY'
+          import base64
           import os
           import sys
 
-          key = os.environ.get("APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY") or os.environ.get("APP_STORE_CONNECT_PRIVATE_KEY") or ""
+          key = os.environ.get("APP_STORE_CONNECT_PRIVATE_KEY") or ""
           key = key.strip()
 
           if key.startswith('"') and key.endswith('"'):
               key = key[1:-1]
 
           key = key.replace("\r\n", "\n").replace("\r", "\n")
-          if "\\n" in key and "-----BEGIN PRIVATE KEY-----" in key:
+          if "\\n" in key:
               key = key.replace("\\n", "\n")
 
           if "-----BEGIN PRIVATE KEY-----" not in key or "-----END PRIVATE KEY-----" not in key:
-              raise SystemExit("App Store Connect private key format is invalid")
+              try:
+                  decoded = base64.b64decode(key).decode("utf-8")
+              except Exception:
+                  decoded = ""
+              if "-----BEGIN PRIVATE KEY-----" in decoded and "-----END PRIVATE KEY-----" in decoded:
+                  key = decoded
+
+          if "-----BEGIN PRIVATE KEY-----" not in key or "-----END PRIVATE KEY-----" not in key:
+              raise SystemExit(
+                  "APP_STORE_CONNECT_PRIVATE_KEY is invalid. Store the full .p8 content, including BEGIN/END PRIVATE KEY lines."
+              )
 
           with open(sys.argv[1], "w", encoding="utf-8", newline="\n") as fh:
               fh.write(key)
