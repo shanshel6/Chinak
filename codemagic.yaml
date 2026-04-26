@@ -77,14 +77,9 @@ workflows:
             exit 1
           fi
 
-          if [ -z "${APP_STORE_CONNECT_PRIVATE_KEY:-}" ]; then
-            echo "App Store Connect private key env var is missing"
-            exit 1
-          fi
-
           mkdir -p "$HOME/.appstoreconnect/private_keys"
           KEY_FILE="$HOME/.appstoreconnect/private_keys/AuthKey_${APP_STORE_CONNECT_KEY_IDENTIFIER}.p8"
-          python3 - "$KEY_FILE" <<'PY'
+          if python3 - "$KEY_FILE" <<'PY'
           import base64
           import os
           import sys
@@ -108,16 +103,20 @@ workflows:
                   key = decoded
 
           if "-----BEGIN PRIVATE KEY-----" not in key or "-----END PRIVATE KEY-----" not in key:
-              raise SystemExit(
-                  "APP_STORE_CONNECT_PRIVATE_KEY is invalid. Store the full .p8 content, including BEGIN/END PRIVATE KEY lines."
-              )
+              raise SystemExit(2)
 
           with open(sys.argv[1], "w", encoding="utf-8", newline="\n") as fh:
               fh.write(key)
               if not key.endswith("\n"):
                   fh.write("\n")
           PY
-          chmod 600 "$KEY_FILE"
+          then
+            chmod 600 "$KEY_FILE"
+            USE_API_KEY="true"
+          else
+            USE_API_KEY="false"
+            rm -f "$KEY_FILE"
+          fi
 
           BUILD_NUMBER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' ios/App/App/Info.plist)"
           VERSION_NAME="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' ios/App/App/Info.plist 2>/dev/null || true)"
@@ -126,14 +125,31 @@ workflows:
           fi
 
           echo "Uploading $IPA_PATH to App Store Connect for Apple ID $APPLE_APP_ID"
-          xcrun altool --upload-package "$IPA_PATH" \
-            --type ios \
-            --apple-id "$APPLE_APP_ID" \
-            --bundle-id "$BUNDLE_ID" \
-            --bundle-version "$BUILD_NUMBER" \
-            --bundle-short-version-string "$VERSION_NAME" \
-            --apiKey "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
-            --apiIssuer "$APP_STORE_CONNECT_ISSUER_ID"
+          if [ "$USE_API_KEY" = "true" ]; then
+            echo "Using App Store Connect API key authentication"
+            xcrun altool --upload-package "$IPA_PATH" \
+              --type ios \
+              --apple-id "$APPLE_APP_ID" \
+              --bundle-id "$BUNDLE_ID" \
+              --bundle-version "$BUILD_NUMBER" \
+              --bundle-short-version-string "$VERSION_NAME" \
+              --apiKey "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
+              --apiIssuer "$APP_STORE_CONNECT_ISSUER_ID"
+          elif [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_APP_SPECIFIC_PASSWORD:-}" ]; then
+            echo "API key unavailable, falling back to Apple ID authentication"
+            xcrun altool --upload-package "$IPA_PATH" \
+              --type ios \
+              --apple-id "$APPLE_APP_ID" \
+              --bundle-id "$BUNDLE_ID" \
+              --bundle-version "$BUILD_NUMBER" \
+              --bundle-short-version-string "$VERSION_NAME" \
+              --username "$APPLE_ID" \
+              --password "@env:APPLE_APP_SPECIFIC_PASSWORD"
+          else
+            echo "No usable App Store Connect credentials found."
+            echo "Provide a valid APP_STORE_CONNECT_PRIVATE_KEY, or set APPLE_ID and APPLE_APP_SPECIFIC_PASSWORD in Codemagic."
+            exit 1
+          fi
             
     artifacts:
       - build/ios/ipa/*.ipa
