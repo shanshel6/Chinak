@@ -18,6 +18,7 @@ workflows:
         XCODE_PROJECT: "ios/App/App.xcodeproj"
         XCODE_SCHEME: "App"
         BUNDLE_ID: "com.chinak.app"
+        APPLE_APP_ID: "6760597610"
         DEVELOPMENT_TEAM: "3GF82YPKY5"
         TEST_DEVICE_UDID: "00008150-001C5C4C36D9401C"
         TEST_DEVICE_NAME: "Chinak iPhone"
@@ -66,15 +67,44 @@ workflows:
       - name: Build IPA for distribution (CODEMAGIC_MANAGED_SIGNING_V1)
         script: |
           xcode-project build-ipa --project "$XCODE_PROJECT" --scheme "$XCODE_SCHEME" --config Release
+      - name: Upload IPA to App Store Connect
+        script: |
+          set -euo pipefail
+
+          IPA_PATH="$(find "$CM_BUILD_DIR/build/ios/ipa" -maxdepth 1 -name "*.ipa" | head -n 1)"
+          if [ -z "${IPA_PATH:-}" ]; then
+            echo "IPA file not found in $CM_BUILD_DIR/build/ios/ipa"
+            exit 1
+          fi
+
+          PRIVATE_KEY_VALUE="${APP_STORE_CONNECT_PRIVATE_KEY:-${APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY:-}}"
+          if [ -z "${PRIVATE_KEY_VALUE:-}" ]; then
+            echo "App Store Connect private key env var is missing"
+            exit 1
+          fi
+
+          mkdir -p "$HOME/.appstoreconnect/private_keys"
+          KEY_FILE="$HOME/.appstoreconnect/private_keys/AuthKey_${APP_STORE_CONNECT_KEY_IDENTIFIER}.p8"
+          printf '%s' "$PRIVATE_KEY_VALUE" > "$KEY_FILE"
+          chmod 600 "$KEY_FILE"
+
+          BUILD_NUMBER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' ios/App/App/Info.plist)"
+          VERSION_NAME="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' ios/App/App/Info.plist 2>/dev/null || true)"
+          if [ -z "${VERSION_NAME:-}" ] || [ "$VERSION_NAME" = '$(MARKETING_VERSION)' ]; then
+            VERSION_NAME="$(sed -n 's/.*MARKETING_VERSION = \(.*\);/\1/p' ios/App/App.xcodeproj/project.pbxproj | head -n 1)"
+          fi
+
+          echo "Uploading $IPA_PATH to App Store Connect for Apple ID $APPLE_APP_ID"
+          xcrun altool --upload-package "$IPA_PATH" \
+            --type ios \
+            --apple-id "$APPLE_APP_ID" \
+            --bundle-id "$BUNDLE_ID" \
+            --bundle-version "$BUILD_NUMBER" \
+            --bundle-short-version-string "$VERSION_NAME" \
+            --apiKey "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
+            --apiIssuer "$APP_STORE_CONNECT_ISSUER_ID"
             
     artifacts:
       - build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log
       - "*.dSYM.zip"
-    publishing:
-      app_store_connect:
-        api_key: $APP_STORE_CONNECT_PRIVATE_KEY
-        key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
-        issuer_id: $APP_STORE_CONNECT_ISSUER_ID
-        submit_to_testflight: true
-        submit_to_app_store: false
