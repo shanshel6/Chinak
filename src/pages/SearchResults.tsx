@@ -718,6 +718,9 @@ const SearchResults: React.FC = () => {
         pageRef.current = nextPage;
         return;
       }
+      
+      if (!category) return;
+      
       const price = priceFilterRef.current;
       const cond = conditionFilterRef.current;
       const maxPrice = price === '1k' ? 1000 : price === '5k' ? 5000 : price === '10k' ? 10000 : price === '25k' ? 25000 : undefined;
