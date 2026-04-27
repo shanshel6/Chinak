@@ -102,7 +102,7 @@ const DEFAULT_AI_MODEL = String(
   process.env.CATEGORY_ASSIGN_MODEL
   || process.env.DEEPINFRA_CATEGORY_MODEL
   || process.env.DEEPINFRA_MODEL
-  || 'Qwen/Qwen3-32B'
+  || 'Qwen/Qwen3-14B'
 ).trim();
 const heartbeatMs = 15000;
 

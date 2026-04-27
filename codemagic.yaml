@@ -67,91 +67,14 @@ workflows:
       - name: Build IPA for distribution (CODEMAGIC_MANAGED_SIGNING_V1)
         script: |
           xcode-project build-ipa --project "$XCODE_PROJECT" --scheme "$XCODE_SCHEME" --config Release
-      - name: Upload IPA to App Store Connect
-        script: |
-          set -euo pipefail
-
-          IPA_PATH="$(find "$CM_BUILD_DIR/build/ios/ipa" -maxdepth 1 -name "*.ipa" | head -n 1)"
-          if [ -z "${IPA_PATH:-}" ]; then
-            echo "IPA file not found in $CM_BUILD_DIR/build/ios/ipa"
-            exit 1
-          fi
-
-          mkdir -p "$HOME/.appstoreconnect/private_keys"
-          KEY_FILE="$HOME/.appstoreconnect/private_keys/AuthKey_${APP_STORE_CONNECT_KEY_IDENTIFIER}.p8"
-          if python3 - "$KEY_FILE" <<'PY'
-          import base64
-          import os
-          import sys
-
-          key = os.environ.get("APP_STORE_CONNECT_PRIVATE_KEY") or ""
-          key = key.strip()
-
-          if key.startswith('"') and key.endswith('"'):
-              key = key[1:-1]
-
-          key = key.replace("\r\n", "\n").replace("\r", "\n")
-          if "\\n" in key:
-              key = key.replace("\\n", "\n")
-
-          if "-----BEGIN PRIVATE KEY-----" not in key or "-----END PRIVATE KEY-----" not in key:
-              try:
-                  decoded = base64.b64decode(key).decode("utf-8")
-              except Exception:
-                  decoded = ""
-              if "-----BEGIN PRIVATE KEY-----" in decoded and "-----END PRIVATE KEY-----" in decoded:
-                  key = decoded
-
-          if "-----BEGIN PRIVATE KEY-----" not in key or "-----END PRIVATE KEY-----" not in key:
-              raise SystemExit(2)
-
-          with open(sys.argv[1], "w", encoding="utf-8", newline="\n") as fh:
-              fh.write(key)
-              if not key.endswith("\n"):
-                  fh.write("\n")
-          PY
-          then
-            chmod 600 "$KEY_FILE"
-            USE_API_KEY="true"
-          else
-            USE_API_KEY="false"
-            rm -f "$KEY_FILE"
-          fi
-
-          BUILD_NUMBER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' ios/App/App/Info.plist)"
-          VERSION_NAME="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' ios/App/App/Info.plist 2>/dev/null || true)"
-          if [ -z "${VERSION_NAME:-}" ] || [ "$VERSION_NAME" = '$(MARKETING_VERSION)' ]; then
-            VERSION_NAME="$(sed -n 's/.*MARKETING_VERSION = \(.*\);/\1/p' ios/App/App.xcodeproj/project.pbxproj | head -n 1)"
-          fi
-
-          echo "Uploading $IPA_PATH to App Store Connect for Apple ID $APPLE_APP_ID"
-          if [ "$USE_API_KEY" = "true" ]; then
-            echo "Using App Store Connect API key authentication"
-            xcrun altool --upload-package "$IPA_PATH" \
-              --type ios \
-              --apple-id "$APPLE_APP_ID" \
-              --bundle-id "$BUNDLE_ID" \
-              --bundle-version "$BUILD_NUMBER" \
-              --bundle-short-version-string "$VERSION_NAME" \
-              --apiKey "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
-              --apiIssuer "$APP_STORE_CONNECT_ISSUER_ID"
-          elif [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_APP_SPECIFIC_PASSWORD:-}" ]; then
-            echo "API key unavailable, falling back to Apple ID authentication"
-            xcrun altool --upload-package "$IPA_PATH" \
-              --type ios \
-              --apple-id "$APPLE_APP_ID" \
-              --bundle-id "$BUNDLE_ID" \
-              --bundle-version "$BUILD_NUMBER" \
-              --bundle-short-version-string "$VERSION_NAME" \
-              --username "$APPLE_ID" \
-              --password "@env:APPLE_APP_SPECIFIC_PASSWORD"
-          else
-            echo "No usable App Store Connect credentials found."
-            echo "Provide a valid APP_STORE_CONNECT_PRIVATE_KEY, or set APPLE_ID and APPLE_APP_SPECIFIC_PASSWORD in Codemagic."
-            exit 1
-          fi
             
     artifacts:
       - build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log
       - "*.dSYM.zip"
+
+    publishing:
+      app_store_connect:
+        auth: integration
+        # Set to true if you want to automatically distribute to TestFlight beta testers
+        submit_to_testflight: false

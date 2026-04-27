@@ -19,7 +19,7 @@ if not exist "server\.env" (
 )
 
 if "%CATEGORY_ASSIGN_MODEL%"=="" (
-  set "CATEGORY_ASSIGN_MODEL=Qwen/Qwen3-32B"
+  set "CATEGORY_ASSIGN_MODEL=Qwen/Qwen3-14B"
 )
 
 set "BASE_ARGS=--batch-size=100 --use-ai --propose-categories --review-every=1800"
