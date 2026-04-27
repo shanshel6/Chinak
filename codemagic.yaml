@@ -67,14 +67,32 @@ workflows:
       - name: Build IPA for distribution (CODEMAGIC_MANAGED_SIGNING_V1)
         script: |
           xcode-project build-ipa --project "$XCODE_PROJECT" --scheme "$XCODE_SCHEME" --config Release
+          
+      - name: Upload IPA to App Store Connect manually with explicit App ID
+        script: |
+          set -euo pipefail
+          
+          IPA_PATH="$(find "$CM_BUILD_DIR/build/ios/ipa" -maxdepth 1 -name "*.ipa" | head -n 1)"
+          if [ -z "${IPA_PATH:-}" ]; then
+            echo "IPA file not found in $CM_BUILD_DIR/build/ios/ipa"
+            exit 1
+          fi
+
+          echo "Uploading $IPA_PATH to App Store Connect for App ID $APPLE_APP_ID..."
+          
+          # We use xcrun altool directly to explicitly pass --apple-id ($APPLE_APP_ID)
+          # because Apple's API sometimes fails to map the bundle ID automatically (Error 19).
+          # Codemagic's integration automatically provides the API key in ~/.appstoreconnect/private_keys/
+          # and exports the APP_STORE_CONNECT_KEY_IDENTIFIER and APP_STORE_CONNECT_ISSUER_ID variables.
+          
+          xcrun altool --upload-package "$IPA_PATH" \
+            --type ios \
+            --apple-id "$APPLE_APP_ID" \
+            --bundle-id "$BUNDLE_ID" \
+            --apiKey "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
+            --apiIssuer "$APP_STORE_CONNECT_ISSUER_ID"
             
     artifacts:
       - build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log
       - "*.dSYM.zip"
-
-    publishing:
-      app_store_connect:
-        auth: integration
-        # Set to true if you want to automatically distribute to TestFlight beta testers
-        submit_to_testflight: false
