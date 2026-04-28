@@ -61,6 +61,7 @@ const SearchResults: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [searchVersion, setSearchVersion] = useState(0);
   const [restored, setRestored] = useState(false);
+  const [initialSearchCacheHydrated, setInitialSearchCacheHydrated] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const restoredFromCacheRef = useRef(false);
@@ -131,6 +132,25 @@ const SearchResults: React.FC = () => {
     try {
       sessionStorage.removeItem(IMAGE_SEARCH_STATE_STORAGE_KEY);
     } catch {}
+  }, []);
+
+  const restoreScrollWithRetry = useCallback((targetPos: number) => {
+    if (targetPos <= 0) return;
+    let attempts = 0;
+    const tryRestore = () => {
+      attempts += 1;
+      window.scrollTo(0, targetPos);
+      if (document.scrollingElement) {
+        document.scrollingElement.scrollTop = targetPos;
+      }
+      const currentPos = window.pageYOffset || window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0;
+      const reached = Math.abs(currentPos - targetPos) < 4;
+      if (reached || attempts >= 12) return;
+      setTimeout(tryRestore, 120);
+    };
+    requestAnimationFrame(() => {
+      requestAnimationFrame(tryRestore);
+    });
   }, []);
 
   const rememberSearchTerm = useCallback((term: string) => {
@@ -453,14 +473,9 @@ const SearchResults: React.FC = () => {
     setQueryInput(IMAGE_QUERY_LABEL);
     const pos = Number(cachedSearch.scrollPos || 0);
     if (pos > 0) {
-      setTimeout(() => {
-        window.scrollTo(0, pos);
-        if (document.scrollingElement) {
-          document.scrollingElement.scrollTop = pos;
-        }
-      }, 100);
+      restoreScrollWithRetry(pos);
     }
-  }, [IMAGE_QUERY_LABEL, initialQuery, readImageSearchState, startImageSearch]);
+  }, [IMAGE_QUERY_LABEL, initialQuery, readImageSearchState, restoreScrollWithRetry, startImageSearch]);
 
   useEffect(() => {
     if (!imageSearchInput || !imageSearchPreview) return;
@@ -481,6 +496,7 @@ const SearchResults: React.FC = () => {
 
   useEffect(() => {
     if (imageSearchInput) return;
+    setInitialSearchCacheHydrated(false);
     setQueryInput(initialQuery);
     setActiveQuery(initialCategoryName || initialQuery);
     setActiveCategory(
@@ -500,6 +516,7 @@ const SearchResults: React.FC = () => {
     if (!key) {
       restoredFromCacheRef.current = false;
       setRestored(false);
+      setInitialSearchCacheHydrated(true);
       return;
     }
     const cached = usePageCacheStore.getState().getSearchData(key);
@@ -510,24 +527,24 @@ const SearchResults: React.FC = () => {
       setDraftConditionFilter(cached.condition as ConditionFilter);
       setDraftPriceFilter(cached.price as PriceFilter);
       setResults(cached.results);
-      setHasMore(cached.hasMore);
-      setPage(cached.page);
+      setHasMore(Boolean(cached.hasMore));
+      hasMoreRef.current = Boolean(cached.hasMore);
+      const restoredPage = Math.max(1, Number(cached.page || 1));
+      setPage(restoredPage);
+      pageRef.current = restoredPage;
       setError(null);
       setRestored(true);
       const pos = cached.scrollPos || 0;
       if (pos > 0) {
-        setTimeout(() => {
-          window.scrollTo(0, pos);
-          if (document.scrollingElement) {
-            document.scrollingElement.scrollTop = pos;
-          }
-        }, 100);
+        restoreScrollWithRetry(pos);
       }
+      setInitialSearchCacheHydrated(true);
       return;
     }
     restoredFromCacheRef.current = false;
     setRestored(false);
-  }, [initialCategoryId, imageSearchInput]);
+    setInitialSearchCacheHydrated(true);
+  }, [imageSearchInput, initialCategoryId, restoreScrollWithRetry]);
 
   useEffect(() => {
     activeQueryRef.current = activeQuery;
@@ -795,6 +812,7 @@ const SearchResults: React.FC = () => {
 
   useEffect(() => {
     const key = imageSearchInput ? IMAGE_SEARCH_CACHE_KEY : activeCategoryKey;
+    if (!initialSearchCacheHydrated) return;
     if (!key) return;
     usePageCacheStore.getState().setSearchData(key, {
       results,
@@ -803,10 +821,11 @@ const SearchResults: React.FC = () => {
       condition: imageSearchInput ? null : conditionFilter as any,
       price: imageSearchInput ? null : priceFilter as any,
     });
-  }, [IMAGE_SEARCH_CACHE_KEY, activeCategoryKey, conditionFilter, hasMore, imageSearchInput, page, priceFilter, results]);
+  }, [IMAGE_SEARCH_CACHE_KEY, activeCategoryKey, conditionFilter, hasMore, imageSearchInput, initialSearchCacheHydrated, page, priceFilter, results]);
 
   useEffect(() => {
     const key = imageSearchInput ? IMAGE_SEARCH_CACHE_KEY : activeCategoryKey;
+    if (!initialSearchCacheHydrated) return;
     if (!key) return;
     let timeoutId: any = null;
     const getScrollY = () => {
@@ -827,7 +846,7 @@ const SearchResults: React.FC = () => {
       window.removeEventListener('scroll', handleScroll);
       window.removeEventListener('touchmove', handleScroll);
     };
-  }, [IMAGE_SEARCH_CACHE_KEY, activeCategoryKey, imageSearchInput]);
+  }, [IMAGE_SEARCH_CACHE_KEY, activeCategoryKey, imageSearchInput, initialSearchCacheHydrated]);
 
   const selectCategory = useCallback((category: CategorySuggestion) => {
     const label = category.nameAr || category.pathAr || queryInput.trim();
@@ -935,7 +954,9 @@ const SearchResults: React.FC = () => {
               value={queryInput}
               onChange={(event) => setQueryInput(event.target.value)}
               onFocus={() => setIsInputFocused(true)}
-              onBlur={() => setIsInputFocused(false)}
+              onBlur={() => {
+                setTimeout(() => setIsInputFocused(false), 200);
+              }}
               onKeyDown={(event) => {
                 if (event.key === 'Enter') submitSearch();
               }}
