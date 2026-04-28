@@ -178,10 +178,10 @@ const GOOFISH_EMBEDDING_STEP_TIMEOUT_MS = Math.max(5000, parseInt(process.env.GO
 const GOOFISH_DB_RECOVER_MAX_CYCLES_PER_OP = Math.max(0, parseInt(process.env.GOOFISH_DB_RECOVER_MAX_CYCLES_PER_OP || '1', 10) || 1);
 const GOOFISH_PROCESS_LINK_TIMEOUT_MS = Math.max(30000, parseInt(process.env.GOOFISH_PROCESS_LINK_TIMEOUT_MS || '120000', 10) || 120000);
 const GOOFISH_AI_CALL_TIMEOUT_MS = Math.max(5000, parseInt(process.env.GOOFISH_AI_CALL_TIMEOUT_MS || '15000', 10) || 15000);
-const GOOFISH_AI_RETRY_MAX_ATTEMPTS = Math.max(1, parseInt(process.env.GOOFISH_AI_RETRY_MAX_ATTEMPTS || '2', 10) || 2);
+const GOOFISH_AI_RETRY_MAX_ATTEMPTS = Math.max(1, parseInt(process.env.GOOFISH_AI_RETRY_MAX_ATTEMPTS || '3', 10) || 3);
 const GOOFISH_TERM_AI_CALL_TIMEOUT_MS = Math.max(5000, parseInt(process.env.GOOFISH_TERM_AI_CALL_TIMEOUT_MS || '15000', 10) || 15000);
-const GOOFISH_TERM_AI_MAX_ATTEMPTS = Math.max(1, parseInt(process.env.GOOFISH_TERM_AI_MAX_ATTEMPTS || '1', 10) || 1);
-const GOOFISH_AI_MODEL = String(process.env.GOOFISH_AI_MODEL || 'Qwen/Qwen3-14B').trim() || 'Qwen/Qwen3-14B';
+const GOOFISH_TERM_AI_MAX_ATTEMPTS = Math.max(1, parseInt(process.env.GOOFISH_TERM_AI_MAX_ATTEMPTS || '2', 10) || 2);
+const GOOFISH_AI_MODEL = String(process.env.GOOFISH_AI_MODEL || 'Qwen/Qwen3-8B').trim() || 'Qwen/Qwen3-8B';
 const GOOFISH_ENABLE_TRANSLATION_RETRY = String(process.env.GOOFISH_ENABLE_TRANSLATION_RETRY || '').toLowerCase() === 'true';
 const GOOFISH_SKIP_ON_TRANSLATION_FAILURE = String(process.env.GOOFISH_SKIP_ON_TRANSLATION_FAILURE || 'true').toLowerCase() !== 'false';
 const GOOFISH_DB_SAVE_BACKOFF_MS = Math.max(200, parseInt(process.env.GOOFISH_DB_SAVE_BACKOFF_MS || '500', 10) || 500);
@@ -298,10 +298,11 @@ async function callSiliconFlow(messages, temperature = 0.3, maxTokens = 100, opt
     } catch (error) {
       const status = error?.response?.status;
       const isTimeout = String(error?.message || '').includes('timeout');
-      // Retry on 429 (Rate Limit), 503 (Service Unavailable), and 500 (Internal Server Error)
-      if (status === 429 || status === 503 || status === 500 || isTimeout) {
+      // Retry on 429 (Rate Limit), 502 (Bad Gateway), 503 (Service Unavailable), 504 (Gateway Timeout), and 500 (Internal Server Error)
+      if (status === 429 || status === 502 || status === 503 || status === 504 || status === 500 || isTimeout) {
         console.warn(`SiliconFlow API Error (${status || 'timeout'}), retrying (attempt ${attempt}/${maxAttempts})...`);
-        const waitMs = Math.min(5000, 1000 * attempt);
+        // Exponential backoff: 2s, 4s, 8s, etc. but capped at 15s
+        const waitMs = Math.min(15000, 2000 * Math.pow(2, attempt - 1));
         await new Promise((resolve) => setTimeout(resolve, waitMs));
         continue;
       }

@@ -105,6 +105,9 @@ export async function ensureProductImageEmbeddings({
     }
   }
 
+  // Ensure we use the correct logger from ensureProductImageEmbeddings if available
+  const activeLogger = logger || console;
+
   await runDb(
     () => prisma.$executeRawUnsafe(
       `
@@ -123,7 +126,10 @@ export async function ensureProductImageEmbeddings({
       selectedLimit
     ),
     `clear extra product image embeddings ${productId}`
-  );
+  ).catch(err => {
+    activeLogger.warn?.(`[Image Embedding] Non-critical error clearing extra embeddings for Product ${productId}: ${err.message}`);
+    // We don't throw here to prevent freezing the entire pipeline for a non-critical cleanup task
+  });
 
   if (mainVector) {
     await runDb(

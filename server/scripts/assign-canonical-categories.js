@@ -102,7 +102,7 @@ const DEFAULT_AI_MODEL = String(
   process.env.CATEGORY_ASSIGN_MODEL
   || process.env.DEEPINFRA_CATEGORY_MODEL
   || process.env.DEEPINFRA_MODEL
-  || 'Qwen/Qwen3-14B'
+  || 'Qwen/Qwen3-8B'
 ).trim();
 const heartbeatMs = 15000;
 
@@ -932,12 +932,32 @@ const updateProductCategory = async (product, classification, dryRun) => {
     categoryAssignedAt: new Date().toISOString()
   };
   const metadataPatch = JSON.stringify(nextMetadata);
-  const changedRows = await prisma.$executeRawUnsafe(`
-    UPDATE "Product"
-    SET "aiMetadata" = COALESCE("aiMetadata", '{}'::jsonb) || $2::jsonb
-    WHERE id = $1
-  `, product.id, metadataPatch);
-  return Number(changedRows || 0) > 0;
+
+  const maxRetries = 5;
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const changedRows = await prisma.$executeRawUnsafe(`
+        UPDATE "Product"
+        SET "aiMetadata" = COALESCE("aiMetadata", '{}'::jsonb) || $2::jsonb
+        WHERE id = $1
+      `, product.id, metadataPatch);
+      return Number(changedRows || 0) > 0;
+    } catch (err) {
+      lastError = err;
+      const isConnectionError = err.code === 'P1001' || err.code === 'P1017' || String(err.message).includes('Can\'t reach database');
+      
+      if (isConnectionError && attempt < maxRetries) {
+        const waitMs = Math.min(30000, 2000 * Math.pow(2, attempt - 1));
+        console.warn(`[category-assign] Database connection lost for Product ${product.id}. Retrying (${attempt}/${maxRetries}) in ${waitMs}ms...`);
+        await new Promise(r => setTimeout(r, waitMs));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastError;
 };
 
 const withTimeout = async (promise, timeoutMs, label) => {

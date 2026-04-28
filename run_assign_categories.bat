@@ -19,17 +19,18 @@ if not exist "server\.env" (
 )
 
 if "%CATEGORY_ASSIGN_MODEL%"=="" (
-  set "CATEGORY_ASSIGN_MODEL=Qwen/Qwen3-14B"
+  set "CATEGORY_ASSIGN_MODEL=Qwen/Qwen3-8B"
 )
 
 set "BASE_ARGS=--batch-size=100 --use-ai --propose-categories --review-every=1800"
 set "MODE_LABEL=DRY RUN"
 
-if /I "%~1"=="apply" (
-  set "MODE_LABEL=APPLY"
+if /I "%~1"=="dry" (
+  set "MODE_LABEL=DRY RUN"
+  set "BASE_ARGS=%BASE_ARGS% --dry-run"
   shift
 ) else (
-  set "BASE_ARGS=%BASE_ARGS% --dry-run"
+  set "MODE_LABEL=APPLY"
 )
 
 echo [category-assign] Mode: %MODE_LABEL%

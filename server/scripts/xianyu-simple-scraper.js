@@ -126,7 +126,7 @@ async function enrichWithAI(title, description, price) {
             try {
                 // Add 25s timeout to the API call (Increased from 15s to avoid timeout on long generations)
                 const responsePromise = deepinfra.chat.completions.create({
-                    model: "Qwen/Qwen2.5-7B-Instruct",
+                    model: "Qwen/Qwen3-8B",
                     messages: [{ role: "user", content: prompt }],
                     temperature: 0.7,
                     max_tokens: 1024, // Explicitly increase token limit to avoid truncation

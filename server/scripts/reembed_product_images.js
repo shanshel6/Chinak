@@ -1,5 +1,7 @@
 import prisma from '../prismaClient.js';
 import { ensureProductImageEmbeddings, MAX_PRODUCT_IMAGE_EMBEDDINGS } from '../services/productImageVectorService.js';
+import { embedText } from '../services/clipService.js';
+import { canonicalCategories } from '../services/categoryCanonicalService.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
@@ -109,6 +111,21 @@ async function writeProgress(progressFilePath, progress) {
   }
 }
 
+const assignCategories = process.env.REEMBED_ASSIGN_CATEGORIES === '1';
+
+function cosineSimilarity(vecA, vecB) {
+  let dotProduct = 0;
+  let normA = 0;
+  let normB = 0;
+  for (let i = 0; i < vecA.length; i++) {
+    dotProduct += vecA[i] * vecB[i];
+    normA += vecA[i] * vecA[i];
+    normB += vecB[i] * vecB[i];
+  }
+  if (normA === 0 || normB === 0) return 0;
+  return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+}
+
 async function main() {
   const batchSize = Math.max(1, Number.parseInt(process.env.REEMBED_BATCH_SIZE || '100', 10) || 100);
   const maxItems = Math.max(1, Number.parseInt(process.env.REEMBED_MAX_ITEMS || '5000', 10) || 5000);
@@ -117,8 +134,8 @@ async function main() {
   const resetProgress = String(process.env.REEMBED_RESET_PROGRESS || '').trim() === '1';
   const forceAll = String(process.env.REEMBED_FORCE_ALL || '').trim() === '1';
   const testOnly = String(process.env.REEMBED_TEST_ONLY || '').trim() === '1';
-  const queryTimeoutMs = Math.max(1000, Number.parseInt(process.env.REEMBED_QUERY_TIMEOUT_MS || '60000', 10) || 60000);
-  const updateTimeoutMs = Math.max(1000, Number.parseInt(process.env.REEMBED_UPDATE_TIMEOUT_MS || '120000', 10) || 120000);
+  const queryTimeoutMs = Math.max(1000, Number.parseInt(process.env.REEMBED_QUERY_TIMEOUT_MS || '90000', 10) || 90000);
+  const updateTimeoutMs = Math.max(1000, Number.parseInt(process.env.REEMBED_UPDATE_TIMEOUT_MS || '180000', 10) || 180000);
   const retryCount = Math.max(1, Number.parseInt(process.env.REEMBED_RETRY_COUNT || '5', 10) || 5);
   const concurrency = Math.max(1, Number.parseInt(process.env.REEMBED_CONCURRENCY || '1', 10) || 1);
   const retryBackoffMs = Math.max(200, Number.parseInt(process.env.REEMBED_RETRY_BACKOFF_MS || '1500', 10) || 1500);
@@ -134,6 +151,21 @@ async function main() {
   console.log(`=================================================\n`);
 
   let heartbeat = null;
+
+  const categoryEmbeddings = [];
+  if (assignCategories) {
+    console.log('Pre-computing category embeddings...');
+    for (const cat of canonicalCategories) {
+      if (cat.slug === 'other') continue;
+      const text = `a photo of a ${cat.slug.replace(/_/g, ' ')}`;
+      const vec = await embedText(text);
+      if (vec && vec.length === 512 && !vec.every(v => v === 0)) {
+        categoryEmbeddings.push({ cat, vec });
+      }
+    }
+    console.log(`Pre-computed embeddings for ${categoryEmbeddings.length} categories.`);
+  }
+
   try {
     let processed = 0;
     if (resetProgress) {
@@ -263,6 +295,50 @@ async function main() {
             if (result.embeddedCount === 0) {
               console.log(`Skipping ${productLabel}: No embeddable product images`);
               return;
+            }
+
+            if (assignCategories && result.mainVector && categoryEmbeddings.length > 0) {
+              try {
+                const vecStr = result.mainVector;
+                const vecArray = JSON.parse(vecStr);
+                
+                let bestCat = null;
+                let bestScore = -1;
+                
+                for (const { cat, vec } of categoryEmbeddings) {
+                  const score = cosineSimilarity(vecArray, vec);
+                  if (score > bestScore) {
+                    bestScore = score;
+                    bestCat = cat;
+                  }
+                }
+                
+                if (bestCat) {
+                  const metadataPatch = JSON.stringify({
+                    categorySlug: bestCat.slug,
+                    categoryNameAr: bestCat.name_ar,
+                    categoryScore: Math.round(bestScore * 100),
+                    categoryConfidence: 'high',
+                    categorySource: 'vision_zero_shot',
+                    categoryAssignedAt: new Date().toISOString()
+                  });
+                  
+                  await withRetry(
+                    () => prisma.$executeRawUnsafe(`
+                      UPDATE "Product"
+                      SET "aiMetadata" = COALESCE("aiMetadata", '{}'::jsonb) || $2::jsonb
+                      WHERE id = $1
+                    `, product.id, metadataPatch),
+                    'update category',
+                    retryCount,
+                    updateTimeoutMs,
+                    retryBackoffMs
+                  );
+                  console.log(`Category Assigned: ${productLabel} -> ${bestCat.slug} (${Math.round(bestScore * 100)}% match)`);
+                }
+              } catch (catErr) {
+                console.error(`Failed to assign category for ${productLabel}: ${catErr?.message || catErr}`);
+              }
             }
 
             processed += 1;

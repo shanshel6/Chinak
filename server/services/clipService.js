@@ -1,4 +1,4 @@
-import { AutoProcessor, CLIPVisionModelWithProjection, AutoModelForObjectDetection, AutoModelForZeroShotObjectDetection, RawImage, env } from '@xenova/transformers';
+import { AutoProcessor, CLIPVisionModelWithProjection, CLIPTextModelWithProjection, AutoModelForObjectDetection, AutoModelForZeroShotObjectDetection, RawImage, env, AutoTokenizer } from '@xenova/transformers';
 import { Agent, ProxyAgent, setGlobalDispatcher } from 'undici';
 import axios from 'axios';
 import dns from 'node:dns';
@@ -66,12 +66,31 @@ let zsModelPromise = null;
 let zeroShotFailureCount = 0;
 let zeroShotDisabledForRun = String(process.env.CLIP_DISABLE_ZERO_SHOT || 'false').toLowerCase() === 'true';
 
+let textModelPromise = null;
+let tokenizerPromise = null;
+
 const getProcessor = async () => {
   ensureCacheDir();
   if (!processorPromise) {
     processorPromise = AutoProcessor.from_pretrained(MODEL_ID);
   }
   return processorPromise;
+};
+
+const getTextModel = async () => {
+  ensureCacheDir();
+  if (!textModelPromise) {
+    textModelPromise = CLIPTextModelWithProjection.from_pretrained(MODEL_ID, { quantized: QUANTIZED });
+  }
+  return textModelPromise;
+};
+
+const getTokenizer = async () => {
+  ensureCacheDir();
+  if (!tokenizerPromise) {
+    tokenizerPromise = AutoTokenizer.from_pretrained(MODEL_ID);
+  }
+  return tokenizerPromise;
 };
 
 const getVisionModel = async () => {
@@ -101,7 +120,17 @@ const getODModel = async () => {
 const getZSProcessor = async () => {
   ensureCacheDir();
   if (!zsProcessorPromise) {
-    zsProcessorPromise = AutoProcessor.from_pretrained(ZERO_SHOT_OD_MODEL_ID);
+    zsProcessorPromise = (async () => {
+      const processor = await AutoProcessor.from_pretrained(ZERO_SHOT_OD_MODEL_ID);
+      try {
+        // Manually load tokenizer for OWL-ViT since AutoProcessor might not include it in v2
+        const tokenizer = await AutoTokenizer.from_pretrained(ZERO_SHOT_OD_MODEL_ID);
+        processor.tokenizer = tokenizer;
+      } catch (err) {
+        console.warn('[CLIP Service] Failed to load tokenizer for Zero-Shot processor:', err.message);
+      }
+      return processor;
+    })();
   }
   return zsProcessorPromise;
 };
@@ -207,6 +236,10 @@ function normalizeDetectionResult(result) {
 }
 
 async function buildZeroShotInputs(processor, image, textQueries) {
+  // 1. Basic validation
+  if (!image || !image.data) {
+    throw new Error('Invalid image object passed to buildZeroShotInputs');
+  }
   const normalizedQueries = (Array.isArray(textQueries) ? textQueries : [textQueries])
     .map((q) => String(q || '').trim())
     .filter(Boolean);
@@ -214,32 +247,90 @@ async function buildZeroShotInputs(processor, image, textQueries) {
     throw new Error('Missing zero-shot text query');
   }
 
-  // Different transformers.js versions accept different batching/signatures.
-  // OWL-ViT often expects one list of queries per image (nested text array).
-  const inputBuilders = [
-    () => processor({ images: image, text: [normalizedQueries] }),
-    () => processor({ images: image, text: normalizedQueries }),
-    () => processor({ images: [image], text: [normalizedQueries] }),
-    () => processor({ images: [image], text: normalizedQueries }),
-    () => processor(normalizedQueries, image),
-    () => processor(image, normalizedQueries),
-  ];
+  // 2. Ensure processor is ready (especially tokenizer)
+  if (processor.tokenizer && typeof processor.tokenizer.then === 'function') {
+    await processor.tokenizer;
+  }
 
   let lastError = null;
-  for (const build of inputBuilders) {
+
+  // 3. Manual merge as primary path for OWL-ViT in transformers.js v2
+  try {
+    const imgProc = processor.image_processor || processor.feature_extractor || processor;
+    const tokenizer = processor.tokenizer;
+
+    if (tokenizer) {
+      console.log(`[CLIP Service] Using manual merge for Zero-Shot inputs`);
+      
+      // Process image
+      let imageInputs;
+      try {
+        imageInputs = await imgProc([image]);
+      } catch (e) {
+        imageInputs = await imgProc(image);
+      }
+      
+      // Process text - ensure we pass a flat array of strings
+      const flatQueries = Array.isArray(normalizedQueries[0]) ? normalizedQueries[0] : normalizedQueries;
+      
+      let textInputs;
+      try {
+        // Try batch encoding
+        textInputs = await tokenizer(flatQueries, {
+          padding: true,
+          truncation: true,
+          return_tensors: 'pt'
+        });
+      } catch (e) {
+        console.warn('[CLIP Service] Tokenizer batch failed, trying single:', e.message);
+        textInputs = await tokenizer(flatQueries[0], {
+          padding: true,
+          truncation: true,
+          return_tensors: 'pt'
+        });
+      }
+
+      if (imageInputs && textInputs && imageInputs.pixel_values && textInputs.input_ids) {
+        console.log(`[CLIP Service] SUCCESS with manual merge`);
+        return {
+          ...imageInputs,
+          ...textInputs
+        };
+      }
+    }
+  } catch (err) {
+    console.warn(`[CLIP Service] Manual merge failed:`, err.message);
+    lastError = err;
+  }
+
+  // 4. Attempt various signatures as fallback
+  const attempts = [
+    // Variation: Object-based (Stable in newer v2 versions)
+    { name: 'object-based', fn: () => processor({ 
+        text: normalizedQueries, 
+        images: image 
+      }) },
+    // Variation: images then text (Standard HuggingFace style)
+    { name: 'image-then-text', fn: () => processor(image, normalizedQueries) },
+  ];
+
+  for (const attempt of attempts) {
     try {
-      const inputs = await build();
-      if (inputs?.input_ids && inputs?.attention_mask) {
+      console.log(`[CLIP Service] Attempting Zero-Shot input format fallback: ${attempt.name}`);
+      const inputs = await attempt.fn();
+      
+      // Critical check: Some formats return successfully but missing required fields
+      if (inputs && inputs.pixel_values && inputs.input_ids) {
+        console.log(`[CLIP Service] SUCCESS with ${attempt.name}`);
         return inputs;
       }
     } catch (err) {
       lastError = err;
+      console.warn(`[CLIP Service] Fallback ${attempt.name} failed:`, err.message);
     }
   }
 
-  const message = lastError?.message
-    ? String(lastError.message)
-    : 'processor did not return input_ids/attention_mask';
+  const message = lastError?.message || 'Unknown error';
   throw new Error(`Failed to build zero-shot inputs: ${message}`);
 }
 
@@ -255,14 +346,29 @@ async function detectAndCropObject(image, productName = null) {
         const model = await getZSModel();
         
         // Clean product name for better detection (remove numbers, weird chars, keep main words)
-        // e.g. "iPhone 13 Pro Max 256GB" -> "iPhone"
-        // But OWL-ViT works better with simple object names.
-        // Let's try using the first 2-3 words or known category synonyms if possible.
-        // For now, use the full name but truncated to first few words to avoid noise.
-        const textQueries = [productName.split(' ').slice(0, 4).join(' ')];
+        const cleanName = productName
+          .replace(/[^\p{L}\p{N}\s]/gu, ' ') // Keep letters, numbers, and spaces (Unicode aware)
+          .replace(/\s+/g, ' ')
+          .trim();
+        
+        if (!cleanName) {
+           throw new Error('Product name is empty after cleaning');
+        }
+
+        // OWL-ViT works best with short, descriptive labels.
+        // We use:
+        // 1. Full cleaned name (truncated to reasonable length)
+        // 2. First 3 words of name
+        // 3. Broad fallbacks
+        const textQueries = [
+          cleanName.split(' ').slice(0, 8).join(' '),
+          cleanName.split(' ').slice(0, 3).join(' '),
+          'product',
+          'item'
+        ].filter((q, i, self) => q && self.indexOf(q) === i); // Unique queries
 
         const zsInputs = await buildZeroShotInputs(processor, image, textQueries);
-        const { original_sizes } = zsInputs;
+        const original_sizes = zsInputs.original_sizes || [[image.height, image.width]];
         const outputs = await model(zsInputs);
         
         // Threshold can be lower for zero-shot
@@ -288,16 +394,15 @@ async function detectAndCropObject(image, productName = null) {
           console.log(`[CLIP Service] Zero-Shot found ${result.boxes.length} candidates for "${textQueries[0]}"`);
         }
       } catch (zsError) {
-        const zsMessage = String(zsError?.message || '');
+        const zsMessage = String(zsError?.message || zsError || 'Unknown error');
+        console.warn(`[CLIP Service] Zero-Shot Detection failed for "${productName}":`, zsMessage);
+        
         zeroShotFailureCount += 1;
-        if (zsMessage.includes('undefined is not iterable')) {
-          zeroShotFailureCount = 3;
-        }
-        if (zeroShotFailureCount >= 3) {
+        // Don't disable immediately on "undefined is not iterable" unless it happens repeatedly
+        if (zeroShotFailureCount >= 5) {
           zeroShotDisabledForRun = true;
-          console.warn('[CLIP Service] Zero-Shot disabled for this run after repeated preprocessing failures. Using DETR fallback.');
+          console.warn('[CLIP Service] Zero-Shot disabled for this run after repeated failures. Using DETR fallback.');
         }
-        console.warn('[CLIP Service] Zero-Shot Detection failed:', zsMessage || zsError);
       }
     }
 
@@ -850,3 +955,35 @@ export async function embedImage(input, productName = null) {
     return new Array(512).fill(0);
   }
 }
+
+/**
+ * Generate CLIP embedding for text
+ * @param {string} text - Text to embed
+ * @returns {Promise<number[]>} - 512-dim embedding vector
+ */
+export async function embedText(text) {
+  try {
+    const tokenizer = await getTokenizer();
+    const model = await getTextModel();
+
+    const textInputs = await tokenizer([text], {
+      padding: true,
+      truncation: true,
+      return_tensors: 'pt'
+    });
+
+    const output = await model(textInputs);
+    const textEmbeds = output?.text_embeds;
+    if (!textEmbeds) throw new Error('CLIP model did not return text_embeds');
+
+    const embedding = toNumberArray(textEmbeds);
+    if (!embedding || embedding.length !== 512) {
+      throw new Error(`Unexpected CLIP embedding length ${embedding?.length} (expected 512)`);
+    }
+    return normalizeL2(embedding);
+  } catch (error) {
+    console.error('[CLIP Service] Error generating text embedding:', error?.message || error);
+    return new Array(512).fill(0);
+  }
+}
+

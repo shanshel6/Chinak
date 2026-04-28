@@ -310,7 +310,7 @@ async function callSiliconFlow(messages, temperature = 0.3, maxTokens = 100) {
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
       const response = await axios.post('https://api.siliconflow.com/v1/chat/completions', {
-        model: "Qwen/Qwen2.5-7B-Instruct",
+        model: "Qwen/Qwen3-8B",
         messages,
         temperature,
         max_tokens: maxTokens,
@@ -326,10 +326,11 @@ async function callSiliconFlow(messages, temperature = 0.3, maxTokens = 100) {
     } catch (error) {
       const status = error?.response?.status;
       const isTimeout = String(error?.message || '').includes('timeout');
-      // Retry on 429 (Rate Limit), 503 (Service Unavailable), and 500 (Internal Server Error)
-      if (status === 429 || status === 503 || status === 500 || isTimeout) {
+      // Retry on 429 (Rate Limit), 502 (Bad Gateway), 503 (Service Unavailable), 504 (Gateway Timeout), and 500 (Internal Server Error)
+      if (status === 429 || status === 502 || status === 503 || status === 504 || status === 500 || isTimeout) {
         console.warn(`SiliconFlow API Error (${status || 'timeout'}), retrying (attempt ${attempt}/${maxAttempts})...`);
-        const waitMs = Math.min(30000, 2000 * attempt * attempt);
+        // Exponential backoff: 2s, 4s, 8s, etc. but capped at 30s
+        const waitMs = Math.min(30000, 2000 * Math.pow(2, attempt - 1));
         await new Promise((resolve) => setTimeout(resolve, waitMs));
         continue;
       }
