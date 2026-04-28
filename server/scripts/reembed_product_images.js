@@ -157,7 +157,12 @@ async function main() {
     console.log('Pre-computing category embeddings...');
     for (const cat of canonicalCategories) {
       if (cat.slug === 'other') continue;
-      const text = `a photo of a ${cat.slug.replace(/_/g, ' ')}`;
+      
+      // Try to find a purely English alias for a better CLIP prompt
+      const englishAlias = (cat.aliases || []).find(a => /^[a-zA-Z\s-]+$/.test(a));
+      const promptSubject = englishAlias || cat.slug.replace(/_/g, ' ');
+      const text = `a photo of ${promptSubject}`;
+      
       const vec = await embedText(text);
       if (vec && vec.length === 512 && !vec.every(v => v === 0)) {
         categoryEmbeddings.push({ cat, vec });
@@ -311,6 +316,11 @@ async function main() {
                     bestScore = score;
                     bestCat = cat;
                   }
+                }
+                
+                // If the score is extremely low, fallback to 'other'
+                if (bestScore < 0.22) {
+                  bestCat = { slug: 'other', name_ar: 'أخرى' };
                 }
                 
                 if (bestCat) {
