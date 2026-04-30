@@ -723,6 +723,10 @@ const scoreCategorySuggestion = (entry, query) => {
   return { score: bestScore, matchedText };
 };
 
+let dynamicCategorySuggestionCache = { at: 0, list: [], assignedSlugs: new Set() };
+let dynamicCategorySuggestionCachePromise = null;
+const DYNAMIC_CATEGORY_SUGGESTION_TTL_MS = 120000;
+
 const sanitizeFeaturedSearchSentences = (input) => {
   const source = Array.isArray(input)
     ? input
@@ -5272,6 +5276,7 @@ app.get('/api/products', async (req, res) => {
     const skip = (page - 1) * limit;
     const maxPrice = req.query.maxPrice ? parseFloat(req.query.maxPrice) : null;
     const condition = req.query.condition || '';
+    const random = String(req.query.random || '').toLowerCase() === 'true';
 
     // Cache Store Settings for 60 seconds to reduce DB round-trips
     if (!cachedStoreSettings || (Date.now() - cachedStoreSettingsTime > 60000)) {
@@ -5322,38 +5327,57 @@ app.get('/api/products', async (req, res) => {
       }
     }
 
-    const dbStartedAt = Date.now();
-    const [products, total] = await withDbRetry(() => Promise.all([
-      prisma.product.findMany({
-        where,
+    const productSelect = {
+      id: true,
+      name: true,
+      price: true,
+      basePriceIQD: true,
+      image: true,
+      aiMetadata: true,
+      neworold: true,
+      isFeatured: true,
+      featuredSearchSentences: true,
+      domesticShippingFee: true,
+      deliveryTime: true,
+      variants: {
         select: {
           id: true,
-          name: true,
+          combination: true,
           price: true,
           basePriceIQD: true,
           image: true,
-          aiMetadata: true,
-          neworold: true,
-          isFeatured: true,
-          featuredSearchSentences: true,
-          domesticShippingFee: true,
-          deliveryTime: true,
-          variants: {
-            select: {
-              id: true,
-              combination: true,
-              price: true,
-              basePriceIQD: true,
-              image: true,
-            }
-          }
-        },
+        }
+      }
+    };
+
+    const dbStartedAt = Date.now();
+    const [products, total] = await withDbRetry(async () => {
+      const total = await prisma.product.count({ where });
+      if (random) {
+        const maxOffset = Math.max(0, total - limit);
+        const randomSkip = maxOffset > 0 ? Math.floor(Math.random() * (maxOffset + 1)) : 0;
+        const rows = await prisma.product.findMany({
+          where,
+          select: productSelect,
+          skip: randomSkip,
+          take: limit,
+          orderBy: { id: 'asc' }
+        });
+        for (let i = rows.length - 1; i > 0; i -= 1) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [rows[i], rows[j]] = [rows[j], rows[i]];
+        }
+        return [rows, total];
+      }
+      const rows = await prisma.product.findMany({
+        where,
+        select: productSelect,
         skip,
         take: limit,
         orderBy: [{ isFeatured: 'desc' }, { updatedAt: 'desc' }]
-      }),
-      prisma.product.count({ where })
-    ]));
+      });
+      return [rows, total];
+    });
     perf.log('db_query_done', { dbMs: Date.now() - dbStartedAt, productsCount: products.length, total });
 
     // If no products found, return empty result immediately to avoid processing overhead
@@ -5516,6 +5540,65 @@ app.get('/api/admin/products', authenticateToken, isAdmin, hasPermission('manage
 app.post('/api/admin/check-links', authenticateToken, isAdmin, async (req, res) => {
   checkAllProductLinks();
   res.json({ message: 'Link check started in background' });
+});
+
+// ADMIN: Reset all categories (clear product assignments + wipe seed + delete mappings)
+app.post('/api/admin/categories/reset-all', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const SEED_PATH = path.join(__dirname, 'scripts', 'canonical-categories.seed.json');
+    const MAPPINGS_PATH = path.join(__dirname, 'scripts', 'goofish-category-mappings.json');
+    const DISCOVERY_PATH = path.join(__dirname, 'scripts', 'goofish-category-discoveries.json');
+    const REBED_PROGRESS = path.join(process.cwd(), 'reembed_progress.json');
+
+    // 1. Clear all category assignments from products
+    const clearedResult = await prisma.$executeRawUnsafe(`
+      UPDATE "Product"
+      SET "aiMetadata" = jsonb_strip_nulls(
+        COALESCE("aiMetadata", '{}'::jsonb)
+        - 'categorySlug'
+        - 'categoryNameAr'
+        - 'categoryScore'
+        - 'categoryConfidence'
+        - 'categorySource'
+        - 'categoryAssignedAt'
+        - 'goofishCategoryId'
+      )
+      WHERE "aiMetadata" IS NOT NULL
+    `);
+
+    // 2. Wipe seed file
+    fs.writeFileSync(SEED_PATH, '[]');
+
+    // 3. Delete mappings
+    let deletedMappings = 0;
+    if (fs.existsSync(MAPPINGS_PATH)) {
+      const data = JSON.parse(fs.readFileSync(MAPPINGS_PATH, 'utf8'));
+      deletedMappings = Object.keys(data).length;
+      fs.unlinkSync(MAPPINGS_PATH);
+    }
+    if (fs.existsSync(DISCOVERY_PATH)) {
+      fs.unlinkSync(DISCOVERY_PATH);
+    }
+
+    // 4. Delete reembed progress
+    if (fs.existsSync(REBED_PROGRESS)) {
+      fs.unlinkSync(REBED_PROGRESS);
+    }
+
+    res.json({
+      success: true,
+      message: 'All categories reset successfully',
+      productsCleared: clearedResult.count || clearedResult,
+      mappingsDeleted: deletedMappings,
+      filesReset: ['canonical-categories.seed.json', 'goofish-category-mappings.json']
+    });
+  } catch (error) {
+    console.error('[Admin] Category reset failed:', error);
+    res.status(500).json({
+      error: 'Failed to reset categories',
+      details: error.message
+    });
+  }
 });
 
 function emitBulkImportJobEvent(payload) {
@@ -8274,7 +8357,11 @@ const getAssignedCategorySlugs = (entry, fallbackId) => {
   const entryPath = String(entry?.pathAr || '').trim();
   const slugs = new Set();
 
-  for (const candidate of categorySearchList) {
+  // Rebuild category list dynamically from seed file
+  const freshIndex = buildCategoryIndex();
+  const freshList = Array.isArray(freshIndex?.list) ? freshIndex.list : [];
+
+  for (const candidate of freshList) {
     const candidateId = String(candidate?.id || '').trim();
     const candidatePath = String(candidate?.pathAr || '').trim();
     if (!candidateId || !candidatePath) continue;
@@ -8340,24 +8427,26 @@ const searchProductsByAssignedCategories = async ({
     AND: andFilters
   };
 
-  const [total, productsFromDb, shippingRates] = await Promise.all([
-    withDbRetry(() => prisma.product.count({ where })),
+  const [productsFromDb, shippingRates] = await Promise.all([
     withDbRetry(() => prisma.product.findMany({
       where,
       skip: offset,
-      take: limit,
+      take: limit + 1,
       orderBy: [{ updatedAt: 'desc' }],
       select: getSearchProductSelect()
     })),
     getSearchShippingRates()
   ]);
+  const pageProducts = productsFromDb.slice(0, limit);
+  const hasMore = productsFromDb.length > limit;
+  const total = offset + pageProducts.length + (hasMore ? 1 : 0);
 
   return {
-    products: productsFromDb.map((product) => mapSearchProduct(product, shippingRates)),
+    products: pageProducts.map((product) => mapSearchProduct(product, shippingRates)),
     total,
     page,
     totalPages: Math.ceil(total / limit),
-    hasMore: offset + productsFromDb.length < total,
+    hasMore,
     engine
   };
 };
@@ -8439,13 +8528,7 @@ const searchProductsFromDatabase = async ({
     condition
   });
 
-  const total = await withDbRetry(() => prisma.product.count({ where }));
-  perf?.log?.('db_count_done', { total });
-  if (!total) {
-    return { products: [], total: 0, page, totalPages: 0, hasMore: false, engine };
-  }
-
-  const candidateTake = Math.min(400, Math.max(limit * 4, offset + limit + 80));
+  const candidateTake = Math.min(400, Math.max(limit + 1, offset + limit + 1));
   const productsFromDb = await withDbRetry(() => prisma.product.findMany({
     where,
     take: candidateTake,
@@ -8474,19 +8557,16 @@ const searchProductsFromDatabase = async ({
       return bUpdated - aUpdated;
     });
 
-  const filteredProducts = condition === 'new'
-    ? rankedProducts.filter((product) => inferProductCondition(product) !== false)
-    : condition === 'used'
-      ? rankedProducts.filter((product) => inferProductCondition(product) !== true)
-      : rankedProducts;
-  const pagedProducts = filteredProducts.slice(offset, offset + limit);
+  const pagedProducts = rankedProducts.slice(offset, offset + limit);
+  const hasMore = rankedProducts.length > offset + limit;
+  const total = offset + pagedProducts.length + (hasMore ? 1 : 0);
 
   return {
     products: pagedProducts,
     total,
     page,
     totalPages: Math.ceil(total / limit),
-    hasMore: offset + pagedProducts.length < total,
+    hasMore,
     engine
   };
 };
@@ -8537,7 +8617,92 @@ app.get('/api/search/categories', async (req, res) => {
       return res.json({ categories: [] });
     }
 
-    const categories = categorySuggestionIndex
+    let freshSuggestionIndex = dynamicCategorySuggestionCache.list;
+    let assignedSlugs = dynamicCategorySuggestionCache.assignedSlugs;
+    const cacheExpired = !Array.isArray(freshSuggestionIndex) || !assignedSlugs || (Date.now() - dynamicCategorySuggestionCache.at) > DYNAMIC_CATEGORY_SUGGESTION_TTL_MS;
+    if (cacheExpired) {
+      if (!dynamicCategorySuggestionCachePromise) {
+        dynamicCategorySuggestionCachePromise = (async () => {
+          const dbCategoryRows = await prisma.$queryRawUnsafe(`
+            SELECT
+              "aiMetadata"->>'categorySlug' as slug,
+              MAX(COALESCE("aiMetadata"->>'categoryNameAr', "aiMetadata"->>'categoryName', "aiMetadata"->>'nameAr')) as "nameAr",
+              MAX(COALESCE("aiMetadata"->>'categoryNameEn', "aiMetadata"->>'englishName', "aiMetadata"->>'nameEn')) as "nameEn",
+              COUNT(*)::int AS count
+            FROM "Product"
+            WHERE "aiMetadata"->>'categorySlug' IS NOT NULL
+              AND "aiMetadata"->>'categorySlug' != ''
+              AND "aiMetadata"->>'categorySlug' != 'other'
+            GROUP BY "aiMetadata"->>'categorySlug'
+          `);
+          const nextAssignedSlugs = new Set((dbCategoryRows || []).map((r) => String(r.slug || '').trim()).filter(Boolean));
+          const dbCategoryMap = new Map();
+          for (const row of dbCategoryRows || []) {
+            const slug = String(row.slug || '').trim();
+            if (!slug) continue;
+            dbCategoryMap.set(slug, {
+              nameAr: String(row.nameAr || '').trim() || slug,
+              nameEn: String(row.nameEn || '').trim() || slug
+            });
+          }
+          const freshIndex = buildCategoryIndex();
+          const freshList = Array.isArray(freshIndex?.list) ? freshIndex.list : [];
+          const combinedMap = new Map(freshList.map(c => [String(c.id || c.slug || '').trim(), c]));
+          for (const [slug, dbCat] of dbCategoryMap) {
+            if (!combinedMap.has(slug)) {
+              combinedMap.set(slug, {
+                id: slug,
+                slug,
+                nameAr: dbCat.nameAr,
+                nameEn: dbCat.nameEn,
+                pathAr: dbCat.nameAr,
+                pathEn: dbCat.nameEn,
+                aliases: [dbCat.nameAr, dbCat.nameEn, slug].filter(Boolean),
+                source: 'db_only'
+              });
+            }
+          }
+          const nextList = Array.from(combinedMap.values()).map((entry) => {
+            const pathSegmentsAr = splitCategoryPath(entry?.pathAr || entry?.nameAr);
+            const pathSegmentsEn = splitCategoryPath(entry?.pathEn || entry?.nameEn);
+            const aliases = Array.isArray(entry?.aliases) ? entry.aliases : [];
+            const candidates = [
+              { raw: entry?.nameAr || entry?.name_ar || '', isLeafName: true, isArabic: true },
+              { raw: entry?.pathAr || entry?.path_ar || entry?.nameAr || '', isLeafName: false, isArabic: true },
+              { raw: entry?.nameEn || entry?.name_en || '', isLeafName: true, isArabic: false },
+              { raw: entry?.pathEn || entry?.path_en || entry?.nameEn || '', isLeafName: false, isArabic: false },
+              ...pathSegmentsAr.map((segment, index) => ({ raw: segment, isLeafName: index === pathSegmentsAr.length - 1, isArabic: true })),
+              ...pathSegmentsEn.map((segment, index) => ({ raw: segment, isLeafName: index === pathSegmentsEn.length - 1, isArabic: false })),
+              ...aliases.map(alias => ({ raw: alias, isLeafName: true, isArabic: /[\u0600-\u06FF]/.test(alias) }))
+            ].map((candidate) => {
+              const normalized = normalizeSearchText(candidate.raw);
+              return normalized ? { ...candidate, normalized, compact: normalized.replace(/\s+/g, '') } : null;
+            }).filter(Boolean);
+            return {
+              id: String(entry?.id || entry?.slug || '').trim(),
+              nameAr: entry?.nameAr || entry?.name_ar || '',
+              pathAr: entry?.pathAr || entry?.path_ar || entry?.nameAr || entry?.name_ar || '',
+              nameEn: entry?.nameEn || entry?.name_en || '',
+              pathEn: entry?.pathEn || entry?.path_en || entry?.nameEn || entry?.name_en || '',
+              aliases,
+              candidates,
+              pathSegmentsAr,
+              pathSegmentsEn
+            };
+          });
+          dynamicCategorySuggestionCache = { at: Date.now(), list: nextList, assignedSlugs: nextAssignedSlugs };
+          return dynamicCategorySuggestionCache;
+        })().finally(() => {
+          dynamicCategorySuggestionCachePromise = null;
+        });
+      }
+      const nextCache = await dynamicCategorySuggestionCachePromise;
+      freshSuggestionIndex = nextCache.list;
+      assignedSlugs = nextCache.assignedSlugs;
+    }
+
+    const categories = freshSuggestionIndex
+      .filter((entry) => assignedSlugs.has(String(entry.id || '').trim()))
       .map((entry) => {
         const { score, matchedText } = scoreCategorySuggestion(entry, q);
         return score > 0
@@ -8574,6 +8739,89 @@ app.get('/api/search/categories', async (req, res) => {
   }
 });
 
+// Get categories that actually have products assigned (for home page/filter display)
+app.get('/api/categories/with-products', async (req, res) => {
+  try {
+    const minCount = Math.max(0, parseInt(req.query.minCount, 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 50));
+
+    // Get counts per category from DB
+    const countRows = await prisma.$queryRawUnsafe(`
+      SELECT "aiMetadata"->>'categorySlug' AS slug, COUNT(*)::int AS count
+      FROM "Product"
+      WHERE "aiMetadata"->>'categorySlug' IS NOT NULL
+        AND "aiMetadata"->>'categorySlug' != ''
+        AND "aiMetadata"->>'categorySlug' != 'other'
+      GROUP BY "aiMetadata"->>'categorySlug'
+      HAVING COUNT(*) >= $1
+      ORDER BY COUNT(*) DESC
+      LIMIT $2
+    `, minCount, limit);
+
+    // Also get category names from DB for any categories missing in seed file
+    const dbCategoryRows = await prisma.$queryRawUnsafe(`
+      SELECT DISTINCT
+        "aiMetadata"->>'categorySlug' as slug,
+        "aiMetadata"->>'categoryNameAr' as nameAr,
+        "aiMetadata"->>'categoryNameEn' as nameEn
+      FROM "Product"
+      WHERE "aiMetadata"->>'categorySlug' IS NOT NULL
+        AND "aiMetadata"->>'categorySlug' != ''
+        AND "aiMetadata"->>'categorySlug' != 'other'
+    `);
+    const dbCategoryMap = new Map();
+    for (const row of dbCategoryRows) {
+      const slug = String(row.slug || '').trim();
+      if (!slug) continue;
+      dbCategoryMap.set(slug, {
+        nameAr: String(row.nameAr || '').trim() || slug,
+        nameEn: String(row.nameEn || '').trim() || slug
+      });
+    }
+
+    // Rebuild category index dynamically from seed file + DB categories
+    const freshIndex = buildCategoryIndex();
+    const freshMap = freshIndex?.map instanceof Map ? freshIndex.map : new Map();
+
+    // Cross-reference with category metadata, including DB-only categories
+    const categories = (countRows || []).map((row) => {
+      const slug = String(row.slug || '').trim();
+      const entry = freshMap.get(slug);
+      if (entry) {
+        return {
+          id: entry.id || slug,
+          nameAr: entry.nameAr || slug,
+          pathAr: entry.pathAr || entry.nameAr || slug,
+          nameEn: entry.nameEn || slug,
+          pathEn: entry.pathEn || entry.nameEn || slug,
+          productCount: row.count || 0
+        };
+      }
+      // Use DB category info if not in seed file
+      const dbCat = dbCategoryMap.get(slug);
+      if (dbCat) {
+        return {
+          id: slug,
+          nameAr: dbCat.nameAr,
+          pathAr: dbCat.nameAr,
+          nameEn: dbCat.nameEn,
+          pathEn: dbCat.nameEn,
+          productCount: row.count || 0
+        };
+      }
+      return null;
+    }).filter(Boolean);
+
+    return res.json({ categories });
+  } catch (error) {
+    console.error('Categories with products query failed:', error);
+    return res.status(500).json({
+      error: 'Failed to load categories',
+      details: error?.message || 'Unknown error'
+    });
+  }
+});
+
 app.get('/api/search/category-products', async (req, res) => {
   try {
     const categoryId = String(req.query.categoryId || '').trim();
@@ -8583,9 +8831,56 @@ app.get('/api/search/category-products', async (req, res) => {
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
     const maxPrice = req.query.maxPrice ? Number.parseFloat(String(req.query.maxPrice)) : null;
     const condition = String(req.query.condition || '').trim();
-    const categoryEntry = categoryId ? categorySearchMap.get(categoryId) : null;
-    const categoryQuery = buildCategorySearchQuery(categoryEntry, categoryName, categoryPath);
+    // Rebuild category index dynamically from seed file (categories may have been added by pipeline)
+    const freshIndex = buildCategoryIndex();
+    const freshMap = freshIndex?.map instanceof Map ? freshIndex.map : new Map();
+
+    // Also get category info from DB for any categories missing in seed file
+    const dbCategoryRows = await prisma.$queryRawUnsafe(`
+      SELECT DISTINCT
+        "aiMetadata"->>'categorySlug' as slug,
+        "aiMetadata"->>'categoryNameAr' as nameAr,
+        "aiMetadata"->>'categoryNameEn' as nameEn
+      FROM "Product"
+      WHERE "aiMetadata"->>'categorySlug' = $1
+    `, categoryId);
+    const dbCategory = dbCategoryRows?.[0];
+
+    let categoryEntry = freshMap.get(categoryId);
+    if (!categoryEntry && dbCategory) {
+      const nameAr = String(dbCategory.nameAr || '').trim() || categoryId;
+      const nameEn = String(dbCategory.nameEn || '').trim() || categoryId;
+      categoryEntry = {
+        id: categoryId,
+        slug: categoryId,
+        nameAr,
+        nameEn,
+        name_ar: nameAr,
+        name_en: nameEn,
+        pathAr: nameAr,
+        pathEn: nameEn,
+        path_ar: nameAr,
+        path_en: nameEn,
+        keywords: []
+      };
+    }
+
+    if (!categoryEntry) {
+      console.warn(`[Category Products] Category '${categoryId}' not found in fresh category index or DB.`);
+      return res.status(400).json({
+        error: 'Invalid category ID',
+        message: `Category '${categoryId}' not found in index or DB.`
+      });
+    }
+
     const assignedCategorySlugs = getAssignedCategorySlugs(categoryEntry, categoryId);
+
+    // Build query context for this category search
+    const categoryQuery = {
+      searchText: String(req.query.q || '').trim(),
+      displayName: categoryEntry?.nameAr || categoryName,
+      displayPath: categoryEntry?.pathAr || categoryPath
+    };
 
     if (!categoryQuery.searchText && assignedCategorySlugs.length === 0) {
       return res.json({

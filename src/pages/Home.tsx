@@ -58,6 +58,7 @@ const Home: React.FC = () => {
   const observer = useRef<IntersectionObserver | null>(null);
   const autoLoadGuardRef = useRef({ categoryId: homeCategoryId, lastCount: 0, stagnantAttempts: 0 });
   const [page, setPage] = useState(() => usePageCacheStore.getState().homePage);
+  const [recentCategories, setRecentCategories] = useState<RecentCategoryEntry[]>([]);
   const productsRef = useRef<Product[]>(usePageCacheStore.getState().homeProducts);
   const restoredHomeScrollRef = useRef(false);
   const initializedRef = useRef(false);
@@ -278,7 +279,7 @@ const Home: React.FC = () => {
             return isAuthenticated ? 'auth:terms::categories:' : 'guest:terms::categories:';
           }
         })();
-        const cacheExpired = !cached.createdAt || (Date.now() - cached.createdAt) > FEED_EXPIRY_MS;
+        const cacheExpired = pageNum === 1 || !cached.createdAt || (Date.now() - cached.createdAt) > FEED_EXPIRY_MS;
         const termsChanged = cached.termsHash !== recentFeedHash;
 
         if (pageNum === 1 && (personalizedPool.length === 0 || cacheExpired || termsChanged)) {
@@ -322,7 +323,7 @@ const Home: React.FC = () => {
           } else {
             const randomPages = Array.from({ length: 4 }, () => Math.floor(Math.random() * 12) + 1);
             const randomBatches = await Promise.all(
-              randomPages.map((p) => fetchProducts(p, 20).then((res) => (Array.isArray(res.products) ? res.products : [])).catch(() => [] as Product[]))
+              randomPages.map((p) => fetchProducts(p, 20, undefined, undefined, true).then((res) => (Array.isArray(res.products) ? res.products : [])).catch(() => [] as Product[]))
             );
             const randomPool = randomBatches.flat();
             personalizedPool = shuffle(mergeUniqueProducts(randomPool, []));
@@ -371,7 +372,7 @@ const Home: React.FC = () => {
         }
       }
 
-      const prodsRes = await fetchProducts(pageNum, 10, maxPrice, condition);
+      const prodsRes = await fetchProducts(pageNum, 10, maxPrice, condition, categoryId === 'all' && !maxPrice && !condition);
 
       // Only proceed if this is still the active request for this category
       if (activeRequestRef.current !== requestId) return;
@@ -450,6 +451,7 @@ const Home: React.FC = () => {
   }, [mergeUniqueProducts, normalizeProductId, setHomeData, t, readCategoryCachedProducts, writeCategoryCachedProducts, readGlobalCachedProducts, conditionFilter, priceFilter, isAuthenticated]);
 
   useEffect(() => {
+    setRecentCategories(readRecentCategories());
     const isInitialMount = !initializedRef.current;
     if (isInitialMount) {
       initializedRef.current = true;
@@ -462,7 +464,43 @@ const Home: React.FC = () => {
     setHasMore(true);
     setPage(1);
     loadData(1, selectedCategoryId, true);
-  }, [selectedCategoryId, conditionFilter, priceFilter, loadData]);
+  }, [selectedCategoryId, conditionFilter, priceFilter, loadData, readRecentCategories]);
+
+  const shuffleProducts = useCallback((items: Product[]) => {
+    const copy = [...items];
+    for (let i = copy.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [copy[i], copy[j]] = [copy[j], copy[i]];
+    }
+    return copy;
+  }, []);
+
+  const handleRecentCategoryClick = useCallback(async (category: RecentCategoryEntry) => {
+    setLoading(true);
+    setError(null);
+    setSelectedCategoryId('all');
+    try {
+      const batches = await Promise.all(
+        Array.from({ length: 3 }, () => {
+          const randomPage = Math.floor(Math.random() * 4) + 1;
+          return searchProductsByCategory(category, randomPage, 20).catch(() => ({ products: [] as Product[] }));
+        })
+      );
+      const randomItems = shuffleProducts(mergeUniqueProducts(
+        batches.flatMap((batch) => Array.isArray(batch.products) ? batch.products : []),
+        []
+      ));
+      productsRef.current = randomItems;
+      setProducts(randomItems);
+      setPage(1);
+      setHasMore(randomItems.length >= 10);
+      setHomeData(randomItems, 1, 'all');
+    } catch (err: any) {
+      setError(err?.message || t('common.error_loading'));
+    } finally {
+      setLoading(false);
+    }
+  }, [mergeUniqueProducts, setHomeData, shuffleProducts, t]);
 
   const applyFilters = useCallback(() => {
     setConditionFilter(draftConditionFilter);
@@ -799,6 +837,22 @@ const Home: React.FC = () => {
           onApply={applyFilters}
           className="border-t border-slate-100 dark:border-slate-800"
         />
+        {recentCategories.length > 0 && selectedCategoryId === 'all' && !conditionFilter && !priceFilter && (
+          <div className="border-t border-slate-100 dark:border-slate-800 px-4 py-3">
+            <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide">
+              {recentCategories.map((category) => (
+                <button
+                  key={category.id}
+                  type="button"
+                  onClick={() => handleRecentCategoryClick(category)}
+                  className="shrink-0 rounded-full bg-slate-100 dark:bg-slate-800 px-4 py-2 text-xs font-bold text-slate-600 dark:text-slate-300 active:scale-95 transition"
+                >
+                  {category.nameAr}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
         {error && (

@@ -33,6 +33,24 @@ const buildCategoryMatchers = () => canonicalCategories.map((category) => {
 
 const categoryMatchers = buildCategoryMatchers();
 
+// Map Goofish category IDs → our canonical category slugs
+const GOOFISH_CATEGORY_ID_MAP = new Map([
+  // Add mappings here as you discover them, e.g.:
+  // ['126860589', 'camping_gear'],
+]);
+
+// Extract categoryId from Goofish URLs
+function extractGoofishCategoryId(url) {
+  const raw = String(url || '').trim();
+  if (!raw) return '';
+  try {
+    const parsed = new URL(raw);
+    return String(parsed.searchParams.get('categoryId') || '').trim();
+  } catch {
+    return '';
+  }
+}
+
 const scoreFromKeyword = (normalizedKeyword, compactKeyword, scores) => {
   // Direct match using the service's lookup
   const direct = mapToCanonicalCategory(normalizedKeyword) || mapToCanonicalCategory(compactKeyword);
@@ -77,13 +95,40 @@ const classifyProduct = (keywords) => {
   return { slug: ranked[0][0], score: ranked[0][1] };
 };
 
-const assignCategoryToProduct = async (productId, keywords) => {
+const assignCategoryToProduct = async (productId, keywords, goofishCategoryId = '') => {
+  // Fast path: if Goofish category ID is known, assign directly
+  if (goofishCategoryId && GOOFISH_CATEGORY_ID_MAP.has(goofishCategoryId)) {
+    const mappedSlug = GOOFISH_CATEGORY_ID_MAP.get(goofishCategoryId);
+    const category = categoryBySlug.get(mappedSlug) || categoryBySlug.get('other');
+    const nextMetadata = {
+      categorySlug: category?.slug || mappedSlug,
+      categoryNameAr: category?.name_ar || mappedSlug,
+      categoryScore: 1.0,
+      categorySource: 'goofish_category_id',
+      goofishCategoryId,
+      categoryAssignedAt: new Date().toISOString()
+    };
+    const metadataPatch = JSON.stringify(nextMetadata);
+    await prisma.$executeRawUnsafe(`
+      UPDATE "Product"
+      SET "aiMetadata" = COALESCE("aiMetadata", '{}'::jsonb) || $2::jsonb
+      WHERE id = $1
+    `, productId, metadataPatch);
+    console.log(`[Category] Assigned product ${productId} to "${mappedSlug}" via Goofish categoryId=${goofishCategoryId}`);
+    return;
+  }
+
+  if (goofishCategoryId && !GOOFISH_CATEGORY_ID_MAP.has(goofishCategoryId)) {
+    console.log(`[Category] Unknown Goofish categoryId=${goofishCategoryId} for product ${productId} — add to GOOFISH_CATEGORY_ID_MAP`);
+  }
+
   const { slug, score } = classifyProduct(keywords);
   const category = categoryBySlug.get(slug) || categoryBySlug.get('other');
   const nextMetadata = {
     categorySlug: category?.slug || 'other',
     categoryNameAr: category?.name_ar || 'أخرى',
     categoryScore: score,
+    goofishCategoryId: goofishCategoryId || undefined,
     categorySource: 'canonical_keywords',
     categoryAssignedAt: new Date().toISOString()
   };
@@ -1556,7 +1601,8 @@ async function saveProductToDb(item, existingProductId = null) {
       translatedDescription: item.descriptionAr || '',
       isRealBrand: typeof item.realBrand === 'boolean' ? item.realBrand : null,
       source: 'goofish',
-      scrapedAt: new Date()
+      scrapedAt: new Date(),
+      ...(item.goofishCategoryId ? { goofishCategoryId: item.goofishCategoryId } : {})
     };
     const keywordsList = ensureKeywordList(item.keywords, item.titleEn || item.title);
     const hasDetectedCondition = typeof item.newOrOld === 'boolean';
@@ -1587,7 +1633,7 @@ async function saveProductToDb(item, existingProductId = null) {
           WHERE "id" = ${existing.id}
         `;
         // Assign canonical category immediately
-        await assignCategoryToProduct(existing.id, keywordsList);
+        await assignCategoryToProduct(existing.id, keywordsList, item.goofishCategoryId || '');
         console.log(`Updated product: ${item.titleEn || item.title}`);
       } catch (updateError) {
         console.error('Update failed, trying raw SQL fallback:', updateError.message);
@@ -1645,7 +1691,7 @@ async function saveProductToDb(item, existingProductId = null) {
                 WHERE "id" = ${newProduct.id}
             `;
             // Assign canonical category immediately
-            await assignCategoryToProduct(newProduct.id, keywordsList);
+            await assignCategoryToProduct(newProduct.id, keywordsList, item.goofishCategoryId || '');
         }
       } catch (createError) {
         // console.error('Prisma create failed, trying raw SQL fallback:', createError.message);

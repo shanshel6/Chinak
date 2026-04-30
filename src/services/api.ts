@@ -971,7 +971,7 @@ export const trackInteraction = async (productId: number | string, type: 'VIEW' 
 };
 
 // --- Product API ---
-export async function fetchProducts(page = 1, limit = 10, maxPrice?: number, condition?: 'new' | 'used') {
+export async function fetchProducts(page = 1, limit = 10, maxPrice?: number, condition?: 'new' | 'used', random = false) {
   const query = new URLSearchParams({
     page: String(page),
     limit: String(limit)
@@ -981,6 +981,9 @@ export async function fetchProducts(page = 1, limit = 10, maxPrice?: number, con
   }
   if (condition) {
     query.set('condition', condition);
+  }
+  if (random) {
+    query.set('random', 'true');
   }
 
   const dbData = await request(`/products?${query.toString()}`, { skipCache: true }).catch(() => null);
@@ -1109,6 +1112,21 @@ export async function searchCategorySuggestions(query: string, limit = 20) {
   const response = await request(`/search/categories?${params.toString()}`, { skipCache: true });
   return {
     categories: Array.isArray(response?.categories) ? response.categories as CategorySuggestion[] : []
+  };
+}
+
+export interface CategoryWithProducts extends CategorySuggestion {
+  productCount: number;
+}
+
+export async function fetchCategoriesWithProducts(minCount = 1, limit = 50) {
+  const params = new URLSearchParams({
+    minCount: String(minCount),
+    limit: String(limit)
+  });
+  const response = await request(`/categories/with-products?${params.toString()}`, { skipCache: true });
+  return {
+    categories: Array.isArray(response?.categories) ? response.categories as CategoryWithProducts[] : []
   };
 }
 

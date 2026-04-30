@@ -73,6 +73,7 @@ export async function ensureProductImageEmbeddings({
 
   let mainVector = null;
   const embeddedImageIds = [];
+  const allEmbeddings = [];
 
   for (const image of productImages) {
     const imageUrl = sanitizeProductImageUrl(image.url);
@@ -85,6 +86,7 @@ export async function ensureProductImageEmbeddings({
         continue;
       }
 
+      allEmbeddings.push(embedding);
       const vectorLiteral = vectorToSqlLiteral(embedding);
       await runDb(
         () => prisma.$executeRawUnsafe(
@@ -142,10 +144,23 @@ export async function ensureProductImageEmbeddings({
     );
   }
 
+  // Compute averaged embedding from all images for better category matching
+  let averagedVector = null;
+  if (allEmbeddings.length > 0) {
+    const dim = allEmbeddings[0].length;
+    const avg = new Array(dim).fill(0);
+    for (const emb of allEmbeddings) {
+      for (let i = 0; i < dim; i++) avg[i] += emb[i];
+    }
+    for (let i = 0; i < dim; i++) avg[i] /= allEmbeddings.length;
+    averagedVector = avg;
+  }
+
   return {
     embeddedCount: embeddedImageIds.length,
     embeddedImageIds,
-    mainVector
+    mainVector,
+    averagedVector
   };
 }
 

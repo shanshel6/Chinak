@@ -15,88 +15,6 @@ const __dirname = path.dirname(__filename);
 const envPath = path.join(__dirname, '..', '.env');
 dotenv.config({ path: envPath });
 
-import { canonicalCategories, mapToCanonicalCategory, normalizeCategoryText } from '../services/categoryCanonicalService.js';
-
-const categoryBySlug = new Map(canonicalCategories.map((category) => [category.slug, category]));
-
-const buildCategoryMatchers = () => canonicalCategories.map((category) => {
-  const aliases = [category.name_ar, ...(Array.isArray(category.aliases) ? category.aliases : [])]
-    .map((value) => normalizeCategoryText(value))
-    .filter(Boolean);
-  const aliasSet = new Set(aliases);
-  const compactAliasSet = new Set(aliases.map((value) => value.replace(/\s+/g, '')).filter(Boolean));
-  return {
-    slug: category.slug,
-    name_ar: category.name_ar,
-    aliasSet,
-    compactAliasSet
-  };
-});
-
-const categoryMatchers = buildCategoryMatchers();
-
-const scoreFromKeyword = (normalizedKeyword, compactKeyword, scores) => {
-  // Direct match using the service's lookup
-  const direct = mapToCanonicalCategory(normalizedKeyword) || mapToCanonicalCategory(compactKeyword);
-  if (direct) {
-    scores.set(direct, (scores.get(direct) || 0) + 100);
-    return;
-  }
-
-  // Fallback: Check if any category alias is contained within the keyword (substring match)
-  for (const matcher of categoryMatchers) {
-    let score = scores.get(matcher.slug) || 0;
-    
-    // Strict inclusion: Check if alias is part of the keyword
-    for (const alias of matcher.aliasSet) {
-      if (alias.length < 3) continue; // Skip very short aliases
-      if (normalizedKeyword.includes(alias)) {
-        score += 20;
-      }
-    }
-    
-    if (score > (scores.get(matcher.slug) || 0)) {
-      scores.set(matcher.slug, score);
-    }
-  }
-};
-
-const classifyProduct = (keywords) => {
-  const rawKeywords = Array.isArray(keywords) ? keywords : [];
-  const normalizedKeywords = rawKeywords
-    .map((value) => normalizeCategoryText(value))
-    .filter(Boolean);
-  const scores = new Map();
-  for (const normalizedKeyword of normalizedKeywords) {
-    const compactKeyword = normalizedKeyword.replace(/\s+/g, '');
-    if (!compactKeyword) continue;
-    scoreFromKeyword(normalizedKeyword, compactKeyword, scores);
-  }
-  if (scores.size === 0) {
-    return { slug: 'other', score: 0 };
-  }
-  const ranked = Array.from(scores.entries()).sort((a, b) => b[1] - a[1]);
-  return { slug: ranked[0][0], score: ranked[0][1] };
-};
-
-const assignCategoryToProduct = async (productId, keywords) => {
-  const { slug, score } = classifyProduct(keywords);
-  const category = categoryBySlug.get(slug) || categoryBySlug.get('other');
-  const nextMetadata = {
-    categorySlug: category?.slug || 'other',
-    categoryNameAr: category?.name_ar || 'أخرى',
-    categoryScore: score,
-    categorySource: 'canonical_keywords',
-    categoryAssignedAt: new Date().toISOString()
-  };
-  const metadataPatch = JSON.stringify(nextMetadata);
-  await prisma.$executeRawUnsafe(`
-    UPDATE "Product"
-    SET "aiMetadata" = COALESCE("aiMetadata", '{}'::jsonb) || $2::jsonb
-    WHERE id = $1
-  `, productId, metadataPatch);
-  console.log(`[Category] Assigned product ${productId} to ${slug} (${category?.name_ar}) score=${score}`);
-};
 const CNY_TO_IQD_RATE = 200;
 
 const withDbParams = (url) => {
@@ -2426,7 +2344,7 @@ async function findExistingProductByUrl(url) {
   if (!url || url.includes('search?')) return null;
   if (!dbReady) return null;
   try {
-    return await withTimeout(() => prisma.product.findFirst({
+    const byUrl = await withTimeout(() => prisma.product.findFirst({
       where: { purchaseUrl: url },
       select: {
         id: true,
@@ -2435,6 +2353,26 @@ async function findExistingProductByUrl(url) {
         aiMetadata: true
       }
     }), 'find existing product by url', 12000);
+    if (byUrl) return byUrl;
+
+    const goofishItemId = extractGoofishItemId(url);
+    if (!goofishItemId) return null;
+
+    const rows = await withTimeout(() => prisma.$queryRawUnsafe(`
+      SELECT id, name, keywords, "aiMetadata"
+      FROM "Product"
+      WHERE "aiMetadata"->>'goofishItemId' = $1
+      ORDER BY "updatedAt" DESC
+      LIMIT 1
+    `, goofishItemId), 'find existing product by goofish item id', 12000);
+    const row = Array.isArray(rows) ? rows[0] : null;
+    if (!row) return null;
+    return {
+      id: row.id,
+      name: row.name,
+      keywords: Array.isArray(row.keywords) ? row.keywords : [],
+      aiMetadata: row.aiMetadata || null
+    };
   } catch (error) {
     if (isRetryableDbError(error)) {
       dbReady = false;
@@ -2473,10 +2411,12 @@ async function saveProductToDb(item, existingProductId = null) {
     }
 
     const existing = existingProductId ? { id: existingProductId } : null;
+    const goofishItemId = extractGoofishItemId(item.url);
     const metadata = {
       originalTitle: item.title,
       translatedDescription: item.descriptionAr || '',
       isRealBrand: typeof item.realBrand === 'boolean' ? item.realBrand : null,
+      goofishItemId: goofishItemId || null,
       source: 'goofish',
       scrapedAt: new Date()
     };
@@ -2508,12 +2448,6 @@ async function saveProductToDb(item, existingProductId = null) {
           SET "keywords" = ARRAY[${keywordsSql}]
           WHERE "id" = ${existing.id}
         `;
-        try {
-          await assignCategoryToProduct(existing.id, keywordsList);
-        } catch (categoryErr) {
-          console.warn(`Category assignment deferred for product ${existing.id}: ${toErrorText(categoryErr)}`);
-          if (isRetryableDbError(categoryErr)) triggerDbReconnectNonBlocking(`category assign ${existing.id}`);
-        }
         console.log(`Updated product: ${item.titleEn || item.title}`);
         return existing.id;
       } catch (updateError) {
@@ -2575,12 +2509,6 @@ async function saveProductToDb(item, existingProductId = null) {
                 SET "keywords" = ARRAY[${keywordsSql}]
                 WHERE "id" = ${newProduct.id}
             `;
-            try {
-              await assignCategoryToProduct(newProduct.id, keywordsList);
-            } catch (categoryErr) {
-              console.warn(`Category assignment deferred for product ${newProduct.id}: ${toErrorText(categoryErr)}`);
-              if (isRetryableDbError(categoryErr)) triggerDbReconnectNonBlocking(`category assign ${newProduct.id}`);
-            }
         }
       } catch (createError) {
         if (isRetryableDbError(createError)) {
@@ -2609,12 +2537,6 @@ async function saveProductToDb(item, existingProductId = null) {
                   "aiMetadata" = ${JSON.stringify(metadata)}::jsonb
               WHERE "id" = ${newProduct.id}
             `;
-            try {
-              await assignCategoryToProduct(newProduct.id, keywordsList);
-            } catch (categoryErr) {
-              console.warn(`Category assignment deferred for product ${newProduct.id}: ${toErrorText(categoryErr)}`);
-              if (isRetryableDbError(categoryErr)) triggerDbReconnectNonBlocking(`category assign ${newProduct.id}`);
-            }
           } catch (fallbackMetaErr) {
             console.warn(`Post-create metadata update skipped for ${newProduct.id}: ${toErrorText(fallbackMetaErr)}`);
           }
@@ -3111,8 +3033,8 @@ async function processProductDetails(page, product, detailProgress = null) {
                     }
                   }),
                   `update image base ${product.id}`,
-                imageMutationRetryCount,
-                imageMutationTimeoutMs,
+                  imageMutationRetryCount,
+                  imageMutationTimeoutMs,
                   retryBackoffMs
                 );
                 await withRetry(
@@ -3120,8 +3042,8 @@ async function processProductDetails(page, product, detailProgress = null) {
                     where: { productId: product.id }
                   }),
                   `delete images ${product.id}`,
-                imageMutationRetryCount,
-                imageMutationTimeoutMs,
+                  imageMutationRetryCount,
+                  imageMutationTimeoutMs,
                   retryBackoffMs
                 );
                 if (cleanImages.length > 0) {
@@ -3427,7 +3349,7 @@ async function run() {
             conditionText: (conditionText || '').trim(),
             priceText: (priceText || '').trim(),
             image: toAbs(imgEl?.getAttribute('src') || ''),
-            url
+            url,
           });
         }
         return out;
@@ -3535,7 +3457,7 @@ async function run() {
         realBrand,
         priceCny: cny,
         image: item.image || '',
-        url: resolvedUrl
+        url: resolvedUrl,
       };
       if (OUTPUT_JSON) allItems.push(itemData);
       const goofishItemId = extractGoofishItemId(resolvedUrl);
