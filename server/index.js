@@ -8877,10 +8877,38 @@ app.get('/api/search/category-products', async (req, res) => {
     `, categoryId);
     const dbCategory = dbCategoryRows?.[0];
 
+    // Also check categories table
+    const categoryTableRows = await prisma.$queryRawUnsafe(`
+      SELECT
+        slug,
+        "name_ar" as nameAr,
+        "name_en" as nameEn
+      FROM "categories"
+      WHERE slug = $1
+    `, categoryId);
+    const tableCategory = categoryTableRows?.[0];
+
     let categoryEntry = freshMap.get(categoryId);
     if (!categoryEntry && dbCategory) {
       const nameAr = String(dbCategory.nameAr || '').trim() || categoryId;
       const nameEn = String(dbCategory.nameEn || '').trim() || categoryId;
+      categoryEntry = {
+        id: categoryId,
+        slug: categoryId,
+        nameAr,
+        nameEn,
+        name_ar: nameAr,
+        name_en: nameEn,
+        pathAr: nameAr,
+        pathEn: nameEn,
+        path_ar: nameAr,
+        path_en: nameEn,
+        keywords: []
+      };
+    }
+    if (!categoryEntry && tableCategory) {
+      const nameAr = String(tableCategory.nameAr || '').trim() || categoryId;
+      const nameEn = String(tableCategory.nameEn || '').trim() || categoryId;
       categoryEntry = {
         id: categoryId,
         slug: categoryId,
