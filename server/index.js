@@ -8897,6 +8897,8 @@ app.get('/api/search/category-products', async (req, res) => {
       const nameAr = String(dbCategory.nameAr || '').trim() || categoryId;
       const nameEn = String(dbCategory.nameEn || '').trim() || categoryId;
       // Try to get path from seed file
+      const freshIndex = buildCategoryIndex();
+      const freshList = Array.isArray(freshIndex?.list) ? freshIndex.list : [];
       const seedEntry = freshList.find(c => String(c.id || '').trim() === categoryId);
       categoryEntry = {
         id: categoryId,
@@ -8916,6 +8918,8 @@ app.get('/api/search/category-products', async (req, res) => {
       const nameAr = String(tableCategory.nameAr || '').trim() || categoryId;
       const nameEn = String(tableCategory.nameEn || '').trim() || categoryId;
       // Try to get path from seed file
+      const freshIndex = buildCategoryIndex();
+      const freshList = Array.isArray(freshIndex?.list) ? freshIndex.list : [];
       const seedEntry = freshList.find(c => String(c.id || '').trim() === categoryId);
       categoryEntry = {
         id: categoryId,
