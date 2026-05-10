@@ -8916,11 +8916,15 @@ app.get('/api/search/category-products', async (req, res) => {
     if (!categoryEntry && dbCategory) {
       const nameAr = String(dbCategory.nameAr || '').trim() || categoryId;
       const nameEn = String(dbCategory.nameEn || '').trim() || categoryId;
-      // Try to get path from seed file
+      // Try to get path from seed file by matching nameAr or nameEn
       const freshIndex = buildCategoryIndex();
       const freshList = Array.isArray(freshIndex?.list) ? freshIndex.list : [];
-      const seedEntry = freshList.find(c => String(c.id || '').trim() === categoryId);
-      console.log('[Category Products] dbCategory branch - categoryId:', categoryId, 'seedEntry found:', !!seedEntry, 'seedEntry pathAr:', seedEntry?.pathAr);
+      const seedEntry = freshList.find(c => 
+        String(c.id || '').trim() === categoryId ||
+        String(c.nameAr || '').trim() === nameAr ||
+        String(c.nameEn || '').trim() === nameEn
+      );
+      console.log('[Category Products] dbCategory branch - categoryId:', categoryId, 'nameAr:', nameAr, 'nameEn:', nameEn, 'seedEntry found:', !!seedEntry, 'seedEntry pathAr:', seedEntry?.pathAr);
       categoryEntry = {
         id: categoryId,
         slug: categoryId,
@@ -8938,11 +8942,15 @@ app.get('/api/search/category-products', async (req, res) => {
     if (!categoryEntry && tableCategory) {
       const nameAr = String(tableCategory.nameAr || '').trim() || categoryId;
       const nameEn = String(tableCategory.nameEn || '').trim() || categoryId;
-      // Try to get path from seed file
+      // Try to get path from seed file by matching nameAr or nameEn
       const freshIndex = buildCategoryIndex();
       const freshList = Array.isArray(freshIndex?.list) ? freshIndex.list : [];
-      const seedEntry = freshList.find(c => String(c.id || '').trim() === categoryId);
-      console.log('[Category Products] tableCategory branch - categoryId:', categoryId, 'seedEntry found:', !!seedEntry, 'seedEntry pathAr:', seedEntry?.pathAr);
+      const seedEntry = freshList.find(c => 
+        String(c.id || '').trim() === categoryId ||
+        String(c.nameAr || '').trim() === nameAr ||
+        String(c.nameEn || '').trim() === nameEn
+      );
+      console.log('[Category Products] tableCategory branch - categoryId:', categoryId, 'nameAr:', nameAr, 'nameEn:', nameEn, 'seedEntry found:', !!seedEntry, 'seedEntry pathAr:', seedEntry?.pathAr);
       categoryEntry = {
         id: categoryId,
         slug: categoryId,
