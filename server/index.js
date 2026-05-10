@@ -8896,6 +8896,8 @@ app.get('/api/search/category-products', async (req, res) => {
     if (!categoryEntry && dbCategory) {
       const nameAr = String(dbCategory.nameAr || '').trim() || categoryId;
       const nameEn = String(dbCategory.nameEn || '').trim() || categoryId;
+      // Try to get path from seed file
+      const seedEntry = freshList.find(c => String(c.id || '').trim() === categoryId);
       categoryEntry = {
         id: categoryId,
         slug: categoryId,
@@ -8903,16 +8905,18 @@ app.get('/api/search/category-products', async (req, res) => {
         nameEn,
         name_ar: nameAr,
         name_en: nameEn,
-        pathAr: nameAr,
-        pathEn: nameEn,
-        path_ar: nameAr,
-        path_en: nameEn,
+        pathAr: seedEntry?.pathAr || nameAr,
+        pathEn: seedEntry?.pathEn || nameEn,
+        path_ar: seedEntry?.pathAr || nameAr,
+        path_en: seedEntry?.pathEn || nameEn,
         keywords: []
       };
     }
     if (!categoryEntry && tableCategory) {
       const nameAr = String(tableCategory.nameAr || '').trim() || categoryId;
       const nameEn = String(tableCategory.nameEn || '').trim() || categoryId;
+      // Try to get path from seed file
+      const seedEntry = freshList.find(c => String(c.id || '').trim() === categoryId);
       categoryEntry = {
         id: categoryId,
         slug: categoryId,
@@ -8920,10 +8924,10 @@ app.get('/api/search/category-products', async (req, res) => {
         nameEn,
         name_ar: nameAr,
         name_en: nameEn,
-        pathAr: nameAr,
-        pathEn: nameEn,
-        path_ar: nameAr,
-        path_en: nameEn,
+        pathAr: seedEntry?.pathAr || nameAr,
+        pathEn: seedEntry?.pathEn || nameEn,
+        path_ar: seedEntry?.pathAr || nameAr,
+        path_en: seedEntry?.pathEn || nameEn,
         keywords: []
       };
     }
