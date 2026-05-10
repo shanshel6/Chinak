@@ -2,8 +2,9 @@
 setlocal EnableDelayedExpansion
 cd /d %~dp0
 set NODE_ENV=development
-set DATABASE_URL=postgresql://postgres:wpAxoWsjxiQfxCSnAnPdotRRMuDpOIdu@viaduct.proxy.rlwy.net:34644/railway
-set GOOFISH_DATABASE_URL=postgresql://postgres:wpAxoWsjxiQfxCSnAnPdotRRMuDpOIdu@viaduct.proxy.rlwy.net:34644/railway
+set DATABASE_URL=postgresql://postgres:DsizocMPoAaTQyhDhiMQxzxQKnnbfjqQ@trolley.proxy.rlwy.net:57322/railway?sslmode=require^&connection_limit=10^&pool_timeout=300^&connect_timeout=120^&keepalives=1^&keepalives_idle=30^&keepalives_interval=10^&keepalives_count=3
+set GOOFISH_DATABASE_URL=postgresql://postgres:DsizocMPoAaTQyhDhiMQxzxQKnnbfjqQ@trolley.proxy.rlwy.net:57322/railway?sslmode=require^&connection_limit=10^&pool_timeout=300^&connect_timeout=120^&keepalives=1^&keepalives_idle=30^&keepalives_interval=10^&keepalives_count=3
+set GOOFISH_USE_QUEUE=true
 set GOOFISH_MUTATION_TIMEOUT_MS=15000
 set GOOFISH_MUTATION_RETRY_COUNT=3
 set GOOFISH_NEWOROLD_TIMEOUT_MS=8000
@@ -20,7 +21,7 @@ set GOOFISH_DB_SAVE_TIMEOUT_MS=20000
 set GOOFISH_DB_SAVE_RETRIES=3
 set GOOFISH_DB_SAVE_FATAL_ON_RETRY_EXHAUST=false
 set GOOFISH_DB_SAVE_BACKOFF_MS=500
-set GOOFISH_DB_CONNECT_TIMEOUT_MS=20000
+set GOOFISH_DB_CONNECT_TIMEOUT_MS=60000
 set GOOFISH_DB_CONNECT_RETRIES=3
 set GOOFISH_DB_CONNECT_RETRY_DELAY_MS=5000
 set GOOFISH_DB_CONNECT_VERIFY_PING=true
@@ -38,24 +39,44 @@ set GOOFISH_DB_RECOVER_WAIT_MS=8000
 set GOOFISH_DB_RECOVER_PING_TIMEOUT_MS=12000
 set GOOFISH_DB_RECOVER_MAX_CYCLES_PER_OP=1
 set GOOFISH_AI_CALL_TIMEOUT_MS=90000
-set GOOFISH_AI_RETRY_MAX_ATTEMPTS=1
-set GOOFISH_AI_MODEL=Qwen/Qwen3-8B
+set GOOFISH_AI_RETRY_MAX_ATTEMPTS=3
+set SILICONFLOW_API_KEY=sk-crnipdimfvvgrbbxtvmbrshaqtjdmujbvkpuoifcdxkcalwh
+set SILICONFLOW_MODEL=Qwen/Qwen3-235B-A22B-Instruct-2507
+set GOOFISH_AI_MODEL=Qwen/Qwen3-235B-A22B-Instruct-2507
 set GOOFISH_AI_SECOND_PASS_DESCRIPTION=true
 set GOOFISH_ENABLE_TRANSLATION_RETRY=false
 set GOOFISH_SKIP_ON_TRANSLATION_FAILURE=true
 set GOOFISH_RESET_TERMS_ON_START=false
-set GOOFISH_ITEMS_PER_SEARCH=90
-set GOOFISH_LINKS_PER_TERM=90
+set GOOFISH_ITEMS_PER_SEARCH=150
+set GOOFISH_LINKS_PER_TERM=150
 set GOOFISH_TERMS_PER_BATCH=1
+set GOOFISH_OUTPUT_JSON=true
+set GOOFISH_BATCH_INSERT_FROM_JSON=false
+set GOOFISH_DISABLE_IMAGE_EMBEDDINGS=false
+set GOOFISH_ACCUMULATE_PER_PRODUCT=true
 set GOOFISH_EMBED_USE_PRODUCT_NAME=true
 set CLIP_WARMUP=true
 set CLIP_MAX_IMAGE_SIDE=1024
 set CLIP_ENABLE_RESIZE=false
 set GOOFISH_PIPELINE_RESTART_DELAY_SEC=15
 set GOOFISH_PIPELINE_RESTART_MAX_DELAY_SEC=60
-set GOOFISH_PIPELINE_MAX_RESTARTS=0
-set PROXY_SERVER=http://127.0.0.1:7890
+set GOOFISH_PIPELINE_MAX_RESTARTS=10
 set /a GOOFISH_PIPELINE_ATTEMPT=0
+
+echo GOOFISH_USE_QUEUE is set to: "%GOOFISH_USE_QUEUE%"
+if "%GOOFISH_USE_QUEUE%"=="true" (
+    echo Queue mode enabled: Starting scraper and queue processor in parallel...
+    echo.
+    echo Starting queue processor...
+    start "" cmd /k "node server/scripts/process-product-queue.js"
+    echo Queue processor started in separate window.
+    echo.
+    timeout /t 3 /nobreak
+    echo Starting scraper...
+) else (
+    echo Queue mode is DISABLED. Running scraper only.
+)
+
 :pipeline_loop
 set /a GOOFISH_PIPELINE_ATTEMPT+=1
 echo.

@@ -1,19 +1,100 @@
 import puppeteer from 'puppeteer-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import fs from 'fs';
+import fsPromises from 'fs/promises';
 import path from 'path';
 import dotenv from 'dotenv';
 import readline from 'readline';
 import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
 import { Prisma, PrismaClient } from '@prisma/client';
 import axios from 'axios';
+import http from 'http';
+import https from 'https';
 import { ensureProductImageEmbeddings } from '../services/productImageVectorService.js';
+import { embedImage } from '../services/clipService.js';
+import { sanitizeProductImageUrl } from '../services/productImageVectorService.js';
+
+const QUEUE_DIR = join(dirname(fileURLToPath(import.meta.url)), '../../product-queue');
+const USE_QUEUE_MODE = String(process.env.GOOFISH_USE_QUEUE || '').toLowerCase() === 'true';
+
+// Initialize queue directory
+async function initQueueDir() {
+  try {
+    await fsPromises.mkdir(QUEUE_DIR, { recursive: true });
+    console.log('[Queue] Queue directory initialized');
+  } catch (err) {
+    console.error('[Queue] Failed to initialize queue directory:', err);
+  }
+}
+
+// Save product data to queue file
+async function saveToQueue(accumulatedData) {
+  try {
+    const itemId = accumulatedData.url.match(/id=(\d+)/)?.[1] || Date.now().toString();
+    const filePath = join(QUEUE_DIR, `${itemId}.json`);
+    
+    const productData = {
+      itemId,
+      url: accumulatedData.url,
+      name: accumulatedData.name,
+      originalTitle: accumulatedData.originalName || null,
+      priceCny: accumulatedData.priceCny,
+      newOrOld: accumulatedData.newOrOld,
+      description: accumulatedData.description,
+      specs: accumulatedData.specs,
+      images: accumulatedData.images,
+      imageEmbeddings: accumulatedData.imageEmbeddings || [],
+      categoryId: accumulatedData.categoryId,
+      soldCount: accumulatedData.soldCount,
+      isActive: accumulatedData.isActive,
+      scrapedAt: new Date().toISOString()
+    };
+    
+    await fsPromises.writeFile(filePath, JSON.stringify(productData, null, 2));
+    console.log(`[Queue] Saved product ${itemId} to queue`);
+    return true;
+  } catch (err) {
+    console.error(`[Queue] Failed to save product to queue: ${err.message}`);
+    return false;
+  }
+}
+
+// Helper function to convert vector to SQL literal
+function vectorToSqlLiteral(vector) {
+  return `[${vector.join(',')}]`;
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const envPath = path.join(__dirname, '..', '.env');
-dotenv.config({ path: envPath });
+dotenv.config({ path: envPath, override: false });
+
+// Category assignment paths
+const SEED_PATH = path.join(__dirname, 'canonical-categories.seed.json');
+const MAPPINGS_PATH = path.join(__dirname, 'goofish-category-mappings.json');
+
+// Custom search terms path
+const CUSTOM_TERMS_PATH = path.join(__dirname, '..', '..', 'custom-search-terms.json');
+
+// Load custom terms if available
+function loadCustomTerms() {
+  try {
+    if (fs.existsSync(CUSTOM_TERMS_PATH)) {
+      const terms = JSON.parse(fs.readFileSync(CUSTOM_TERMS_PATH, 'utf8'));
+      if (Array.isArray(terms) && terms.length > 0) {
+        console.log(`[Custom Terms] Loaded ${terms.length} custom search terms from ${CUSTOM_TERMS_PATH}`);
+        return terms;
+      }
+    }
+  } catch (err) {
+    console.error(`[Custom Terms] Error loading custom terms: ${err.message}`);
+  }
+  return null;
+}
+
+let customTerms = null;
 
 const CNY_TO_IQD_RATE = 200;
 
@@ -21,8 +102,8 @@ const withDbParams = (url) => {
   if (!url) return '';
   const parsed = new URL(url);
   if (!parsed.searchParams.has('connection_limit')) parsed.searchParams.set('connection_limit', '3');
-  if (!parsed.searchParams.has('pool_timeout')) parsed.searchParams.set('pool_timeout', '120');
-  if (!parsed.searchParams.has('connect_timeout')) parsed.searchParams.set('connect_timeout', '20');
+  if (!parsed.searchParams.has('pool_timeout')) parsed.searchParams.set('pool_timeout', '300');
+  if (!parsed.searchParams.has('connect_timeout')) parsed.searchParams.set('connect_timeout', '120');
   if (!parsed.searchParams.has('keepalives')) parsed.searchParams.set('keepalives', '1');
   if (!parsed.searchParams.has('keepalives_idle')) parsed.searchParams.set('keepalives_idle', '30');
   if (!parsed.searchParams.has('keepalives_interval')) parsed.searchParams.set('keepalives_interval', '10');
@@ -35,6 +116,8 @@ const prismaDbUrl = withDbParams(
   String(process.env.GOOFISH_DATABASE_URL || process.env.DATABASE_URL || '').trim()
 );
 
+console.log('[DB] Database URL being used:', prismaDbUrl.replace(/:[^:@]+@/, ':****@'));
+
 // We must override the direct connection parameters specifically for Prisma
 if (process.env.GOOFISH_DATABASE_URL) {
   process.env.DATABASE_URL = process.env.GOOFISH_DATABASE_URL;
@@ -44,44 +127,904 @@ const createPrismaClient = () => (prismaDbUrl
   ? new PrismaClient({ datasources: { db: { url: prismaDbUrl } } })
   : new PrismaClient());
 let prisma = createPrismaClient();
-function calculatePriceMultiplier(basePriceIQD) {
+export function calculatePriceMultiplier(basePriceIQD) {
   return 1.25;
 }
 
 const SILICONFLOW_API_KEY = String(process.env.SILICONFLOW_API_KEY || '').trim();
+console.log(`[Debug] SILICONFLOW_API_KEY is set: ${SILICONFLOW_API_KEY ? 'YES (length=' + SILICONFLOW_API_KEY.length + ')' : 'NO'}`);
+
 const DISABLE_DB_WRITE = String(process.env.GOOFISH_DISABLE_DB_WRITE || '').toLowerCase() === 'true';
 const configuredMaxProducts = parseInt(process.env.GOOFISH_MAX_PRODUCTS || '', 10);
+
+// Category assignment config
+const CATEGORY_ASSIGN_ENABLED = String(process.env.GOOFISH_CATEGORY_ASSIGN || 'true').toLowerCase() === 'true';
+const CATEGORY_AI_RATE_LIMIT_DELAY_MS = Math.max(0, parseInt(process.env.CATEGORY_AI_RATE_LIMIT_DELAY_MS || '200', 10) || 200);
+const CATEGORY_API_TIMEOUT_MS = parseInt(process.env.CATEGORY_API_TIMEOUT_MS || '120000', 10);
+const CATEGORY_MODEL = process.env.SILICONFLOW_MODEL || 'Qwen/Qwen3-235B-A22B-Instruct-2507';
+
+// Load category data
+let categories = [];
+let goofishMappings = {};
+
+function loadCategoryData() {
+  try {
+    if (fs.existsSync(SEED_PATH)) {
+      categories = JSON.parse(fs.readFileSync(SEED_PATH, 'utf8'));
+      console.log(`[Category] Loaded ${categories.length} categories`);
+    } else {
+      console.warn(`[Category] No seed file found at ${SEED_PATH}`);
+    }
+  } catch (err) {
+    console.error(`[Category] Error loading seed file: ${err.message}`);
+  }
+
+  try {
+    if (fs.existsSync(MAPPINGS_PATH)) {
+      goofishMappings = JSON.parse(fs.readFileSync(MAPPINGS_PATH, 'utf8'));
+      console.log(`[Category] Loaded ${Object.keys(goofishMappings).length} Goofish mappings`);
+    } else {
+      console.warn(`[Category] No mappings file found at ${MAPPINGS_PATH}`);
+    }
+  } catch (err) {
+    console.error(`[Category] Error loading mappings file: ${err.message}`);
+  }
+}
+
+function saveCategoryData() {
+  try {
+    fs.writeFileSync(SEED_PATH, JSON.stringify(categories, null, 2));
+  } catch (err) {
+    console.error(`[Category] Error saving seed file: ${err.message}`);
+  }
+
+  try {
+    fs.writeFileSync(MAPPINGS_PATH, JSON.stringify(goofishMappings, null, 2));
+  } catch (err) {
+    console.error(`[Category] Error saving mappings file: ${err.message}`);
+  }
+}
+
+// Extract categoryId from Goofish/Xianyu URLs
+export function extractCategoryId(url) {
+  if (!url) return null;
+  try {
+    const urlObj = new URL(url);
+    const categoryId = urlObj.searchParams.get('categoryId');
+    return categoryId || null;
+  } catch {
+    const match = url.match(/[?&]categoryId=([^&]+)/);
+    return match ? match[1] : null;
+  }
+}
+
+// Call SiliconFlow API for category discovery
+async function callSiliconFlowForCategory(prompt, maxRetries = 3) {
+  if (!SILICONFLOW_API_KEY) {
+    throw new Error('SILICONFLOW_API_KEY not set');
+  }
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), CATEGORY_API_TIMEOUT_MS);
+
+    try {
+      const response = await axios.post(
+        'https://api.siliconflow.com/v1/chat/completions',
+        {
+          model: CATEGORY_MODEL,
+          messages: [
+            { role: 'system', content: 'You are a helpful assistant that categorizes products. Always respond with valid JSON only.' },
+            { role: 'user', content: prompt }
+          ],
+          max_tokens: 500,
+          temperature: 0.3
+        },
+        {
+          headers: {
+            'Authorization': `Bearer ${SILICONFLOW_API_KEY}`,
+            'Content-Type': 'application/json'
+          },
+          signal: controller.signal
+        }
+      );
+
+      const content = response.data?.choices?.[0]?.message?.content;
+      if (!content) throw new Error('Empty response from API');
+
+      try {
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        let result;
+        if (jsonMatch) {
+          result = JSON.parse(jsonMatch[0]);
+        } else {
+          result = JSON.parse(content);
+        }
+        if (CATEGORY_AI_RATE_LIMIT_DELAY_MS > 0) {
+          await new Promise(r => setTimeout(r, CATEGORY_AI_RATE_LIMIT_DELAY_MS));
+        }
+        return result;
+      } catch {
+        if (CATEGORY_AI_RATE_LIMIT_DELAY_MS > 0) {
+          await new Promise(r => setTimeout(r, CATEGORY_AI_RATE_LIMIT_DELAY_MS));
+        }
+        return { rawResponse: content };
+      }
+    } catch (err) {
+      const isTimeout = err.name === 'AbortError' || err.code === 'ECONNABORTED';
+      console.log(`[Category AI] Attempt ${attempt} failed: ${isTimeout ? 'timed out' : err.message}`);
+      if (attempt === maxRetries) throw err;
+      const delay = isTimeout ? 5000 * attempt : 2000 * attempt;
+      console.log(`[Category AI] Retrying in ${delay}ms...`);
+      await new Promise(r => setTimeout(r, delay));
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+}
+
+// Discover category using AI
+async function discoverCategory(productTitle, categoryId = null) {
+  const context = categoryId
+    ? `This product is from a marketplace with category ID "${categoryId}".`
+    : '';
+
+  const prompt = `${context}
+Based on the following product title, suggest a category.
+Product Title: "${productTitle}"
+
+Respond ONLY with a JSON object in this exact format:
+{
+  "slug": "lowercase_category_name_with_underscores",
+  "name_ar": "Arabic category name",
+  "name_en": "English category name",
+  "confidence": 0.95
+}
+
+Rules:
+- slug: lowercase, underscores instead of spaces, no special characters
+- name_ar: Proper Arabic name that users would search for
+- name_en: English translation
+- confidence: number between 0 and 1
+- IMPORTANT: "睡袍" (robe) should translate to "روب نوم" (sleep robe), NOT "بناطيل نوم" (pajama pants)
+- IMPORTANT: "睡衣" (pajamas) should translate to "بيجامة" (pajamas) or "بناطيل نوم" (pajama pants)
+
+Example output for "iPhone 15 Pro Max":
+{
+  "slug": "smartphones",
+  "name_ar": "الهواتف الذكية",
+  "name_en": "Smartphones",
+  "confidence": 0.98
+}
+
+Example output for "睡袍" (robe):
+{
+  "slug": "sleepwear_robes",
+  "name_ar": "روب نوم",
+  "name_en": "Sleepwear Robes",
+  "confidence": 0.98
+}
+
+Example output for "睡衣" (pajamas):
+{
+  "slug": "sleepwear_pajamas",
+  "name_ar": "بيجامة نوم",
+  "name_en": "Sleepwear Pajamas",
+  "confidence": 0.98
+}`;
+
+  console.log(`  → Calling AI for category discovery...`);
+  return await callSiliconFlowForCategory(prompt);
+}
+
+// Assign category to a product
+async function batchInsertDetailsFromJson() {
+  const detailDataPath = path.join(process.cwd(), 'goofish-detail-results.json');
+  const maxRetries = 3;
+  const retryDelayMs = 5000;
+  
+  try {
+    console.log(`[Batch Insert Details] Reading JSON from ${detailDataPath}`);
+    
+    if (!fs.existsSync(detailDataPath)) {
+      console.log(`[Batch Insert Details] JSON file not found: ${detailDataPath}`);
+      return;
+    }
+    
+    await ensureDbReady();
+    console.log(`[Batch Insert Details] Database ready, starting streaming insert`);
+    
+    let totalProcessed = 0;
+    let totalUpdated = 0;
+    let totalSkipped = 0;
+    
+    while (fs.existsSync(detailDataPath)) {
+      try {
+        const rawData = fs.readFileSync(detailDataPath, 'utf8');
+        const items = JSON.parse(rawData);
+        
+        if (!Array.isArray(items) || items.length === 0) {
+          console.log(`[Batch Insert Details] No more items to insert`);
+          break;
+        }
+        
+        console.log(`[Batch Insert Details] ${items.length} items remaining in JSON`);
+        
+        // Process first item
+        const item = items[0];
+        let attempt = 1;
+        let updated = false;
+        
+        while (attempt <= maxRetries && !updated) {
+          try {
+            const urlDisplay = typeof item.url === 'string' ? item.url.substring(0, 50) : typeof item.url;
+            console.log(`[Batch Insert Details] Processing item ${totalProcessed + 1} (URL: ${urlDisplay}...) (attempt ${attempt}/${maxRetries})`);
+            
+            if (!item.url || typeof item.url !== 'string') {
+              console.warn(`[Batch Insert Details] Skipping item with invalid URL (type: ${typeof item.url}), removing from JSON`);
+              console.warn(`[Batch Insert Details] Item data:`, JSON.stringify(item).substring(0, 200));
+              updated = true;
+              totalSkipped++;
+              break;
+            }
+            
+            // Find product by URL
+            const existing = await findExistingProductByUrl(item.url);
+            
+            if (!existing) {
+              console.warn(`[Batch Insert Details] No product found for URL ${item.url}, skipping (will be created in collection batch insert)`);
+              updated = true;
+              totalSkipped++;
+              // Remove skipped item from JSON to prevent infinite loop
+              const remainingItems = items.slice(1);
+              if (remainingItems.length > 0) {
+                fs.writeFileSync(detailDataPath, JSON.stringify(remainingItems, null, 2));
+              } else {
+                fs.unlinkSync(detailDataPath);
+                console.log(`[Batch Insert Details] All items processed, JSON file deleted`);
+              }
+              break;
+            }
+            
+            const productId = existing.id;
+            
+            // Update product with all gathered data
+            const metadata = {
+              ...item.aiMetadata,
+              soldCount: item.soldCount,
+              detailUpdatedAt: new Date().toISOString()
+            };
+            
+            // Update name if translated
+            if (item.translatedName && hasArabic(item.translatedName)) {
+              await prisma.$executeRaw`
+                UPDATE "Product"
+                SET "name" = ${item.translatedName},
+                    "updatedAt" = NOW()
+                WHERE id = ${productId}
+              `;
+            }
+            
+            // Update description if translated
+            if (item.translatedDescription && hasArabic(item.translatedDescription)) {
+              await prisma.$executeRaw`
+                UPDATE "Product"
+                SET "aiMetadata" = COALESCE("aiMetadata", '{}'::jsonb) || ${JSON.stringify(metadata)}::jsonb,
+                    "description" = ${item.translatedDescription},
+                    "updatedAt" = NOW()
+                WHERE id = ${productId}
+              `;
+            } else {
+              await prisma.$executeRaw`
+                UPDATE "Product"
+                SET "aiMetadata" = COALESCE("aiMetadata", '{}'::jsonb) || ${JSON.stringify(metadata)}::jsonb,
+                    "updatedAt" = NOW()
+                WHERE id = ${productId}
+              `;
+            }
+            
+            // Update specs if available
+            if (item.translatedSpecs && Object.keys(item.translatedSpecs).length > 0) {
+              await prisma.$executeRaw`
+                UPDATE "Product"
+                SET "specs" = ${JSON.stringify(item.translatedSpecs)}::jsonb,
+                    "updatedAt" = NOW()
+                WHERE id = ${productId}
+              `;
+            }
+            
+            // Insert images
+            if (item.images && item.images.length > 0) {
+              for (const imageUrl of item.images) {
+                try {
+                  await prisma.productImage.createMany({
+                    data: [{
+                      productId: productId,
+                      url: imageUrl,
+                      order: item.images.indexOf(imageUrl),
+                      type: 'GALLERY'
+                    }],
+                    skipDuplicates: true
+                  });
+                } catch (imageErr) {
+                  // Ignore duplicate errors
+                }
+              }
+            }
+            
+            // Assign category if categoryId is available
+            if (item.categoryId) {
+              try {
+                await assignCategoryToProduct(productId, item.translatedName || item.name, item.url);
+              } catch (categoryErr) {
+                console.warn(`[Batch Insert Details] Failed to assign category for ${productId}: ${toErrorText(categoryErr)}`);
+              }
+            }
+            
+            // Update isActive if unavailable
+            if (item.isActive === false) {
+              await prisma.$executeRaw`
+                UPDATE "Product"
+                SET "isActive" = false,
+                    "updatedAt" = NOW()
+                WHERE id = ${productId}
+              `;
+            }
+            
+            // Generate image embeddings if not disabled
+            if (!GOOFISH_DISABLE_IMAGE_EMBEDDINGS) {
+              const imageToEmbed = item.image || (item.images && item.images.length > 0 ? item.images[0] : null);
+              if (imageToEmbed) {
+                console.log(`[Batch Insert Details] Generating embedding for Product ${productId}...`);
+                try {
+                  const embeddingResult = await withTimeout(
+                    () => ensureProductImageEmbeddings({
+                      prisma,
+                      productId: productId,
+                      productName: GOOFISH_EMBED_USE_PRODUCT_NAME ? (item.translatedName || item.name || null) : null,
+                      fallbackImageUrl: imageToEmbed,
+                      runDb: (operation, label) => withRetry(
+                        operation,
+                        label,
+                        3,
+                        30000,
+                        500
+                      ),
+                      logger: console,
+                    }),
+                    `embedding step ${productId}`,
+                    120000
+                  );
+                  if (embeddingResult.embeddedCount > 0) {
+                    console.log(`[Batch Insert Details] ✓ Generated ${embeddingResult.embeddedCount} embeddings for Product ${productId}`);
+                  }
+                } catch (embedErr) {
+                  console.warn(`⚠️ Failed to generate image embeddings for Product ${productId}: ${toErrorText(embedErr)}`);
+                }
+              }
+            }
+            
+            console.log(`[Batch Insert Details] ✓ Successfully updated item ${totalProcessed + 1} (ID: ${productId})`);
+            updated = true;
+            totalUpdated++;
+            
+            // Remove updated item from JSON
+            const remainingItems = items.slice(1);
+            if (remainingItems.length > 0) {
+              fs.writeFileSync(detailDataPath, JSON.stringify(remainingItems, null, 2));
+            } else {
+              // All items processed, delete the file
+              fs.unlinkSync(detailDataPath);
+              console.log(`[Batch Insert Details] All items processed, JSON file deleted`);
+            }
+            
+          } catch (itemErr) {
+            console.error(`[Batch Insert Details] Attempt ${attempt}/${maxRetries} failed for item: ${toErrorText(itemErr)}`);
+            
+            if (attempt < maxRetries) {
+              console.log(`[Batch Insert Details] Retrying in ${retryDelayMs}ms...`);
+              await new Promise(resolve => setTimeout(resolve, retryDelayMs));
+              attempt++;
+            } else {
+              console.error(`[Batch Insert Details] All ${maxRetries} attempts failed for this item, skipping`);
+              // Remove failed item from JSON to avoid infinite loop
+              const remainingItems = items.slice(1);
+              if (remainingItems.length > 0) {
+                fs.writeFileSync(detailDataPath, JSON.stringify(remainingItems, null, 2));
+              } else {
+                fs.unlinkSync(detailDataPath);
+              }
+              totalSkipped++;
+            }
+          }
+        }
+        
+        totalProcessed++;
+        
+      } catch (error) {
+        console.error(`[Batch Insert Details] Error processing JSON: ${toErrorText(error)}`);
+        // Delete corrupted JSON file to prevent infinite loop
+        if (fs.existsSync(detailDataPath)) {
+          console.warn(`[Batch Insert Details] Deleting corrupted JSON file to prevent infinite loop`);
+          fs.unlinkSync(detailDataPath);
+        }
+        break;
+      }
+    }
+    
+    console.log(`[Batch Insert Details] Completed: ${totalProcessed} processed, ${totalUpdated} updated, ${totalSkipped} skipped`);
+    
+  } catch (error) {
+    console.error(`[Batch Insert Details] Fatal error: ${toErrorText(error)}`);
+    throw error;
+  }
+}
+
+async function batchInsertFromJson() {
+  const outputPath = path.join(process.cwd(), 'goofish-results.json');
+  const detailDataPath = path.join(process.cwd(), 'goofish-detail-results.json');
+  const maxRetries = 3;
+  const retryDelayMs = 5000;
+  
+  try {
+    console.log(`[Batch Insert] Reading collection JSON from ${outputPath}`);
+    
+    if (!fs.existsSync(outputPath)) {
+      console.log(`[Batch Insert] Collection JSON file not found: ${outputPath}`);
+      return;
+    }
+    
+    await ensureDbReady();
+    console.log(`[Batch Insert] Database ready, starting streaming insert`);
+    
+    let totalProcessed = 0;
+    let totalInserted = 0;
+    let totalSkipped = 0;
+    
+    while (fs.existsSync(outputPath)) {
+      try {
+        const rawData = fs.readFileSync(outputPath, 'utf8');
+        const items = JSON.parse(rawData);
+        
+        if (!Array.isArray(items) || items.length === 0) {
+          console.log(`[Batch Insert] No more items to insert`);
+          break;
+        }
+        
+        console.log(`[Batch Insert] ${items.length} items remaining in JSON`);
+        
+        // Process first item
+        const item = items[0];
+        let attempt = 1;
+        let inserted = false;
+        
+        while (attempt <= maxRetries && !inserted) {
+          try {
+            console.log(`[Batch Insert] Processing item ${totalProcessed + 1}: ${item.titleEn?.substring(0, 30)}... (attempt ${attempt}/${maxRetries})`);
+            
+            const goofishItemId = extractGoofishItemId(item?.url);
+            const existing = await findExistingProductByUrl(item.url);
+            
+            const metadata = {
+              originalTitle: item.title,
+              translatedDescription: item.descriptionAr || '',
+              isRealBrand: typeof item.realBrand === 'boolean' ? item.realBrand : null,
+              goofishItemId: goofishItemId || null,
+              source: 'goofish',
+              scrapedAt: new Date()
+            };
+            
+            const keywordsList = ensureKeywordList(item.keywords, item.titleEn || item.title);
+            const basePriceIQD = Math.max(0, Number(item.priceCny || 0) * CNY_TO_IQD_RATE);
+            const multiplier = calculatePriceMultiplier(basePriceIQD);
+            const priceIQD = Math.round(basePriceIQD * multiplier);
+            
+            let productId;
+            
+            if (existing) {
+              // Update existing
+              await prisma.product.update({
+                where: { id: existing.id },
+                data: {
+                  name: item.titleEn || item.title,
+                  price: priceIQD,
+                  basePriceIQD,
+                  aiMetadata: metadata,
+                  updatedAt: new Date()
+                }
+              });
+              
+              // Update keywords using raw SQL
+              if (keywordsList && keywordsList.length > 0) {
+                const keywordsSql = Prisma.join(keywordsList);
+                await prisma.$executeRaw`
+                  UPDATE "Product"
+                  SET "keywords" = ARRAY[${keywordsSql}]
+                  WHERE "id" = ${existing.id}
+                `;
+              }
+              
+              productId = existing.id;
+            } else {
+              // Create new
+              const newProduct = await prisma.product.create({
+                data: {
+                  name: item.titleEn || item.title,
+                  price: priceIQD,
+                  basePriceIQD,
+                  image: item.image,
+                  purchaseUrl: item.url,
+                  status: 'PUBLISHED',
+                  isActive: true,
+                  aiMetadata: metadata
+                }
+              });
+              
+              // Update keywords using raw SQL
+              if (newProduct?.id && keywordsList && keywordsList.length > 0) {
+                const keywordsSql = Prisma.join(keywordsList);
+                await prisma.$executeRaw`
+                  UPDATE "Product"
+                  SET "keywords" = ARRAY[${keywordsSql}]
+                  WHERE "id" = ${newProduct.id}
+                `;
+              }
+              
+              // Add main image
+              if (item.image && newProduct?.id) {
+                try {
+                  await prisma.productImage.createMany({
+                    data: [{
+                      productId: newProduct.id,
+                      url: item.image,
+                      order: 0,
+                      type: 'GALLERY'
+                    }],
+                    skipDuplicates: true
+                  });
+                } catch (imageErr) {
+                  console.warn(`[Batch Insert] Failed to insert image for ${newProduct.id}: ${toErrorText(imageErr)}`);
+                }
+              }
+              
+              // Assign category
+              try {
+                await assignCategoryToProduct(newProduct.id, item.titleEn || item.title, item.url);
+              } catch (categoryErr) {
+                console.warn(`[Batch Insert] Failed to assign category for ${newProduct.id}: ${toErrorText(categoryErr)}`);
+              }
+              
+              // Generate image embeddings if not disabled
+              if (!GOOFISH_DISABLE_IMAGE_EMBEDDINGS) {
+                const imageToEmbed = item.image;
+                if (imageToEmbed) {
+                  console.log(`[Batch Insert] Generating embedding for Product ${newProduct.id}...`);
+                  try {
+                    const embeddingResult = await withTimeout(
+                      () => ensureProductImageEmbeddings({
+                        prisma,
+                        productId: newProduct.id,
+                        productName: GOOFISH_EMBED_USE_PRODUCT_NAME ? (item.titleEn || item.title || null) : null,
+                        fallbackImageUrl: imageToEmbed,
+                        runDb: (operation, label) => withRetry(
+                          operation,
+                          label,
+                          3,
+                          30000,
+                          500
+                        ),
+                        logger: console,
+                      }),
+                      `embedding step ${newProduct.id}`,
+                      120000
+                    );
+                    if (embeddingResult.embeddedCount > 0) {
+                      console.log(`[Batch Insert] ✓ Generated ${embeddingResult.embeddedCount} embeddings for Product ${newProduct.id}`);
+                    }
+                  } catch (embedErr) {
+                    console.warn(`⚠️ Failed to generate image embeddings for Product ${newProduct.id}: ${toErrorText(embedErr)}`);
+                  }
+                }
+              }
+              
+              productId = newProduct.id;
+            }
+            
+            // Check if there's corresponding detail data for this product
+            if (fs.existsSync(detailDataPath)) {
+              try {
+                const detailRawData = fs.readFileSync(detailDataPath, 'utf8');
+                const detailItems = JSON.parse(detailRawData);
+                const detailItem = detailItems.find(d => d.url === item.url);
+                
+                if (detailItem) {
+                  console.log(`[Batch Insert] Found detail data for ${item.url}, applying updates`);
+                  
+                  // Update with detail data
+                  const detailMetadata = {
+                    ...metadata,
+                    soldCount: detailItem.soldCount,
+                    detailUpdatedAt: new Date().toISOString()
+                  };
+                  
+                  // Update name if translated
+                  if (detailItem.translatedName && hasArabic(detailItem.translatedName)) {
+                    await prisma.$executeRaw`
+                      UPDATE "Product"
+                      SET "name" = ${detailItem.translatedName},
+                          "updatedAt" = NOW()
+                      WHERE id = ${productId}
+                    `;
+                  }
+                  
+                  // Update description if translated
+                  if (detailItem.translatedDescription && hasArabic(detailItem.translatedDescription)) {
+                    await prisma.$executeRaw`
+                      UPDATE "Product"
+                      SET "aiMetadata" = COALESCE("aiMetadata", '{}'::jsonb) || ${JSON.stringify(detailMetadata)}::jsonb,
+                          "description" = ${detailItem.translatedDescription},
+                          "updatedAt" = NOW()
+                      WHERE id = ${productId}
+                    `;
+                  } else {
+                    await prisma.$executeRaw`
+                      UPDATE "Product"
+                      SET "aiMetadata" = COALESCE("aiMetadata", '{}'::jsonb) || ${JSON.stringify(detailMetadata)}::jsonb,
+                          "updatedAt" = NOW()
+                      WHERE id = ${productId}
+                    `;
+                  }
+                  
+                  // Update specs if available
+                  if (detailItem.translatedSpecs && Object.keys(detailItem.translatedSpecs).length > 0) {
+                    await prisma.$executeRaw`
+                      UPDATE "Product"
+                      SET "specs" = ${JSON.stringify(detailItem.translatedSpecs)}::jsonb,
+                          "updatedAt" = NOW()
+                      WHERE id = ${productId}
+                    `;
+                  }
+                  
+                  // Insert additional images
+                  if (detailItem.images && detailItem.images.length > 0) {
+                    for (const imageUrl of detailItem.images) {
+                      try {
+                        await prisma.productImage.createMany({
+                          data: [{
+                            productId: productId,
+                            url: imageUrl,
+                            order: detailItem.images.indexOf(imageUrl),
+                            type: 'GALLERY'
+                          }],
+                          skipDuplicates: true
+                        });
+                      } catch (imageErr) {
+                        // Ignore duplicate errors
+                      }
+                    }
+                  }
+                  
+                  // Update isActive if unavailable
+                  if (detailItem.isActive === false) {
+                    await prisma.$executeRaw`
+                      UPDATE "Product"
+                      SET "isActive" = false,
+                          "updatedAt" = NOW()
+                      WHERE id = ${productId}
+                    `;
+                  }
+                  
+                  // Remove detail item from detail JSON
+                  const remainingDetailItems = detailItems.filter(d => d.url !== item.url);
+                  if (remainingDetailItems.length > 0) {
+                    fs.writeFileSync(detailDataPath, JSON.stringify(remainingDetailItems, null, 2));
+                  } else {
+                    fs.unlinkSync(detailDataPath);
+                    console.log(`[Batch Insert] Detail JSON file deleted`);
+                  }
+                }
+              } catch (detailErr) {
+                console.warn(`[Batch Insert] Failed to process detail data for ${item.url}: ${toErrorText(detailErr)}`);
+              }
+            }
+            
+            console.log(`[Batch Insert] ✓ Successfully inserted item ${totalProcessed + 1} (ID: ${productId})`);
+            inserted = true;
+            totalInserted++;
+            
+            // Remove inserted item from JSON
+            const remainingItems = items.slice(1);
+            if (remainingItems.length > 0) {
+              fs.writeFileSync(outputPath, JSON.stringify(remainingItems, null, 2));
+            } else {
+              // All items processed, delete the file
+              fs.unlinkSync(outputPath);
+              console.log(`[Batch Insert] All items processed, JSON file deleted`);
+            }
+            
+          } catch (itemErr) {
+            console.error(`[Batch Insert] Attempt ${attempt}/${maxRetries} failed for item: ${toErrorText(itemErr)}`);
+            
+            if (attempt < maxRetries) {
+              console.log(`[Batch Insert] Retrying in ${retryDelayMs}ms...`);
+              await new Promise(resolve => setTimeout(resolve, retryDelayMs));
+              attempt++;
+            } else {
+              console.error(`[Batch Insert] All ${maxRetries} attempts failed for this item, skipping`);
+              // Remove failed item from JSON to avoid infinite loop
+              const remainingItems = items.slice(1);
+              if (remainingItems.length > 0) {
+                fs.writeFileSync(outputPath, JSON.stringify(remainingItems, null, 2));
+              } else {
+                fs.unlinkSync(outputPath);
+              }
+              totalSkipped++;
+            }
+          }
+        }
+        
+        totalProcessed++;
+        
+      } catch (error) {
+        console.error(`[Batch Insert] Error processing JSON: ${toErrorText(error)}`);
+        break;
+      }
+    }
+    
+    console.log(`[Batch Insert] Completed: ${totalProcessed} processed, ${totalInserted} inserted, ${totalSkipped} skipped`);
+    
+  } catch (error) {
+    console.error(`[Batch Insert] Fatal error: ${toErrorText(error)}`);
+    throw error;
+  }
+}
+
+async function assignCategoryToProduct(productId, productName, purchaseUrl) {
+  if (!CATEGORY_ASSIGN_ENABLED) {
+    return;
+  }
+
+  try {
+    console.log(`[Category] Assigning category to product ${productId}: ${productName?.slice(0, 40)}...`);
+
+    const categoryId = extractCategoryId(purchaseUrl);
+    let categorySlug = null;
+    let categoryNameAr = null;
+    let categorySource = 'unknown';
+
+    if (categoryId) {
+      console.log(`  → Found categoryId in URL: ${categoryId}`);
+
+      if (goofishMappings[categoryId]) {
+        categorySlug = goofishMappings[categoryId];
+        const existingCat = categories.find(c => c.slug === categorySlug);
+        categoryNameAr = existingCat?.name_ar || categorySlug;
+        categorySource = 'goofish_mapped';
+        console.log(`  → Using existing mapping: ${categorySlug}`);
+      } else {
+        console.log(`  → New categoryId discovered, using AI...`);
+        const discovered = await discoverCategory(productName, categoryId);
+
+        if (discovered?.slug && discovered?.name_ar) {
+          categorySlug = discovered.slug;
+          categoryNameAr = discovered.name_ar;
+
+          const existingIndex = categories.findIndex(c => c.slug === categorySlug);
+          if (existingIndex === -1) {
+            categories.push({
+              slug: categorySlug,
+              name_ar: discovered.name_ar,
+              name_en: discovered.name_en || discovered.slug,
+              aliases: [discovered.name_ar, discovered.name_en].filter(Boolean),
+              source: 'auto_discovered',
+              discovered_from: categoryId,
+              created_at: new Date().toISOString()
+            });
+            console.log(`  → Created new category: ${categorySlug} (${discovered.name_ar})`);
+            saveCategoryData();
+          } else {
+            console.log(`  → Using existing category: ${categorySlug}`);
+          }
+
+          goofishMappings[categoryId] = categorySlug;
+          categorySource = 'goofish_auto_discovered';
+          saveCategoryData();
+        }
+      }
+    }
+
+    if (!categorySlug) {
+      console.log(`  → No categoryId, using AI on product title...`);
+      const discovered = await discoverCategory(productName);
+
+      if (discovered?.slug && discovered?.name_ar) {
+        categorySlug = discovered.slug;
+        categoryNameAr = discovered.name_ar;
+
+        const existingIndex = categories.findIndex(c => c.slug === categorySlug);
+        if (existingIndex === -1) {
+          categories.push({
+            slug: categorySlug,
+            name_ar: discovered.name_ar,
+            name_en: discovered.name_en || discovered.slug,
+            aliases: [discovered.name_ar, discovered.name_en].filter(Boolean),
+            source: 'ai_generated',
+            created_at: new Date().toISOString()
+          });
+          console.log(`  → Created new category: ${categorySlug} (${discovered.name_ar})`);
+          saveCategoryData();
+        } else {
+          console.log(`  → Using existing category: ${categorySlug}`);
+        }
+
+        categorySource = 'ai_title_based';
+      }
+    }
+
+    if (categorySlug && categoryNameAr) {
+      // Check if category exists in database, create if not
+      let categoryRecord = await prisma.category.findUnique({
+        where: { slug: categorySlug }
+      });
+
+      if (!categoryRecord) {
+        console.log(`  → Category not found in database, creating: ${categorySlug}`);
+        categoryRecord = await prisma.category.create({
+          data: {
+            slug: categorySlug,
+            nameAr: categoryNameAr,
+            nameEn: categoryNameAr,
+            goofishCategoryId: categoryId || null
+          }
+        });
+        console.log(`  → Created category in database with ID: ${categoryRecord.id}`);
+      } else {
+        console.log(`  → Found category in database with ID: ${categoryRecord.id}`);
+      }
+
+      // Update product with categoryId
+      await prisma.product.update({
+        where: { id: productId },
+        data: { categoryId: categoryRecord.id }
+      });
+      console.log(`  ✓ Assigned to: ${categorySlug} (${categoryNameAr}) with categoryId: ${categoryRecord.id}`);
+    } else {
+      console.log(`  ✗ Failed to assign category`);
+    }
+  } catch (err) {
+    console.error(`[Category] Error assigning category to product ${productId}:`, err.message);
+  }
+}
 const MAX_PRODUCTS_TO_PROCESS = Number.isFinite(configuredMaxProducts) && configuredMaxProducts > 0
   ? configuredMaxProducts
   : Number.POSITIVE_INFINITY;
 const OUTPUT_JSON = String(process.env.GOOFISH_OUTPUT_JSON || '').toLowerCase() === 'true';
+const BATCH_INSERT_FROM_JSON = String(process.env.GOOFISH_BATCH_INSERT_FROM_JSON || '').toLowerCase() === 'true';
+const SKIP_COLLECT_ONLY_BATCH_INSERT = String(process.env.GOOFISH_SKIP_COLLECT || '').toLowerCase() === 'true';
 const REQUIRE_DB_WRITE = String(process.env.GOOFISH_REQUIRE_DB_WRITE || 'true').toLowerCase() !== 'false';
 const AI_ONLY_TERMS = String(process.env.GOOFISH_AI_ONLY_TERMS || '').toLowerCase() === 'true';
 const TRANSLATION_CACHE_PATH = path.join(__dirname, 'goofish-translation-cache.json');
 const TERM_DETAIL_LINKS_PATH = path.join(__dirname, 'goofish-term-detail-links.json');
 const BATCH_LINKS_PATH = path.join(__dirname, 'goofish-batch-links.json');
 const ITEMS_PER_SEARCH = Math.max(1, parseInt(process.env.GOOFISH_ITEMS_PER_SEARCH || '150', 10) || 150);
-const GOOFISH_LINKS_PER_TERM = Math.max(1, parseInt(process.env.GOOFISH_LINKS_PER_TERM || '90', 10) || 90);
+const GOOFISH_LINKS_PER_TERM = Math.max(1, parseInt(process.env.GOOFISH_LINKS_PER_TERM || '150', 10) || 150);
 const GOOFISH_TERMS_PER_BATCH = Math.max(1, parseInt(process.env.GOOFISH_TERMS_PER_BATCH || '50', 10) || 50);
 const KEYWORDS_PER_PRODUCT = Math.max(8, Math.min(20, parseInt(process.env.GOOFISH_KEYWORDS_PER_PRODUCT || '14', 10) || 14));
 const GOOFISH_AI_TITLE_MAX_CHARS = Math.max(40, parseInt(process.env.GOOFISH_AI_TITLE_MAX_CHARS || '140', 10) || 140);
 const GOOFISH_AI_SECOND_PASS_DESCRIPTION = String(process.env.GOOFISH_AI_SECOND_PASS_DESCRIPTION || 'false').toLowerCase() === 'true';
 const GOOFISH_TRANSLATION_CACHE_FLUSH_EVERY = Math.max(1, parseInt(process.env.GOOFISH_TRANSLATION_CACHE_FLUSH_EVERY || '20', 10) || 20);
-const GOOFISH_DB_SAVE_TIMEOUT_MS = Math.max(5000, parseInt(process.env.GOOFISH_DB_SAVE_TIMEOUT_MS || '45000', 10) || 45000);
-const GOOFISH_DB_SAVE_RETRIES = Math.max(1, parseInt(process.env.GOOFISH_DB_SAVE_RETRIES || '1', 10) || 1);
-const GOOFISH_DB_SAVE_FATAL_ON_RETRY_EXHAUST = String(process.env.GOOFISH_DB_SAVE_FATAL_ON_RETRY_EXHAUST || 'true').toLowerCase() !== 'false';
-const GOOFISH_DB_CONNECT_TIMEOUT_MS = Math.max(8000, parseInt(process.env.GOOFISH_DB_CONNECT_TIMEOUT_MS || '25000', 10) || 25000);
+const GOOFISH_DB_SAVE_TIMEOUT_MS = Math.max(5000, parseInt(process.env.GOOFISH_DB_SAVE_TIMEOUT_MS || '60000', 10) || 60000);
+const GOOFISH_DB_ENGINE_FAILURE_WINDOW_MS = Math.max(1000, parseInt(process.env.GOOFISH_DB_ENGINE_FAILURE_WINDOW_MS || '180000', 10) || 180000);
+const GOOFISH_DB_ENGINE_FAILURE_THRESHOLD = Math.max(2, parseInt(process.env.GOOFISH_DB_ENGINE_FAILURE_THRESHOLD || '4', 10) || 4);
+const GOOFISH_DB_ENGINE_COOLDOWN_MS = Math.max(1000, parseInt(process.env.GOOFISH_DB_ENGINE_COOLDOWN_MS || '90000', 10) || 90000);
+const GOOFISH_DB_FORCE_RECONNECT_MIN_INTERVAL_MS = Math.max(1000, parseInt(process.env.GOOFISH_DB_FORCE_RECONNECT_MIN_INTERVAL_MS || '60000', 10) || 60000);
+const GOOFISH_DB_CONNECT_TIMEOUT_MS = Math.max(8000, parseInt(process.env.GOOFISH_DB_CONNECT_TIMEOUT_MS || '30000', 10) || 30000);
 const GOOFISH_DB_CONNECT_RETRIES = Math.max(1, parseInt(process.env.GOOFISH_DB_CONNECT_RETRIES || '8', 10) || 8);
-const GOOFISH_DB_CONNECT_RETRY_DELAY_MS = Math.max(500, parseInt(process.env.GOOFISH_DB_CONNECT_RETRY_DELAY_MS || '5000', 10) || 5000);
-const GOOFISH_DB_CONNECT_VERIFY_PING = String(process.env.GOOFISH_DB_CONNECT_VERIFY_PING || 'false').toLowerCase() === 'true';
-const GOOFISH_DB_ENGINE_FAILURE_THRESHOLD = Math.max(1, parseInt(process.env.GOOFISH_DB_ENGINE_FAILURE_THRESHOLD || '3', 10) || 3);
-const GOOFISH_DB_ENGINE_FAILURE_WINDOW_MS = Math.max(1000, parseInt(process.env.GOOFISH_DB_ENGINE_FAILURE_WINDOW_MS || '120000', 10) || 120000);
-const GOOFISH_DB_ENGINE_COOLDOWN_MS = Math.max(1000, parseInt(process.env.GOOFISH_DB_ENGINE_COOLDOWN_MS || '45000', 10) || 45000);
-const GOOFISH_DB_FORCE_RECONNECT_MIN_INTERVAL_MS = Math.max(1000, parseInt(process.env.GOOFISH_DB_FORCE_RECONNECT_MIN_INTERVAL_MS || '45000', 10) || 45000);
+const GOOFISH_DB_CONNECT_RETRY_DELAY_MS = Math.max(1000, parseInt(process.env.GOOFISH_DB_CONNECT_RETRY_DELAY_MS || '2000', 10) || 2000);
+const GOOFISH_DB_CONNECT_VERIFY_PING = String(process.env.GOOFISH_DB_CONNECT_VERIFY_PING || 'true').toLowerCase() !== 'false';
+const GOOFISH_DB_SAVE_FATAL_ON_RETRY_EXHAUST = String(process.env.GOOFISH_DB_SAVE_FATAL_ON_RETRY_EXHAUST || 'false').toLowerCase() === 'true';
+const GOOFISH_DB_SAVE_RETRIES = Math.max(1, parseInt(process.env.GOOFISH_DB_SAVE_RETRIES || '3', 10) || 3);
 const GOOFISH_PROGRESS_STALL_TIMEOUT_MS = Math.max(30000, parseInt(process.env.GOOFISH_PROGRESS_STALL_TIMEOUT_MS || '120000', 10) || 120000);
-const GOOFISH_PROGRESS_WATCHDOG_INTERVAL_MS = Math.max(5000, parseInt(process.env.GOOFISH_PROGRESS_WATCHDOG_INTERVAL_MS || '10000', 10) || 10000);
-const GOOFISH_PROGRESS_RECOVERY_COOLDOWN_MS = Math.max(5000, parseInt(process.env.GOOFISH_PROGRESS_RECOVERY_COOLDOWN_MS || '30000', 10) || 30000);
-const GOOFISH_PROGRESS_STALL_MAX_RECOVERS = Math.max(1, parseInt(process.env.GOOFISH_PROGRESS_STALL_MAX_RECOVERS || '3', 10) || 3);
 const GOOFISH_PROGRESS_STALL_HARD_EXIT_MS = Math.max(
   GOOFISH_PROGRESS_STALL_TIMEOUT_MS,
   parseInt(
@@ -89,25 +1032,53 @@ const GOOFISH_PROGRESS_STALL_HARD_EXIT_MS = Math.max(
     10
   ) || (GOOFISH_PROGRESS_STALL_TIMEOUT_MS * 2)
 );
+const GOOFISH_PROGRESS_WATCHDOG_INTERVAL_MS = Math.max(5000, parseInt(process.env.GOOFISH_PROGRESS_WATCHDOG_INTERVAL_MS || '10000', 10) || 10000);
+const GOOFISH_PROGRESS_RECOVERY_COOLDOWN_MS = Math.max(5000, parseInt(process.env.GOOFISH_PROGRESS_RECOVERY_COOLDOWN_MS || '30000', 10) || 30000);
+const GOOFISH_PROGRESS_STALL_MAX_RECOVERS = Math.max(1, parseInt(process.env.GOOFISH_PROGRESS_STALL_MAX_RECOVERS || '3', 10) || 3);
 const parsedRecoverWaitMs = parseInt(process.env.GOOFISH_DB_RECOVER_WAIT_MS || '120000', 10);
 const GOOFISH_DB_RECOVER_WAIT_MS = Number.isFinite(parsedRecoverWaitMs) ? Math.max(0, parsedRecoverWaitMs) : 120000;
 const GOOFISH_DB_RECOVER_PING_TIMEOUT_MS = Math.max(1000, parseInt(process.env.GOOFISH_DB_RECOVER_PING_TIMEOUT_MS || '12000', 10) || 12000);
 const GOOFISH_EMBEDDING_STEP_TIMEOUT_MS = Math.max(5000, parseInt(process.env.GOOFISH_EMBEDDING_STEP_TIMEOUT_MS || '90000', 10) || 90000);
 const GOOFISH_DB_RECOVER_MAX_CYCLES_PER_OP = Math.max(0, parseInt(process.env.GOOFISH_DB_RECOVER_MAX_CYCLES_PER_OP || '1', 10) || 1);
-const GOOFISH_PROCESS_LINK_TIMEOUT_MS = Math.max(30000, parseInt(process.env.GOOFISH_PROCESS_LINK_TIMEOUT_MS || '120000', 10) || 120000);
-const GOOFISH_AI_CALL_TIMEOUT_MS = Math.max(5000, parseInt(process.env.GOOFISH_AI_CALL_TIMEOUT_MS || '15000', 10) || 15000);
+const GOOFISH_PROCESS_LINK_TIMEOUT_MS = Math.max(30000, parseInt(process.env.GOOFISH_PROCESS_LINK_TIMEOUT_MS || '180000', 10) || 180000);
+const GOOFISH_AI_CALL_TIMEOUT_MS = Math.max(5000, parseInt(process.env.GOOFISH_AI_CALL_TIMEOUT_MS || '60000', 10) || 60000);
 const GOOFISH_AI_RETRY_MAX_ATTEMPTS = Math.max(1, parseInt(process.env.GOOFISH_AI_RETRY_MAX_ATTEMPTS || '3', 10) || 3);
-const GOOFISH_TERM_AI_CALL_TIMEOUT_MS = Math.max(5000, parseInt(process.env.GOOFISH_TERM_AI_CALL_TIMEOUT_MS || '15000', 10) || 15000);
-const GOOFISH_TERM_AI_MAX_ATTEMPTS = Math.max(1, parseInt(process.env.GOOFISH_TERM_AI_MAX_ATTEMPTS || '2', 10) || 2);
-const GOOFISH_AI_MODEL = String(process.env.GOOFISH_AI_MODEL || 'Qwen/Qwen3-8B').trim() || 'Qwen/Qwen3-8B';
+
+// Reuse HTTP connections to SiliconFlow to avoid TLS handshake overhead
+const siliconflowAgent = new https.Agent({
+  keepAlive: true,
+  maxSockets: 5,
+  maxFreeSockets: 2,
+  timeout: 30000,
+  freeSocketTimeout: 30000,
+});
+
+// Circuit breaker: skip AI calls after N consecutive failures
+let sfConsecutiveFailures = 0;
+const SF_FAILURE_THRESHOLD = 10;
+const SF_COOLDOWN_MS = 10000;
+let sfCircuitOpenUntil = 0;
+
+// Reset circuit breaker on startup
+sfConsecutiveFailures = 0;
+sfCircuitOpenUntil = 0;
+
+const GOOFISH_TERM_AI_CALL_TIMEOUT_MS = Math.max(5000, parseInt(process.env.GOOFISH_TERM_AI_CALL_TIMEOUT_MS || '60000', 10) || 60000);
+const GOOFISH_TERM_AI_MAX_ATTEMPTS = Math.max(1, parseInt(process.env.GOOFISH_TERM_AI_MAX_ATTEMPTS || '3', 10) || 3);
+const GOOFISH_AI_MODEL = String(process.env.GOOFISH_AI_MODEL || 'Qwen/Qwen3-235B-A22B-Instruct-2507').trim() || 'Qwen/Qwen3-235B-A22B-Instruct-2507';
+const GOOFISH_AI_RATE_LIMIT_DELAY_MS = Math.max(0, Number.parseInt(process.env.GOOFISH_AI_RATE_LIMIT_DELAY_MS || '200', 10) || 200);
 const GOOFISH_ENABLE_TRANSLATION_RETRY = String(process.env.GOOFISH_ENABLE_TRANSLATION_RETRY || '').toLowerCase() === 'true';
 const GOOFISH_SKIP_ON_TRANSLATION_FAILURE = String(process.env.GOOFISH_SKIP_ON_TRANSLATION_FAILURE || 'true').toLowerCase() !== 'false';
 const GOOFISH_DB_SAVE_BACKOFF_MS = Math.max(200, parseInt(process.env.GOOFISH_DB_SAVE_BACKOFF_MS || '500', 10) || 500);
 const GOOFISH_RESET_TERMS_ON_START = String(process.env.GOOFISH_RESET_TERMS_ON_START || '').toLowerCase() === 'true';
 const GOOFISH_EMBED_USE_PRODUCT_NAME = String(process.env.GOOFISH_EMBED_USE_PRODUCT_NAME || 'true').toLowerCase() !== 'false';
+const GOOFISH_DISABLE_IMAGE_EMBEDDINGS = String(process.env.GOOFISH_DISABLE_IMAGE_EMBEDDINGS || 'true').toLowerCase() === 'true';
+const GOOFISH_ACCUMULATE_PER_PRODUCT = String(process.env.GOOFISH_ACCUMULATE_PER_PRODUCT || '').toLowerCase() === 'true';
+console.log(`[Config] GOOFISH_ACCUMULATE_PER_PRODUCT = ${GOOFISH_ACCUMULATE_PER_PRODUCT}`);
 const GOOFISH_SKIP_DETAILS_AFTER_TERM = String(process.env.GOOFISH_SKIP_DETAILS_AFTER_TERM || '').toLowerCase() === 'true';
 const GOOFISH_DETAILS_ONLY = String(process.env.GOOFISH_DETAILS_ONLY || '').toLowerCase() === 'true';
-const GOOFISH_DETAILS_LIMIT = Math.max(1, parseInt(process.env.GOOFISH_DETAILS_LIMIT || '3', 10) || 3);
+const GOOFISH_HEADLESS = !['0', 'false', 'no', 'off'].includes(String(process.env.GOOFISH_HEADLESS || '0').trim().toLowerCase());
+const GOOFISH_DETAILS_LIMIT = Math.max(1, parseInt(process.env.GOOFISH_DETAILS_LIMIT || '5', 10) || 5);
 const GOOFISH_DETAILS_IDS = String(process.env.GOOFISH_DETAILS_IDS || '')
   .split(',')
   .map((v) => Number.parseInt(v.trim(), 10))
@@ -164,6 +1135,138 @@ function detectRealPriceFromTitle(title, currentPrice) {
   return currentPrice;
 }
 
+// Price extraction functions from goofish-link-checker
+function hasExplicitChinesePrice(description) {
+  const text = String(description || '');
+  return /(?:\d{1,6}(?:\.\d{1,2})?\s*(?:元|块|人民币|￥|¥))|(?:(?:元|块|人民币|￥|¥)\s*\d{1,6}(?:\.\d{1,2})?)/.test(text);
+}
+
+function extractPricesLocally(description) {
+  const text = String(description || '').replace(/\r/g, '\n');
+  const lines = text.split(/\n|<br\s*\/?>/i).map((line) => line.replace(/\s+/g, ' ').trim()).filter(Boolean);
+  const variants = [];
+  const seen = new Set();
+
+  for (const line of lines) {
+    const matches = [...line.matchAll(/(?:^|[^\d])(\d{1,6}(?:\.\d{1,2})?)\s*(?:元|块|￥|¥)/g)];
+    for (const match of matches) {
+      const priceCny = Number(match[1]);
+      if (!Number.isFinite(priceCny) || priceCny <= 0) continue;
+      const beforePrice = line.slice(0, match.index + match[0].indexOf(match[1])).replace(/^[-–—\s]+/, '').trim();
+      const name = beforePrice || line.replace(match[0], '').trim();
+      const key = `${name}-${priceCny}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      variants.push({
+        nameAr: name,
+        priceCny,
+      });
+    }
+  }
+
+  if (!variants.length) return null;
+  variants.sort((a, b) => a.priceCny - b.priceCny);
+  return {
+    lowestPriceCny: variants[0].priceCny,
+    highestPriceCny: variants[variants.length - 1].priceCny,
+    priceVariants: variants,
+    source: 'local_regex',
+  };
+}
+
+async function extractPricesWithAI(description) {
+  const apiKey = process.env.SILICONFLOW_API_KEY;
+  if (!apiKey) {
+    console.warn('[AI Price Extraction] No SILICONFLOW_API_KEY found, skipping price extraction');
+    return null;
+  }
+
+  console.log(`[AI Price Extraction] Sending description to AI (${description.length} chars)`);
+
+  for (let attempt = 1; attempt <= GOOFISH_AI_RETRY_MAX_ATTEMPTS; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), GOOFISH_AI_CALL_TIMEOUT_MS);
+    try {
+      const response = await axios.post('https://api.siliconflow.com/v1/chat/completions', {
+        model: GOOFISH_AI_MODEL,
+        messages: [
+          {
+            role: 'system',
+            content: 'You are a price extraction assistant for an Iraqi e-commerce platform. Extract all real product prices from product descriptions. Prices are usually in Chinese Yuan (元/块/人民币/¥/￥).\n\nCRITICAL RULES:\n1. You MUST translate EVERY option/variant name to Arabic (Iraqi dialect).\n2. NEVER use generic names like "خيار 1" or "option 1" or "Option A".\n3. You MUST translate the actual Chinese text from the description into proper Arabic.\n\nEXAMPLE INPUT:\n0.9米三件套（学生床 被套150*200） 32元包邮\n1.2米三件套（宿舍床 被套150*200） 35元包邮\n1.5米四件套（被套150*200）38元包邮\n\nEXAMPLE OUTPUT:\n{\n  "lowestPriceCny": 32,\n  "highestPriceCny": 38,\n  "priceVariants": [\n    {"nameAr": "طقم 3 قطع 0.9 متر (سرير طالب، غطاء لحاف 150×200)", "priceCny": 32},\n    {"nameAr": "طقم 3 قطع 1.2 متر (سرير سكن، غطاء لحاف 150×200)", "priceCny": 35},\n    {"nameAr": "طقم 4 قطع 1.5 متر (غطاء لحاف 150×200)", "priceCny": 38}\n  ]\n}\n\nReturn JSON ONLY with: lowestPriceCny, highestPriceCny, and priceVariants (array of objects with nameAr and priceCny). Only extract prices clearly stated in the description. If only one price exists, return one variant.'
+          },
+          {
+            role: 'user',
+            content: `Extract real prices from this product description and translate option names to Arabic:\n\n${description}`
+          }
+        ],
+        temperature: 0.1,
+        max_tokens: 500
+      }, {
+        signal: controller.signal,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        }
+      });
+
+      const content = response.data.choices?.[0]?.message?.content;
+      if (!content) {
+        console.warn(`[AI Price Extraction] No content in AI response`);
+        return null;
+      }
+
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        console.warn(`[AI Price Extraction] No JSON found in AI response: ${content.slice(0, 300)}`);
+        return null;
+      }
+
+      const priceData = JSON.parse(jsonMatch[0]);
+      const variantNames = priceData.priceVariants?.map((v, i) => `[${i + 1}] "${v.nameAr}" = ¥${v.priceCny}`).join(', ') || 'none';
+      console.log(`[AI Price Extraction] Extracted CNY prices: lowest=¥${priceData.lowestPriceCny}, highest=¥${priceData.highestPriceCny}, variants=${priceData.priceVariants?.length || 0}`);
+      console.log(`[AI Price Extraction] Options: ${variantNames}`);
+      return priceData;
+    } catch (error) {
+      const errorMessage = error?.name === 'AbortError' ? `timed out after ${GOOFISH_AI_CALL_TIMEOUT_MS}ms` : error.message;
+      console.error(`[AI Price Extraction] Error (attempt ${attempt}/${GOOFISH_AI_RETRY_MAX_ATTEMPTS}): ${errorMessage}`);
+      if (attempt < GOOFISH_AI_RETRY_MAX_ATTEMPTS) {
+        const backoffMs = 1200 * attempt;
+        console.log(`[AI Price Extraction] Retrying in ${backoffMs}ms...`);
+        await new Promise(resolve => setTimeout(resolve, backoffMs));
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  return null;
+}
+
+async function extractPricesWithFallback(description) {
+  if (!hasExplicitChinesePrice(description)) {
+    return null;
+  }
+
+  const localPriceData = extractPricesLocally(description);
+  if (localPriceData && localPriceData.priceVariants.length >= 2) {
+    console.log(`[Local Price Extraction] Extracted CNY prices without AI: lowest=¥${localPriceData.lowestPriceCny}, highest=¥${localPriceData.highestPriceCny}, variants=${localPriceData.priceVariants.length}`);
+    return localPriceData;
+  }
+
+  const aiPriceData = await extractPricesWithAI(description);
+  if (aiPriceData) return aiPriceData;
+
+  if (localPriceData) {
+    console.log(`[Local Price Extraction] Extracted CNY prices: lowest=¥${localPriceData.lowestPriceCny}, highest=¥${localPriceData.highestPriceCny}, variants=${localPriceData.priceVariants.length}`);
+  }
+  return localPriceData;
+}
+
+function convertCnyToIqdWithProfit(cny) {
+  const CNY_TO_IQD_RATE = 200;
+  const PRICE_PROFIT_MULTIPLIER = 1.1;
+  return Math.ceil((Number(cny) || 0) * CNY_TO_IQD_RATE * PRICE_PROFIT_MULTIPLIER / 250) * 250;
+}
+
 const MAX_AI_ATTEMPTS = 3;
 let dbReady = false;
 let dbChecked = false;
@@ -190,13 +1293,21 @@ if (process.env.NODE_ENV === 'production' && process.env.ALLOW_SCRAPER_IN_PROD !
 async function callSiliconFlow(messages, temperature = 0.3, maxTokens = 100, options = {}) {
   const apiKey = SILICONFLOW_API_KEY;
   if (!apiKey) return null;
+  
+  // Circuit breaker check
+  if (Date.now() < sfCircuitOpenUntil) {
+    console.warn(`[SiliconFlow] Circuit breaker open — skipping AI call until ${new Date(sfCircuitOpenUntil).toISOString()}`);
+    return null;
+  }
+  
   const timeoutMsRaw = Number.parseInt(String(options?.timeoutMs ?? GOOFISH_AI_CALL_TIMEOUT_MS), 10);
   const timeoutMs = Number.isFinite(timeoutMsRaw) ? Math.max(5000, timeoutMsRaw) : GOOFISH_AI_CALL_TIMEOUT_MS;
   const maxAttemptsRaw = Number.parseInt(String(options?.maxAttempts ?? GOOFISH_AI_RETRY_MAX_ATTEMPTS), 10);
   const maxAttempts = Number.isFinite(maxAttemptsRaw) ? Math.max(1, maxAttemptsRaw) : GOOFISH_AI_RETRY_MAX_ATTEMPTS;
+  
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      console.log(`[SiliconFlow] Request attempt ${attempt}/${maxAttempts} (timeout=${timeoutMs}ms)`);
+      console.log(`[SiliconFlow] Request attempt ${attempt}/${maxAttempts} (timeout=${timeoutMs}ms, model=${GOOFISH_AI_MODEL})`);
       const startedAt = Date.now();
       const response = await axios.post('https://api.siliconflow.com/v1/chat/completions', {
         model: GOOFISH_AI_MODEL,
@@ -209,29 +1320,64 @@ async function callSiliconFlow(messages, temperature = 0.3, maxTokens = 100, opt
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${apiKey}`
         },
-        timeout: timeoutMs
+        timeout: timeoutMs,
       });
-      console.log(`[SiliconFlow] Success in ${Date.now() - startedAt}ms`);
+      const elapsed = Date.now() - startedAt;
+      console.log(`[SiliconFlow] Success in ${elapsed}ms`);
+      
+      // Reset circuit breaker on success
+      if (sfConsecutiveFailures > 0) {
+        sfConsecutiveFailures = 0;
+      }
+      
+      // Rate limit delay to respect tier limits
+      if (GOOFISH_AI_RATE_LIMIT_DELAY_MS > 0) {
+        await new Promise((resolve) => setTimeout(resolve, GOOFISH_AI_RATE_LIMIT_DELAY_MS));
+      }
+      
       return response.data.choices[0].message.content.trim();
     } catch (error) {
       const status = error?.response?.status;
-      const isTimeout = String(error?.message || '').includes('timeout');
-      // Retry on 429 (Rate Limit), 502 (Bad Gateway), 503 (Service Unavailable), 504 (Gateway Timeout), and 500 (Internal Server Error)
-      if (status === 429 || status === 502 || status === 503 || status === 504 || status === 500 || isTimeout) {
+      const errorMessage = String(error?.message || '').toLowerCase();
+      const errorData = String(JSON.stringify(error?.response?.data || '')).toLowerCase();
+      const isTimeout = errorMessage.includes('timeout');
+      sfConsecutiveFailures += 1;
+
+      // Check for AI limit/quota errors and close scraper
+      const isRateLimit = status === 429;
+      const isQuotaExceeded = errorMessage.includes('quota') || errorMessage.includes('limit') || errorData.includes('quota') || errorData.includes('limit');
+      
+      if (isRateLimit || isQuotaExceeded) {
+        console.error('========================================');
+        console.error('AI LIMIT REACHED - CLOSING SCRAPER');
+        console.error('========================================');
+        console.error(`Error: ${error.message}`);
+        if (error.response?.data) {
+          console.error('API Response:', JSON.stringify(error.response.data));
+        }
+        console.error('Scraper will now exit to avoid further AI calls.');
+        console.error('========================================');
+        process.exit(0);
+      }
+      
+      // Open circuit breaker if too many consecutive failures
+      if (sfConsecutiveFailures >= SF_FAILURE_THRESHOLD) {
+        sfCircuitOpenUntil = Date.now() + SF_COOLDOWN_MS;
+        console.error(`[SiliconFlow] Circuit breaker OPEN — too many failures (${sfConsecutiveFailures}). Cooling down for ${SF_COOLDOWN_MS/1000}s.`);
+        return null;
+      }
+      
+      // Retry on 502, 503, 504, 500, and timeout
+      if (status === 502 || status === 503 || status === 504 || status === 500 || isTimeout) {
         console.warn(`SiliconFlow API Error (${status || 'timeout'}), retrying (attempt ${attempt}/${maxAttempts})...`);
-        // Exponential backoff: 2s, 4s, 8s, etc. but capped at 15s
         const waitMs = Math.min(15000, 2000 * Math.pow(2, attempt - 1));
         await new Promise((resolve) => setTimeout(resolve, waitMs));
         continue;
       }
       console.error('SiliconFlow API Error:', error.message);
-      if (error.response?.data) {
-        console.error('API Response Data:', JSON.stringify(error.response.data).slice(0, 200));
-      }
       return null;
     }
   }
-  console.error('SiliconFlow API Error: rate limit');
   return null;
 }
 
@@ -293,9 +1439,37 @@ function cleanDescriptionText(value) {
     .map((line) => line.trim())
     .filter(Boolean)
     .filter((line) => !keywordLineRegex.test(line))
-    .map((line) => line.replace(priceTokenRegex, '').trim())
-    .filter((line) => !(priceLineRegex.test(line) && /\d/.test(line)));
+    .filter((line) => line.startsWith('') || !priceLineRegex.test(line) || !/\d/.test(line))
+    .map((line) => line.startsWith('') ? line : line.replace(priceTokenRegex, '').trim())
+    .filter((line) => line.startsWith('') || !(priceLineRegex.test(line) && /\d/.test(line)));
   return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+function filterArabicEnglishOnly(text) {
+  if (!text) return '';
+  return String(text).replace(/[^\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFFa-zA-Z0-9\s\.,،؛:!?()\-_]/g, '').trim();
+}
+
+async function convertChineseToPinyin(text) {
+  if (!text || !SILICONFLOW_API_KEY) return text;
+  // Check if text contains Chinese characters
+  if (!/[\u4e00-\u9fff]/.test(text)) return text;
+  
+  try {
+    const result = await callSiliconFlow([
+      {
+        role: 'system',
+        content: 'You are a Chinese to pinyin converter. Convert Chinese characters to their pinyin romanization. Keep the pinyin in lowercase with spaces between words. Preserve numbers, English letters, and Arabic text exactly as they are. Do not translate - only convert Chinese characters to pinyin.'
+      },
+      {
+        role: 'user',
+        content: `Convert the Chinese characters in this text to pinyin. Keep non-Chinese text unchanged:\n${text}`
+      }
+    ], 0.2, 200, { timeoutMs: GOOFISH_AI_CALL_TIMEOUT_MS });
+    return result || text;
+  } catch {
+    return text;
+  }
 }
 
 function normalizeArabicKeyword(value) {
@@ -303,6 +1477,7 @@ function normalizeArabicKeyword(value) {
     .replace(/[\u0610-\u061A\u0640\u064B-\u065F\u0670\u06D6-\u06ED]/g, '')
     .replace(/[【】「」『』〔〕（）]/g, ' ')
     .replace(/[\u3400-\u9FFF]+/g, ' ')
+    .replace(/[`"'']/g, '')
     .replace(/[.,!?:;()"'[\]{}<>«»/\\|]/g, ' ')
     .replace(/،/g, ' ')
     .replace(/\s+/g, ' ')
@@ -1468,7 +2643,7 @@ Return a JSON array only, no other text or punctuation.`
     ];
     const raw = await callSiliconFlow(prompt, 0.6, 500, {
       timeoutMs: GOOFISH_TERM_AI_CALL_TIMEOUT_MS,
-      maxAttempts: 1
+      maxAttempts: GOOFISH_TERM_AI_MAX_ATTEMPTS
     });
     if (!raw) {
       console.log('[AI Term Gen] SiliconFlow returned empty or null response.');
@@ -1550,7 +2725,7 @@ async function getSearchTermsForRun() {
 
   if (activeBatch && Array.isArray(activeBatch.terms) && activeBatch.terms.length > 0) {
     const batchSource = activeBatch.source || 'resume';
-    if (AI_ONLY_TERMS && batchSource !== 'ai') {
+    if (AI_ONLY_TERMS && batchSource !== 'ai' && batchSource !== 'custom') {
       clearActiveBatch(activeBatch.id);
     } else {
       return {
@@ -1562,6 +2737,27 @@ async function getSearchTermsForRun() {
       };
     }
   }
+  
+  // Use custom terms if available
+  if (customTerms && Array.isArray(customTerms) && customTerms.length > 0) {
+    const finalTerms = customTerms.slice(0, GOOFISH_TERMS_PER_BATCH);
+    const batchId = `custom_${Date.now()}`;
+    const active = { id: batchId, generatedAt: new Date().toISOString(), terms: finalTerms, nextIndex: 0, source: 'custom' };
+    const history = loadSearchTermHistory();
+    const nextHistory = {
+      used: Array.from(new Set([...(Array.isArray(history.used) ? history.used : []), ...finalTerms])),
+      batches: [
+        ...(Array.isArray(history.batches) ? history.batches : []),
+        { id: batchId, generatedAt: active.generatedAt, terms: finalTerms, source: 'custom' }
+      ],
+      activeBatch: active
+    };
+    saveSearchTermHistory(nextHistory);
+    clearBatchLinksQueue();
+    console.log(`[Custom Terms] Using ${finalTerms.length} custom terms for this batch`);
+    return { terms: finalTerms, startIndex: 0, batchId, source: 'custom', checkpoint: null };
+  }
+  
   const existing = Array.isArray(history.used) ? history.used : [];
   const existingNormalized = new Set(existing.map(normalizeSearchTerm).filter(Boolean));
   const aiResult = await generateSearchTermsWithAi(existing);
@@ -1781,7 +2977,7 @@ const recoverDbConnection = async (label, backoffMs, attemptIndex) => {
   return false;
 };
 
-const recoverDbConnectionQuick = async (label) => {
+export const recoverDbConnectionQuick = async (label) => {
   await safeDbDisconnect();
   await resetPrismaClient(`quick recover ${label}`);
   const connected = await safeDbConnect();
@@ -1833,7 +3029,7 @@ const markPipelineProgress = (label = '') => {
 const schedulePipelineRestart = (reason) => {
   if (pipelineRestartScheduled) return;
   pipelineRestartScheduled = true;
-  const exitCode = 86;
+  const exitCode = 99;
   console.error(`[Watchdog] Restarting pipeline: ${reason}`);
   process.exitCode = exitCode;
   setTimeout(() => {
@@ -1906,7 +3102,7 @@ const stopPipelineProgressWatchdog = () => {
   pipelineRestartScheduled = false;
 };
 
-const isRetryableDbError = (error) => {
+export const isRetryableDbError = (error) => {
   const msg = String(error?.message || '');
   const code = String(error?.code || '');
   return msg.includes('Timed out fetching a new connection from the connection pool')
@@ -1986,10 +3182,9 @@ async function createBrowser() {
   let executablePath = getExecutablePath();
   
   const launchOptions = {
-    headless: true,
+    headless: GOOFISH_HEADLESS ? 'new' : false,
     defaultViewport: null,
     args: [
-      '--start-maximized',
       '--no-sandbox',
       '--disable-setuid-sandbox',
       '--disable-blink-features=AutomationControlled',
@@ -1998,8 +3193,12 @@ async function createBrowser() {
       '--disable-features=IsolateOrigins,site-per-process',
       '--incognito',
       '--disable-dev-shm-usage',
-      '--disable-accelerated-2d-canvas',
-      '--disable-gpu'
+      ...(GOOFISH_HEADLESS ? [
+        '--disable-gpu',
+        '--hide-scrollbars',
+        '--mute-audio',
+        '--window-size=1920,1080'
+      ] : ['--start-maximized'])
     ]
   };
 
@@ -2049,57 +3248,116 @@ function extractGoofishItemId(url) {
   }
 }
 
-async function translateFullTitleToArabic(title, fallbackText = '') {
-  const source = String(title || '').trim().slice(0, GOOFISH_AI_TITLE_MAX_CHARS);
-  if (!source || !SILICONFLOW_API_KEY) return fallbackText || source;
+async function regenerateNameWithLanguageFilter(title, currentName) {
+  if (!SILICONFLOW_API_KEY) return currentName;
   try {
     const result = await callSiliconFlow([
       {
         role: 'system',
-        content: 'You are an Arabic e-commerce localization expert. Rewrite Chinese marketplace product titles into natural Arabic product listing names. Keep brand names (Latin) unchanged and keep exact numbers/units.'
+        content: 'You are an Arabic e-commerce product naming expert. Your task is to regenerate the Arabic product name to ensure it contains ONLY Arabic and English characters. Remove any Chinese, Korean, Thai, or other languages. Keep it SHORT and CLEAR (2-5 words). Focus on: 1) What the product IS, 2) Key material if important, 3) Brand name ONLY if explicitly mentioned.'
       },
       {
         role: 'user',
-        content: `Convert this Chinese product title into one clean Arabic e-commerce title. Return Arabic title only, no JSON, no explanation.\nTitle: ${source}`
+        content: `Regenerate this Arabic product name to contain only Arabic and English characters. Remove any foreign languages. Keep it short (2-5 words).\nCurrent name: ${currentName}\nOriginal title: ${title}`
       }
-    ], 0.2, 180);
-    const translated = cleanAiText(sanitizeTranslationText(result));
-    if (!translated || isLowQualityTranslationText(translated, 3)) return fallbackText || source;
-    return translated;
+    ], 0.2, 180, { timeoutMs: GOOFISH_AI_CALL_TIMEOUT_MS });
+    const regenerated = cleanAiText(sanitizeTranslationText(result));
+    if (!regenerated || isLowQualityTranslationText(regenerated, 3)) return currentName;
+    return filterArabicEnglishOnly(regenerated);
   } catch {
+    return currentName;
+  }
+}
+
+async function translateFullTitleToArabic(title, fallbackText = '') {
+  const source = String(title || '').trim().slice(0, GOOFISH_AI_TITLE_MAX_CHARS);
+  if (!source || !SILICONFLOW_API_KEY) return fallbackText || source;
+  try {
+    console.log(`[translateFullTitleToArabic] Translating: ${source.substring(0, 30)}...`);
+    const result = await callSiliconFlow([
+      {
+        role: 'system',
+        content: 'You are an Arabic e-commerce product naming expert. Translate Chinese product titles to neat and simple Arabic product names. Keep the name SHORT and CLEAN (2-5 words maximum). Focus on: 1) Product type (most important), 2) Brand name if available (VERY IMPORTANT - include brand name in the name), 3) Material if relevant, 4) Color/style if important. CRITICAL: Do NOT mention any prices, currency symbols, or monetary values in the name. Exclude size, seller policies, shipping, price, negotiation terms, promotional text, and unnecessary details. Keep English brand names if present. Return Arabic ONLY (except brand names), no JSON, no explanation.'
+      },
+      {
+        role: 'user',
+        content: `Translate this Chinese product title to a neat and simple Arabic product name. Keep it SHORT and CLEAN (2-5 words maximum). MUST include the product type first. MUST include the brand name if available in the title. You may add material and color after the product type if relevant. CRITICAL: Do NOT mention any prices, currency symbols, or monetary values in the name. Exclude size, seller policies, shipping, price, negotiation terms, promotional text, and unnecessary details. Keep English brand names if present. Return Arabic ONLY (except brand names), no JSON, no explanation.\nTitle: ${source}`
+      }
+    ], 0.2, 200, { timeoutMs: GOOFISH_AI_CALL_TIMEOUT_MS });
+    console.log(`[translateFullTitleToArabic] Raw result: ${result.substring(0, 50)}...`);
+    const translated = cleanAiText(sanitizeTranslationText(result));
+    console.log(`[translateFullTitleToArabic] Cleaned: ${translated.substring(0, 30)}...`);
+    if (!translated || isLowQualityTranslationText(translated, 3)) {
+      console.log(`[translateFullTitleToArabic] Translation failed or low quality, using fallback`);
+      return fallbackText || source;
+    }
+    let filtered = filterArabicEnglishOnly(translated);
+    console.log(`[translateFullTitleToArabic] Filtered: ${filtered.substring(0, 30)}...`);
+    return filtered;
+  } catch (err) {
+    console.error(`[translateFullTitleToArabic] Error: ${err.message}`);
     return fallbackText || source;
   }
 }
 
 async function translateDetailDescriptionToArabic(title, detailText, fallbackText = '') {
   const sourceTitle = String(title || '').trim().slice(0, GOOFISH_AI_TITLE_MAX_CHARS);
-  const sourceDetail = String(detailText || '').trim().slice(0, 1800);
+  const sourceDetail = String(detailText || '').trim().slice(0, 800);
   if (!sourceDetail || !SILICONFLOW_API_KEY) return fallbackText || '';
-  try {
-    const result = await callSiliconFlow([
-      {
-        role: 'system',
-        content: 'You are an Arabic e-commerce copywriter. Translate product details into natural Arabic listing description text. Keep facts, measurements, model names, and condition details accurate.'
-      },
-      {
-        role: 'user',
-        content: `Translate the following Chinese product detail text to Arabic for an e-commerce listing description.
+  
+  const maxRetries = 3;
+  let lastError = null;
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      console.log(`[translateDetailDescriptionToArabic] Attempt ${attempt}/${maxRetries}`);
+      const result = await callSiliconFlow([
+        {
+          role: 'system',
+          content: 'You are an Arabic e-commerce content expert. Analyze the Chinese product details and generate a natural Arabic product description. Extract and present the most important product information in a clear, readable format. Output Arabic ONLY - no Chinese, Korean, Thai, or other languages.'
+        },
+        {
+          role: 'user',
+          content: `Analyze the following Chinese product detail text and generate a natural Arabic product description for an e-commerce listing.
+
+Task:
+- Extract the important product information (material, size, color, features, condition, etc.)
+- Present it in clear, natural Arabic that reads like a real product description
+- Summarize the key points in a concise way
+
 Rules:
-- Keep it factual and concise.
-- Preserve all numbers, dimensions, model codes, and condition notes.
-- Keep brand names unchanged.
+- Keep it factual and natural.
+- Extract and present key product details clearly.
+- Preserve brand names unchanged.
+- CRITICAL: Convert Chinese weight unit "斤" (jin) to kg by dividing by 2. Example: 150斤 = 75 kg, 170斤 = 85 kg.
+- CRITICAL: Do NOT mention any prices, currency symbols, or monetary values in the description. Remove all price information completely.
 - Do not add features not present in source.
-- Output Arabic only.
+- Output Arabic ONLY - no Chinese, Korean, Thai, or other languages.
 Product title: ${sourceTitle}
 Product details: ${sourceDetail}`
+        }
+      ], 0.2, 300, { timeoutMs: GOOFISH_AI_CALL_TIMEOUT_MS });
+      
+      const translated = cleanDescriptionText(result);
+      if (!translated) {
+        console.log(`[translateDetailDescriptionToArabic] Attempt ${attempt} returned empty`);
+        lastError = new Error('Empty translation');
+        continue;
       }
-    ], 0.2, 420);
-    const translated = cleanDescriptionText(result);
-    if (!translated || isLowQualityTranslationText(translated, 6)) return fallbackText || '';
-    return translated;
-  } catch {
-    return fallbackText || '';
+      
+      console.log(`[translateDetailDescriptionToArabic] Attempt ${attempt} succeeded: ${translated.substring(0, 50)}...`);
+      return translated;
+    } catch (err) {
+      lastError = err;
+      console.error(`[translateDetailDescriptionToArabic] Attempt ${attempt} failed: ${err.message}`);
+      if (attempt < maxRetries) {
+        await new Promise(r => setTimeout(r, 1000 * attempt));
+      }
+    }
   }
+  
+  console.error(`[translateDetailDescriptionToArabic] All ${maxRetries} attempts failed, using fallback`);
+  return fallbackText || '';
 }
 
 async function updateProductTranslatedDescription(productId, descriptionAr) {
@@ -2109,92 +3367,136 @@ async function updateProductTranslatedDescription(productId, descriptionAr) {
     translatedDescription: normalizedDescription,
     detailTranslationUpdatedAt: new Date().toISOString()
   });
-  await prisma.$executeRawUnsafe(`
+  console.log(`[Desc Update] Product ${productId} - Description length: ${normalizedDescription.length}`);
+  console.log(`[Desc Update] Product ${productId} - Metadata patch:`, metadataPatch.substring(0, 200));
+  
+  const result = await prisma.$executeRawUnsafe(`
     UPDATE "Product"
     SET "aiMetadata" = COALESCE("aiMetadata", '{}'::jsonb) || $2::jsonb,
+        "description" = $3,
         "updatedAt" = NOW()
     WHERE id = $1
-  `, productId, metadataPatch);
+    RETURNING "aiMetadata"
+  `, productId, metadataPatch, normalizedDescription);
+  
+  console.log(`[Desc Update] Product ${productId} - Updated metadata:`, JSON.stringify(result[0]?.aiMetadata || {}).substring(0, 200));
+  console.log(`[Desc Update] Product ${productId} - Database update complete`);
 }
 
-async function generateTitleAndKeywords(title) {
+async function generateLongDescriptionFromTitle(title, fallbackText = '') {
+  const source = String(title || '').trim().slice(0, GOOFISH_AI_TITLE_MAX_CHARS);
+  if (!source || !SILICONFLOW_API_KEY) return fallbackText || source;
+  try {
+    console.log(`[generateLongDescriptionFromTitle] Summarizing: ${source.substring(0, 30)}...`);
+    const result = await callSiliconFlow([
+      {
+        role: 'system',
+        content: 'You are an Arabic e-commerce content expert. Your task is to read the Chinese product title and generate a DETAILED Arabic product description that summarizes all important information. Extract and present all relevant details in a clear, readable format. Output Arabic or English ONLY - no Chinese, Korean, Thai, or other languages.'
+      },
+      {
+        role: 'user',
+        content: `Generate a detailed Arabic product description from this Chinese title. Extract and summarize ALL important details:
+
+- Material (e.g., cotton, silk, polyester, viscose)
+- Season (e.g., summer, winter, spring, autumn)
+- Style/type (e.g., sleep robe, pajamas, dress)
+- Sizes available (e.g., M, XL, 80-120cm)
+- Weight/size limits (e.g., suitable for people under 140 jin = 70 kg)
+- Features (e.g., belt, buttons, pockets, zipper, adjustable waist tie)
+- Design details (e.g., colors, patterns, prints)
+- Condition (e.g., brand new, used, with tags)
+- Quantity available (e.g., 2-3 pieces per size)
+- Price information (e.g., clearance price, wholesale, low price)
+- Shipping information (e.g., free shipping, which courier)
+- Brand information (if mentioned)
+- Target audience (e.g., men, women, children, babies)
+
+Make the description comprehensive and natural, like a real product listing. Convert Chinese weight unit "斤" (jin) to kg by dividing by 2. Example: 140斤 = 70 kg, 165斤 = 82.5 kg.
+
+IMPORTANT: The description must be detailed and comprehensive, at least 30-50 words long. Do not just translate the brand name or product type - include ALL the details mentioned in the title.
+
+Title: ${source}`
+      }
+    ], 0.2, 600, { timeoutMs: GOOFISH_AI_CALL_TIMEOUT_MS });
+    console.log(`[generateLongDescriptionFromTitle] Raw result: ${result.substring(0, 80)}...`);
+    const translated = cleanDescriptionText(result);
+    console.log(`[generateLongDescriptionFromTitle] Cleaned: ${translated.substring(0, 50)}...`);
+    
+    // Convert any remaining Chinese to pinyin before filtering
+    const withPinyin = await convertChineseToPinyin(translated);
+    console.log(`[generateLongDescriptionFromTitle] After pinyin conversion: ${withPinyin.substring(0, 50)}...`);
+    
+    if (!withPinyin || withPinyin.length < 15) {
+      console.log(`[generateLongDescriptionFromTitle] Translation too short (${withPinyin.length} chars), using fallback`);
+      return fallbackText || source;
+    }
+    const filtered = filterArabicEnglishOnly(withPinyin);
+    console.log(`[generateLongDescriptionFromTitle] Filtered: ${filtered.substring(0, 50)}... length=${filtered.length}`);
+    if (filtered.length < 15) {
+      console.log(`[generateLongDescriptionFromTitle] Filtered result too short (${filtered.length} chars), using original`);
+      return withPinyin || fallbackText || source;
+    }
+    return filtered;
+  } catch (err) {
+    console.error(`[generateLongDescriptionFromTitle] Error: ${err.message}`);
+    return fallbackText || source;
+  }
+}
+
+async function generateTitleAndKeywords(title, detailText = '') {
   const fallback = String(title || '').trim().slice(0, GOOFISH_AI_TITLE_MAX_CHARS);
   if (!SILICONFLOW_API_KEY || !fallback) {
     return { titleAr: fallback, descriptionAr: fallback, keywords: [], translationSucceeded: false };
   }
   try {
-    const prompt = [
-      {
-        role: 'system',
-        content: 'You are an Arabic e-commerce localization expert for marketplace products. Produce high-quality Iraqi-friendly Modern Standard Arabic listing outputs.'
-      },
-      {
-        role: 'user',
-        content: `Return valid JSON only with this exact schema:
-{"title_ar":"...","description_ar":"...","keywords":["..."]}
-
-Task:
-- Translate and rewrite the Chinese title into a natural Arabic marketplace product name.
-- title_ar must be concise, product-focused, and suitable as listing title.
-- description_ar must be a clear Arabic product description sentence or short paragraph based only on source title meaning.
-- keywords must contain up to ${KEYWORDS_PER_PRODUCT} unique Arabic search terms suitable for shopping queries.
-
-Rules:
-- Preserve brand names and model numbers exactly.
-- Preserve quantities, dimensions, storage sizes, and condition words.
-- Use only high-intent buyer search terms: product type, common synonyms, category words, and Iraqi dialect variants.
-- Include a mix of strong single terms and natural 2-3 word phrases such as product-plus-category or product-plus-use-case.
-- Prefer phrases like "غسيل أحذية" or "مثبت هاتف" over isolated weak words like "خدمة" or "مريح".
-- Exclude delivery, pickup, free, service, promotional, and sentence-like words.
-- If you only have 8-15 strong keywords, return only those. Never invent filler.
-- Remove marketing fluff, emojis, and shipping chatter.
-- Do not output Chinese text.
-- Do not output markdown.
-
-Chinese title: "${fallback}"`
-      }
-    ];
-    const result = await callSiliconFlow(prompt, 0.2, 420);
-    const raw = String(result || '').trim();
-    if (!raw) {
-        console.warn(`[AI Debug] generateTitleAndKeywords returned empty for title: ${fallback}`);
-        return { titleAr: fallback, descriptionAr: fallback, keywords: [], translationSucceeded: false };
+    // If we have detail text, use the detail description function for longer descriptions
+    if (detailText && detailText.length > 20) {
+      const descriptionAr = await translateDetailDescriptionToArabic(title, detailText, fallback);
+      const titleAr = await translateFullTitleToArabic(title, fallback);
+      // Use generated content even if quality check fails, as long as it's not empty
+      const finalTitleAr = titleAr && titleAr !== fallback && titleAr.length > 2 ? titleAr : fallback;
+      const finalDescriptionAr = descriptionAr && descriptionAr !== fallback && descriptionAr.length > 5 ? descriptionAr : fallback;
+      const translationSucceeded = (titleAr && titleAr !== fallback) || (descriptionAr && descriptionAr !== fallback);
+      return { titleAr: finalTitleAr, descriptionAr: finalDescriptionAr, keywords: [], translationSucceeded };
     }
-    const parsed = parseAiTranslationPayload(raw);
-    const titleAr = normalizeTranslatedTitle(parsed?.title_ar || raw, fallback);
-    let descriptionAr = cleanDescriptionText(parsed?.description_ar || titleAr || fallback) || titleAr || fallback;
     
-    // Log for debugging
-    console.log(`[AI Debug] Translating: ${fallback.substring(0, 20)}...`);
-    console.log(`[AI Debug] Title: ${titleAr.substring(0, 30)}...`);
-    // console.log(`[AI Debug] Desc:`, descriptionAr);
+    // Separate AI calls: one for name, one for long description
+    const titleAr = await translateFullTitleToArabic(title, fallback);
+    const descriptionAr = await generateLongDescriptionFromTitle(title, fallback);
     
-    if (GOOFISH_AI_SECOND_PASS_DESCRIPTION && (!descriptionAr || descriptionAr.length < 15 || descriptionAr === titleAr)) {
-      descriptionAr = cleanDescriptionText(await translateFullTitleToArabic(fallback, descriptionAr || titleAr || fallback)) || titleAr || fallback;
-    }
-    const titleLooksBad = isLowQualityTranslationText(titleAr, 3);
-    const descriptionLooksBad = isLowQualityTranslationText(descriptionAr, 6);
-    if (titleLooksBad || descriptionLooksBad) {
-      return { titleAr: fallback, descriptionAr: fallback, keywords: [], translationSucceeded: false };
-    }
-    descriptionAr = cleanDescriptionText(descriptionAr) || titleAr || fallback;
-    const seedText = `${titleAr} ${descriptionAr}`.trim();
-    const keywords = ensureKeywordList(
-      Array.isArray(parsed?.keywords)
-        ? parsed.keywords
-        : (parsed?.keywords || ''),
-      seedText || fallback
-    );
+    console.log(`[generateTitleAndKeywords] titleAr=${titleAr?.substring(0, 30)}... descriptionAr=${descriptionAr?.substring(0, 30)}...`);
+    
+    // Use generated content even if quality check fails, as long as it's not empty
+    const finalTitleAr = titleAr && titleAr !== fallback && titleAr.length > 2 ? titleAr : fallback;
+    const finalDescriptionAr = descriptionAr && descriptionAr !== fallback && descriptionAr.length > 5 ? descriptionAr : fallback;
+    
     const translationSucceeded = (titleAr && titleAr !== fallback && hasArabic(titleAr))
       || (descriptionAr && descriptionAr !== fallback && hasArabic(descriptionAr));
-    return { titleAr, descriptionAr, keywords, translationSucceeded };
-  } catch (e) {
+    
+    console.log(`[generateTitleAndKeywords] finalTitleAr=${finalTitleAr?.substring(0, 30)}... finalDescriptionAr=${finalDescriptionAr?.substring(0, 30)}... translationSucceeded=${translationSucceeded}`);
+    
+    return { titleAr: finalTitleAr, descriptionAr: finalDescriptionAr, keywords: [], translationSucceeded };
+  } catch (error) {
+    console.error('[AI Debug] generateTitleAndKeywords error:', error.message);
     return { titleAr: fallback, descriptionAr: fallback, keywords: [], translationSucceeded: false };
   }
 }
 
-async function ensureDbReady() {
-  console.log("ensureDbReady called. DISABLE_DB_WRITE:", DISABLE_DB_WRITE);
+export async function ensureDbReady() {
+  // Skip database connection in queue mode
+  if (USE_QUEUE_MODE) {
+    console.log('[Queue Mode] Skipping database connection - scraper only saves to queue');
+    return false;
+  }
+  
+  console.log("ensureDbReady called. DISABLE_DB_WRITE:", DISABLE_DB_WRITE, "BATCH_INSERT_FROM_JSON:", BATCH_INSERT_FROM_JSON);
+  
+  // Skip DB connection if batch insert mode is enabled (we'll connect later during batch insert)
+  if (BATCH_INSERT_FROM_JSON) {
+    console.log("ensureDbReady: Skipping DB connection in batch insert mode");
+    return false;
+  }
+  
   if (DISABLE_DB_WRITE) {
     if (REQUIRE_DB_WRITE) {
       throw new Error('GOOFISH_DISABLE_DB_WRITE is true while DB write is required.');
@@ -2338,6 +3640,60 @@ async function openHomeAndSearch(page, term) {
   }
   await page.waitForSelector('#content div[class^="search-container--"] div[class^="feeds-list-container--"] a[class*="feeds-item-wrap--"]', { timeout: 30000 });
   await humanDelay(1200, 2200);
+  
+  // Check "全新" (Brand New) and "包邮" (Free Shipping) checkboxes
+  try {
+    await page.waitForSelector('.search-filter-checkbox-container--pbR_LEIX', { timeout: 10000 });
+    
+    // Find all checkbox labels
+    const checkboxLabels = await page.$$('.search-checkbox-label--yt8qOVYk');
+    console.log(`[Filter] Found ${checkboxLabels.length} checkbox labels`);
+    
+    for (const label of checkboxLabels) {
+      const labelText = await page.evaluate(el => el.textContent.trim(), label);
+      console.log(`[Filter] Found checkbox label: "${labelText}"`);
+      
+      // Check for "全新" (Brand New)
+      if (labelText === '全新') {
+        const parent = await label.evaluateHandle(el => el.parentElement);
+        const checkbox = await parent.$('div[class*="search-checkbox"]');
+        if (checkbox) {
+          const isChecked = await checkbox.evaluate(el => el.classList.contains('search-checkbox-checked--tu74qy3u'));
+          if (!isChecked) {
+            // Use JavaScript click instead of Puppeteer click
+            await checkbox.evaluate(el => el.click());
+            console.log('[Filter] Clicked "全新" (Brand New) checkbox');
+            await humanDelay(500, 1000);
+          } else {
+            console.log('[Filter] "全新" checkbox already checked');
+          }
+        }
+      }
+      
+      // Check for "包邮" (Free Shipping)
+      if (labelText === '包邮') {
+        const parent = await label.evaluateHandle(el => el.parentElement);
+        const checkbox = await parent.$('div[class*="search-checkbox"]');
+        if (checkbox) {
+          const isChecked = await checkbox.evaluate(el => el.classList.contains('search-checkbox-checked--tu74qy3u'));
+          if (!isChecked) {
+            // Use JavaScript click instead of Puppeteer click
+            await checkbox.evaluate(el => el.click());
+            console.log('[Filter] Clicked "包邮" (Free Shipping) checkbox');
+            await humanDelay(500, 1000);
+          } else {
+            console.log('[Filter] "包邮" checkbox already checked');
+          }
+        }
+      }
+    }
+    
+    // Wait for page to refresh after filter selection
+    await page.waitForSelector('#content div[class^="search-container--"] div[class^="feeds-list-container--"] a[class*="feeds-item-wrap--"]', { timeout: 30000 });
+    await humanDelay(1000, 2000);
+  } catch (err) {
+    console.warn('[Filter] Could not check filter checkboxes:', err.message);
+  }
 }
 
 async function findExistingProductByUrl(url) {
@@ -2403,11 +3759,20 @@ async function saveProductToDb(item, existingProductId = null) {
   try {
     if (!item.url || item.url.includes('search?')) {
         console.warn('Skipping item with invalid URL:', item.url);
-        return; 
+        return;
     }
-    const ready = await ensureDbReady();
+    let ready = await ensureDbReady();
+    let dbReadyRetries = 0;
+    const maxDbReadyRetries = 5;
+    while (!ready && dbReadyRetries < maxDbReadyRetries) {
+      dbReadyRetries += 1;
+      console.warn(`[DB Save] Database not ready (attempt ${dbReadyRetries}/${maxDbReadyRetries}), waiting 10s...`);
+      await new Promise(resolve => setTimeout(resolve, 10000));
+      ready = await ensureDbReady();
+    }
     if (!ready) {
-        throw makePipelineRestartError(`database not ready before save ${extractGoofishItemId(item.url) || 'item'}`);
+        console.error(`[DB Save] Failed to get database ready after ${maxDbReadyRetries} retries. Skipping save for ${extractGoofishItemId(item.url) || 'item'}`);
+        return null;
     }
 
     const existing = existingProductId ? { id: existingProductId } : null;
@@ -2435,6 +3800,7 @@ async function saveProductToDb(item, existingProductId = null) {
             name: item.titleEn || item.title,
             price: priceIQD,
             basePriceIQD,
+            // description: item.descriptionAr || '', // Skip Prisma update - use raw SQL fallback
             // keywords: keywordsList, // Removing this because it causes "Unknown argument" error
             aiMetadata: metadata,
             updatedAt: new Date(),
@@ -2442,12 +3808,14 @@ async function saveProductToDb(item, existingProductId = null) {
           }
         });
         // Update keywords using raw SQL to bypass Prisma schema mismatch
-        const keywordsSql = Prisma.join(keywordsList);
-        await prisma.$executeRaw`
-          UPDATE "Product"
-          SET "keywords" = ARRAY[${keywordsSql}]
-          WHERE "id" = ${existing.id}
-        `;
+        if (keywordsList && keywordsList.length > 0) {
+          const keywordsSql = Prisma.join(keywordsList);
+          await prisma.$executeRaw`
+            UPDATE "Product"
+            SET "keywords" = ARRAY[${keywordsSql}]
+            WHERE "id" = ${existing.id}
+          `;
+        }
         console.log(`Updated product: ${item.titleEn || item.title}`);
         return existing.id;
       } catch (updateError) {
@@ -2455,30 +3823,59 @@ async function saveProductToDb(item, existingProductId = null) {
           throw updateError;
         }
         console.error('Update failed, trying raw SQL fallback:', updateError.message);
-        const keywordsSql = Prisma.join(keywordsList);
-        if (hasDetectedCondition) {
-          await prisma.$executeRaw`
-            UPDATE "Product"
-            SET "price" = ${priceIQD},
-                "basePriceIQD" = ${basePriceIQD},
-                "name" = ${item.titleEn || item.title},
-                "keywords" = ARRAY[${keywordsSql}],
-                "neworold" = ${newOrOldValue},
-                "aiMetadata" = ${JSON.stringify(metadata)}::jsonb,
-                "updatedAt" = NOW()
-            WHERE "id" = ${existing.id}
-          `;
+        if (keywordsList && keywordsList.length > 0) {
+          const keywordsSql = Prisma.join(keywordsList);
+          if (hasDetectedCondition) {
+            await prisma.$executeRaw`
+              UPDATE "Product"
+              SET "price" = ${priceIQD},
+                  "basePriceIQD" = ${basePriceIQD},
+                  "name" = ${item.titleEn || item.title},
+                  "description" = ${item.descriptionAr || ''},
+                  "keywords" = ARRAY[${keywordsSql}],
+                  "neworold" = ${newOrOldValue},
+                  "aiMetadata" = ${JSON.stringify(metadata)}::jsonb,
+                  "updatedAt" = NOW()
+              WHERE "id" = ${existing.id}
+            `;
+          } else {
+            await prisma.$executeRaw`
+              UPDATE "Product"
+              SET "price" = ${priceIQD},
+                  "basePriceIQD" = ${basePriceIQD},
+                  "name" = ${item.titleEn || item.title},
+                  "description" = ${item.descriptionAr || ''},
+                  "keywords" = ARRAY[${keywordsSql}],
+                  "aiMetadata" = ${JSON.stringify(metadata)}::jsonb,
+                  "updatedAt" = NOW()
+              WHERE "id" = ${existing.id}
+            `;
+          }
         } else {
-          await prisma.$executeRaw`
-            UPDATE "Product"
-            SET "price" = ${priceIQD},
-                "basePriceIQD" = ${basePriceIQD},
-                "name" = ${item.titleEn || item.title},
-                "keywords" = ARRAY[${keywordsSql}],
-                "aiMetadata" = ${JSON.stringify(metadata)}::jsonb,
-                "updatedAt" = NOW()
-            WHERE "id" = ${existing.id}
-          `;
+          if (hasDetectedCondition) {
+            await prisma.$executeRaw`
+              UPDATE "Product"
+              SET "price" = ${priceIQD},
+                  "basePriceIQD" = ${basePriceIQD},
+                  "name" = ${item.titleEn || item.title},
+                  "description" = ${item.descriptionAr || ''},
+                  "neworold" = ${newOrOldValue},
+                  "aiMetadata" = ${JSON.stringify(metadata)}::jsonb,
+                  "updatedAt" = NOW()
+              WHERE "id" = ${existing.id}
+            `;
+          } else {
+            await prisma.$executeRaw`
+              UPDATE "Product"
+              SET "price" = ${priceIQD},
+                  "basePriceIQD" = ${basePriceIQD},
+                  "name" = ${item.titleEn || item.title},
+                  "description" = ${item.descriptionAr || ''},
+                  "aiMetadata" = ${JSON.stringify(metadata)}::jsonb,
+                  "updatedAt" = NOW()
+              WHERE "id" = ${existing.id}
+            `;
+          }
         }
         console.log(`Updated product (raw SQL): ${item.titleEn || item.title}`);
         return existing.id;
@@ -2494,6 +3891,7 @@ async function saveProductToDb(item, existingProductId = null) {
             purchaseUrl: item.url,
             status: 'PUBLISHED',
             isActive: true,
+            // description: item.descriptionAr || '', // Skip Prisma update - use raw SQL fallback
             // keywords: keywordsList, // Removed to avoid "Unknown argument"
             aiMetadata: metadata,
             ...(hasDetectedCondition ? { neworold: newOrOldValue } : {})
@@ -2502,7 +3900,7 @@ async function saveProductToDb(item, existingProductId = null) {
           data: createData
         });
         // Update keywords using raw SQL
-        if (newProduct?.id) {
+        if (newProduct?.id && keywordsList && keywordsList.length > 0) {
             const keywordsSql = Prisma.join(keywordsList);
             await prisma.$executeRaw`
                 UPDATE "Product"
@@ -2523,6 +3921,7 @@ async function saveProductToDb(item, existingProductId = null) {
           purchaseUrl: item.url,
           status: 'PUBLISHED',
           isActive: true,
+          // description: item.descriptionAr || '', // Skip Prisma update - use raw SQL fallback
           ...(hasDetectedCondition ? { neworold: newOrOldValue } : {})
         };
         newProduct = await prisma.product.create({
@@ -2530,13 +3929,21 @@ async function saveProductToDb(item, existingProductId = null) {
         });
         if (newProduct?.id) {
           try {
-            const keywordsSql = Prisma.join(keywordsList);
-            await prisma.$executeRaw`
-              UPDATE "Product"
-              SET "keywords" = ARRAY[${keywordsSql}],
-                  "aiMetadata" = ${JSON.stringify(metadata)}::jsonb
-              WHERE "id" = ${newProduct.id}
-            `;
+            if (keywordsList && keywordsList.length > 0) {
+              const keywordsSql = Prisma.join(keywordsList);
+              await prisma.$executeRaw`
+                UPDATE "Product"
+                SET "keywords" = ARRAY[${keywordsSql}],
+                    "aiMetadata" = ${JSON.stringify(metadata)}::jsonb
+                WHERE "id" = ${newProduct.id}
+              `;
+            } else {
+              await prisma.$executeRaw`
+                UPDATE "Product"
+                SET "aiMetadata" = ${JSON.stringify(metadata)}::jsonb
+                WHERE "id" = ${newProduct.id}
+              `;
+            }
           } catch (fallbackMetaErr) {
             console.warn(`Post-create metadata update skipped for ${newProduct.id}: ${toErrorText(fallbackMetaErr)}`);
           }
@@ -2567,6 +3974,7 @@ async function saveProductToDb(item, existingProductId = null) {
       }
       if (newProduct?.id) {
         console.log(`Saved to DB: id=${newProduct.id} title=${item.titleEn || item.title}`);
+        // Category assignment moved to detail phase
       } else {
         console.log(`Saved to DB: id=unknown title=${item.titleEn || item.title}`);
       }
@@ -2586,19 +3994,1084 @@ async function saveProductToDb(item, existingProductId = null) {
   }
 }
 
-async function processProductDetails(page, product, detailProgress = null) {
+async function processProductDetailsToJson(page, url, index) {
+  const detailDataPath = path.join(process.cwd(), 'goofish-detail-results.json');
+  
+  console.log(`\n[Pipeline JSON Mode] Processing URL ${index}: ${url}`);
+
+  if (!url || typeof url !== 'string') {
+    console.log(`⚠️ Invalid URL (type: ${typeof url}). Skipping.`);
+    return;
+  }
+
+  const detailItem = {
+    url: url,  // URL must be a string
+    title: '',
+    image: '',
+    aiMetadata: {},
+    specs: null,
+    translatedSpecs: null,
+    soldCount: null,
+    translatedName: null,
+    translatedDescription: null,
+    categoryId: null,
+    images: [],
+    isActive: true,
+    priceCny: 0,
+    newOrOld: null,
+    realBrand: null,
+    keywords: []
+  };
+
+  try {
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    const delay = Math.floor(Math.random() * 1500) + 1000;
+    await new Promise(r => setTimeout(r, delay));
+
+    const pageContent = await page.evaluate(() => document.body.innerText);
+    const title = await page.title();
+    
+    let isUnavailable = false;
+    let unavailableReason = '';
+
+    for (const keyword of UNAVAILABLE_KEYWORDS) {
+      if (pageContent.includes(keyword) || title.includes(keyword)) {
+        isUnavailable = true;
+        unavailableReason = keyword;
+        break;
+      }
+    }
+
+    if (isUnavailable) {
+      console.log(`❌ URL ${url} is UNAVAILABLE. Reason: ${unavailableReason}`);
+      detailItem.isActive = false;
+      saveDetailItemToJson(detailItem, detailDataPath);
+      return;
+    }
+
+    console.log(`✅ URL ${url} is AVAILABLE.`);
+    
+    // Extract title and basic info
+    detailItem.title = title;
+    
+    // Extract seller sold count
+    const sellerInfo = await page.evaluate(() => {
+      const userLabels = document.querySelectorAll('.item-user-info-label--NLTMHARN');
+      for (const label of userLabels) {
+        const text = label.innerText || '';
+        const match = text.match(/卖出(\d+)件宝贝/);
+        if (match) return parseInt(match[1], 10);
+      }
+      return null;
+    });
+    
+    if (sellerInfo !== null) {
+      console.log(`[Seller Info] URL ${url} - Seller sold count: ${sellerInfo}`);
+      detailItem.soldCount = sellerInfo;
+    }
+
+    // Extract image
+    const mainImage = await page.evaluate(() => {
+      const img = document.querySelector('.item-main-window-list--od7DK4Fm img, img.fadeInImg--DnykYtf4, .item-body--P2hJb44_ img, .item-main--N18QxQe1 img');
+      return img?.src || '';
+    });
+    if (mainImage) {
+      detailItem.image = mainImage;
+    }
+
+    // Extract price
+    const priceText = await page.evaluate(() => {
+      const selectors = [
+        '.price--qH7y0yJl',
+        '.price--gq5h3rYh',
+        '.price--fHfY0Q3N',
+        '[class*="price--"]',
+        '.price',
+        '.item-price',
+        '.price-num'
+      ];
+      for (const selector of selectors) {
+        const el = document.querySelector(selector);
+        if (el) {
+          const text = el.innerText || el.textContent || '';
+          const match = text.match(/(\d+(?:\.\d+)?)/);
+          if (match) return match[1];
+        }
+      }
+      return '';
+    });
+    if (priceText) {
+      const cny = parseCnyPrice(priceText);
+      detailItem.priceCny = cny;
+      console.log(`[Price] Extracted price: ${cny} CNY`);
+    } else {
+      console.log(`[Price] No price found for ${url}`);
+    }
+
+    // Extract name and description from the specific div
+    let rawDetailDescription = '';
+    const extractedContent = await page.evaluate(() => {
+      const mainDiv = document.querySelector('.main--Nu33bWl6.open--gEYf_BQc');
+      if (!mainDiv) return null;
+      const descSpan = mainDiv.querySelector('.desc--GaIUKUQY');
+      if (!descSpan) return null;
+      return descSpan.innerText || descSpan.textContent || '';
+    });
+
+    if (extractedContent && extractedContent.length > 10) {
+      console.log(`[Detail Phase] Extracted content from product page: ${extractedContent.substring(0, 50)}...`);
+      
+      const generated = await generateTitleAndKeywords(extractedContent, extractedContent);
+      
+      if (generated.translationSucceeded) {
+        console.log(`[Detail Phase] Generated Arabic name: ${generated.titleAr?.substring(0, 30)}...`);
+        console.log(`[Detail Phase] Generated Arabic description: ${generated.descriptionAr?.substring(0, 50)}...`);
+        
+        detailItem.translatedName = generated.titleAr;
+        detailItem.translatedDescription = generated.descriptionAr;
+        detailItem.keywords = generated.keywords || [];
+      }
+    } else {
+      console.log(`[Detail Phase] Could not extract content from specific div, using fallback extraction`);
+      
+      rawDetailDescription = cleanAiText(await page.evaluate(() => {
+        const selectors = [
+          '.desc--GaIUKUQY',
+          '[class*="desc--"]',
+          '.item-desc--fHfY0Q3N',
+          '[class*="item-desc"]',
+          '[class*="description"]'
+        ];
+        for (const selector of selectors) {
+          const el = document.querySelector(selector);
+          const txt = (el?.textContent || '').trim();
+          if (txt) return txt;
+        }
+        const bodyText = (document.body?.innerText || '').trim();
+        if (!bodyText) return '';
+        const lines = bodyText
+          .split('\n')
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .filter((line) => line.length >= 8)
+          .slice(0, 30);
+        return lines.join(' ');
+      }));
+      
+      if (rawDetailDescription) {
+        const fallbackDescription = cleanDescriptionText(String(extractedContent || '').trim());
+        const translatedDetailDescription = await translateDetailDescriptionToArabic(extractedContent || '', rawDetailDescription, fallbackDescription);
+        if (translatedDetailDescription && hasArabic(translatedDetailDescription)) {
+          detailItem.translatedDescription = translatedDetailDescription;
+        }
+      }
+    }
+
+    // Extract category ID from URL
+    const categoryId = extractCategoryId(url);
+    if (categoryId) {
+      detailItem.categoryId = categoryId;
+    }
+
+    // Extract specs
+    const rawSpecsText = await page.evaluate(() => {
+      const labels = Array.from(document.querySelectorAll('.labels--ndhPFgp8 .item--qI9ENIfp'));
+      const specs = {};
+      for (const label of labels) {
+        const labelText = label.querySelector('.label--ejJeaTRV')?.innerText || '';
+        const valueText = label.querySelector('.value--EyQBSInp')?.innerText || '';
+        if (labelText && valueText) {
+          specs[labelText] = valueText;
+        }
+      }
+      return specs;
+    });
+    
+    if (Object.keys(rawSpecsText).length > 0) {
+      console.log(`ℹ️ Found specs for ${url}:`, JSON.stringify(rawSpecsText));
+      detailItem.specs = rawSpecsText;
+      
+      // Translate specs
+      const specsPrompt = Object.entries(rawSpecsText)
+        .map(([key, value]) => `${key}: ${value}`)
+        .join('\n');
+      const translatedSpecs = await callSiliconFlow([
+        {
+          role: 'system',
+          content: 'You are a Chinese to Arabic translator for e-commerce product specifications. Translate BOTH keys and values to Arabic (Iraqi dialect). CRITICAL: Translate ALL keys to meaningful Arabic labels - do NOT keep Chinese keys. Key translations to memorize: 品牌→الماركة, 成色→الحالة, 适用性别→الجنس, 适用季节→الموسم, 尺码→المقاس, 适用人群→الفئة المستهدفة, 材质→المادة, 颜色→اللون. Return ONLY a JSON object with Arabic keys and Arabic values. Do not include any explanation or extra text.'
+        },
+        {
+          role: 'user',
+          content: `Translate these specifications to Arabic:\n${specsPrompt}`
+        }
+      ], 0.2, 300, { timeoutMs: 60000 });
+      
+      try {
+        const parsedSpecs = JSON.parse(translatedSpecs);
+        console.log(`✅ Translated specs for ${url}:`, JSON.stringify(parsedSpecs));
+        detailItem.translatedSpecs = parsedSpecs;
+      } catch {
+        console.warn(`⚠️ Failed to parse translated specs for ${url}`);
+      }
+    }
+
+    // Extract images
+    console.log('Checking for images...');
+    await page.waitForSelector('.item-main-window-list--od7DK4Fm, img.fadeInImg--DnykYtf4, .item-body--P2hJb44_, .item-main--N18QxQe1, img[src*="alicdn.com"]', { timeout: 5000 }).catch(() => {});
+
+    const images = await page.evaluate(() => {
+      const MAX_GALLERY_IMAGES = 8;
+      const CANDIDATE_ATTRS = ['src', 'data-src', 'data-lazy-src', 'data-ks-lazyload', 'data-original', 'data-url', 'data-imgurl'];
+      const BAD_HINTS = ['avatar', 'icon', 'sprite', 'logo', 'gif'];
+      const SIZE_HINT_RE = /_\d+x\d+.*$/;
+      const SMALL_HINT_RE = /(?:^|[_-])(40|48|50|60|72|80|96|100|120|160|180)x\1(?:[_-]|$)/i;
+
+      const normalize = (value) => {
+        if (!value) return '';
+        let url = String(value).trim();
+        if (!url) return '';
+        url = url.replace(/^[`'"]+|[`'"]+$/g, '');
+        if (url.startsWith('//')) url = `https:${url}`;
+        if (!/^https?:\/\//i.test(url)) return '';
+        url = url.replace(/[)\]}",:;`]+$/g, '');
+        url = url.replace(/[#?].*$/, '').replace(SIZE_HINT_RE, '').replace(/\.webp$/i, '');
+        return url;
+      };
+
+      const images = [];
+      const seen = new Set();
+
+      document.querySelectorAll('img').forEach(img => {
+        if (images.length >= MAX_GALLERY_IMAGES) return;
+        let src = null;
+        for (const attr of CANDIDATE_ATTRS) {
+          const val = img.getAttribute(attr);
+          if (val) {
+            src = val;
+            break;
+          }
+        }
+        if (!src) return;
+        const normalized = normalize(src);
+        if (!normalized) return;
+        if (seen.has(normalized)) return;
+        const lower = normalized.toLowerCase();
+        if (BAD_HINTS.some(h => lower.includes(h))) return;
+        if (SMALL_HINT_RE.test(normalized)) return;
+        seen.add(normalized);
+        images.push(normalized);
+      });
+
+      return images;
+    });
+
+    if (images.length > 0) {
+      console.log(`Found ${images.length} images.`);
+      detailItem.images = images.slice(0, 8);
+    }
+
+    // Save to JSON
+    saveDetailItemToJson(detailItem, detailDataPath);
+    console.log(`✅ Saved detail data for ${url} to JSON`);
+
+  } catch (error) {
+    console.error(`Error processing ${url} (JSON mode):`, error.message);
+    // Save whatever data we have
+    saveDetailItemToJson(detailItem, detailDataPath);
+  }
+}
+
+function saveDetailItemToJson(item, filePath) {
+  // Validate item structure before saving
+  if (!item || typeof item !== 'object') {
+    console.warn(`[saveDetailItemToJson] Invalid item type: ${typeof item}, skipping`);
+    return;
+  }
+  
+  // Ensure URL is a string
+  if (item.url && typeof item.url !== 'string') {
+    console.warn(`[saveDetailItemToJson] Invalid URL type: ${typeof item.url}, attempting to extract string URL`);
+    if (item.url.url && typeof item.url.url === 'string') {
+      item.url = item.url.url;
+    } else {
+      console.warn(`[saveDetailItemToJson] Cannot extract valid URL from item, skipping`);
+      return;
+    }
+  }
+  
+  let existingItems = [];
+  if (fs.existsSync(filePath)) {
+    try {
+      const rawData = fs.readFileSync(filePath, 'utf8');
+      existingItems = JSON.parse(rawData);
+    } catch (err) {
+      console.warn(`[saveDetailItemToJson] Failed to read existing JSON: ${err.message}`);
+      existingItems = [];
+    }
+  }
+  
+  // Update or add item by URL
+  const existingIndex = existingItems.findIndex(i => i.url === item.url);
+  if (existingIndex >= 0) {
+    existingItems[existingIndex] = item;
+  } else {
+    existingItems.push(item);
+  }
+  
+  try {
+    fs.writeFileSync(filePath, JSON.stringify(existingItems, null, 2));
+  } catch (err) {
+    console.error(`[saveDetailItemToJson] Failed to write JSON: ${err.message}`);
+  }
+}
+
+async function processProductDetailsAccumulate(page, product, detailProgress = null) {
   const mutationTimeoutMs = Math.max(5000, Number.parseInt(process.env.GOOFISH_MUTATION_TIMEOUT_MS || '15000', 10) || 15000);
   const mutationRetryCount = Math.max(1, Number.parseInt(process.env.GOOFISH_MUTATION_RETRY_COUNT || '3', 10) || 3);
-  const imageMutationTimeoutMs = Math.max(5000, Number.parseInt(process.env.GOOFISH_IMAGE_MUTATION_TIMEOUT_MS || '10000', 10) || 10000);
-  const imageMutationRetryCount = Math.max(1, Number.parseInt(process.env.GOOFISH_IMAGE_MUTATION_RETRY_COUNT || '1', 10) || 1);
-  const embeddingMutationTimeoutMs = Math.max(5000, Number.parseInt(process.env.GOOFISH_EMBEDDING_MUTATION_TIMEOUT_MS || '8000', 10) || 8000);
-  const embeddingMutationRetryCount = Math.max(1, Number.parseInt(process.env.GOOFISH_EMBEDDING_MUTATION_RETRY_COUNT || '1', 10) || 1);
-  const newOrOldTimeoutMs = Math.max(4000, Number.parseInt(process.env.GOOFISH_NEWOROLD_TIMEOUT_MS || '8000', 10) || 8000);
+  const imageMutationTimeoutMs = Math.max(5000, Number.parseInt(process.env.GOOFISH_IMAGE_MUTATION_TIMEOUT_MS || '30000', 10) || 30000);
+  const imageMutationRetryCount = Math.max(1, Number.parseInt(process.env.GOOFISH_IMAGE_MUTATION_RETRY_COUNT || '3', 10) || 3);
+  const embeddingMutationTimeoutMs = Math.max(5000, Number.parseInt(process.env.GOOFISH_EMBEDDING_MUTATION_TIMEOUT_MS || '30000', 10) || 30000);
+  const embeddingMutationRetryCount = Math.max(1, Number.parseInt(process.env.GOOFISH_EMBEDDING_MUTATION_RETRY_COUNT || '3', 10) || 3);
+  const newOrOldTimeoutMs = Math.max(4000, Number.parseInt(process.env.GOOFISH_NEWOROLD_TIMEOUT_MS || '30000', 10) || 30000);
   const newOrOldRetryCount = Math.max(1, Number.parseInt(process.env.GOOFISH_NEWOROLD_RETRY_COUNT || '3', 10) || 3);
   const retryBackoffMs = Math.max(200, Number.parseInt(process.env.GOOFISH_RETRY_BACKOFF_MS || '500', 10) || 500);
-  const productTimeoutMs = Math.max(30000, Number.parseInt(process.env.GOOFISH_PRODUCT_TIMEOUT_MS || '120000', 10) || 120000);
-  const specsMutationTimeoutMs = Math.max(4000, Number.parseInt(process.env.GOOFISH_SPECS_MUTATION_TIMEOUT_MS || '8000', 10) || 8000);
-  const specsMutationRetryCount = Math.max(1, Number.parseInt(process.env.GOOFISH_SPECS_MUTATION_RETRY_COUNT || '1', 10) || 1);
+  const productTimeoutMs = 180000;
+  const specsMutationTimeoutMs = Math.max(4000, Number.parseInt(process.env.GOOFISH_SPECS_MUTATION_TIMEOUT_MS || '30000', 10) || 30000);
+  const specsMutationRetryCount = Math.max(1, Number.parseInt(process.env.GOOFISH_SPECS_MUTATION_RETRY_COUNT || '3', 10) || 3);
+
+  const progressLabel = detailProgress && Number.isFinite(detailProgress.current) && Number.isFinite(detailProgress.total)
+    ? ` [${detailProgress.current}/${detailProgress.total}]`
+    : '';
+
+  // Local accumulation object
+  const accumulatedData = {
+    productId: product.id,
+    url: product.url,
+    soldCount: null,
+    newOrOld: null,
+    name: null,
+    originalName: product.name || null, // Store original Chinese name
+    description: null,
+    specs: null,
+    images: [],
+    imageEmbeddings: [], // Store embeddings locally
+    categoryId: null,
+    isActive: true
+  };
+
+  console.log(`\n[Pipeline Accumulate]${progressLabel} Checking details for Product ID ${product.id}: ${product.name}`);
+  console.log(`URL: \`${product.url}\``);
+
+  if (!product.url) {
+    console.log(`⚠️ No URL. Skipping.`);
+    return;
+  }
+
+  try {
+    await ensureDbReady();
+    await withTimeout(async () => {
+      const productProcessStartMs = Date.now();
+      await page.goto(product.url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    
+      const delay = Math.floor(Math.random() * 1500) + 1000;
+      await new Promise(r => setTimeout(r, delay));
+
+      const pageContent = await page.evaluate(() => document.body.innerText);
+      const title = await page.title();
+    
+      let isUnavailable = false;
+      let unavailableReason = '';
+
+      for (const keyword of UNAVAILABLE_KEYWORDS) {
+        if (pageContent.includes(keyword) || title.includes(keyword)) {
+          isUnavailable = true;
+          unavailableReason = keyword;
+          break;
+        }
+      }
+
+      if (page.url().includes('login.taobao.com') || page.url().includes('login.tmall.com')) {
+        console.warn('⚠️ Redirected to login page. Cannot verify status accurately. Skipping.');
+        return;
+      }
+
+      if (isUnavailable) {
+        console.log(`❌ Product ${product.id} is UNAVAILABLE. Reason: Found keyword: ${unavailableReason}`);
+        console.log(`[Accumulate] Skipping unavailable product`);
+        return;
+      } else {
+        console.log(`✅ Product ${product.id} is AVAILABLE.`);
+        
+        // Extract seller sold count
+        const sellerInfo = await page.evaluate(() => {
+          const userLabels = document.querySelectorAll('.item-user-info-label--NLTMHARN');
+          for (const label of userLabels) {
+            const text = label.innerText || '';
+            const match = text.match(/卖出(\d+)件宝贝/);
+            if (match) return parseInt(match[1], 10);
+          }
+          return null;
+        });
+        
+        if (sellerInfo !== null) {
+          console.log(`[Seller Info] Product ${product.id} - Seller sold count: ${sellerInfo}`);
+          accumulatedData.soldCount = sellerInfo;
+        }
+        
+        // Ensure we are on the correct product page
+        const currentUrl = page.url();
+        const expectedIdMatch = product.url.match(/id=(\d+)/);
+        const expectedId = expectedIdMatch ? expectedIdMatch[1] : null;
+        
+        const isOnProductPage = currentUrl.includes('goofish.com/item') && expectedId && currentUrl.includes(`id=${expectedId}`);
+
+        if (!isOnProductPage) {
+           console.log(`⚠️ Browser not on the correct product page (current: ${currentUrl}). Re-navigating to ${product.url}`);
+           await page.goto(product.url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+           await new Promise(r => setTimeout(r, 2000));
+        }
+      
+        // Extract new/old status
+        const newOrOldStatus = await page.evaluate(() => {
+          try {
+            const images = Array.from(document.querySelectorAll('img'));
+            const newImgUrl = 'https://gw.alicdn.com/imgextra/i3/O1CN015hOhg21hTpVIveeDA_!!6000000004279-2-tps-252-60.png';
+            const usedImgUrl = 'https://gw.alicdn.com/imgextra/i4/O1CN01MQosre1EmUmuzzD3k_!!6000000000394-2-tps-252-60.png';
+            const almostNewImgUrl = 'https://gw.alicdn.com/imgextra/i3/O1CN01yU5CER1wslIj9m7bv_!!6000000006364-2-tps-252-60.png';
+
+            const hasNewImg = images.some(img => img.src === newImgUrl);
+            const hasUsedImg = images.some(img => img.src === usedImgUrl);
+            const hasAlmostNewImg = images.some(img => img.src === almostNewImgUrl);
+
+            if (hasNewImg) return true;
+            if (hasUsedImg || hasAlmostNewImg) return false;
+
+            const labels = Array.from(document.querySelectorAll('.item--qI9ENIfp'));
+            for (const label of labels) {
+              const labelText = label.querySelector('.label--ejJeaTRV')?.innerText || '';
+              const valueText = label.querySelector('.value--EyQBSInp')?.innerText || '';
+          
+              if (labelText.includes('成色')) {
+                if (valueText.includes('全新')) return true;
+                if (valueText.includes('使用痕迹') || valueText.includes('二手') || valueText.includes('闲置') || valueText.includes('有磨损') || valueText.includes('有划痕')) return false;
+              }
+            }
+
+            const desc = document.querySelector('.desc--GaIUKUQY')?.innerText || '';
+            if (desc.includes('全新') && !desc.includes('部分全新') && !desc.includes('99新')) return true;
+            if (desc.includes('使用痕迹') || desc.includes('二手') || desc.includes('闲置')) return false;
+
+            return null;
+          } catch (e) {
+            return null;
+          }
+        });
+
+        if (newOrOldStatus !== null) {
+          console.log(`ℹ️ Product ${product.id} detected as ${newOrOldStatus ? 'NEW' : 'USED'}.`);
+          accumulatedData.newOrOld = newOrOldStatus;
+        }
+
+        // Extract price
+        const priceText = await page.evaluate(() => {
+          const selectors = [
+            '.price--qH7y0yJl',
+            '.price--gq5h3rYh',
+            '.price--fHfY0Q3N',
+            '[class*="price--"]',
+            '.price',
+            '.item-price',
+            '.price-num'
+          ];
+          for (const selector of selectors) {
+            const el = document.querySelector(selector);
+            if (el) {
+              const text = el.innerText || el.textContent || '';
+              const match = text.match(/(\d+(?:\.\d+)?)/);
+              if (match) return match[1];
+            }
+          }
+          return '';
+        });
+        if (priceText) {
+          const cny = parseCnyPrice(priceText);
+          accumulatedData.priceCny = cny;
+          console.log(`[Accumulate] Extracted price: ${cny} CNY`);
+        } else {
+          console.log(`[Accumulate] No price found for ${product.url}`);
+        }
+
+        // Extract name and description
+        let rawDetailDescription = '';
+        const extractedContent = await page.evaluate(() => {
+          const mainDiv = document.querySelector('.main--Nu33bWl6.open--gEYf_BQc');
+          if (!mainDiv) return null;
+          const descSpan = mainDiv.querySelector('.desc--GaIUKUQY');
+          if (!descSpan) return null;
+          return descSpan.innerText || descSpan.textContent || '';
+        });
+
+        if (extractedContent && extractedContent.length > 10) {
+          console.log(`[Detail Phase] Extracted content from product page: ${extractedContent.substring(0, 50)}...`);
+          
+          const generated = await generateTitleAndKeywords(extractedContent, extractedContent);
+          
+          if (generated.translationSucceeded) {
+            console.log(`[Detail Phase] Generated Arabic name: ${generated.titleAr?.substring(0, 30)}...`);
+            console.log(`[Detail Phase] Generated Arabic description: ${generated.descriptionAr?.substring(0, 50)}...`);
+            
+            if (generated.titleAr && hasArabic(generated.titleAr)) {
+              accumulatedData.name = generated.titleAr;
+            }
+            
+            if (generated.descriptionAr && hasArabic(generated.descriptionAr)) {
+              accumulatedData.description = generated.descriptionAr;
+            }
+          }
+        } else {
+          console.log(`[Detail Phase] Could not extract content from specific div, using fallback extraction`);
+          
+          rawDetailDescription = cleanAiText(await page.evaluate(() => {
+            const selectors = [
+              '.desc--GaIUKUQY',
+              '[class*="desc--"]',
+              '.item-desc--fHfY0Q3N',
+              '[class*="item-desc"]',
+              '[class*="description"]'
+            ];
+            for (const selector of selectors) {
+              const el = document.querySelector(selector);
+              const txt = (el?.textContent || '').trim();
+              if (txt) return txt;
+            }
+            const bodyText = (document.body?.innerText || '').trim();
+            if (!bodyText) return '';
+            const lines = bodyText
+              .split('\n')
+              .map((line) => line.trim())
+              .filter(Boolean)
+              .filter((line) => line.length >= 8)
+              .slice(0, 30);
+            return lines.join(' ');
+          }));
+          if (rawDetailDescription) {
+            const fallbackDescription = cleanDescriptionText(String(product.name || '').trim());
+            const translatedDetailDescription = await translateDetailDescriptionToArabic(product.name || '', rawDetailDescription, fallbackDescription);
+            if (translatedDetailDescription && hasArabic(translatedDetailDescription)) {
+              accumulatedData.description = translatedDetailDescription;
+            }
+          }
+        }
+
+        // Check if product name is still in Chinese
+        const productName = String(product.name || '').trim();
+        const isProductNameChinese = /[\u4e00-\u9fff]/.test(productName);
+        if (isProductNameChinese) {
+          console.log(`[Name Update] Product has Chinese name, translating to Arabic: ${productName.substring(0, 30)}...`);
+          const translatedName = await translateFullTitleToArabic(productName, productName);
+          if (translatedName && translatedName !== productName && hasArabic(translatedName)) {
+            accumulatedData.name = translatedName;
+            console.log(`[Name Update] Translated name stored: ${translatedName.substring(0, 30)}...`);
+          } else {
+            console.warn(`[Name Update] Translation failed or invalid, using original name`);
+            accumulatedData.name = productName;
+          }
+        } else if (accumulatedData.name) {
+          console.log(`[Name Update] Using already translated name: ${accumulatedData.name.substring(0, 30)}...`);
+        } else {
+          console.log(`[Name Update] Name is not Chinese: ${productName.substring(0, 30)}...`);
+          accumulatedData.name = productName;
+        }
+
+        // Extract category ID from URL
+        const urlMatch = product.url.match(/categoryId=(\d+)/);
+        if (urlMatch) {
+          accumulatedData.categoryId = urlMatch[1];
+        }
+
+        // Extract specs
+        const existingSpecs = product.specs && product.specs !== 'null' ? String(product.specs) : '';
+        const hasArabicSpecs = existingSpecs.length > 0 && /[\u0600-\u06FF]/.test(existingSpecs);
+        
+        if (!hasArabicSpecs) {
+          const elapsedMs = Date.now() - productProcessStartMs;
+          const timeLeftMs = productTimeoutMs - elapsedMs;
+          if (timeLeftMs >= 45000) {
+            const rawSpecs = await page.evaluate(() => {
+              try {
+                const selectorStrategies = [
+                  '.labels--ndhPFgp8 .item--qI9ENIfp',
+                  '[class*="labels"] [class*="item"]',
+                  '.item--qI9ENIfp',
+                  '[class*="item--qI9"]',
+                  '[class*="label"]',
+                ];
+                
+                const specs = {};
+                let strategyUsed = '';
+                let elementsFound = 0;
+                
+                for (const strategy of selectorStrategies) {
+                  let labels;
+                  if (strategy === '[class*="label"]') {
+                    const allLabels = Array.from(document.querySelectorAll(strategy));
+                    labels = allLabels.filter(el => {
+                      const parent = el.parentElement;
+                      return parent && (parent.querySelector('[class*="value"]') || parent.nextElementSibling?.matches('[class*="value"]'));
+                    }).map(el => el.closest('[class*="item"]') || el.parentElement);
+                    labels = [...new Set(labels)];
+                  } else {
+                    labels = Array.from(document.querySelectorAll(strategy));
+                  }
+                  
+                  if (labels.length > 0) {
+                    elementsFound = labels.length;
+                    strategyUsed = strategy;
+                    
+                    for (const item of labels) {
+                      const labelSelectors = ['.label--ejJeaTRV', '[class*="label--"]', '[class*="label"]'];
+                      const valueSelectors = ['.value--EyQBSInp', '[class*="value--"]', '[class*="value"]'];
+                      
+                      let labelEl = null;
+                      for (const sel of labelSelectors) {
+                        labelEl = item.querySelector(sel);
+                        if (labelEl) break;
+                      }
+                      if (!labelEl) continue;
+                      
+                      let valueEl = null;
+                      for (const sel of valueSelectors) {
+                        valueEl = item.querySelector(sel);
+                        if (valueEl) break;
+                      }
+                      if (!valueEl) {
+                        const parentText = item.textContent || '';
+                        const labelText = labelEl.textContent || '';
+                        const remainingText = parentText.replace(labelText, '').trim();
+                        if (remainingText) {
+                          valueEl = { innerText: remainingText };
+                        } else {
+                          continue;
+                        }
+                      }
+                      
+                      let key = labelEl.innerText?.replace(/[\n\r\s\uff1a?:]/g, '').trim() || '';
+                      let value = (valueEl.innerText || valueEl.textContent || '').trim();
+                      
+                      if (key && value && key.length < 50 && value.length < 200) {
+                        specs[key] = value;
+                      }
+                    }
+                    
+                    if (Object.keys(specs).length > 0) {
+                      break;
+                    }
+                  }
+                }
+                
+                return Object.keys(specs).length > 0 ? { specs, debug: { strategy: strategyUsed, count: elementsFound } } : { specs: null, debug: { strategy: strategyUsed || 'none', count: elementsFound } };
+              } catch (e) {
+                return { specs: null, debug: { error: e.message, strategy: 'error', count: 0 } };
+              }
+            });
+            
+            console.log(`[Specs Debug] Product ${product.id}: strategy="${rawSpecs?.debug?.strategy || 'unknown'}", elements=${rawSpecs?.debug?.count || 0}`);
+            
+            const extractedSpecs = rawSpecs?.specs || null;
+
+            if (extractedSpecs) {
+              console.log(`ℹ️ Found specs for Product ${product.id}:`, JSON.stringify(extractedSpecs));
+        
+              const rawSpecsText = JSON.stringify(extractedSpecs);
+
+              if (SILICONFLOW_API_KEY) {
+                console.log(`ℹ️ Product ${product.id} specs found. Attempting translation...`);
+                try {
+                  const prompt = `You are translating product specifications for an Iraqi e-commerce website. Translate the following JSON from Chinese to Arabic (Iraqi dialect preferred).
+
+CRITICAL RULES:
+- Translate ALL keys to meaningful Arabic labels - THIS IS MANDATORY
+- Translate ALL values to Arabic
+- Keep brand names in ENGLISH if they are English (like Apple, Nike, etc.)
+- Transliterate Chinese brand names to Arabic (like 芬腾 → فينتن)
+- Keep model numbers as-is
+- "适用人群":"成人" must translate to "بالغين" (adults) NOT "ult"
+- Do NOT include Chinese characters in output - NEITHER KEYS NOR VALUES
+- Return ONLY a valid JSON object, no markdown, no explanations
+
+Key translations (memorize these):
+品牌 → الماركة
+成色 → الحالة
+适用性别 → الجنس
+适用季节 → الموسم
+尺码 → المقاس
+适用人群 → الفئة المستهدفة
+材质 → المادة
+颜色 → اللون
+
+Input JSON:
+${JSON.stringify(extractedSpecs)}
+
+Output JSON ONLY (with Arabic keys and Arabic values):`;
+                  const result = await callSiliconFlow([
+                    { role: 'system', content: 'You are a Chinese to Arabic translator for e-commerce product specifications.' },
+                    { role: 'user', content: prompt }
+                  ], 0.2, 300, { timeoutMs: GOOFISH_AI_CALL_TIMEOUT_MS });
+                  
+                  const translatedSpecs = JSON.parse(result.trim());
+                  console.log(`✅ Translated specs for Product ${product.id}:`, JSON.stringify(translatedSpecs));
+                  accumulatedData.specs = translatedSpecs;
+                } catch (specErr) {
+                  console.warn(`⚠️ Failed to translate specs for Product ${product.id}: ${toErrorText(specErr)}`);
+                }
+              }
+            }
+          }
+        }
+
+        // Add soldCount to specs
+        if (accumulatedData.soldCount !== null && accumulatedData.soldCount !== undefined) {
+          if (!accumulatedData.specs) {
+            accumulatedData.specs = {};
+          }
+          accumulatedData.specs['عدد المبيعات'] = String(accumulatedData.soldCount);
+          console.log(`[Accumulate] Added soldCount to specs: ${accumulatedData.soldCount}`);
+        }
+
+        // Extract images
+        const images = await page.evaluate(() => {
+          const mainWindow = document.querySelector('.item-main-window--BgQbsIsU');
+          const imgElements = mainWindow ? Array.from(mainWindow.querySelectorAll('img')) : [];
+          const imageUrls = [];
+          const seenUrls = new Set();
+          for (const img of imgElements) {
+            const src = img.src || img.getAttribute('data-src');
+            if (src && src.includes('alicdn.com') && !src.includes('logo') && !src.includes('icon') && src.length > 20) {
+              // Filter out placeholder/white images
+              // Common patterns for placeholder images on alicdn
+              if (src.includes('100x100') || src.includes('50x50') || src.includes('40x40')) {
+                continue; // Skip small placeholder images
+              }
+              if (src.includes('loading') || src.includes('placeholder') || src.includes('blank')) {
+                continue; // Skip loading/placeholder images
+              }
+              if (src.includes('T1') && src.includes('_.webp')) {
+                continue; // Skip common placeholder pattern
+              }
+              // Skip images that are too small (likely placeholders)
+              if (src.match(/_\d+x\d+\./)) {
+                const match = src.match(/_(\d+)x(\d+)\./);
+                if (match) {
+                  const width = parseInt(match[1], 10);
+                  const height = parseInt(match[2], 10);
+                  if (width < 200 || height < 200) {
+                    continue; // Skip small images
+                  }
+                }
+              }
+              if (!seenUrls.has(src)) {
+                seenUrls.add(src);
+                imageUrls.push(src);
+              }
+            }
+          }
+          return imageUrls.slice(0, 10);
+        });
+        
+        if (images.length > 0) {
+          console.log(`Found ${images.length} images.`);
+          // Sanitize all image URLs before storing
+          accumulatedData.images = images.map(sanitizeProductImageUrl).filter(url => url);
+          
+          // Generate embeddings locally for each image
+          if (!GOOFISH_DISABLE_IMAGE_EMBEDDINGS) {
+            console.log(`[Accumulate] Generating embeddings locally for ${accumulatedData.images.length} images...`);
+            for (let i = 0; i < Math.min(accumulatedData.images.length, 5); i++) {
+              const imageUrl = accumulatedData.images[i];
+              if (!imageUrl) continue;
+              
+              try {
+                console.log(`[Accumulate] Generating embedding for image ${i + 1}/${Math.min(accumulatedData.images.length, 5)}...`);
+                const embedding = await embedImage(imageUrl, accumulatedData.name || product.name || null);
+                if (Array.isArray(embedding) && embedding.length > 0 && !embedding.every(v => v === 0)) {
+                  accumulatedData.imageEmbeddings.push({
+                    url: imageUrl,
+                    embedding: embedding,
+                    order: i
+                  });
+                  console.log(`[Accumulate] Generated embedding for image ${i + 1}`);
+                } else {
+                  console.log(`[Accumulate] Skipped image ${i + 1} - empty embedding`);
+                }
+              } catch (embedErr) {
+                console.warn(`[Accumulate] Failed to generate embedding for image ${i + 1}: ${toErrorText(embedErr)}`);
+              }
+            }
+            console.log(`[Accumulate] Generated ${accumulatedData.imageEmbeddings.length} embeddings locally`);
+          }
+        }
+      }
+
+      // Now push all accumulated data to DB in one transaction OR save to queue
+      if (USE_QUEUE_MODE) {
+        console.log(`[Accumulate] Queue mode enabled, saving product to queue file...`);
+        const saved = await saveToQueue(accumulatedData);
+        if (saved) {
+          console.log(`[Accumulate] Successfully saved product to queue`);
+        } else {
+          console.error(`[Accumulate] Failed to save product to queue`);
+        }
+      } else {
+        console.log(`[Accumulate] Creating product with all data...`);
+        
+        let createdProduct;
+        const maxDbRetries = 10;
+        let dbRetryCount = 0;
+        
+        while (dbRetryCount < maxDbRetries) {
+          try {
+            createdProduct = await prisma.$transaction(async (tx) => {
+              console.log(`[Accumulate] Transaction started for product creation (attempt ${dbRetryCount + 1}/${maxDbRetries})`);
+              // Create product with all data
+              const basePriceIQD = Math.max(0, Number(accumulatedData.priceCny || 0) * CNY_TO_IQD_RATE);
+              const multiplier = calculatePriceMultiplier(basePriceIQD);
+              const priceIQD = Math.round(basePriceIQD * multiplier);
+              console.log(`[Accumulate] Calculated price: ${accumulatedData.priceCny || 0} CNY -> ${priceIQD} IQD`);
+
+            const newProduct = await tx.product.create({
+              data: {
+                purchaseUrl: accumulatedData.url,
+                name: accumulatedData.name || product.name,
+                image: accumulatedData.images && accumulatedData.images.length > 0 ? accumulatedData.images[0] : product.image,
+                price: priceIQD,
+                basePriceIQD,
+                neworold: accumulatedData.newOrOld,
+                specs: accumulatedData.specs ? JSON.stringify(accumulatedData.specs) : null,
+                aiMetadata: {
+                  source: "goofish",
+                  scrapedAt: new Date().toISOString(),
+                  soldCount: accumulatedData.soldCount || null,
+                  isRealBrand: null,
+                  goofishItemId: accumulatedData.url.match(/id=(\d+)/)?.[1] || null,
+                  originalTitle: product.name,
+                  translatedDescription: accumulatedData.description || null,
+                  detailTranslationUpdatedAt: accumulatedData.description ? new Date().toISOString() : null
+                },
+                isActive: accumulatedData.isActive,
+                keywords: [],
+                imagesChecked: true
+              }
+            });
+            
+            console.log(`[Accumulate] Created product with ID: ${newProduct.id}`);
+            
+            // Assign category inside transaction if categoryId is available
+            if (accumulatedData.categoryId) {
+              console.log(`[Accumulate] Assigning category inside transaction for Product ${newProduct.id}...`);
+              try {
+                const categoryId = extractCategoryId(accumulatedData.url);
+                let categorySlug = null;
+                let categoryNameAr = null;
+
+                if (categoryId && goofishMappings[categoryId]) {
+                  categorySlug = goofishMappings[categoryId];
+                  const existingCat = categories.find(c => c.slug === categorySlug);
+                  categoryNameAr = existingCat?.name_ar || categorySlug;
+                  console.log(`  → Using existing mapping: ${categorySlug}`);
+                }
+
+                if (categorySlug && categoryNameAr) {
+                  let categoryRecord = await tx.category.findUnique({
+                    where: { slug: categorySlug }
+                  });
+
+                  if (!categoryRecord) {
+                    console.log(`  → Category not found in database, creating: ${categorySlug}`);
+                    categoryRecord = await tx.category.create({
+                      data: {
+                        slug: categorySlug,
+                        nameAr: categoryNameAr,
+                        nameEn: categoryNameAr,
+                        goofishCategoryId: categoryId || null
+                      }
+                    });
+                    console.log(`  → Created category in database with ID: ${categoryRecord.id}`);
+                  } else {
+                    console.log(`  → Found category in database with ID: ${categoryRecord.id}`);
+                  }
+
+                  // Update product with categoryId
+                  await tx.product.update({
+                    where: { id: newProduct.id },
+                    data: { categoryId: categoryRecord.id }
+                  });
+                  console.log(`✅ Assigned category inside transaction: ${categorySlug} (${categoryRecord.id})`);
+                }
+              } catch (catErr) {
+                console.warn(`⚠️ Failed to assign category inside transaction: ${toErrorText(catErr)}`);
+              }
+            }
+            
+            // Insert images without embeddings first (vector type causes issues in INSERT)
+            if (accumulatedData.images && accumulatedData.images.length > 0) {
+              for (const imageUrl of accumulatedData.images) {
+                try {
+                  await tx.productImage.create({
+                    data: {
+                      productId: newProduct.id,
+                      url: imageUrl,
+                      order: accumulatedData.images.indexOf(imageUrl),
+                      type: 'GALLERY'
+                    }
+                  });
+                } catch (imageErr) {
+                  console.error(`[Accumulate] Failed to insert image ${imageUrl}: ${toErrorText(imageErr)}`);
+                  throw imageErr;
+                }
+              }
+            }
+            
+            return newProduct;
+          }, {
+            timeout: 120000
+          });
+          
+          console.log(`✅ Transaction committed successfully for product ${createdProduct.id}`);
+          console.log(`[Accumulate] Transaction completed successfully for product`);
+          break; // Success - exit retry loop
+        } catch (txErr) {
+          dbRetryCount++;
+          const errorMsg = toErrorText(txErr);
+          console.error(`[Accumulate] Transaction failed for product (attempt ${dbRetryCount}/${maxDbRetries}): ${errorMsg}`);
+          
+          // Check if it's a retryable database error
+          const isRetryable = isRetryableDbError(txErr) || errorMsg.includes('Server has closed the connection');
+          
+          if (!isRetryable || dbRetryCount >= maxDbRetries) {
+            console.error(`[Accumulate] Transaction failed after ${dbRetryCount} attempts, giving up`);
+            throw txErr;
+          }
+          
+          // Wait before retry with exponential backoff
+          const backoffMs = Math.min(5000, 1000 * dbRetryCount);
+          console.log(`[Accumulate] Waiting ${backoffMs}ms before retry...`);
+          await new Promise(r => setTimeout(r, backoffMs));
+          
+          // Try to reconnect before retry
+          try {
+            await recoverDbConnectionQuick(`accumulate retry ${dbRetryCount}`);
+            console.log(`[Accumulate] Reconnected to database, retrying transaction...`);
+          } catch (reconnectErr) {
+            console.warn(`[Accumulate] Reconnect failed, will retry anyway: ${toErrorText(reconnectErr)}`);
+          }
+        }
+      }
+      
+      console.log(`✅ Successfully created product ${createdProduct.id} with all data`);
+      
+      // Verify product exists in database
+      try {
+        const verification = await prisma.product.findUnique({
+          where: { id: createdProduct.id }
+        });
+        if (verification) {
+          console.log(`✅ Verified product ${createdProduct.id} exists in database`);
+        } else {
+          console.error(`❌ Product ${createdProduct.id} NOT FOUND in database after transaction commit!`);
+        }
+      } catch (verifyErr) {
+        console.error(`❌ Failed to verify product ${createdProduct.id}: ${toErrorText(verifyErr)}`);
+      }
+      
+      // Update image embeddings after transaction using the existing service
+      if (accumulatedData.imageEmbeddings && accumulatedData.imageEmbeddings.length > 0) {
+        console.log(`[Accumulate] Using ensureProductImageEmbeddings service to update embeddings for ${accumulatedData.imageEmbeddings.length} images...`);
+        
+        const maxEmbeddingRetries = 5;
+        let embeddingRetryCount = 0;
+        
+        while (embeddingRetryCount < maxEmbeddingRetries) {
+          try {
+            const result = await ensureProductImageEmbeddings({
+              prisma,
+              productId: createdProduct.id,
+              productName: createdProduct.name,
+              maxImages: accumulatedData.imageEmbeddings.length
+            });
+            console.log(`[Accumulate] ensureProductImageEmbeddings completed: ${result.embeddedCount} images embedded`);
+            break; // Success - exit retry loop
+          } catch (embErr) {
+            embeddingRetryCount++;
+            const errorMsg = toErrorText(embErr);
+            console.error(`[Accumulate] ensureProductImageEmbeddings failed for product ${createdProduct.id} (attempt ${embeddingRetryCount}/${maxEmbeddingRetries}): ${errorMsg}`);
+            
+            // Check if it's a retryable database error
+            const isRetryable = isRetryableDbError(embErr) || errorMsg.includes('Server has closed the connection');
+            
+            if (!isRetryable || embeddingRetryCount >= maxEmbeddingRetries) {
+              console.warn(`⚠️ ensureProductImageEmbeddings failed after ${embeddingRetryCount} attempts, skipping embeddings for product ${createdProduct.id}`);
+              break;
+            }
+            
+            // Wait before retry with exponential backoff
+            const backoffMs = Math.min(3000, 500 * embeddingRetryCount);
+            console.log(`[Accumulate] Waiting ${backoffMs}ms before retrying embeddings...`);
+            await new Promise(r => setTimeout(r, backoffMs));
+            
+            // Try to reconnect before retry
+            try {
+              await recoverDbConnectionQuick(`embedding retry ${embeddingRetryCount}`);
+              console.log(`[Accumulate] Reconnected to database, retrying embeddings...`);
+            } catch (reconnectErr) {
+              console.warn(`[Accumulate] Reconnect failed, will retry anyway: ${toErrorText(reconnectErr)}`);
+            }
+          }
+        }
+      }
+      
+      // Clear accumulated data
+      Object.keys(accumulatedData).forEach(key => {
+        if (key !== 'productId') {
+          accumulatedData[key] = null;
+        }
+        if (key === 'images') {
+          accumulatedData[key] = [];
+        }
+      });
+      console.log(`[Accumulate] Cleared local data for Product ${product.id}`);
+      }
+      
+    }, `processProductDetailsAccumulate ${product.id}`, productTimeoutMs);
+  } catch (err) {
+    console.error(`[Accumulate] Error processing Product ${product.id}: ${toErrorText(err)}`);
+    throw err;
+  }
+}
+
+async function processProductDetails(page, product, detailProgress = null) {
+  // If batch insert mode is enabled, gather data to JSON instead of DB updates
+  if (BATCH_INSERT_FROM_JSON) {
+    const index = detailProgress?.current || 0;
+    return processProductDetailsToJson(page, product.url, index);
+  }
+  
+  // If accumulate per product mode is enabled, gather all data locally then push once
+  if (GOOFISH_ACCUMULATE_PER_PRODUCT) {
+    return processProductDetailsAccumulate(page, product, detailProgress);
+  }
+  
+  const mutationTimeoutMs = Math.max(5000, Number.parseInt(process.env.GOOFISH_MUTATION_TIMEOUT_MS || '15000', 10) || 15000);
+  const mutationRetryCount = Math.max(1, Number.parseInt(process.env.GOOFISH_MUTATION_RETRY_COUNT || '3', 10) || 3);
+  const imageMutationTimeoutMs = Math.max(5000, Number.parseInt(process.env.GOOFISH_IMAGE_MUTATION_TIMEOUT_MS || '30000', 10) || 30000);
+  const imageMutationRetryCount = Math.max(1, Number.parseInt(process.env.GOOFISH_IMAGE_MUTATION_RETRY_COUNT || '3', 10) || 3);
+  const embeddingMutationTimeoutMs = Math.max(5000, Number.parseInt(process.env.GOOFISH_EMBEDDING_MUTATION_TIMEOUT_MS || '30000', 10) || 30000);
+  const embeddingMutationRetryCount = Math.max(1, Number.parseInt(process.env.GOOFISH_EMBEDDING_MUTATION_RETRY_COUNT || '3', 10) || 3);
+  const newOrOldTimeoutMs = Math.max(4000, Number.parseInt(process.env.GOOFISH_NEWOROLD_TIMEOUT_MS || '30000', 10) || 30000);
+  const newOrOldRetryCount = Math.max(1, Number.parseInt(process.env.GOOFISH_NEWOROLD_RETRY_COUNT || '3', 10) || 3);
+  const retryBackoffMs = Math.max(200, Number.parseInt(process.env.GOOFISH_RETRY_BACKOFF_MS || '500', 10) || 500);
+  const productTimeoutMs = Math.max(30000, Number.parseInt(process.env.GOOFISH_PRODUCT_TIMEOUT_MS || '180000', 10) || 180000);
+  const specsMutationTimeoutMs = Math.max(4000, Number.parseInt(process.env.GOOFISH_SPECS_MUTATION_TIMEOUT_MS || '30000', 10) || 30000);
+  const specsMutationRetryCount = Math.max(1, Number.parseInt(process.env.GOOFISH_SPECS_MUTATION_RETRY_COUNT || '3', 10) || 3);
   const updateNewOrOld = async (statusValue) => withRetry(
     () => prisma.$executeRaw`
       UPDATE "Product"
@@ -2638,6 +5111,7 @@ async function processProductDetails(page, product, detailProgress = null) {
   try {
     await ensureDbReady();
     await withTimeout(async () => {
+      const productProcessStartMs = Date.now();
       await page.goto(product.url, { waitUntil: 'domcontentloaded', timeout: 60000 });
     
       const delay = Math.floor(Math.random() * 1500) + 1000;
@@ -2677,6 +5151,38 @@ async function processProductDetails(page, product, detailProgress = null) {
         );
       } else {
         console.log(`✅ Product ${product.id} is AVAILABLE.`);
+        
+        // Extract seller sold count from user info
+        const sellerInfo = await page.evaluate(() => {
+          const userLabels = document.querySelectorAll('.item-user-info-label--NLTMHARN');
+          for (const label of userLabels) {
+            const text = label.innerText || '';
+            const match = text.match(/卖出(\d+)件宝贝/);
+            if (match) return parseInt(match[1], 10);
+          }
+          return null;
+        });
+        
+        if (sellerInfo !== null) {
+          console.log(`[Seller Info] Product ${product.id} - Seller sold count: ${sellerInfo}`);
+          try {
+            await withRetry(
+              () => prisma.$executeRaw`
+                UPDATE "Product"
+                SET "aiMetadata" = COALESCE("aiMetadata", '{}'::jsonb) || jsonb_build_object('soldCount', ${sellerInfo}),
+                    "updatedAt" = NOW()
+                WHERE id = ${product.id}
+              `,
+              `update sold count ${product.id}`,
+              mutationRetryCount,
+              mutationTimeoutMs,
+              retryBackoffMs
+            );
+            console.log(`✅ Updated seller sold count for Product ${product.id}`);
+          } catch (soldCountErr) {
+            console.warn(`⚠️ Failed to update sold count for Product ${product.id}: ${toErrorText(soldCountErr)}`);
+          }
+        }
         
         // Ensure we are actually on the product URL before evaluating anything
         const currentUrl = page.url();
@@ -2756,91 +5262,298 @@ async function processProductDetails(page, product, detailProgress = null) {
           }
         }
 
-        let translatedDetailDescription = '';
-        const rawDetailDescription = cleanAiText(await page.evaluate(() => {
-          const selectors = [
-            '.desc--GaIUKUQY',
-            '[class*="desc--"]',
-            '.item-desc--fHfY0Q3N',
-            '[class*="item-desc"]',
-            '[class*="description"]'
-          ];
-          for (const selector of selectors) {
-            const el = document.querySelector(selector);
-            const txt = (el?.textContent || '').trim();
-            if (txt) return txt;
+        // Extract name and description from the specific div
+        let rawDetailDescription = '';
+        const extractedContent = await page.evaluate(() => {
+          const mainDiv = document.querySelector('.main--Nu33bWl6.open--gEYf_BQc');
+          if (!mainDiv) return null;
+          const descSpan = mainDiv.querySelector('.desc--GaIUKUQY');
+          if (!descSpan) return null;
+          return descSpan.innerText || descSpan.textContent || '';
+        });
+
+        if (extractedContent && extractedContent.length > 10) {
+          console.log(`[Detail Phase] Extracted content from product page: ${extractedContent.substring(0, 50)}...`);
+          
+          // Generate Arabic name and description from extracted content
+          const generated = await generateTitleAndKeywords(extractedContent, extractedContent);
+          
+          if (generated.translationSucceeded) {
+            console.log(`[Detail Phase] Generated Arabic name: ${generated.titleAr?.substring(0, 30)}...`);
+            console.log(`[Detail Phase] Generated Arabic description: ${generated.descriptionAr?.substring(0, 50)}...`);
+            
+            // Update product name
+            if (generated.titleAr && hasArabic(generated.titleAr)) {
+              try {
+                await withRetry(
+                  () => prisma.$executeRaw`
+                    UPDATE "Product"
+                    SET "name" = ${generated.titleAr},
+                        "updatedAt" = NOW()
+                    WHERE id = ${product.id}
+                  `,
+                  `update product name ${product.id}`,
+                  mutationRetryCount,
+                  mutationTimeoutMs,
+                  retryBackoffMs
+                );
+                console.log(`✅ Updated product name for Product ${product.id}`);
+              } catch (nameUpdateErr) {
+                console.warn(`⚠️ Failed to update product name for Product ${product.id}: ${toErrorText(nameUpdateErr)}`);
+                if (isRetryableDbError(nameUpdateErr)) triggerDbReconnectNonBlocking(`update product name ${product.id}`);
+              }
+            }
+            
+            // Update product description
+            if (generated.descriptionAr && hasArabic(generated.descriptionAr)) {
+              try {
+                await withRetry(
+                  () => updateProductTranslatedDescription(product.id, generated.descriptionAr),
+                  `update translated description ${product.id}`,
+                  mutationRetryCount,
+                  mutationTimeoutMs,
+                  retryBackoffMs
+                );
+                console.log(`✅ Updated translated description for Product ${product.id}`);
+              } catch (descUpdateErr) {
+                console.warn(`⚠️ Failed to update translated description for Product ${product.id}: ${toErrorText(descUpdateErr)}`);
+                if (isRetryableDbError(descUpdateErr)) triggerDbReconnectNonBlocking(`update translated description ${product.id}`);
+              }
+            }
           }
-          const bodyText = (document.body?.innerText || '').trim();
-          if (!bodyText) return '';
-          const lines = bodyText
-            .split('\n')
-            .map((line) => line.trim())
-            .filter(Boolean)
-            .filter((line) => line.length >= 8)
-            .slice(0, 30);
-          return lines.join(' ');
-        }));
-        if (rawDetailDescription) {
-          const fallbackDescription = cleanDescriptionText(String(product.name || '').trim());
-          translatedDetailDescription = await translateDetailDescriptionToArabic(product.name || '', rawDetailDescription, fallbackDescription);
-          if (translatedDetailDescription && hasArabic(translatedDetailDescription)) {
-            try {
-              await withRetry(
-                () => updateProductTranslatedDescription(product.id, translatedDetailDescription),
-                `update translated description ${product.id}`,
-                mutationRetryCount,
-                mutationTimeoutMs,
-                retryBackoffMs
-              );
-              console.log(`✅ Updated translated description for Product ${product.id}`);
-            } catch (descUpdateErr) {
-              console.warn(`⚠️ Failed to update translated description for Product ${product.id}: ${toErrorText(descUpdateErr)}`);
-              if (isRetryableDbError(descUpdateErr)) triggerDbReconnectNonBlocking(`update translated description ${product.id}`);
+        } else {
+          console.log(`[Detail Phase] Could not extract content from specific div, using fallback extraction`);
+          
+          let translatedDetailDescription = '';
+          rawDetailDescription = cleanAiText(await page.evaluate(() => {
+            const selectors = [
+              '.desc--GaIUKUQY',
+              '[class*="desc--"]',
+              '.item-desc--fHfY0Q3N',
+              '[class*="item-desc"]',
+              '[class*="description"]'
+            ];
+            for (const selector of selectors) {
+              const el = document.querySelector(selector);
+              const txt = (el?.textContent || '').trim();
+              if (txt) return txt;
+            }
+            const bodyText = (document.body?.innerText || '').trim();
+            if (!bodyText) return '';
+            const lines = bodyText
+              .split('\n')
+              .map((line) => line.trim())
+              .filter(Boolean)
+              .filter((line) => line.length >= 8)
+              .slice(0, 30);
+            return lines.join(' ');
+          }));
+          if (rawDetailDescription) {
+            const fallbackDescription = cleanDescriptionText(String(product.name || '').trim());
+            translatedDetailDescription = await translateDetailDescriptionToArabic(product.name || '', rawDetailDescription, fallbackDescription);
+            if (translatedDetailDescription && hasArabic(translatedDetailDescription)) {
+              try {
+                await withRetry(
+                  () => updateProductTranslatedDescription(product.id, translatedDetailDescription),
+                  `update translated description ${product.id}`,
+                  mutationRetryCount,
+                  mutationTimeoutMs,
+                  retryBackoffMs
+                );
+                console.log(`✅ Updated translated description for Product ${product.id}`);
+              } catch (descUpdateErr) {
+                console.warn(`⚠️ Failed to update translated description for Product ${product.id}: ${toErrorText(descUpdateErr)}`);
+                if (isRetryableDbError(descUpdateErr)) triggerDbReconnectNonBlocking(`update translated description ${product.id}`);
+              }
             }
           }
         }
 
-        if (product.specs && product.specs !== 'null') {
-          console.log(`ℹ️ Specs already exist for Product ${product.id}. Skipping extraction.`);
+        // Check if product name is still in Chinese and update it
+        const productName = String(product.name || '').trim();
+        const isProductNameChinese = /[\u4e00-\u9fff]/.test(productName);
+        if (isProductNameChinese) {
+          console.log(`[Name Update] Product ${product.id} has Chinese name, translating to Arabic...`);
+          const translatedName = await translateFullTitleToArabic(productName, productName);
+          if (translatedName && translatedName !== productName && hasArabic(translatedName)) {
+            try {
+              await withRetry(
+                () => prisma.$executeRaw`
+                  UPDATE "Product"
+                  SET "name" = ${translatedName},
+                      "updatedAt" = NOW()
+                  WHERE id = ${product.id}
+                `,
+                `update product name ${product.id}`,
+                mutationRetryCount,
+                mutationTimeoutMs,
+                retryBackoffMs
+              );
+              console.log(`✅ Updated product name for Product ${product.id}: ${translatedName}`);
+            } catch (nameUpdateErr) {
+              console.warn(`⚠️ Failed to update product name for Product ${product.id}: ${toErrorText(nameUpdateErr)}`);
+              if (isRetryableDbError(nameUpdateErr)) triggerDbReconnectNonBlocking(`update product name ${product.id}`);
+            }
+          }
+        }
+
+        // Assign category to product in detail phase
+        try {
+          await assignCategoryToProduct(product.id, product.name, product.url);
+          console.log(`✅ Category assignment completed for Product ${product.id}`);
+        } catch (categoryErr) {
+          console.warn(`⚠️ Failed to assign category for Product ${product.id}: ${toErrorText(categoryErr)}`);
+        }
+
+        // Check if specs already exist and contain Arabic - only then skip
+        const existingSpecs = product.specs && product.specs !== 'null' ? String(product.specs) : '';
+        const hasArabicSpecs = existingSpecs.length > 0 && /[\u0600-\u06FF]/.test(existingSpecs);
+        
+        if (hasArabicSpecs) {
+          console.log(`ℹ️ Arabic specs already exist for Product ${product.id}. Skipping extraction.`);
         } else {
+          const elapsedMs = Date.now() - productProcessStartMs;
+          const elapsedSec = Math.round(elapsedMs / 1000);
+          const timeLeftMs = productTimeoutMs - elapsedMs;
+          if (timeLeftMs < 45000) {
+            console.warn(`⏱️ Skipping spec extraction for Product ${product.id} - only ${timeLeftMs/1000}s left (${elapsedSec}s elapsed).`);
+          } else {
           const rawSpecs = await page.evaluate(() => {
             try {
-              const labels = Array.from(document.querySelectorAll('.labels--ndhPFgp8 .item--qI9ENIfp'));
+              // Try multiple selector strategies since Xianyu/Goofish changes class names frequently
+              const selectorStrategies = [
+                // Strategy 1: Current known selectors
+                '.labels--ndhPFgp8 .item--qI9ENIfp',
+                // Strategy 2: Generic label/value patterns
+                '[class*="labels"] [class*="item"]',
+                // Strategy 3: Direct item selectors
+                '.item--qI9ENIfp',
+                '[class*="item--qI9"]',
+                // Strategy 4: Any element with label + value children
+                '[class*="label"]',
+              ];
+              
               const specs = {};
-          
-              for (const item of labels) {
-                const labelEl = item.querySelector('.label--ejJeaTRV');
-                if (!labelEl) continue;
-            
-                let key = labelEl.innerText.replace(/[\n\r\s：:]/g, '').trim();
-            
-                const valueEl = item.querySelector('.value--EyQBSInp');
-                if (!valueEl) continue;
-                let value = valueEl.innerText.trim();
-            
-                if (key && value) {
-                  specs[key] = value;
+              let strategyUsed = '';
+              let elementsFound = 0;
+              
+              for (const strategy of selectorStrategies) {
+                let labels;
+                if (strategy === '[class*="label"]') {
+                  // Special handling: find parent containers that have both label and value
+                  const allLabels = Array.from(document.querySelectorAll(strategy));
+                  labels = allLabels.filter(el => {
+                    const parent = el.parentElement;
+                    return parent && (parent.querySelector('[class*="value"]') || parent.nextElementSibling?.matches('[class*="value"]'));
+                  }).map(el => el.closest('[class*="item"]') || el.parentElement);
+                  // Deduplicate
+                  labels = [...new Set(labels)];
+                } else {
+                  labels = Array.from(document.querySelectorAll(strategy));
+                }
+                
+                if (labels.length > 0) {
+                  elementsFound = labels.length;
+                  strategyUsed = strategy;
+                  
+                  for (const item of labels) {
+                    // Try multiple label/value selector patterns
+                    const labelSelectors = ['.label--ejJeaTRV', '[class*="label--"]', '[class*="label"]'];
+                    const valueSelectors = ['.value--EyQBSInp', '[class*="value--"]', '[class*="value"]'];
+                    
+                    let labelEl = null;
+                    for (const sel of labelSelectors) {
+                      labelEl = item.querySelector(sel);
+                      if (labelEl) break;
+                    }
+                    if (!labelEl) continue;
+                    
+                    let valueEl = null;
+                    for (const sel of valueSelectors) {
+                      valueEl = item.querySelector(sel);
+                      if (valueEl) break;
+                    }
+                    if (!valueEl) {
+                      // Try getting value from next sibling or parent text
+                      const parentText = item.textContent || '';
+                      const labelText = labelEl.textContent || '';
+                      const remainingText = parentText.replace(labelText, '').trim();
+                      if (remainingText) {
+                        valueEl = { innerText: remainingText };
+                      } else {
+                        continue;
+                      }
+                    }
+                    
+                    let key = labelEl.innerText?.replace(/[\n\r\s\uff1a?:]/g, '').trim() || '';
+                    let value = (valueEl.innerText || valueEl.textContent || '').trim();
+                    
+                    if (key && value && key.length < 50 && value.length < 200) {
+                      specs[key] = value;
+                    }
+                  }
+                  
+                  if (Object.keys(specs).length > 0) {
+                    break; // Found specs, stop trying strategies
+                  }
                 }
               }
-          
-              return Object.keys(specs).length > 0 ? specs : null;
+              
+              // Return metadata for debugging
+              return Object.keys(specs).length > 0 ? { specs, debug: { strategy: strategyUsed, count: elementsFound } } : { specs: null, debug: { strategy: strategyUsed || 'none', count: elementsFound } };
             } catch (e) {
-              return null;
+              return { specs: null, debug: { error: e.message, strategy: 'error', count: 0 } };
             }
           });
+          
+          console.log(`[Specs Debug] Product ${product.id}: strategy="${rawSpecs?.debug?.strategy || 'unknown'}", elements=${rawSpecs?.debug?.count || 0}`);
+          
+          const extractedSpecs = rawSpecs?.specs || null;
 
-          if (rawSpecs) {
-            console.log(`ℹ️ Found specs for Product ${product.id}:`, JSON.stringify(rawSpecs));
+          if (extractedSpecs) {
+            console.log(`ℹ️ Found specs for Product ${product.id}:`, JSON.stringify(extractedSpecs));
         
-            const rawSpecsText = JSON.stringify(rawSpecs);
-            const containsChinese = true;
+            const rawSpecsText = JSON.stringify(extractedSpecs);
 
             if (SILICONFLOW_API_KEY) {
               console.log(`ℹ️ Product ${product.id} specs found. Attempting translation...`);
               try {
-                const prompt = `Translate this JSON from Chinese to Arabic. Translate keys and values. Return JSON only.\n${JSON.stringify(rawSpecs)}`;
+                const prompt = `You are translating product specifications for an Iraqi e-commerce website. Translate the following JSON from Chinese to Arabic (Iraqi dialect preferred).
+
+CRITICAL RULES:
+- Translate ALL keys to meaningful Arabic labels - THIS IS MANDATORY
+- Translate ALL values to Arabic
+- Keep brand names in ENGLISH if they are English (like Apple, Nike, etc.)
+- Transliterate Chinese brand names to Arabic (like 芬腾 → فينتن)
+- Keep model numbers as-is
+- "适用人群":"成人" must translate to "بالغين" (adults) NOT "ult"
+- Do NOT include Chinese characters in output - NEITHER KEYS NOR VALUES
+- Return ONLY a valid JSON object, no markdown, no explanations
+
+Key translations (memorize these):
+品牌 → الماركة
+成色 → الحالة
+适用性别 → الجنس
+适用季节 → الموسم
+尺码 → المقاس
+适用人群 → الفئة المستهدفة
+材质 → المادة
+颜色 → اللون
+
+Examples:
+{"品牌": "苹果"} → {"الماركة": "Apple"}
+{"品牌": "芬腾"} → {"الماركة": "فينتن"}
+{"成色": "全新"} → {"الحالة": "جديد"}
+{"适用人群": "成人"} → {"الفئة المستهدفة": "بالغين"}
+{"连接方式": "蓝牙连接"} → {"نوع الاتصال": "بلوتوث"}
+{"功能": "蓝牙通话"} → {"الوظائف": "مكالمات بلوتوث"}
+
+Input JSON:
+${JSON.stringify(extractedSpecs)}
+
+Output JSON ONLY (with Arabic keys and Arabic values):`;
                 
-                const translatedJsonStr = await callSiliconFlow([{ role: "user", content: prompt }], 0.2, 350);
+                const translatedJsonStr = await callSiliconFlow([{ role: "user", content: prompt }], 0.2, 300, { timeoutMs: GOOFISH_AI_CALL_TIMEOUT_MS });
                 
                 if (translatedJsonStr) {
                   const cleanJson = translatedJsonStr.replace(/```json/g, '').replace(/```/g, '').trim();
@@ -2849,28 +5562,75 @@ async function processProductDetails(page, product, detailProgress = null) {
                     translatedSpecs = JSON.parse(cleanJson);
                   } catch (parseErr) {
                      console.error(`❌ Failed to parse translated specs JSON for Product ${product.id}:`, parseErr.message);
-                     translatedSpecs = rawSpecs;
+                     translatedSpecs = extractedSpecs;
                   }
                   
-                  console.log(`✅ Translated specs for Product ${product.id}:`, JSON.stringify(translatedSpecs));
+                  // Validate translation - check if it contains Arabic
+                  const translatedText = JSON.stringify(translatedSpecs);
+                  const hasArabic = /[\u0600-\u06FF]/.test(translatedText);
                   
-                  await updateSpecsValue(JSON.stringify(translatedSpecs), `update specs ${product.id}`);
+                  if (hasArabic) {
+                    console.log(`✅ Translated specs for Product ${product.id}:`, JSON.stringify(translatedSpecs));
+                    await updateSpecsValue(JSON.stringify(translatedSpecs), `update specs ${product.id}`);
+                  } else {
+                    console.warn(`⚠️ Translation for Product ${product.id} does not contain Arabic. Saving raw specs.`);
+                    await updateSpecsValue(rawSpecsText, `update specs raw ${product.id}`);
+                  }
                 } else {
                     console.warn(`⚠️ Translation returned empty for Product ${product.id}. Saving raw specs.`);
                     await updateSpecsValue(rawSpecsText, `update specs raw ${product.id}`);
                 }
               } catch (err) {
+                const isTimeout = String(err?.message || '').includes('timeout') || String(err?.message || '').includes('timed out');
                 console.error(`❌ Failed to translate specs for Product ${product.id}:`, err.message);
-                try {
-                  await updateSpecsValue(rawSpecsText, `update specs fallback ${product.id}`);
-                } catch (specFallbackErr) {
-                  console.error(`❌ Failed to save fallback specs for Product ${product.id}: ${toErrorText(specFallbackErr)}`);
+                // Don't try to save raw specs on timeout to avoid further delays - just skip specs for this product
+                if (!isTimeout) {
+                  try {
+                    await updateSpecsValue(rawSpecsText, `update specs fallback ${product.id}`);
+                  } catch (specFallbackErr) {
+                    console.error(`❌ Failed to save fallback specs for Product ${product.id}: ${toErrorText(specFallbackErr)}`);
+                  }
+                } else {
+                  console.warn(`⚠️ Spec translation timed out for Product ${product.id}. Skipping specs save to avoid blocking.`);
                 }
               }
             } else {
               console.warn(`⚠️ SILICONFLOW_API_KEY missing. Saving raw specs for Product ${product.id}.`);
               await updateSpecsValue(rawSpecsText, `update specs raw ${product.id}`);
             }
+          }
+
+          // Extract prices from description
+          if (rawDetailDescription) {
+            console.log(`[Price Extraction] Checking description for prices...`);
+            try {
+              const priceData = await extractPricesWithFallback(rawDetailDescription);
+              if (priceData && priceData.lowestPriceCny) {
+                const newPriceIQD = convertCnyToIqdWithProfit(priceData.lowestPriceCny);
+                console.log(`[Price Extraction] Found price: ¥${priceData.lowestPriceCny} -> ${newPriceIQD} IQD`);
+                
+                // Update product price
+                await withRetry(
+                  () => prisma.$executeRaw`
+                    UPDATE "Product"
+                    SET "price" = ${newPriceIQD},
+                        "generated_options" = ${JSON.stringify(priceData.priceVariants)}::jsonb,
+                        "updatedAt" = NOW()
+                    WHERE "id" = ${product.id}
+                  `,
+                  `update price ${product.id}`,
+                  specsMutationRetryCount,
+                  specsMutationTimeoutMs,
+                  retryBackoffMs
+                );
+                console.log(`✓ Updated price for Product ${product.id}: ${newPriceIQD} IQD`);
+              } else {
+                console.log(`[Price Extraction] No prices found in description`);
+              }
+            } catch (priceErr) {
+              console.error(`[Price Extraction] Failed to extract prices for Product ${product.id}:`, priceErr.message);
+            }
+          }
           }
         }
 
@@ -3019,6 +5779,21 @@ async function processProductDetails(page, product, detailProgress = null) {
             mainImage = cleanImages[0];
 
             console.log(`Found ${cleanImages.length} images. Updating database...`);
+            
+            // Skip products without images entirely
+            if (cleanImages.length === 0) {
+              console.warn(`⚠️ Product ${product.id} has no images. Skipping and deleting...`);
+              try {
+                await prisma.product.delete({
+                  where: { id: product.id }
+                });
+                console.log(`✓ Deleted Product ${product.id} (no images)`);
+              } catch (deleteErr) {
+                console.warn(`⚠️ Failed to delete Product ${product.id}: ${toErrorText(deleteErr)}`);
+              }
+              return; // Skip the rest of processing for this product
+            }
+            
             if (isDbCircuitOpen()) {
               const remaining = Math.max(1, Math.ceil((dbCircuitOpenUntil - Date.now()) / 1000));
               console.warn(`[DB Circuit] Skipping image DB update for Product ${product.id} (${remaining}s left).`);
@@ -3095,7 +5870,7 @@ async function processProductDetails(page, product, detailProgress = null) {
         }
 
         const imageToEmbed = mainImage || product.image;
-        if (imageToEmbed) {
+        if (imageToEmbed && !GOOFISH_DISABLE_IMAGE_EMBEDDINGS) {
           console.log(`[Pipeline] Generating embedding for Product ${product.id}...`);
           try {
             const embeddingResult = await withTimeout(
@@ -3123,8 +5898,9 @@ async function processProductDetails(page, product, detailProgress = null) {
             }
           } catch (embedErr) {
             console.error(`❌ Embedding error for Product ${product.id}: ${embedErr.message}`);
-            if (isRetryableDbError(embedErr)) triggerDbReconnectNonBlocking(`embedding ${product.id}`);
           }
+        } else if (imageToEmbed && GOOFISH_DISABLE_IMAGE_EMBEDDINGS) {
+          console.log(`[Pipeline] Skipping image embeddings for Product ${product.id} (disabled by config)`);
         } else {
           console.log(`ℹ️ No image available to embed for Product ${product.id}`);
         }
@@ -3138,8 +5914,50 @@ async function processProductDetails(page, product, detailProgress = null) {
 
 async function run() {
   console.log("Starting goofish-pipeline run()...");
+  
+  // Initialize queue directory if queue mode is enabled
+  if (USE_QUEUE_MODE) {
+    await initQueueDir();
+  }
+  
+  // Load category data for automatic category assignment
+  if (CATEGORY_ASSIGN_ENABLED) {
+    loadCategoryData();
+    console.log('[Category] Category assignment enabled');
+  } else {
+    console.log('[Category] Category assignment disabled via GOOFISH_CATEGORY_ASSIGN env var');
+  }
+  
+  // Load custom search terms if available
+  customTerms = loadCustomTerms();
+  if (customTerms) {
+    console.log('[Custom Terms] Using provided custom search terms instead of AI generation');
+  }
+  
   const browser = await createBrowser();
-  console.log("Browser created.");
+  console.log(`Browser launched in ${GOOFISH_HEADLESS ? 'hidden/headless' : 'visible'} mode.`);
+  
+  // Login wait - wait for user to manually log in / solve CAPTCHA before starting
+  // Disabled - auto-start
+  // if (!GOOFISH_HEADLESS) {
+  //   const pages = await browser.pages();
+  //   let page = pages[0];
+  //   if (!page) page = await browser.newPage();
+  //
+  //   await page.goto('https://www.goofish.com/', { waitUntil: 'networkidle2', timeout: 60000 });
+  //
+  //   const ua = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
+  //   await page.setUserAgent(ua);
+  //
+  //   console.log('\n========================================');
+  //   console.log('  LOGIN / CAPTCHA WAIT');
+  //   console.log('========================================');
+  //   console.log('Browser is visible. Please log in to Goofish/Xianyu or solve the CAPTCHA if present.');
+  //   console.log('Press Enter when you are ready to start the pipeline...');
+  //   await ask('');
+  //   console.log('Starting pipeline...\n');
+  // }
+  
   markPipelineProgress('run-start');
   startPipelineProgressWatchdog();
   const translationCache = loadTranslationCache();
@@ -3308,7 +6126,7 @@ async function run() {
       return (firstAfter && firstAfter.trim() && firstAfter.trim() !== String(firstBefore || '').trim());
     };
 
-    const configuredMaxPages = parseInt(process.env.GOOFISH_MAX_PAGES || '0', 10);
+    const configuredMaxPages = parseInt(process.env.GOOFISH_MAX_PAGES || '5', 10);
     const estimatedItemsPerPage = Math.max(1, parseInt(process.env.GOOFISH_ESTIMATED_ITEMS_PER_PAGE || '30', 10) || 30);
     const requiredPagesForTermTarget = Math.max(1, Math.ceil(GOOFISH_LINKS_PER_TERM / estimatedItemsPerPage));
     const MAX_PAGES = Number.isFinite(configuredMaxPages) && configuredMaxPages > 0
@@ -3356,12 +6174,18 @@ async function run() {
       });
     };
     const processCollectedLink = async (item) => {
-      if (!item?.url) return null;
+      const goofishItemId = extractGoofishItemId(item?.url);
+      console.log(`[ProcessCollectedLink] Starting for itemId=${goofishItemId || 'n/a'}`);
+      if (!item?.url) {
+        console.log(`[ProcessCollectedLink] Returning null - no URL`);
+        return null;
+      }
       let cny = parseCnyPrice(item.priceText);
       const detectedPrice = detectRealPriceFromTitle(item.title, cny);
       if (detectedPrice !== cny && detectedPrice > 0) cny = detectedPrice;
       const newOrOld = detectNewOrOldFromTexts(item.title, item.conditionText);
       const realBrand = detectRealBrandFromTexts(item.title, item.conditionText);
+      // Keep original Chinese title - translation will happen in detail phase
       let titleEn = String(item.title || '').trim();
       let descriptionAr = titleEn;
       let keywords = [];
@@ -3405,49 +6229,49 @@ async function run() {
         descriptionAr = cleanDescriptionText(String(existingProduct?.aiMetadata?.translatedDescription || titleEn).trim()) || titleEn;
         keywords = ensureKeywordList(existingProduct.keywords, titleEn || item.title);
       }
-      const translationDecision = shouldTranslateFromExistingProduct(existingProduct);
-      if (SILICONFLOW_API_KEY && translationDecision.shouldTranslate) {
-        const cachedTranslation = getCachedTranslation(translationCache, item.title);
-        const canUseCachedDescription = cachedTranslation
-          && cachedTranslation.descriptionAr
-          && cachedTranslation.descriptionAr.length >= 24
-          && cachedTranslation.descriptionAr !== cachedTranslation.titleAr
-          && hasArabic(cachedTranslation.descriptionAr);
-        if (canUseCachedDescription) {
-          titleEn = cachedTranslation.titleAr;
-          descriptionAr = cachedTranslation.descriptionAr;
-          keywords = cachedTranslation.keywords;
-        } else {
-          const generated = await generateTitleAndKeywords(item.title);
-          if (GOOFISH_SKIP_ON_TRANSLATION_FAILURE && !generated.translationSucceeded) {
-            return existingProduct?.id ? {
-              id: existingProduct.id,
-              url: resolvedUrl,
-              name: titleEn || item.title,
-              image: item.image || '',
-              imagesChecked: existingProduct?.imagesChecked || false,
-              specs: existingProduct?.specs || null
-            } : null;
-          }
-          titleEn = generated.titleAr;
-          descriptionAr = generated.descriptionAr;
-          keywords = generated.keywords;
-          if (generated.translationSucceeded) {
-            setCachedTranslation(translationCache, item.title, generated);
-            pendingCacheWrites += 1;
-            if (pendingCacheWrites >= GOOFISH_TRANSLATION_CACHE_FLUSH_EVERY) {
-              saveTranslationCache(translationCache);
-              pendingCacheWrites = 0;
-            }
-          }
-        }
-      }
-      titleEn = sanitizeTranslationText(titleEn);
-      descriptionAr = cleanDescriptionText(descriptionAr);
-      if (GOOFISH_ENABLE_TRANSLATION_RETRY && SILICONFLOW_API_KEY && (!descriptionAr || descriptionAr === item.title || isChineseTerm(descriptionAr))) {
-        if (isChineseTerm(titleEn)) titleEn = await translateFullTitleToArabic(item.title, item.title);
-        descriptionAr = cleanDescriptionText(await translateFullTitleToArabic(item.title, item.title));
-      }
+      // Skip AI translation in collection phase - translation will happen in detail phase
+      // const translationDecision = shouldTranslateFromExistingProduct(existingProduct);
+      // if (SILICONFLOW_API_KEY && translationDecision.shouldTranslate) {
+      //   const cachedTranslation = getCachedTranslation(translationCache, item.title);
+      //   const canUseCachedDescription = cachedTranslation
+      //     && cachedTranslation.descriptionAr
+      //     && cachedTranslation.descriptionAr.length >= 24
+      //     && cachedTranslation.descriptionAr !== cachedTranslation.titleAr
+      //     && hasArabic(cachedTranslation.descriptionAr);
+      //   if (canUseCachedDescription) {
+      //     titleEn = cachedTranslation.titleAr;
+      //     descriptionAr = cachedTranslation.descriptionAr;
+      //     keywords = cachedTranslation.keywords;
+      //   } else {
+      //     console.log(`[ProcessCollectedLink] Generating title and keywords for itemId=${goofishItemId || 'n/a'}`);
+      //     const generated = await generateTitleAndKeywords(item.title);
+      //     console.log(`[ProcessCollectedLink] Generated: translationSucceeded=${generated.translationSucceeded} titleAr=${generated.titleAr?.substring(0, 30)}... descriptionAr=${generated.descriptionAr?.substring(0, 30)}...`);
+      //     if (GOOFISH_SKIP_ON_TRANSLATION_FAILURE && !generated.translationSucceeded) {
+      //       console.log(`[ProcessCollectedLink] Translation failed, but continuing with generated content anyway`);
+      //       titleEn = generated.titleAr || titleEn;
+      //       descriptionAr = generated.descriptionAr || descriptionAr;
+      //       keywords = generated.keywords || keywords;
+      //     } else {
+      //       titleEn = generated.titleAr;
+      //       descriptionAr = generated.descriptionAr;
+      //       keywords = generated.keywords;
+      //     }
+      //     if (generated.translationSucceeded) {
+      //       setCachedTranslation(translationCache, item.title, generated);
+      //       pendingCacheWrites += 1;
+      //       if (pendingCacheWrites >= GOOFISH_TRANSLATION_CACHE_FLUSH_EVERY) {
+      //         saveTranslationCache(translationCache);
+      //         pendingCacheWrites = 0;
+      //       }
+      //     }
+      //   }
+      // }
+      // titleEn = sanitizeTranslationText(titleEn);
+      // descriptionAr = cleanDescriptionText(descriptionAr);
+      // if (GOOFISH_ENABLE_TRANSLATION_RETRY && SILICONFLOW_API_KEY && (!descriptionAr || descriptionAr === item.title || isChineseTerm(descriptionAr))) {
+      //   if (isChineseTerm(titleEn)) titleEn = await translateFullTitleToArabic(item.title, item.title);
+      //   descriptionAr = cleanDescriptionText(await translateFullTitleToArabic(item.title, item.title));
+      // }
       const itemData = {
         title: item.title || '',
         titleEn: titleEn || '',
@@ -3460,7 +6284,33 @@ async function run() {
         url: resolvedUrl,
       };
       if (OUTPUT_JSON) allItems.push(itemData);
-      const goofishItemId = extractGoofishItemId(resolvedUrl);
+      
+      // Skip DB insert if batch insert mode or accumulate per product mode is enabled
+      if (BATCH_INSERT_FROM_JSON || GOOFISH_ACCUMULATE_PER_PRODUCT) {
+        const mode = BATCH_INSERT_FROM_JSON ? 'Batch Mode' : 'Accumulate Mode';
+        console.log(`[${mode}] Skipping DB insert for ${goofishItemId || 'n/a'} - will insert later`);
+        return {
+          id: null,
+          url: resolvedUrl,
+          name: titleEn || item.title,
+          image: item.image || '',
+          imagesChecked: existingProduct?.imagesChecked || false,
+          specs: existingProduct?.specs || null
+        };
+      }
+      
+      if (DISABLE_DB_WRITE) {
+        console.log(`[DB Write Disabled] Skipping DB save for ${goofishItemId || 'n/a'}`);
+        return {
+          id: existingProduct?.id || null,
+          url: resolvedUrl,
+          name: titleEn || item.title,
+          image: item.image || '',
+          imagesChecked: existingProduct?.imagesChecked || false,
+          specs: existingProduct?.specs || null
+        };
+      }
+      
       if (isDbCircuitOpen()) {
         const recovered = await waitForDbCircuitRecovery();
         if (recovered) {
@@ -3482,6 +6332,7 @@ async function run() {
       }
       let dbId = null;
       try {
+        console.log(`[Process] Saving product to DB: ${goofishItemId || 'n/a'}`);
         dbId = await withRetry(
           () => saveProductToDb(itemData, existingProduct?.id || null),
           `save product ${item.title?.slice(0, 20) || 'item'}`,
@@ -3489,7 +6340,9 @@ async function run() {
           GOOFISH_DB_SAVE_TIMEOUT_MS,
           GOOFISH_DB_SAVE_BACKOFF_MS
         );
+        console.log(`[Process] Saved product to DB: dbId=${dbId} itemId=${goofishItemId || 'n/a'}`);
       } catch (saveErr) {
+        console.error(`[Process] DB save error for itemId=${goofishItemId || 'n/a'}: ${toErrorText(saveErr)}`);
         if (GOOFISH_DB_SAVE_FATAL_ON_RETRY_EXHAUST && isRetryableDbError(saveErr)) {
           console.error(`[DB Save] Retry exhausted itemId=${goofishItemId || 'n/a'} url=${resolvedUrl} sourceTitle=${cleanAiText(String(item.title || '').slice(0, 50))} error=${toErrorText(saveErr)}`);
           const now = Date.now();
@@ -3519,12 +6372,14 @@ async function run() {
         }
         const recoveredTarget = await resolveDetailTargetFromDbByUrl();
         if (recoveredTarget) return recoveredTarget;
-        throw makePipelineRestartError(`failed to persist item ${goofishItemId || 'n/a'}`, saveErr);
+        console.warn(`[Process] Skipping item ${goofishItemId || 'n/a'} - database save failed after recovery attempt`);
+        return null;
       }
       if (!dbId) {
         const recoveredTarget = await resolveDetailTargetFromDbByUrl();
         if (recoveredTarget) return recoveredTarget;
-        throw makePipelineRestartError(`save returned no db target for ${goofishItemId || 'n/a'}`);
+        console.warn(`[Process] Skipping item ${goofishItemId || 'n/a'} - database save failed and could not recover`);
+        return null;
       }
       return {
         id: dbId,
@@ -3541,6 +6396,20 @@ async function run() {
       cycleIndex += 1;
       let processedCount = 0;
       allItems = [];
+      
+      // Skip collection phase if flag is set, go directly to batch insert
+      if (SKIP_COLLECT_ONLY_BATCH_INSERT) {
+        console.log(`[Pipeline] SKIP_COLLECT flag is set, skipping collection phase and running batch insert only.`);
+        if (BATCH_INSERT_FROM_JSON && OUTPUT_JSON) {
+          await batchInsertDetailsFromJson();
+          await batchInsertFromJson();
+        } else {
+          console.log(`[Pipeline] BATCH_INSERT_FROM_JSON or OUTPUT_JSON is not enabled, nothing to do.`);
+        }
+        console.log(`[Pipeline] Batch insert completed, exiting.`);
+        break;
+      }
+      
       console.log(`[Pipeline] Starting term cycle ${cycleIndex}...`);
       const { terms: searchTerms, startIndex, batchId, source } = await getSearchTermsForRun();
       const safeStartIndex = Math.max(0, Math.min(searchTerms.length, Number(startIndex || 0) || 0));
@@ -3573,7 +6442,8 @@ async function run() {
             updatedAt: new Date().toISOString()
           };
       if (queue.phase === 'collect') {
-        for (let termIndex = queue.nextCollectTerm; termIndex < searchTerms.length; termIndex += 1) {
+        const termIndex = queue.nextCollectTerm;
+        if (termIndex < searchTerms.length) {
           const term = searchTerms[termIndex];
           const state = queue.termStates[termIndex] || { term, termIndex, items: [], seenUrls: [], collectDone: false, processIndex: 0 };
           const seenUrls = new Set(Array.isArray(state.seenUrls) ? state.seenUrls : []);
@@ -3582,43 +6452,44 @@ async function run() {
           console.log(`[Collect] ${term} (${termCollected}/${GOOFISH_LINKS_PER_TERM})`);
           await openHomeAndSearch(page, term);
           const ok = await ensureItemsLoaded(term);
-          if (!ok) continue;
-          let pageIndex = 0;
-          while (pageIndex < MAX_PAGES && termCollected < GOOFISH_LINKS_PER_TERM) {
-            markPipelineProgress(`collect ${term} page ${pageIndex + 1}`);
-            pageIndex += 1;
-            await closeLoginPopup(page);
-            await page.waitForSelector('#content div[class^="search-container--"] div[class^="feeds-list-container--"] a[class*="feeds-item-wrap--"]', { timeout: 30000 });
-            await humanDelay(1600, 2600);
-            const items = await extractItems();
-            console.log(`[Collect][${term}] Page ${pageIndex} -> ${items.length} raw items`);
-            for (const it of items) {
+          if (ok) {
+            let pageIndex = 0;
+            while (pageIndex < MAX_PAGES && termCollected < GOOFISH_LINKS_PER_TERM) {
+              markPipelineProgress(`collect ${term} page ${pageIndex + 1}`);
+              pageIndex += 1;
+              await closeLoginPopup(page);
+              await page.waitForSelector('#content div[class^="search-container--"] div[class^="feeds-list-container--"] a[class*="feeds-item-wrap--"]', { timeout: 30000 });
+              await humanDelay(1600, 2600);
+              const items = await extractItems();
+              console.log(`[Collect][${term}] Page ${pageIndex} -> ${items.length} raw items`);
+              for (const it of items) {
+                if (termCollected >= GOOFISH_LINKS_PER_TERM) break;
+                const url = String(it?.url || '').trim();
+                if (!url || seenUrls.has(url)) continue;
+                if (isExcludedProduct(it.title)) continue;
+                seenUrls.add(url);
+                state.items = Array.isArray(state.items) ? state.items : [];
+                state.items.push({
+                  url,
+                  title: String(it.title || '').trim(),
+                  conditionText: String(it.conditionText || '').trim(),
+                  priceText: String(it.priceText || '').trim(),
+                  image: String(it.image || '').trim()
+                });
+                termCollected += 1;
+                markPipelineProgress(`collect-hit ${term}`);
+                console.log(`[Collect][${term}] ${termCollected}/${GOOFISH_LINKS_PER_TERM}`);
+              }
+              state.seenUrls = Array.from(seenUrls).slice(-Math.max(300, GOOFISH_LINKS_PER_TERM * 3));
+              queue.termStates[termIndex] = state;
+              queue.nextCollectTerm = termIndex;
+              queue.updatedAt = new Date().toISOString();
+              saveBatchLinksQueue(queue);
+              updateActiveBatchTermCheckpoint(batchId, termIndex, termCollected, state.seenUrls, { collectPageIndex: pageIndex });
               if (termCollected >= GOOFISH_LINKS_PER_TERM) break;
-              const url = String(it?.url || '').trim();
-              if (!url || seenUrls.has(url)) continue;
-              if (isExcludedProduct(it.title)) continue;
-              seenUrls.add(url);
-              state.items = Array.isArray(state.items) ? state.items : [];
-              state.items.push({
-                url,
-                title: String(it.title || '').trim(),
-                conditionText: String(it.conditionText || '').trim(),
-                priceText: String(it.priceText || '').trim(),
-                image: String(it.image || '').trim()
-              });
-              termCollected += 1;
-              markPipelineProgress(`collect-hit ${term}`);
-              console.log(`[Collect][${term}] ${termCollected}/${GOOFISH_LINKS_PER_TERM}`);
+              const changed = await goToNextSearchPage();
+              if (!changed) break;
             }
-            state.seenUrls = Array.from(seenUrls).slice(-Math.max(300, GOOFISH_LINKS_PER_TERM * 3));
-            queue.termStates[termIndex] = state;
-            queue.nextCollectTerm = termIndex;
-            queue.updatedAt = new Date().toISOString();
-            saveBatchLinksQueue(queue);
-            updateActiveBatchTermCheckpoint(batchId, termIndex, termCollected, state.seenUrls, { collectPageIndex: pageIndex });
-            if (termCollected >= GOOFISH_LINKS_PER_TERM) break;
-            const changed = await goToNextSearchPage();
-            if (!changed) break;
           }
           state.collectDone = true;
           state.updatedAt = new Date().toISOString();
@@ -3627,83 +6498,129 @@ async function run() {
           queue.updatedAt = new Date().toISOString();
           saveBatchLinksQueue(queue);
           updateActiveBatchProgress(batchId, termIndex + 1);
+          queue.phase = 'process';
+          queue.nextProcessTerm = termIndex;
+          queue.updatedAt = new Date().toISOString();
+          saveBatchLinksQueue(queue);
+        } else {
+          queue.phase = 'process';
+          queue.nextProcessTerm = 0;
+          queue.updatedAt = new Date().toISOString();
+          saveBatchLinksQueue(queue);
         }
-        queue.phase = 'process';
-        queue.nextProcessTerm = 0;
-        queue.updatedAt = new Date().toISOString();
-        saveBatchLinksQueue(queue);
       }
       let reachedProcessLimit = false;
       if (queue.phase === 'process') {
-        await ensureDbReady();
-        console.log("DB ready.");
-        for (let termIndex = queue.nextProcessTerm; termIndex < searchTerms.length; termIndex += 1) {
-          const state = queue.termStates[termIndex];
-          if (!state) continue;
-          const term = state.term || searchTerms[termIndex];
-          const termPosition = `${termIndex + 1}/${searchTerms.length}`;
-          state.items = Array.isArray(state.items) ? state.items : [];
-          const processedBeforeTerm = Math.max(0, Number(state.processIndex || 0));
-          const totalKnownForTerm = Math.max(state.items.length + processedBeforeTerm, processedBeforeTerm);
-          console.log(`[TermDebug] phase=process batchId=${batchId} termIndex=${termIndex + 1}/${searchTerms.length} term="${term}"`);
-          console.log(`[Process] ${term}: ${processedBeforeTerm}/${totalKnownForTerm}`);
-          while (state.items.length > 0) {
-            markPipelineProgress(`process-start ${term}`);
-            if (processedCount >= MAX_PRODUCTS_TO_PROCESS) {
-              reachedProcessLimit = true;
-              break;
-            }
-            const currentItem = state.items[0];
-            const currentProgress = Math.max(0, Number(state.processIndex || 0)) + 1;
-            const currentTotalForTerm = Math.max(state.items.length + Math.max(0, Number(state.processIndex || 0)), currentProgress);
-            const currentItemId = extractGoofishItemId(currentItem?.url);
-            const sourceTitle = cleanAiText(String(currentItem?.title || '').slice(0, 80));
-            console.log(`[ProcessItem] termIndex=${termPosition} term="${term}" progress=${currentProgress}/${currentTotalForTerm} itemId=${currentItemId || 'n/a'} url=${currentItem?.url || ''}`);
-            if (sourceTitle) {
-              console.log(`[ProcessItem] sourceTitle=${sourceTitle}`);
-            }
+        const termIndex = queue.nextProcessTerm;
+        if (termIndex < searchTerms.length) {
+          await ensureDbReady();
+          console.log("DB ready.");
+          // Clear detail JSON at start of each term if batch mode is enabled
+          if (BATCH_INSERT_FROM_JSON) {
+            const detailDataPath = path.join(process.cwd(), 'goofish-detail-results.json');
             try {
-              markPipelineProgress(`process-link ${currentItemId || 'n/a'}`);
-              const detailTarget = await withTimeout(
-                () => processCollectedLink(currentItem),
-                `process link ${currentItemId || 'n/a'}`,
-                GOOFISH_PROCESS_LINK_TIMEOUT_MS
-              );
-              if (detailTarget) {
-                await processProductDetails(page, detailTarget, {
-                  current: currentProgress,
-                  total: currentTotalForTerm
-                });
-              } else {
-                console.warn(`[ProcessItem] detail phase skipped itemId=${currentItemId || 'n/a'} reason=no-db-target`);
-              }
-              markPipelineProgress(`process-done ${currentItemId || 'n/a'}`);
-            } catch (itemErr) {
-              if (shouldRestartPipelineForItemError(itemErr)) {
-                queue.termStates[termIndex] = state;
-                queue.nextProcessTerm = termIndex;
-                queue.updatedAt = new Date().toISOString();
-                saveBatchLinksQueue(queue);
-                console.error(`[Process] Fatal processing failure. Restart required: ${toErrorText(itemErr)}`);
-                throw itemErr;
-              }
-              console.error(`[Process] Failed processing link, skipping to next: ${toErrorText(itemErr)}`);
+              fs.writeFileSync(detailDataPath, '[]');
+              console.log(`[JSON] Cleared detail JSON file at start of term processing`);
+            } catch (err) {
+              console.warn(`[JSON] Failed to clear detail JSON: ${err.message}`);
             }
-            processedCount += 1;
-            state.items.shift();
-            state.processIndex = Math.max(0, Number(state.processIndex || 0)) + 1;
-            state.updatedAt = new Date().toISOString();
-            queue.termStates[termIndex] = state;
-            queue.nextProcessTerm = termIndex;
-            queue.updatedAt = new Date().toISOString();
-            saveBatchLinksQueue(queue);
-            console.log(`[ProcessItem] completed termIndex=${termPosition} progress=${state.processIndex}/${Math.max(state.items.length + state.processIndex, state.processIndex)} itemId=${currentItemId || 'n/a'}`);
-            markPipelineProgress(`item-committed ${currentItemId || 'n/a'}`);
           }
-          if (reachedProcessLimit) break;
-          queue.nextProcessTerm = termIndex + 1;
-          queue.updatedAt = new Date().toISOString();
-          saveBatchLinksQueue(queue);
+          const state = queue.termStates[termIndex];
+          if (state) {
+            const term = state.term || searchTerms[termIndex];
+            const termPosition = `${termIndex + 1}/${searchTerms.length}`;
+            state.items = Array.isArray(state.items) ? state.items : [];
+            const processedBeforeTerm = Math.max(0, Number(state.processIndex || 0));
+            const totalKnownForTerm = Math.max(state.items.length + processedBeforeTerm, processedBeforeTerm);
+            console.log(`[TermDebug] phase=process batchId=${batchId} termIndex=${termIndex + 1}/${searchTerms.length} term="${term}"`);
+            console.log(`[Process] ${term}: ${processedBeforeTerm}/${totalKnownForTerm}`);
+            while (state.items.length > 0) {
+              markPipelineProgress(`process-start ${term}`);
+              if (processedCount >= MAX_PRODUCTS_TO_PROCESS) {
+                reachedProcessLimit = true;
+                break;
+              }
+              const currentItem = state.items[0];
+              const currentProgress = Math.max(0, Number(state.processIndex || 0)) + 1;
+              const currentTotalForTerm = Math.max(state.items.length + Math.max(0, Number(state.processIndex || 0)), currentProgress);
+              const currentItemId = extractGoofishItemId(currentItem?.url);
+              const sourceTitle = cleanAiText(String(currentItem?.title || '').slice(0, 80));
+              console.log(`[ProcessItem] termIndex=${termPosition} term="${term}" progress=${currentProgress}/${currentTotalForTerm} itemId=${currentItemId || 'n/a'} url=${currentItem?.url || ''}`);
+              if (sourceTitle) {
+                console.log(`[ProcessItem] sourceTitle=${sourceTitle}`);
+              }
+              try {
+                markPipelineProgress(`process-link ${currentItemId || 'n/a'}`);
+                const detailTarget = await withTimeout(
+                  () => processCollectedLink(currentItem),
+                  `process link ${currentItemId || 'n/a'}`,
+                  GOOFISH_PROCESS_LINK_TIMEOUT_MS
+                );
+                if (detailTarget) {
+                  await processProductDetails(page, detailTarget, {
+                    current: currentProgress,
+                    total: currentTotalForTerm
+                  });
+                } else {
+                  console.warn(`[ProcessItem] detail phase skipped itemId=${currentItemId || 'n/a'} reason=no-db-target - deleting from database if exists`);
+                  // Delete product from database if it exists
+                  try {
+                    await ensureDbReady();
+                    if (dbReady) {
+                      const goofishItemId = extractGoofishItemId(currentItem?.url);
+                      if (goofishItemId) {
+                        const deleted = await prisma.product.deleteMany({
+                          where: {
+                            aiMetadata: {
+                              path: ['goofishItemId'],
+                              equals: goofishItemId
+                            }
+                          }
+                        });
+                        if (deleted.count > 0) {
+                          console.log(`[ProcessItem] Deleted ${deleted.count} product(s) from database for itemId=${currentItemId || 'n/a'}`);
+                        }
+                      }
+                    }
+                  } catch (deleteErr) {
+                    console.warn(`[ProcessItem] Failed to delete product for itemId=${currentItemId || 'n/a'}: ${toErrorText(deleteErr)}`);
+                  }
+                }
+                markPipelineProgress(`process-done ${currentItemId || 'n/a'}`);
+              } catch (itemErr) {
+                if (shouldRestartPipelineForItemError(itemErr)) {
+                  queue.termStates[termIndex] = state;
+                  queue.nextProcessTerm = termIndex;
+                  queue.updatedAt = new Date().toISOString();
+                  saveBatchLinksQueue(queue);
+                  console.error(`[Process] Fatal processing failure. Restart required: ${toErrorText(itemErr)}`);
+                  throw itemErr;
+                }
+                console.error(`[Process] Failed processing link, skipping to next: ${toErrorText(itemErr)}`);
+              }
+              processedCount += 1;
+              state.items.shift();
+              state.processIndex = Math.max(0, Number(state.processIndex || 0)) + 1;
+              state.updatedAt = new Date().toISOString();
+              queue.termStates[termIndex] = state;
+              queue.nextProcessTerm = termIndex;
+              queue.updatedAt = new Date().toISOString();
+              saveBatchLinksQueue(queue);
+              console.log(`[ProcessItem] completed termIndex=${termPosition} progress=${state.processIndex}/${Math.max(state.items.length + state.processIndex, state.processIndex)} itemId=${currentItemId || 'n/a'}`);
+              markPipelineProgress(`item-committed ${currentItemId || 'n/a'}`);
+            }
+            if (reachedProcessLimit) {
+              queue.termStates[termIndex] = state;
+              queue.nextProcessTerm = termIndex;
+              queue.updatedAt = new Date().toISOString();
+              saveBatchLinksQueue(queue);
+            } else {
+              queue.nextProcessTerm = termIndex + 1;
+              queue.phase = 'collect';
+              queue.updatedAt = new Date().toISOString();
+              saveBatchLinksQueue(queue);
+            }
+          }
         }
       }
       if (!reachedProcessLimit && queue.phase === 'process') {
@@ -3721,6 +6638,13 @@ async function run() {
       } else {
         console.log(`Cycle ${cycleIndex} finished in database mode.`);
       }
+      
+      // Batch insert from JSON if enabled
+      if (BATCH_INSERT_FROM_JSON && OUTPUT_JSON) {
+        await batchInsertDetailsFromJson();
+        await batchInsertFromJson();
+      }
+      
       if (pendingCacheWrites > 0) {
         saveTranslationCache(translationCache);
         pendingCacheWrites = 0;
@@ -3992,6 +6916,20 @@ async function runDetailsOnly() {
   console.log('Starting goofish details-only mode...');
   await ensureDbReady();
   const browser = await createBrowser();
+  console.log(`Browser launched in ${GOOFISH_HEADLESS ? 'hidden/headless' : 'visible'} mode.`);
+  
+  // Login wait - wait for user to manually log in / solve CAPTCHA before starting
+  // Disabled - auto-start
+  // if (!GOOFISH_HEADLESS) {
+  //   console.log('\n========================================');
+  //   console.log('  LOGIN / CAPTCHA WAIT');
+  //   console.log('========================================');
+  //   console.log('Browser is visible. Please log in to Goofish/Xianyu or solve the CAPTCHA if present.');
+  //   console.log('Press Enter when you are ready to start...');
+  //   await ask('');
+  //   console.log('Starting details-only mode...\n');
+  // }
+  
   const pages = await browser.pages();
   let page = pages[0];
   if (!page) page = await browser.newPage();
