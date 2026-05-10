@@ -8362,6 +8362,8 @@ const getAssignedCategorySlugs = (entry, fallbackId) => {
   const entryPath = String(entry?.pathAr || '').trim();
   const slugs = new Set();
 
+  console.log('[getAssignedCategorySlugs] entryId:', entryId, 'entryPath:', entryPath);
+
   // Rebuild category list dynamically from seed file
   const freshIndex = buildCategoryIndex();
   const freshList = Array.isArray(freshIndex?.list) ? freshIndex.list : [];
@@ -8382,6 +8384,8 @@ const getAssignedCategorySlugs = (entry, fallbackId) => {
   if (slugs.size === 0 && entryId) {
     slugs.add(entryId);
   }
+
+  console.log('[getAssignedCategorySlugs] Returning slugs:', Array.from(slugs));
 
   return Array.from(slugs);
 };
