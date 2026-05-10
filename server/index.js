@@ -8617,6 +8617,26 @@ app.post('/api/admin/search/reindex', authenticateToken, isAdmin, hasPermission(
   });
 });
 
+app.get('/api/debug/category-counts', async (req, res) => {
+  try {
+    const categoryCounts = await prisma.$queryRawUnsafe(`
+      SELECT
+        "aiMetadata"->>'categorySlug' as categorySlug,
+        COUNT(*) as count
+      FROM "Product"
+      WHERE "aiMetadata"->>'categorySlug' IS NOT NULL
+        AND "aiMetadata"->>'categorySlug' != ''
+      GROUP BY "aiMetadata"->>'categorySlug'
+      ORDER BY count DESC
+      LIMIT 50
+    `);
+    res.json({ categoryCounts });
+  } catch (error) {
+    console.error('Category counts query failed:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.get('/api/search/categories', async (req, res) => {
   try {
     const q = String(req.query.q || '').trim();
