@@ -8665,9 +8665,14 @@ app.get('/api/search/categories', async (req, res) => {
           }
           const freshIndex = buildCategoryIndex();
           const freshList = Array.isArray(freshIndex?.list) ? freshIndex.list : [];
-          const combinedMap = new Map(freshList.map(c => [String(c.id || c.slug || '').trim(), c]));
+          
+          // Only include categories from seed file that exist in database
+          const combinedMap = new Map();
           for (const [slug, dbCat] of dbCategoryMap) {
-            if (!combinedMap.has(slug)) {
+            const seedEntry = freshList.find(c => String(c.id || c.slug || '').trim() === slug);
+            if (seedEntry) {
+              combinedMap.set(slug, seedEntry);
+            } else {
               combinedMap.set(slug, {
                 id: slug,
                 slug,
