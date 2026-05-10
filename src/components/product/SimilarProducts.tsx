@@ -1,5 +1,4 @@
-import React from 'react';
-import LazyImage from '../LazyImage';
+import React, { useRef, useEffect } from 'react';
 import { calculateInclusivePrice } from '../../utils/shipping';
 import type { Product } from '../../types/product';
 
@@ -7,9 +6,31 @@ interface SimilarProductsProps {
   products: Product[];
   onProductClick: (id: number | string) => void;
   loading?: boolean;
+  hasMore?: boolean;
+  onLoadMore?: () => void;
 }
 
-const SimilarProducts: React.FC<SimilarProductsProps> = ({ products, onProductClick, loading }) => {
+const SimilarProducts: React.FC<SimilarProductsProps> = ({ products, onProductClick, loading, hasMore, onLoadMore }) => {
+  const loadMoreRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!hasMore || !onLoadMore) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && !loading) {
+          onLoadMore();
+        }
+      },
+      { threshold: 0.5 }
+    );
+
+    if (loadMoreRef.current) {
+      observer.observe(loadMoreRef.current);
+    }
+
+    return () => observer.disconnect();
+  }, [hasMore, loading, onLoadMore]);
   if (loading) {
     return (
       <div className="mb-8 px-5">
@@ -17,7 +38,6 @@ const SimilarProducts: React.FC<SimilarProductsProps> = ({ products, onProductCl
         <div className="flex gap-4 overflow-x-auto no-scrollbar pb-4">
           {[...Array(4)].map((_, i) => (
             <div key={i} className="w-40 shrink-0 bg-white dark:bg-slate-800 rounded-2xl overflow-hidden shadow-sm border border-slate-100 dark:border-white/5">
-              <div className="aspect-square relative overflow-hidden bg-slate-100 dark:bg-slate-700 animate-pulse" />
               <div className="p-3 space-y-2">
                 <div className="h-8 bg-slate-200 dark:bg-slate-600 rounded animate-pulse" />
                 <div className="h-5 w-20 bg-slate-200 dark:bg-slate-600 rounded animate-pulse" />
@@ -62,14 +82,6 @@ const SimilarProducts: React.FC<SimilarProductsProps> = ({ products, onProductCl
               onClick={() => onProductClick(p.id)}
               className="w-40 shrink-0 bg-white dark:bg-slate-800 rounded-2xl overflow-hidden shadow-sm border border-slate-100 dark:border-white/5 cursor-pointer hover:scale-[1.02] transition-transform"
             >
-              <div className="aspect-square relative overflow-hidden bg-slate-100 dark:bg-slate-700">
-                <LazyImage 
-                  src={p.image} 
-                  alt={p.name}
-                  objectFit="contain"
-                  className="w-full h-full bg-white"
-                />
-              </div>
               <div className="p-3">
                 <h4 className="text-xs font-bold text-slate-900 dark:text-white line-clamp-2 h-8 mb-2 leading-snug">
                   {p.name}
@@ -81,6 +93,19 @@ const SimilarProducts: React.FC<SimilarProductsProps> = ({ products, onProductCl
             </div>
           );
         })}
+        {hasMore && onLoadMore && (
+          <button
+            ref={loadMoreRef}
+            onClick={onLoadMore}
+            className="w-40 shrink-0 bg-primary/10 dark:bg-primary/20 rounded-2xl overflow-hidden shadow-sm border border-primary/20 dark:border-primary/30 cursor-pointer hover:bg-primary/20 dark:hover:bg-primary/30 transition-colors flex items-center justify-center min-h-[100px]"
+          >
+            {loading ? (
+              <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+            ) : (
+              <span className="text-primary font-black text-sm">تحميل المزيد</span>
+            )}
+          </button>
+        )}
       </div>
     </div>
   );

@@ -62,6 +62,8 @@ const ProductDetails: React.FC = () => {
   const [reviews, setReviews] = useState<Review[]>([]);
   const [similarProducts, setSimilarProducts] = useState<Product[]>([]);
   const [similarProductsLoading, setSimilarProductsLoading] = useState(false);
+  const [similarProductsPage, setSimilarProductsPage] = useState(1);
+  const [similarProductsHasMore, setSimilarProductsHasMore] = useState(false);
   const [loading, setLoading] = useState(!product); // Only show loading if we don't have initial data
   const [reviewsLoading, setReviewsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -599,13 +601,19 @@ const ProductDetails: React.FC = () => {
   // Fetch similar products when product is loaded
   useEffect(() => {
     if (product && product.id) {
-      const fetchSimilarProducts = async () => {
+      const fetchSimilarProducts = async (page: number = 1) => {
         setSimilarProductsLoading(true);
         try {
-          const response = await fetch(`/api/products/${product.id}/similar?limit=10`);
+          const response = await fetch(`/api/products/${product.id}/similar?limit=10&page=${page}`);
           if (response.ok) {
             const data = await response.json();
-            setSimilarProducts(data.products || []);
+            if (page === 1) {
+              setSimilarProducts(data.products || []);
+            } else {
+              setSimilarProducts(prev => [...prev, ...(data.products || [])]);
+            }
+            setSimilarProductsHasMore(data.hasMore || false);
+            setSimilarProductsPage(page);
           }
         } catch (error) {
           console.error('Failed to fetch similar products:', error);
@@ -614,9 +622,25 @@ const ProductDetails: React.FC = () => {
         }
       };
 
-      fetchSimilarProducts();
+      fetchSimilarProducts(1);
     }
   }, [product?.id]);
+
+  const loadMoreSimilarProducts = () => {
+    if (similarProductsHasMore && !similarProductsLoading && product?.id) {
+      const nextPage = similarProductsPage + 1;
+      setSimilarProductsLoading(true);
+      fetch(`/api/products/${product.id}/similar?limit=10&page=${nextPage}`)
+        .then(res => res.json())
+        .then(data => {
+          setSimilarProducts(prev => [...prev, ...(data.products || [])]);
+          setSimilarProductsHasMore(data.hasMore || false);
+          setSimilarProductsPage(nextPage);
+        })
+        .catch(err => console.error('Failed to load more similar products:', err))
+        .finally(() => setSimilarProductsLoading(false));
+    }
+  };
 
   const handleShippingMethodChange = (method: 'air' | 'sea') => {
     if (product?.isAirRestricted && method === 'air') return;
@@ -834,6 +858,8 @@ const ProductDetails: React.FC = () => {
           <SimilarProducts 
             products={similarProducts}
             loading={similarProductsLoading}
+            hasMore={similarProductsHasMore}
+            onLoadMore={loadMoreSimilarProducts}
             onProductClick={(id) => {
               const selectedProduct = similarProducts.find(p => p.id === id);
               navigate(`/product?id=${id}`, { state: { initialProduct: selectedProduct } });

@@ -5133,6 +5133,8 @@ app.get('/api/products/:id/similar', async (req, res) => {
     }
 
     const limit = Math.min(20, Math.max(1, parseInt(String(req.query?.limit || '10'), 10) || 10));
+    const page = Math.max(1, parseInt(String(req.query?.page || '1'), 10) || 1);
+    const offset = (page - 1) * limit;
     
     // Get the product and its first image
     const product = await prisma.product.findUnique({
@@ -5145,7 +5147,7 @@ app.get('/api/products/:id/similar', async (req, res) => {
     }
 
     if (!product.image) {
-      return res.json({ products: [], total: 0, engine: 'clip' });
+      return res.json({ products: [], total: 0, page, totalPages: 0, hasMore: false, engine: 'clip' });
     }
 
     // Generate embedding for the product's image
@@ -5157,14 +5159,15 @@ app.get('/api/products/:id/similar', async (req, res) => {
 
     console.log(`[Similar Products] Product ${productId}: Vector generated. Querying similar products...`);
     
-    const matches = await searchProductsByImageVector(prisma, embedding, limit + 1, 0);
+    const matches = await searchProductsByImageVector(prisma, embedding, limit + 1, offset);
     // Exclude the product itself from results
     const filteredMatches = matches.filter((match) => match.id !== productId);
     const visibleMatches = filteredMatches.slice(0, limit);
+    const hasMore = filteredMatches.length > limit;
     const ids = visibleMatches.map((match) => match.id).filter((id) => Number.isFinite(id));
 
     if (ids.length === 0) {
-      return res.json({ products: [], total: 0, engine: 'clip' });
+      return res.json({ products: [], total: 0, page, totalPages: 0, hasMore: false, engine: 'clip' });
     }
 
     const shippingRates = {
@@ -5241,7 +5244,7 @@ app.get('/api/products/:id/similar', async (req, res) => {
       })
       .filter(Boolean);
 
-    return res.json({ products: ranked, total: ranked.length, engine: 'clip' });
+    return res.json({ products: ranked, total: ranked.length, page, totalPages: page + (hasMore ? 1 : 0), hasMore, engine: 'clip' });
   } catch (error) {
     console.error('[Similar Products] error details:', error);
     console.error(error.stack);
