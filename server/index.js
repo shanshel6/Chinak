@@ -5125,6 +5125,130 @@ app.post('/api/search/image', async (req, res) => {
 
 // --- Image Analysis & Search Endpoints ---
 
+app.get('/api/products/:id/similar', async (req, res) => {
+  try {
+    const productId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(productId)) {
+      return res.status(400).json({ error: 'Invalid product ID' });
+    }
+
+    const limit = Math.min(20, Math.max(1, parseInt(String(req.query?.limit || '10'), 10) || 10));
+    
+    // Get the product and its first image
+    const product = await prisma.product.findUnique({
+      where: { id: productId },
+      select: { id: true, image: true, status: true, isActive: true }
+    });
+
+    if (!product) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
+
+    if (!product.image) {
+      return res.json({ products: [], total: 0, engine: 'clip' });
+    }
+
+    // Generate embedding for the product's image
+    const embedding = await runClipTask(() => embedImage(product.image));
+    
+    if (!embedding || !Array.isArray(embedding)) {
+      throw new Error('Failed to generate embedding array');
+    }
+
+    console.log(`[Similar Products] Product ${productId}: Vector generated. Querying similar products...`);
+    
+    const matches = await searchProductsByImageVector(prisma, embedding, limit + 1, 0);
+    // Exclude the product itself from results
+    const filteredMatches = matches.filter((match) => match.id !== productId);
+    const visibleMatches = filteredMatches.slice(0, limit);
+    const ids = visibleMatches.map((match) => match.id).filter((id) => Number.isFinite(id));
+
+    if (ids.length === 0) {
+      return res.json({ products: [], total: 0, engine: 'clip' });
+    }
+
+    const shippingRates = {
+      airShippingRate: 15400,
+      seaShippingRate: 182000,
+      airShippingMinFloor: 0
+    };
+    try {
+      const storeSettings = await prisma.storeSettings.findUnique({ where: { id: 1 } });
+      if (storeSettings) {
+        shippingRates.airShippingRate = storeSettings.airShippingRate;
+        shippingRates.seaShippingRate = storeSettings.seaShippingRate;
+        shippingRates.airShippingMinFloor = storeSettings.airShippingMinFloor;
+      }
+    } catch (e) {
+      console.warn('Failed to fetch store settings in similar products, using defaults');
+    }
+
+    const productSelect = {
+      id: true,
+      name: true,
+      price: true,
+      basePriceIQD: true,
+      image: true,
+      aiMetadata: true,
+      neworold: true,
+      isFeatured: true,
+      featuredSearchSentences: true,
+      domesticShippingFee: true,
+      deliveryTime: true,
+      variants: {
+        select: {
+          id: true,
+          combination: true,
+          price: true,
+          basePriceIQD: true,
+          image: true
+        }
+      }
+    };
+
+    const productsFromDb = await prisma.product.findMany({
+      where: {
+        id: { in: ids },
+        status: 'PUBLISHED',
+        isActive: true
+      },
+      select: productSelect
+    });
+
+    const byId = new Map(productsFromDb.map((p) => [p.id, p]));
+    const matchById = new Map(visibleMatches.map((match) => [match.id, match]));
+    const ranked = ids
+      .map((id) => {
+        const product = byId.get(id);
+        const match = matchById.get(id);
+        if (!product || !match) return null;
+        const aiMetadata = parseAiMetadata(product.aiMetadata);
+        const processed = applyDynamicPricingToProduct(product, shippingRates);
+        const isRealBrand = typeof aiMetadata?.isRealBrand === 'boolean' ? aiMetadata.isRealBrand : null;
+        const neworold = (product.neworold !== null && product.neworold !== undefined)
+          ? product.neworold
+          : extractNewOrOld(aiMetadata);
+        return {
+          ...processed,
+          aiMetadata,
+          isRealBrand,
+          neworold,
+          imageSimilarity: match.similarity,
+          matchedImageId: match.matchedImageId,
+          matchedImageUrl: match.matchedImageUrl,
+          matchedImageOrder: match.matchedImageOrder,
+        };
+      })
+      .filter(Boolean);
+
+    return res.json({ products: ranked, total: ranked.length, engine: 'clip' });
+  } catch (error) {
+    console.error('[Similar Products] error details:', error);
+    console.error(error.stack);
+    return res.status(500).json({ error: 'Failed to fetch similar products' });
+  }
+});
+
 app.post('/api/search/analyze-image', upload.single('image'), async (req, res) => {
   try {
     let input;

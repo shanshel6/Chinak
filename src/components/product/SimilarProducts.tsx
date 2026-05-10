@@ -6,9 +6,29 @@ import type { Product } from '../../types/product';
 interface SimilarProductsProps {
   products: Product[];
   onProductClick: (id: number | string) => void;
+  loading?: boolean;
 }
 
-const SimilarProducts: React.FC<SimilarProductsProps> = ({ products, onProductClick }) => {
+const SimilarProducts: React.FC<SimilarProductsProps> = ({ products, onProductClick, loading }) => {
+  if (loading) {
+    return (
+      <div className="mb-8 px-5">
+        <h3 className="text-slate-900 dark:text-white text-lg font-black mb-4">منتجات مشابهة</h3>
+        <div className="flex gap-4 overflow-x-auto no-scrollbar pb-4">
+          {[...Array(4)].map((_, i) => (
+            <div key={i} className="w-40 shrink-0 bg-white dark:bg-slate-800 rounded-2xl overflow-hidden shadow-sm border border-slate-100 dark:border-white/5">
+              <div className="aspect-square relative overflow-hidden bg-slate-100 dark:bg-slate-700 animate-pulse" />
+              <div className="p-3 space-y-2">
+                <div className="h-8 bg-slate-200 dark:bg-slate-600 rounded animate-pulse" />
+                <div className="h-5 w-20 bg-slate-200 dark:bg-slate-600 rounded animate-pulse" />
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   if (products.length === 0) return null;
 
   return (

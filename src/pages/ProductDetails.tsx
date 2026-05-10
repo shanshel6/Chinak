@@ -60,7 +60,8 @@ const ProductDetails: React.FC = () => {
     return null;
   });
   const [reviews, setReviews] = useState<Review[]>([]);
-  const [similarProducts] = useState<Product[]>([]);
+  const [similarProducts, setSimilarProducts] = useState<Product[]>([]);
+  const [similarProductsLoading, setSimilarProductsLoading] = useState(false);
   const [loading, setLoading] = useState(!product); // Only show loading if we don't have initial data
   const [reviewsLoading, setReviewsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -595,6 +596,28 @@ const ProductDetails: React.FC = () => {
     }
   }, [productId, product?.id]);
 
+  // Fetch similar products when product is loaded
+  useEffect(() => {
+    if (product && product.id) {
+      const fetchSimilarProducts = async () => {
+        setSimilarProductsLoading(true);
+        try {
+          const response = await fetch(`/api/products/${product.id}/similar?limit=10`);
+          if (response.ok) {
+            const data = await response.json();
+            setSimilarProducts(data.products || []);
+          }
+        } catch (error) {
+          console.error('Failed to fetch similar products:', error);
+        } finally {
+          setSimilarProductsLoading(false);
+        }
+      };
+
+      fetchSimilarProducts();
+    }
+  }, [product?.id]);
+
   const handleShippingMethodChange = (method: 'air' | 'sea') => {
     if (product?.isAirRestricted && method === 'air') return;
     setShippingMethod(method);
@@ -810,6 +833,7 @@ const ProductDetails: React.FC = () => {
 
           <SimilarProducts 
             products={similarProducts}
+            loading={similarProductsLoading}
             onProductClick={(id) => {
               const selectedProduct = similarProducts.find(p => p.id === id);
               navigate(`/product?id=${id}`, { state: { initialProduct: selectedProduct } });
