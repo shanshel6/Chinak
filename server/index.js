@@ -5132,6 +5132,8 @@ app.get('/api/products/:id/similar', async (req, res) => {
       return res.status(400).json({ error: 'Invalid product ID' });
     }
 
+    console.log(`[Similar Products] Fetching similar products for product ${productId}`);
+    
     const limit = Math.min(20, Math.max(1, parseInt(String(req.query?.limit || '10'), 10) || 10));
     const page = Math.max(1, parseInt(String(req.query?.page || '1'), 10) || 1);
     const offset = (page - 1) * limit;
@@ -5142,29 +5144,38 @@ app.get('/api/products/:id/similar', async (req, res) => {
       select: { id: true, image: true, status: true, isActive: true }
     });
 
+    console.log(`[Similar Products] Product found: ${!!product}, has image: ${!!product?.image}`);
+
     if (!product) {
       return res.status(404).json({ error: 'Product not found' });
     }
 
     if (!product.image) {
+      console.log(`[Similar Products] Product ${productId} has no image, returning empty results`);
       return res.json({ products: [], total: 0, page, totalPages: 0, hasMore: false, engine: 'clip' });
     }
 
     // Generate embedding for the product's image
+    console.log(`[Similar Products] Generating embedding for product ${productId}`);
     const embedding = await runClipTask(() => embedImage(product.image));
     
     if (!embedding || !Array.isArray(embedding)) {
+      console.error(`[Similar Products] Failed to generate embedding for product ${productId}`);
       throw new Error('Failed to generate embedding array');
     }
 
     console.log(`[Similar Products] Product ${productId}: Vector generated. Querying similar products...`);
     
     const matches = await searchProductsByImageVector(prisma, embedding, limit + 1, offset);
+    console.log(`[Similar Products] Found ${matches.length} matches for product ${productId}`);
+    
     // Exclude the product itself from results
     const filteredMatches = matches.filter((match) => match.id !== productId);
     const visibleMatches = filteredMatches.slice(0, limit);
     const hasMore = filteredMatches.length > limit;
     const ids = visibleMatches.map((match) => match.id).filter((id) => Number.isFinite(id));
+
+    console.log(`[Similar Products] After filtering: ${ids.length} products to fetch`);
 
     if (ids.length === 0) {
       return res.json({ products: [], total: 0, page, totalPages: 0, hasMore: false, engine: 'clip' });
