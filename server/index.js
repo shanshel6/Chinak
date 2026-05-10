@@ -8409,14 +8409,21 @@ const searchProductsByAssignedCategories = async ({
     return { products: [], total: 0, page, totalPages: 0, hasMore: false, engine };
   }
 
+  // Convert slugs to category IDs from the categories table
+  const categoryRows = await prisma.$queryRawUnsafe(`
+    SELECT id, slug
+    FROM "categories"
+    WHERE slug = ANY($1)
+  `, slugs);
+  const categoryIds = categoryRows.map((row) => row.id);
+
+  if (categoryIds.length === 0) {
+    return { products: [], total: 0, page, totalPages: 0, hasMore: false, engine };
+  }
+
   const andFilters = [
     {
-      OR: slugs.map((slug) => ({
-        aiMetadata: {
-          path: ['categorySlug'],
-          equals: slug
-        }
-      }))
+      categoryId: { in: categoryIds }
     }
   ];
 
