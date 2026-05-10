@@ -8900,6 +8900,7 @@ app.get('/api/search/category-products', async (req, res) => {
       const freshIndex = buildCategoryIndex();
       const freshList = Array.isArray(freshIndex?.list) ? freshIndex.list : [];
       const seedEntry = freshList.find(c => String(c.id || '').trim() === categoryId);
+      console.log('[Category Products] dbCategory branch - categoryId:', categoryId, 'seedEntry found:', !!seedEntry, 'seedEntry pathAr:', seedEntry?.pathAr);
       categoryEntry = {
         id: categoryId,
         slug: categoryId,
@@ -8921,6 +8922,7 @@ app.get('/api/search/category-products', async (req, res) => {
       const freshIndex = buildCategoryIndex();
       const freshList = Array.isArray(freshIndex?.list) ? freshIndex.list : [];
       const seedEntry = freshList.find(c => String(c.id || '').trim() === categoryId);
+      console.log('[Category Products] tableCategory branch - categoryId:', categoryId, 'seedEntry found:', !!seedEntry, 'seedEntry pathAr:', seedEntry?.pathAr);
       categoryEntry = {
         id: categoryId,
         slug: categoryId,
