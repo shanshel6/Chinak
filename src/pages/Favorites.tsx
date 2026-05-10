@@ -125,6 +125,12 @@ const Favorites: React.FC = () => {
               }, null);
 
               const minPrice = minVariant ? minVariant.price : product.price;
+              const maxVariant = variants.reduce((max: any, curr: any) => {
+                if (!curr.price) return max;
+                if (!max) return curr;
+                return curr.price > max.price ? curr : max;
+              }, null);
+              const maxPrice = maxVariant ? maxVariant.price : product.price;
               
               const effectiveBasePriceIQD = (minVariant && minVariant.basePriceIQD && minVariant.basePriceIQD > 0)
                 ? minVariant.basePriceIQD
@@ -176,7 +182,17 @@ const Favorites: React.FC = () => {
 
                     <div className="mt-2 flex items-center gap-2">
                       <p className="text-primary text-base font-bold">
-                        {calculateInclusivePrice(
+                        {Number(maxPrice) > Number(minPrice)
+                          ? `${calculateInclusivePrice(
+                            minPrice,
+                            product.domesticShippingFee || 0,
+                            effectiveBasePriceIQD
+                          ).toLocaleString()} - ${calculateInclusivePrice(
+                            maxPrice,
+                            product.domesticShippingFee || 0,
+                            maxVariant?.basePriceIQD || product.basePriceIQD
+                          ).toLocaleString()}`
+                          : calculateInclusivePrice(
                           minPrice,
                           product.domesticShippingFee || 0,
                           effectiveBasePriceIQD
@@ -201,7 +217,14 @@ const Favorites: React.FC = () => {
                 return curr.price < min.price ? curr : min;
               }, null);
 
+              const maxVariant = variants.reduce((max: any, curr: any) => {
+                if (!curr.price) return max;
+                if (!max) return curr;
+                return curr.price > max.price ? curr : max;
+              }, null);
+
               const minPrice = minVariant ? minVariant.price : product.price;
+              const maxPrice = maxVariant ? maxVariant.price : product.price;
               
               const effectiveBasePriceIQD = (minVariant && minVariant.basePriceIQD && minVariant.basePriceIQD > 0)
                 ? minVariant.basePriceIQD
@@ -227,7 +250,17 @@ const Favorites: React.FC = () => {
                     </h3>
                     <div className="flex items-center gap-2 mt-2">
                       <span className="text-lg font-bold text-primary">
-                        {calculateInclusivePrice(
+                        {Number(maxPrice) > Number(minPrice)
+                          ? `${calculateInclusivePrice(
+                            minPrice,
+                            product.domesticShippingFee || 0,
+                            effectiveBasePriceIQD
+                          ).toLocaleString()} - ${calculateInclusivePrice(
+                            maxPrice,
+                            product.domesticShippingFee || 0,
+                            maxVariant?.basePriceIQD || product.basePriceIQD
+                          ).toLocaleString()}`
+                          : calculateInclusivePrice(
                           minPrice,
                           product.domesticShippingFee || 0,
                           effectiveBasePriceIQD

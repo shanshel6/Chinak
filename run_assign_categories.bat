@@ -18,8 +18,23 @@ if not exist "server\.env" (
   exit /b 1
 )
 
+set "DATABASE_URL=postgresql://postgres:wpAxoWsjxiQfxCSnAnPdotRRMuDpOIdu@viaduct.proxy.rlwy.net:34644/railway?sslmode=require&connection_limit=2&pool_timeout=300&connect_timeout=120"
+set "DIRECT_URL=postgresql://postgres:wpAxoWsjxiQfxCSnAnPdotRRMuDpOIdu@viaduct.proxy.rlwy.net:34644/railway?sslmode=require&connection_limit=2&pool_timeout=300&connect_timeout=120"
+
 if "%CATEGORY_ASSIGN_MODEL%"=="" (
-  set "CATEGORY_ASSIGN_MODEL=Qwen/Qwen3-8B"
+  set "CATEGORY_ASSIGN_MODEL=Qwen/Qwen3-14B"
+)
+
+if "%SILICONFLOW_API_KEY%"=="" (
+  set "SILICONFLOW_API_KEY=sk-crnipdimfvvgrbbxtvmbrshaqtjdmujbvkpuoifcdxkcalwh"
+)
+
+if "%CATEGORY_API_TIMEOUT_MS%"=="" (
+  set "CATEGORY_API_TIMEOUT_MS=60000"
+)
+
+if "%CATEGORY_API_RETRY_ATTEMPTS%"=="" (
+  set "CATEGORY_API_RETRY_ATTEMPTS=3"
 )
 
 if "%CATEGORY_BATCH_SIZE%"=="" (
@@ -38,9 +53,16 @@ if /I "%~1"=="skip" (
   set "CATEGORY_FORCE_ALL=0"
   echo [MODE] SKIP: Only processing uncategorized products
   shift
+) else if /I "%~1"=="resume" (
+  set "CATEGORY_FORCE_ALL=1"
+  set "RESUME_ARG=--resume-offset=%~2"
+  echo [MODE] FORCE ALL + RESUME from offset: %~2
+  shift
+  shift
 ) else (
   set "CATEGORY_FORCE_ALL=1"
-  echo [MODE] FORCE ALL: Re-processing ALL products and discovering new categories
+  set "RESUME_ARG="
+  echo [MODE] FORCE ALL + Resume from saved progress
 )
 
 echo ========================================
@@ -63,10 +85,25 @@ echo.
 echo To skip already-categorized products, run with "skip" argument:
 echo   run_assign_categories.bat skip
 echo.
+echo To resume from a specific offset, run with "resume" argument:
+echo   run_assign_categories.bat resume 20750
+echo.
 
 cd server
-node scripts\assign-categories-from-urls.js
+:RESTART_LOOP
+node scripts\assign-categories-from-urls.js %RESUME_ARG%
 set "EXIT_CODE=%ERRORLEVEL%"
+
+if errorlevel 1 (
+  echo.
+  echo ========================================
+  echo   Script exited with code %EXIT_CODE%
+  echo   Restarting from saved progress...
+  echo ========================================
+  echo.
+  timeout /t 3 /nobreak >nul
+  goto RESTART_LOOP
+)
 
 echo.
 echo ========================================

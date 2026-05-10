@@ -223,6 +223,15 @@ const ProductCard: React.FC<ProductCardProps> = React.memo(({
   }, [variants]);
 
   const minPrice = minVariant ? minVariant.price : product.price;
+  const maxVariant = React.useMemo(() => {
+    if (!variants.length) return null;
+    return variants.reduce((max: any, curr: any) => {
+      if (!curr?.price) return max;
+      if (!max) return curr;
+      return Number(curr.price) > Number(max.price) ? curr : max;
+    }, null);
+  }, [variants]);
+  const maxPrice = maxVariant ? maxVariant.price : product.price;
 
   const prefetchTimerRef = useRef<any>(null);
   const isPrefetched = useRef(false);
@@ -278,6 +287,8 @@ const ProductCard: React.FC<ProductCardProps> = React.memo(({
     // Just return the minPrice which is already the final price from DB
     return minPrice;
   }, [minPrice]);
+  const totalMaxPrice = React.useMemo(() => maxPrice, [maxPrice]);
+  const hasPriceRange = Number(totalMaxPrice) > Number(totalPrice);
 
   // If the product is archived and we are just hiding it from view instantly
   if (product.isActive === false) {
@@ -447,7 +458,9 @@ const ProductCard: React.FC<ProductCardProps> = React.memo(({
             <span className="text-[10px] text-slate-500 font-medium">السعر</span>
             <div className="flex items-baseline gap-1">
               <span className="text-xl font-black text-primary dark:text-primary-400 tracking-tight">
-                {totalPrice.toLocaleString()}
+                {hasPriceRange
+                  ? `${totalPrice.toLocaleString()} - ${totalMaxPrice.toLocaleString()}`
+                  : totalPrice.toLocaleString()}
               </span>
               <span className="text-[10px] font-bold text-primary/80 dark:text-primary-400/80">د.ع</span>
             </div>

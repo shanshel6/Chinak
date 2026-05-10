@@ -81,9 +81,25 @@ model Message {
   user      User     @relation(fields: [userId], references: [id])
 }
 
+model Category {
+  id              Int      @id @default(autoincrement())
+  slug            String   @unique
+  nameAr          String   @map("name_ar")
+  nameEn          String   @map("name_en")
+  goofishCategoryId String? @map("goofish_category_id")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  products        Product[]
+
+  @@index([slug])
+  @@index([goofishCategoryId])
+  @@map("categories")
+}
+
 model Product {
   id                Int                    @id @default(autoincrement())
   name              String
+  description       String?
   keywords          String[]               @default([])
   price             Float
   basePriceIQD      Float?
@@ -100,12 +116,14 @@ model Product {
   scrapedReviews    Json?                  // New field for scraped reviews
   generated_options Json?                  // New field for generated options
   neworold          Boolean?
-  embedding         Unsupported("vector(512)")?
+  // embedding         Unsupported("vector(512)")?  // Temporarily disabled - Railway doesn't support pgvector
   imageEmbedding    Unsupported("vector(512)")?
   domesticShippingFee Float?
   isAirRestricted   Boolean                @default(false)
   imagesChecked     Boolean?               @default(false) // Changed to optional to handle existing nulls
   deliveryTime      String?
+  categoryId        Int?
+  category          Category?              @relation(fields: [categoryId], references: [id])
   cartItems         CartItem[]
   orderItems        OrderItem[]
   images            ProductImage[]
@@ -119,18 +137,19 @@ model Product {
   @@index([isActive])
   @@index([name])
   @@index([updatedAt])
+  @@index([categoryId])
 }
 
 model ProductImage {
-  id        Int      @id @default(autoincrement())
-  productId Int
-  url       String
-  order     Int      @default(0)
-  type      String   @default("GALLERY")
+  id             Int      @id @default(autoincrement())
+  productId      Int
+  url            String
+  order          Int      @default(0)
+  type           String   @default("GALLERY")
   imageEmbedding Unsupported("vector(512)")?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  product        Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   @@index([productId, order])
 }

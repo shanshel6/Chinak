@@ -17,14 +17,15 @@ const ProductDescription: React.FC<ProductDescriptionProps> = ({
     if (!raw) return '';
     const priceTokenRegex = /[¥￥]\s*\d+(?:[.,]\d+)?|\b(?:CNY|RMB|IQD)\b\s*\d+(?:[.,]\d+)?|\d+(?:[.,]\d+)?\s*(?:元|人民币|د\.?\s*ع)\b/gi;
     const keywordLineRegex = /(关键词|关键字|keywords?\b|tags?\b|الكلمات\s*المفتاحية|كلمات\s*مفتاحية)/i;
-    const priceLineRegex = /(\bprice\b|السعر|السعر:|price_rmb|rmb|cny|¥|￥|元|人民币|د\.?\s*ع)/i;
+    const priceLineRegex = /(\bprice\b|price_rmb|rmb|cny|¥|￥|元|人民币)/i;
     const lines = raw
       .split('\n')
       .map((line) => line.trim())
       .filter(Boolean)
       .filter((line) => !keywordLineRegex.test(line))
-      .map((line) => line.replace(priceTokenRegex, '').trim())
-      .filter((line) => !(priceLineRegex.test(line) && /\d/.test(line)));
+      .filter((line) => line.startsWith('💰') || !priceLineRegex.test(line) || !/\d/.test(line))
+      .map((line) => line.startsWith('💰') ? line : line.replace(priceTokenRegex, '').trim())
+      .filter((line) => line.startsWith('💰') || !(priceLineRegex.test(line) && /\d/.test(line)));
     return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
   }, [description]);
   const hasSpecs = !!specs && (
@@ -108,7 +109,7 @@ const ProductDescription: React.FC<ProductDescriptionProps> = ({
   const isDescriptionRedundant = (hasSpecs && (
     normalizedDescription === normalizedSpecs || 
     normalizedSpecs.includes(normalizedDescription)
-  )) || (!!productName && normalizedDescription === normalizedProductName);
+  )) || (!!productName && normalizedDescription === normalizedProductName && cleanedDescription.length < 10);
 
   const showDescription = !!cleanedDescription && !isDescriptionRedundant;
   const showSpecsInDesc = parsedSpecs.length > 0;
