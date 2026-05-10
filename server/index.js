@@ -8934,6 +8934,8 @@ app.get('/api/search/category-products', async (req, res) => {
 
     const assignedCategorySlugs = getAssignedCategorySlugs(categoryEntry, categoryId);
 
+    console.log('[Category Products] categoryId:', categoryId, 'assignedCategorySlugs:', assignedCategorySlugs.length, 'searchText:', req.query.q);
+
     // Build query context for this category search
     const categoryQuery = {
       searchText: String(req.query.q || '').trim(),
@@ -8942,6 +8944,7 @@ app.get('/api/search/category-products', async (req, res) => {
     };
 
     if (!categoryQuery.searchText && assignedCategorySlugs.length === 0) {
+      console.log('[Category Products] No search text and no assigned slugs, returning empty');
       return res.json({
         products: [],
         total: 0,
@@ -8963,7 +8966,10 @@ app.get('/api/search/category-products', async (req, res) => {
         })
       : null;
 
+    console.log('[Category Products] searchProductsByAssignedCategories result:', result ? { total: result.total, engine: result.engine } : 'null');
+
     if (!result || (result.total === 0 && categoryQuery.searchText)) {
+      console.log('[Category Products] Falling back to searchProductsFromDatabase');
       result = await searchProductsFromDatabase({
         query: categoryQuery.searchText,
         rankingQuery: categoryQuery.displayName || categoryQuery.searchText,
@@ -8973,6 +8979,7 @@ app.get('/api/search/category-products', async (req, res) => {
         condition,
         engine: 'category-db'
       });
+      console.log('[Category Products] searchProductsFromDatabase result:', result ? { total: result.total, engine: result.engine } : 'null');
     }
 
     return res.json({
