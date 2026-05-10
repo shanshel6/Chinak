@@ -700,11 +700,9 @@ const scoreCategorySuggestion = (entry, query) => {
     if (!normalizedCandidate || !compactCandidate) continue;
 
     let score = 0;
-    if (normalizedCandidate === normalizedQuery || compactCandidate === compactQuery) {
-      score = 1000;
-    } else if (normalizedCandidate.startsWith(normalizedQuery) || compactCandidate.startsWith(compactQuery)) {
-      score = 820;
-    } else if (normalizedCandidate.includes(normalizedQuery) || compactCandidate.includes(compactQuery)) {
+    // Only match if query appears as a contiguous substring (not scattered letters)
+    // Check with spaces preserved first, then without spaces as fallback
+    if (normalizedCandidate.includes(normalizedQuery)) {
       score = 520;
     }
 
@@ -3706,6 +3704,13 @@ const withDbRetry = async (task, attempts = 3) => {
   let lastError = null;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
+      // Ensure Prisma is connected before executing task
+      try {
+        await prisma.$connect();
+      } catch (connectErr) {
+        // If connect fails, try to reconnect
+        await reconnectPrisma(attempt);
+      }
       return await task();
     } catch (error) {
       lastError = error;
@@ -8635,15 +8640,28 @@ app.get('/api/search/categories', async (req, res) => {
               AND "aiMetadata"->>'categorySlug' != 'other'
             GROUP BY "aiMetadata"->>'categorySlug'
           `);
-          const nextAssignedSlugs = new Set((dbCategoryRows || []).map((r) => String(r.slug || '').trim()).filter(Boolean));
+          const categoryTableRows = await prisma.$queryRawUnsafe(`
+            SELECT
+              slug,
+              "name_ar" as "nameAr",
+              "name_en" as "nameEn"
+            FROM "categories"
+            WHERE slug IS NOT NULL
+              AND slug != ''
+              AND slug != 'other'
+          `);
+          const allCategoryRows = [...(dbCategoryRows || []), ...(categoryTableRows || [])];
+          const nextAssignedSlugs = new Set(allCategoryRows.map((r) => String(r.slug || '').trim()).filter(Boolean));
           const dbCategoryMap = new Map();
-          for (const row of dbCategoryRows || []) {
+          for (const row of allCategoryRows) {
             const slug = String(row.slug || '').trim();
             if (!slug) continue;
-            dbCategoryMap.set(slug, {
-              nameAr: String(row.nameAr || '').trim() || slug,
-              nameEn: String(row.nameEn || '').trim() || slug
-            });
+            if (!dbCategoryMap.has(slug)) {
+              dbCategoryMap.set(slug, {
+                nameAr: String(row.nameAr || '').trim() || slug,
+                nameEn: String(row.nameEn || '').trim() || slug
+              });
+            }
           }
           const freshIndex = buildCategoryIndex();
           const freshList = Array.isArray(freshIndex?.list) ? freshIndex.list : [];
@@ -8701,7 +8719,9 @@ app.get('/api/search/categories', async (req, res) => {
       assignedSlugs = nextCache.assignedSlugs;
     }
 
-    const categories = freshSuggestionIndex
+    console.log('[Category Search] Cache built:', { totalCategories: freshSuggestionIndex.length, assignedSlugs: assignedSlugs.size, query: q });
+
+    const scoredCategories = freshSuggestionIndex
       .filter((entry) => assignedSlugs.has(String(entry.id || '').trim()))
       .map((entry) => {
         const { score, matchedText } = scoreCategorySuggestion(entry, q);
@@ -8718,7 +8738,11 @@ app.get('/api/search/categories', async (req, res) => {
             }
           : null;
       })
-      .filter(Boolean)
+      .filter(Boolean);
+
+    console.log('[Category Search] Scored categories:', scoredCategories.length, 'out of', freshSuggestionIndex.length);
+
+    const categories = scoredCategories
       .sort((a, b) => {
         const scoreDiff = b.score - a.score;
         if (scoreDiff !== 0) return scoreDiff;
@@ -8728,6 +8752,8 @@ app.get('/api/search/categories', async (req, res) => {
       })
       .slice(0, limit)
       .map(({ score, depth, matchedText, ...entry }) => entry);
+
+    console.log('[Category Search] Returning categories:', categories.length);
 
     return res.json({ categories });
   } catch (error) {
