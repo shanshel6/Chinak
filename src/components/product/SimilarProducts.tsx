@@ -50,7 +50,14 @@ const SimilarProducts: React.FC<SimilarProductsProps> = ({ products, onProductCl
     );
   }
 
-  if (products.length === 0) return null;
+  if (products.length === 0) {
+    return (
+      <div className="mb-8 px-5">
+        <h3 className="text-slate-900 dark:text-white text-lg font-black mb-4">منتجات مشابهة</h3>
+        <p className="text-slate-500 dark:text-slate-400 text-sm">لا توجد منتجات مشابهة حالياً</p>
+      </div>
+    );
+  }
 
   return (
     <div className="mb-8 px-5">

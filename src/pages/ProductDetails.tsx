@@ -598,15 +598,18 @@ const ProductDetails: React.FC = () => {
     }
   }, [productId, product?.id]);
 
-  // Fetch similar products when product is loaded
+  // Fetch similar products after product details are fully loaded
   useEffect(() => {
-    if (product && product.id) {
+    if (product && product.id && !loading && !error) {
       const fetchSimilarProducts = async (page: number = 1) => {
+        console.log('[Similar Products] Fetching similar products for product', product.id);
         setSimilarProductsLoading(true);
         try {
           const response = await fetch(`/api/products/${product.id}/similar?limit=10&page=${page}`);
+          console.log('[Similar Products] Response status:', response.status);
           if (response.ok) {
             const data = await response.json();
+            console.log('[Similar Products] Received data:', data);
             if (page === 1) {
               setSimilarProducts(data.products || []);
             } else {
@@ -614,17 +617,24 @@ const ProductDetails: React.FC = () => {
             }
             setSimilarProductsHasMore(data.hasMore || false);
             setSimilarProductsPage(page);
+          } else {
+            console.error('[Similar Products] API error:', response.status, response.statusText);
           }
         } catch (error) {
-          console.error('Failed to fetch similar products:', error);
+          console.error('[Similar Products] Failed to fetch:', error);
         } finally {
           setSimilarProductsLoading(false);
         }
       };
 
-      fetchSimilarProducts(1);
+      // Delay fetching similar products by 1 second to ensure product details are fully loaded
+      const timer = setTimeout(() => {
+        fetchSimilarProducts(1);
+      }, 1000);
+
+      return () => clearTimeout(timer);
     }
-  }, [product?.id]);
+  }, [product?.id, loading, error]);
 
   const loadMoreSimilarProducts = () => {
     if (similarProductsHasMore && !similarProductsLoading && product?.id) {
