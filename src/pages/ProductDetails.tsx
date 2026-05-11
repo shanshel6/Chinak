@@ -17,6 +17,7 @@ import ProductDescription from '../components/product/ProductDescription';
 import ProductSpecs from '../components/product/ProductSpecs';
 import SimilarProducts from '../components/product/SimilarProducts';
 import AddToCartBar from '../components/product/AddToCartBar';
+import ProductNotesModal from '../components/product/ProductNotesModal';
 
 import { AlertCircle, Package, Plane, Ship } from 'lucide-react';
 
@@ -62,6 +63,10 @@ const ProductDetails: React.FC = () => {
   const [shippingMethod, setShippingMethod] = useState<'air' | 'sea' | null>(null); // Default to null (user must select)
   const userChangedShipping = useRef(false);
   const [currentVariant, setCurrentVariant] = useState<any>(null);
+  
+  // Notes modal state
+  const [isNotesModalOpen, setIsNotesModalOpen] = useState(false);
+  const [pendingCartItem, setPendingCartItem] = useState<any>(null);
 
   const [selectedOptions, setSelectedOptions] = useState<Record<string, string>>(() => {
     // Try to get initial options from navigation state or global cache
@@ -644,13 +649,11 @@ const ProductDetails: React.FC = () => {
       resolvedVariant = product.variants[0];
     }
 
-    // Optimistic state update in the UI
-    setIsAdding(true);
-    setIsAdded(true);
-    showToast('تمت إضافة المنتج إلى السلة بنجاح', 'success');
-
-    try {
-      await addItem(product.id, 1, resolvedVariant?.id, {
+    // Store pending cart item and show notes modal
+    setPendingCartItem({
+      productId: product.id,
+      variantId: resolvedVariant?.id,
+      productInfo: {
         id: product.id,
         name: product.name,
         price: resolvedVariant?.price || product.price || 0,
@@ -659,14 +662,40 @@ const ProductDetails: React.FC = () => {
         domesticShippingFee: product.domesticShippingFee,
         basePriceIQD: product.basePriceIQD,
         deliveryTime: product.deliveryTime
-      }, selectedOptions, finalShippingMethod);
+      },
+      selectedOptions,
+      shippingMethod: finalShippingMethod
+    });
+    setIsNotesModalOpen(true);
+  };
 
-      trackInteraction(product.id, 'CART', 5);
+  const handleNotesConfirm = async (notes: string) => {
+    const item = pendingCartItem;
+    if (!item) return;
+
+    // Optimistic state update in the UI
+    setIsAdding(true);
+    setIsAdded(true);
+    showToast('تمت إضافة المنتج إلى السلة بنجاح', 'success');
+
+    try {
+      await addItem(
+        item.productId,
+        1,
+        item.variantId,
+        item.productInfo,
+        item.selectedOptions,
+        item.shippingMethod,
+        notes
+      );
+
+      trackInteraction(item.productId, 'CART', 5);
     } catch (err) {
       console.error('Error in addItem:', err);
       setIsAdded(false);
       showToast(`فشل إضافة المنتج: ${err instanceof Error ? err.message : 'خطأ غير معروف'}`, 'error');
     } finally {
+      setPendingCartItem(null);
       setIsAdding(false);
     }
   };
@@ -886,6 +915,13 @@ const ProductDetails: React.FC = () => {
             isActive={product.isActive}
           />
       </div>
+      
+      <ProductNotesModal
+        isOpen={isNotesModalOpen}
+        onClose={() => setIsNotesModalOpen(false)}
+        onConfirm={handleNotesConfirm}
+        productName={product?.name || ''}
+      />
     </div>
   );
 };

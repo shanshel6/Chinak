@@ -5144,7 +5144,7 @@ app.get('/api/products/:id/similar', async (req, res) => {
       select: { id: true, categoryId: true, status: true, isActive: true }
     });
 
-    console.log(`[Similar Products] Product found: ${!!product}, categoryId: ${product?.categoryId}`);
+    console.log(`[Similar Products] Product found: ${!!product}, categoryId: ${product?.categoryId}, status: ${product?.status}, isActive: ${product?.isActive}`);
 
     if (!product) {
       return res.status(404).json({ error: 'Product not found' });
@@ -5156,9 +5156,18 @@ app.get('/api/products/:id/similar', async (req, res) => {
       return res.json({ products: [], total: 0, page, totalPages: 0, hasMore: false, engine: 'category' });
     }
 
-    console.log(`[Similar Products] Fetching random products from category ${product.categoryId}...`);
+    console.log(`[Similar Products] Fetching products from category ${product.categoryId}...`);
     
-    // Count total products in the category (excluding current product)
+    // First, count all products in the category (without filters) to see if any exist
+    const totalInCategory = await prisma.product.count({
+      where: {
+        categoryId: product.categoryId,
+        id: { not: productId }
+      }
+    });
+    console.log(`[Similar Products] Total products in category ${product.categoryId} (excluding current): ${totalInCategory}`);
+    
+    // Count total products in the category (excluding current product) with status/isActive filters
     const total = await prisma.product.count({
       where: {
         categoryId: product.categoryId,
@@ -5168,9 +5177,23 @@ app.get('/api/products/:id/similar', async (req, res) => {
       }
     });
 
-    console.log(`[Similar Products] Found ${total} products in category ${product.categoryId}`);
+    console.log(`[Similar Products] Found ${total} PUBLISHED and ACTIVE products in category ${product.categoryId}`);
 
     if (total === 0) {
+      console.log(`[Similar Products] No PUBLISHED/ACTIVE products found. Total in category: ${totalInCategory}`);
+      // If there are products in category but none are PUBLISHED/ACTIVE, try fetching without those filters
+      if (totalInCategory > 0) {
+        console.log(`[Similar Products] Fetching products without status/isActive filters for debugging...`);
+        const allProductsInCategory = await prisma.product.findMany({
+          where: {
+            categoryId: product.categoryId,
+            id: { not: productId }
+          },
+          select: { id: true, status: true, isActive: true, name: true },
+          take: 5
+        });
+        console.log(`[Similar Products] Sample products in category:`, allProductsInCategory.map(p => ({ id: p.id, status: p.status, isActive: p.isActive, name: p.name?.substring(0, 30) })));
+      }
       return res.json({ products: [], total: 0, page, totalPages: 0, hasMore: false, engine: 'category' });
     }
 
@@ -11272,7 +11295,8 @@ app.post('/api/orders', authenticateToken, async (req, res) => {
             selectedOptions: item.selectedOptions,
             quantity: item.quantity,
             price: item.price,
-            shippingMethod: item.shippingMethod || 'air'
+            shippingMethod: item.shippingMethod || 'air',
+            notes: item.notes || null
           });
         }
 

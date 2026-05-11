@@ -1773,17 +1773,17 @@ export async function fetchCart() {
   return request('/cart');
 }
 
-export async function addToCart(productId: number | string, quantity: number = 1, variantId?: number | string, selectedOptions?: any, shippingMethod: string = 'air') {
+export async function addToCart(productId: number | string, quantity: number = 1, variantId?: number | string, selectedOptions?: any, shippingMethod: string = 'air', notes?: string) {
   return request('/cart', {
     method: 'POST',
-    body: JSON.stringify({ productId, quantity, variantId, selectedOptions, shippingMethod }),
+    body: JSON.stringify({ productId, quantity, variantId, selectedOptions, shippingMethod, notes }),
   });
 }
 
-export async function updateCartItem(id: number | string, quantity: number) {
+export async function updateCartItem(id: number | string, quantity: number, notes?: string) {
   return request(`/cart/${id}`, {
     method: 'PUT',
-    body: JSON.stringify({ quantity }),
+    body: JSON.stringify({ quantity, notes }),
   });
 }
 

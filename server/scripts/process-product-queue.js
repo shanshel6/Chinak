@@ -287,12 +287,16 @@ async function moveToProcessed(filePath, itemId) {
 
 // Move file to failed directory
 async function moveToFailed(filePath, itemId) {
-  const destPath = join(FAILED_DIR, `${itemId}.json`);
-  await Promise.race([
-    fs.rename(filePath, destPath),
-    new Promise((_, reject) => setTimeout(() => reject(new Error('File move timeout')), 10000))
-  ]);
-  console.log(`[Queue] Moved ${itemId} to failed`);
+  try {
+    const destPath = join(FAILED_DIR, `${itemId}.json`);
+    await Promise.race([
+      fs.rename(filePath, destPath),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('File move timeout')), 10000))
+    ]);
+    console.log(`[Queue] Moved ${itemId} to failed`);
+  } catch (error) {
+    console.log(`[Queue] Failed to move ${itemId} to failed (file may not exist): ${error.message}`);
+  }
 }
 
 // Insert product to database
@@ -308,6 +312,12 @@ async function insertProduct(productData, goofishMappings, categories) {
         const multiplier = calculatePriceMultiplier(basePriceIQD);
         const priceIQD = Math.round(basePriceIQD * multiplier);
         console.log(`[Queue] Calculated price: ${productData.priceCny || 0} CNY -> ${priceIQD} IQD`);
+
+        // Skip products without images (database constraint until migration is applied)
+        if (!productData.images || productData.images.length === 0) {
+          console.log(`[Queue] Skipping product ${productData.itemId} - no images available`);
+          throw new Error('Product has no images, skipping');
+        }
 
         console.log(`[Queue] Creating product in database...`);
         const newProduct = await tx.product.create({

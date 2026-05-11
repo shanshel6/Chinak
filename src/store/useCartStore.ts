@@ -27,6 +27,7 @@ interface CartItem {
     basePriceRMB?: number;
     isPriceCombined?: boolean;
   };
+  notes?: string; // User notes for the product (sizes, colors, etc.)
   lastUpdated?: number;
 }
 
@@ -63,7 +64,8 @@ interface CartState {
       isPriceCombined?: boolean;
     }, 
     selectedOptions?: any,
-    shippingMethod?: 'air' | 'sea'
+    shippingMethod?: 'air' | 'sea',
+    notes?: string
   ) => Promise<void>;
   updateQuantity: (itemId: number | string, quantity: number) => Promise<void>;
   removeItem: (itemId: number | string) => Promise<void>;
@@ -182,7 +184,7 @@ export const useCartStore = create<CartState>()(
         }
       },
 
-      addItem: async (productId, quantity = 1, variantId, productInfo, selectedOptions, shippingMethod = 'air') => {
+      addItem: async (productId, quantity = 1, variantId, productInfo, selectedOptions, shippingMethod = 'air', notes) => {
         const { items } = get();
         const sOptions = typeof selectedOptions === 'object' && selectedOptions !== null 
           ? JSON.stringify(selectedOptions) 
@@ -206,7 +208,7 @@ export const useCartStore = create<CartState>()(
              set({
                items: items.map(item => 
                  item.id === existingItem.id 
-                   ? { ...item, quantity: 1, lastUpdated: Date.now() }
+                   ? { ...item, quantity: 1, lastUpdated: Date.now(), notes }
                    : item
                )
              });
@@ -214,14 +216,14 @@ export const useCartStore = create<CartState>()(
                if (typeof existingItem.id === 'string' && existingItem.id.startsWith('local-')) {
                   // ...
                } else {
-                 updateCartItem(existingItem.id, 1).catch(() => {});
+                 updateCartItem(existingItem.id, 1, notes).catch(() => {});
                }
              } catch (_e) {}
           } else {
              set({
                items: items.map(item => 
                  item.id === existingItem.id 
-                   ? { ...item, lastUpdated: Date.now() }
+                   ? { ...item, lastUpdated: Date.now(), notes }
                    : item
                )
              });
@@ -249,6 +251,7 @@ export const useCartStore = create<CartState>()(
               isPriceCombined: productInfo.isPriceCombined
             },
             variant: productInfo.variant,
+            notes,
             lastUpdated: Date.now()
           };
           set({ items: [...items, newItem] });
@@ -259,7 +262,7 @@ export const useCartStore = create<CartState>()(
             if (!token || isGuestCartSession(token)) {
               return;
             }
-            addToCart(productId, quantity, variantId, selectedOptions, shippingMethod).then(response => {
+            addToCart(productId, quantity, variantId, selectedOptions, shippingMethod, notes).then(response => {
               if (response && response.id) {
                 // Update the local item with the server ID to keep them in sync
                 set({

@@ -104,6 +104,7 @@ const AdminDashboard: React.FC = () => {
   const editingProductId = useState<number | string | null>(null)[0];
   const setEditingProductId = useState<number | string | null>(null)[1];
   const [showOriginalOptions, setShowOriginalOptions] = useState(false);
+  const [expandedNotes, setExpandedNotes] = useState<Set<number>>(new Set());
   
   const [storeSettings, setStoreSettings] = useState({
     airShippingRate: 15400,
@@ -1657,6 +1658,7 @@ const AdminDashboard: React.FC = () => {
                         <th className="px-4 py-3 text-right">السعر</th>
                         <th className="px-4 py-3 text-right">الإجمالي</th>
                         <th className="px-4 py-3 text-center">الرابط</th>
+                        <th className="px-4 py-3 text-center">ملاحظات</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-50 dark:divide-slate-800">
@@ -1810,6 +1812,35 @@ const AdminDashboard: React.FC = () => {
                                 <span className="text-slate-300 text-[10px]">لا يوجد رابط 1688</span>
                               )}
                             </div>
+                          </td>
+                          <td className="px-4 py-4 text-center">
+                            {item.notes ? (
+                              <div>
+                                <button
+                                  onClick={() => {
+                                    setExpandedNotes(prev => {
+                                      const newSet = new Set(prev);
+                                      if (newSet.has(item.id)) {
+                                        newSet.delete(item.id);
+                                      } else {
+                                        newSet.add(item.id);
+                                      }
+                                      return newSet;
+                                    });
+                                  }}
+                                  className="text-[10px] px-2 py-1 rounded-lg bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 font-bold hover:scale-105 transition-all"
+                                >
+                                  {expandedNotes.has(item.id) ? 'إخفاء' : 'عرض'}
+                                </button>
+                                {expandedNotes.has(item.id) && (
+                                  <p className="mt-2 text-[10px] text-slate-600 dark:text-slate-400 bg-slate-50 dark:bg-slate-800 p-2 rounded-lg max-w-[200px] break-words">
+                                    {item.notes}
+                                  </p>
+                                )}
+                              </div>
+                            ) : (
+                              <span className="text-slate-300 text-[10px]">لا توجد ملاحظات</span>
+                            )}
                           </td>
                         </tr>
                       ))}
