@@ -5138,47 +5138,61 @@ app.get('/api/products/:id/similar', async (req, res) => {
     const page = Math.max(1, parseInt(String(req.query?.page || '1'), 10) || 1);
     const offset = (page - 1) * limit;
     
-    // Get the product and its first image
+    // Get the product and its category
     const product = await prisma.product.findUnique({
       where: { id: productId },
-      select: { id: true, image: true, status: true, isActive: true }
+      select: { id: true, categoryId: true, status: true, isActive: true }
     });
 
-    console.log(`[Similar Products] Product found: ${!!product}, has image: ${!!product?.image}, image URL: ${product?.image?.substring(0, 100)}...`);
+    console.log(`[Similar Products] Product found: ${!!product}, categoryId: ${product?.categoryId}`);
 
     if (!product) {
       return res.status(404).json({ error: 'Product not found' });
     }
 
-    if (!product.image) {
-      console.log(`[Similar Products] Product ${productId} has no image, returning empty results`);
-      return res.json({ products: [], total: 0, page, totalPages: 0, hasMore: false, engine: 'clip' });
+    // If no category, return empty results
+    if (!product.categoryId) {
+      console.log(`[Similar Products] Product ${productId} has no category, returning empty results`);
+      return res.json({ products: [], total: 0, page, totalPages: 0, hasMore: false, engine: 'category' });
     }
 
-    // Generate embedding for the product's image
-    console.log(`[Similar Products] Generating embedding for product ${productId}, CLIP enabled: ${!!process.env.ENABLE_CLIP_WARMUP}`);
-    const embedding = await runClipTask(() => embedImage(product.image));
+    console.log(`[Similar Products] Fetching random products from category ${product.categoryId}...`);
     
-    if (!embedding || !Array.isArray(embedding)) {
-      console.error(`[Similar Products] Failed to generate embedding for product ${productId}, embedding:`, embedding);
-      throw new Error('Failed to generate embedding array');
+    // Count total products in the category (excluding current product)
+    const total = await prisma.product.count({
+      where: {
+        categoryId: product.categoryId,
+        id: { not: productId },
+        status: 'PUBLISHED',
+        isActive: true
+      }
+    });
+
+    console.log(`[Similar Products] Found ${total} products in category ${product.categoryId}`);
+
+    if (total === 0) {
+      return res.json({ products: [], total: 0, page, totalPages: 0, hasMore: false, engine: 'category' });
     }
 
-    console.log(`[Similar Products] Product ${productId}: Vector generated (length: ${embedding.length}). Querying similar products...`);
-    
-    const matches = await searchProductsByImageVector(prisma, embedding, limit + 1, offset);
-    console.log(`[Similar Products] Found ${matches.length} matches for product ${productId}`);
-    
-    // Exclude the product itself from results
-    const filteredMatches = matches.filter((match) => match.id !== productId);
-    const visibleMatches = filteredMatches.slice(0, limit);
-    const hasMore = filteredMatches.length > limit;
-    const ids = visibleMatches.map((match) => match.id).filter((id) => Number.isFinite(id));
+    // Fetch random products from the same category with pagination
+    const productsFromDb = await prisma.product.findMany({
+      where: {
+        categoryId: product.categoryId,
+        id: { not: productId },
+        status: 'PUBLISHED',
+        isActive: true
+      },
+      skip: offset,
+      take: limit,
+      orderBy: {
+        id: 'desc' // Use deterministic ordering for pagination
+      }
+    });
 
-    console.log(`[Similar Products] After filtering: ${ids.length} products to fetch`);
+    console.log(`[Similar Products] Fetched ${productsFromDb.length} products from category ${product.categoryId}`);
 
-    if (ids.length === 0) {
-      return res.json({ products: [], total: 0, page, totalPages: 0, hasMore: false, engine: 'clip' });
+    if (productsFromDb.length === 0) {
+      return res.json({ products: [], total, page, totalPages: Math.ceil(total / limit), hasMore: offset + limit < total, engine: 'category' });
     }
 
     const shippingRates = {
@@ -5220,42 +5234,41 @@ app.get('/api/products/:id/similar', async (req, res) => {
       }
     };
 
-    const productsFromDb = await prisma.product.findMany({
+    // Re-fetch products with full data
+    const productsWithDetails = await prisma.product.findMany({
       where: {
-        id: { in: ids },
+        categoryId: product.categoryId,
+        id: { not: productId },
         status: 'PUBLISHED',
         isActive: true
       },
-      select: productSelect
+      select: productSelect,
+      skip: offset,
+      take: limit,
+      orderBy: {
+        id: 'desc'
+      }
     });
 
-    const byId = new Map(productsFromDb.map((p) => [p.id, p]));
-    const matchById = new Map(visibleMatches.map((match) => [match.id, match]));
-    const ranked = ids
-      .map((id) => {
-        const product = byId.get(id);
-        const match = matchById.get(id);
-        if (!product || !match) return null;
-        const aiMetadata = parseAiMetadata(product.aiMetadata);
-        const processed = applyDynamicPricingToProduct(product, shippingRates);
-        const isRealBrand = typeof aiMetadata?.isRealBrand === 'boolean' ? aiMetadata.isRealBrand : null;
-        const neworold = (product.neworold !== null && product.neworold !== undefined)
-          ? product.neworold
-          : extractNewOrOld(aiMetadata);
-        return {
-          ...processed,
-          aiMetadata,
-          isRealBrand,
-          neworold,
-          imageSimilarity: match.similarity,
-          matchedImageId: match.matchedImageId,
-          matchedImageUrl: match.matchedImageUrl,
-          matchedImageOrder: match.matchedImageOrder,
-        };
-      })
-      .filter(Boolean);
+    const ranked = productsWithDetails.map((p) => {
+      const aiMetadata = parseAiMetadata(p.aiMetadata);
+      const processed = applyDynamicPricingToProduct(p, shippingRates);
+      const isRealBrand = typeof aiMetadata?.isRealBrand === 'boolean' ? aiMetadata.isRealBrand : null;
+      const neworold = (p.neworold !== null && p.neworold !== undefined)
+        ? p.neworold
+        : extractNewOrOld(aiMetadata);
+      return {
+        ...processed,
+        aiMetadata,
+        isRealBrand,
+        neworold,
+      };
+    });
 
-    return res.json({ products: ranked, total: ranked.length, page, totalPages: page + (hasMore ? 1 : 0), hasMore, engine: 'clip' });
+    const hasMore = offset + limit < total;
+    const totalPages = Math.ceil(total / limit);
+
+    return res.json({ products: ranked, total, page, totalPages, hasMore, engine: 'category' });
   } catch (error) {
     console.error('[Similar Products] error details:', error);
     console.error(error.stack);
