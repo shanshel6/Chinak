@@ -103,7 +103,7 @@ model Product {
   keywords          String[]               @default([])
   price             Float
   basePriceIQD      Float?
-  image             String
+  image             String?
   purchaseUrl       String?
   status            String                 @default("PUBLISHED")
   isFeatured        Boolean                @default(false)
