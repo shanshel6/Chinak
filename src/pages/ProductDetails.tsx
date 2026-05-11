@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
-import { fetchProductById, fetchProductReviews, checkProductPurchase, findProductInGlobalCache, trackInteraction } from '../services/api';
+import { fetchProductById, checkProductPurchase, findProductInGlobalCache, trackInteraction } from '../services/api';
 import { normalizeWishlistProductId, useWishlistStore } from '../store/useWishlistStore';
 import { useCartStore } from '../store/useCartStore';
 import { useAuthStore } from '../store/useAuthStore';
@@ -15,18 +15,8 @@ import ImageGallery from '../components/product/ImageGallery';
 import ProductInfo from '../components/product/ProductInfo';
 import ProductDescription from '../components/product/ProductDescription';
 import ProductSpecs from '../components/product/ProductSpecs';
-import ReviewsSection from '../components/product/ReviewsSection';
 import SimilarProducts from '../components/product/SimilarProducts';
 import AddToCartBar from '../components/product/AddToCartBar';
-
-interface Review {
-  id: number;
-  rating: number;
-  comment: string;
-  createdAt: string;
-  user: { name: string };
-  images?: string[];
-}
 
 import { AlertCircle, Package, Plane, Ship } from 'lucide-react';
 
@@ -59,13 +49,11 @@ const ProductDetails: React.FC = () => {
     }
     return null;
   });
-  const [reviews, setReviews] = useState<Review[]>([]);
   const [similarProducts, setSimilarProducts] = useState<Product[]>([]);
   const [similarProductsLoading, setSimilarProductsLoading] = useState(false);
   const [similarProductsPage, setSimilarProductsPage] = useState(1);
   const [similarProductsHasMore, setSimilarProductsHasMore] = useState(false);
   const [loading, setLoading] = useState(!product); // Only show loading if we don't have initial data
-  const [reviewsLoading, setReviewsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isAdding, setIsAdding] = useState(false);
   const [isAdded, setIsAdded] = useState(false);
@@ -146,50 +134,6 @@ const ProductDetails: React.FC = () => {
       }
     }
   }, [product, selectedOptions]);
-
-  const allReviews = useMemo(() => reviews || [], [reviews]);
-
-  const averageRating = useMemo(() => {
-    if (!allReviews.length) return 0;
-    return allReviews.reduce((acc, r) => acc + r.rating, 0) / allReviews.length;
-  }, [allReviews]);
-
-  const reviewSummary = useMemo(() => {
-    if (!allReviews.length) return undefined;
-
-    const summary: Record<number, number> = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 };
-    let positiveCount = 0;
-    const images: string[] = [];
-
-    allReviews.forEach(r => {
-      const rating = Math.round(r.rating);
-      if (summary[rating] !== undefined) summary[rating]++;
-      if (rating >= 4) positiveCount++;
-      if (r.images && r.images.length > 0) {
-        images.push(...r.images);
-      }
-    });
-
-    const positiveRate = Math.round((positiveCount / allReviews.length) * 100) + '%';
-    
-    const tags = Object.entries(summary)
-      .filter(([_, count]) => count > 0)
-      .sort((a, b) => Number(b[0]) - Number(a[0]))
-      .map(([rating, count]) => ({
-        label: `${rating} نجوم`,
-        count
-      }));
-
-    return {
-      countText: allReviews.length.toString(),
-      positiveRate,
-      tags,
-      images: images.slice(0, 10),
-      comments: [], 
-      reviews: [],
-      detailedReviews: []
-    };
-  }, [allReviews]);
 
   const displaySpecs = useMemo(() => {
     if (!product) return [];
@@ -462,7 +406,6 @@ const ProductDetails: React.FC = () => {
         }
       }
 
-      setReviews([]);
       setShouldRenderDetails(false);
 
       // 1. Fetch main product info first (high priority)
@@ -495,19 +438,6 @@ const ProductDetails: React.FC = () => {
         }
       };
 
-      // 2. Fetch reviews in background (medium priority)
-      const fetchReviews = async () => {
-        setReviewsLoading(true);
-        try {
-          const reviewsData = await fetchProductReviews(productId);
-          setReviews(reviewsData);
-        } catch (err) {
-          console.error('Error fetching reviews:', err);
-        } finally {
-          setReviewsLoading(false);
-        }
-      };
-
       // 3. Check purchase status in background (low priority)
       const fetchPurchaseStatus = async () => {
         try {
@@ -519,7 +449,6 @@ const ProductDetails: React.FC = () => {
 
       // Run fetches progressively
       fetchMainProduct();
-      fetchReviews();
       fetchPurchaseStatus();
     };
     
@@ -819,8 +748,6 @@ const ProductDetails: React.FC = () => {
             originalPrice={product.originalPrice}
             name={product.name}
             deliveryTime={product.deliveryTime}
-            averageRating={averageRating}
-            totalReviews={allReviews.length}
             domesticShippingFee={product.domesticShippingFee}
             basePriceIQD={pricingParams?.basePriceIQD}
             calculatedAirPrice={airPrice}
@@ -835,12 +762,6 @@ const ProductDetails: React.FC = () => {
             productName={product.name}
             description={descriptionFromMetadata}
           />
-
-          <ReviewsSection 
-                reviews={allReviews} 
-                reviewSummary={reviewSummary}
-                loading={reviewsLoading}
-              />
 
           <ProductSpecs specs={displaySpecs} />
 

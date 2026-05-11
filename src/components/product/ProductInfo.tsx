@@ -7,8 +7,8 @@ interface ProductInfoProps {
   originalPrice?: number;
   name: string;
   deliveryTime?: string;
-  averageRating: string | number;
-  totalReviews: number;
+  averageRating?: string | number;
+  totalReviews?: number;
   domesticShippingFee?: number;
   basePriceIQD?: number;
   calculatedAirPrice?: number;
