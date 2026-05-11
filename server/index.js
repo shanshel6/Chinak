@@ -5144,7 +5144,7 @@ app.get('/api/products/:id/similar', async (req, res) => {
       select: { id: true, image: true, status: true, isActive: true }
     });
 
-    console.log(`[Similar Products] Product found: ${!!product}, has image: ${!!product?.image}`);
+    console.log(`[Similar Products] Product found: ${!!product}, has image: ${!!product?.image}, image URL: ${product?.image?.substring(0, 100)}...`);
 
     if (!product) {
       return res.status(404).json({ error: 'Product not found' });
@@ -5156,15 +5156,15 @@ app.get('/api/products/:id/similar', async (req, res) => {
     }
 
     // Generate embedding for the product's image
-    console.log(`[Similar Products] Generating embedding for product ${productId}`);
+    console.log(`[Similar Products] Generating embedding for product ${productId}, CLIP enabled: ${!!process.env.ENABLE_CLIP_WARMUP}`);
     const embedding = await runClipTask(() => embedImage(product.image));
     
     if (!embedding || !Array.isArray(embedding)) {
-      console.error(`[Similar Products] Failed to generate embedding for product ${productId}`);
+      console.error(`[Similar Products] Failed to generate embedding for product ${productId}, embedding:`, embedding);
       throw new Error('Failed to generate embedding array');
     }
 
-    console.log(`[Similar Products] Product ${productId}: Vector generated. Querying similar products...`);
+    console.log(`[Similar Products] Product ${productId}: Vector generated (length: ${embedding.length}). Querying similar products...`);
     
     const matches = await searchProductsByImageVector(prisma, embedding, limit + 1, offset);
     console.log(`[Similar Products] Found ${matches.length} matches for product ${productId}`);
