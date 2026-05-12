@@ -1,4 +1,3 @@
-import { supabase } from './supabase';
 import { useMaintenanceStore } from '../store/useMaintenanceStore';
 import { localProductService } from './localProductService';
 
@@ -668,30 +667,8 @@ export function clearCache() {
 
 // Authentication functions using our server
 export async function fetchMe() {
-  try {
-    const user = await request('/auth/me', { skipMaintenanceTrigger: true, skipCache: true });
-    if (user && !user.name) {
-      // If server returned user but no name, try to get it from Supabase
-      const { data: { user: sbUser } } = await supabase.auth.getUser();
-      if (sbUser?.user_metadata?.full_name) {
-        user.name = sbUser.user_metadata.full_name;
-      } else if (sbUser?.email) {
-        user.name = sbUser.email.split('@')[0];
-      }
-    }
-    return user;
-  } catch (err) {
-    // If our server fails, try Supabase as fallback
-    const { data: { user }, error } = await supabase.auth.getUser();
-    if (error || !user) return null;
-    return {
-      id: user.id,
-      phone: user.phone || '',
-      email: user.email,
-      name: user.user_metadata?.full_name || user.email?.split('@')[0] || 'User',
-      role: 'USER',
-    };
-  }
+  const user = await request('/auth/me', { skipMaintenanceTrigger: true, skipCache: true });
+  return user;
 }
 
 export async function checkUser(phone: string) {
@@ -703,149 +680,65 @@ export async function checkEmail(email: string) {
 }
 
 export async function signupWithEmail(email: string, password: string, name: string) {
-  // Use Supabase Auth for signup
-  const { data, error } = await supabase.auth.signUp({
-    email,
-    password,
-    options: {
-      data: {
-        full_name: name
-      }
-    }
+  const response = await request('/auth/email-signup', {
+    method: 'POST',
+    body: JSON.stringify({ email, password, name })
   });
 
-  if (error) throw error;
-
-  // After Supabase signup, we also sync with our backend to ensure Prisma record exists
-  // But wait until email is verified for full access.
-  // We call syncUser to create the initial record.
-  try {
-    await request('/auth/sync-supabase-user', {
-      method: 'POST',
-      body: JSON.stringify({
-        email,
-        name,
-        supabaseId: data.user?.id
-      })
-    });
-  } catch (e) {
-    console.warn('Backend sync failed (optional):', e);
-  }
-
-  return { 
-    user: data.user, 
-    session: data.session,
-    message: 'تم إرسال رابط التحقق إلى بريدك الإلكتروني' 
-  };
+  return response;
 }
 
 export async function loginWithEmail(email: string, password: string) {
-  const { data, error } = await supabase.auth.signInWithPassword({
-    email,
-    password
+  const response = await request('/auth/email-login', {
+    method: 'POST',
+    body: JSON.stringify({ email, password })
   });
 
-  if (error) throw error;
-
-  // Sync with backend to get full user data (role, etc.)
-  let serverResponse = null;
-  try {
-    serverResponse = await request('/auth/sync-supabase-user', {
-      method: 'POST',
-      body: JSON.stringify({
-        email,
-        name: data.user?.user_metadata?.full_name,
-        supabaseId: data.user?.id
-      })
-    });
-  } catch (e) {
-    console.warn('Login sync failed:', e);
-  }
-
-  if (data.session?.access_token) {
-    localStorage.setItem('auth_token', data.session.access_token);
+  if (response.token) {
+    localStorage.setItem('auth_token', response.token);
   }
 
   return {
-    token: data.session?.access_token,
-    user: serverResponse?.user ? {
-      ...serverResponse.user,
-      id: data.user?.id || serverResponse.user.id
-    } : {
-      id: data.user?.id,
-      email: data.user?.email,
-      name: data.user?.user_metadata?.full_name || data.user?.email?.split('@')[0],
-      role: 'USER'
-    }
+    token: response.token,
+    user: response.user
   };
 }
 
 export async function forgotPassword(email: string) {
-  const { error } = await supabase.auth.resetPasswordForEmail(email, {
-    redirectTo: `${window.location.origin}/reset-password`,
+  const response = await request('/auth/forgot-password', {
+    method: 'POST',
+    body: JSON.stringify({ email })
   });
-  if (error) throw error;
-  return true;
+  return response;
 }
 
-export async function resetPassword(password: string) {
-  const { error } = await supabase.auth.updateUser({
-    password: password
+export async function resetPassword(email: string, otp: string, newPassword: string) {
+  const response = await request('/auth/reset-password', {
+    method: 'POST',
+    body: JSON.stringify({ email, otp, newPassword })
   });
-  if (error) throw error;
-  return true;
+  return response;
 }
 
-export async function verifyEmailOTP(email: string, token: string, type: 'signup' | 'recovery' = 'signup') {
-  const { data, error } = await supabase.auth.verifyOtp({
-    email,
-    token,
-    type
+export async function verifyEmailOTP(email: string, code: string) {
+  const response = await request('/auth/verify-email-otp', {
+    method: 'POST',
+    body: JSON.stringify({ email, code })
   });
 
-  if (error) throw error;
-
-  if (data.session?.access_token) {
-    localStorage.setItem('auth_token', data.session.access_token);
+  if (response.token) {
+    localStorage.setItem('auth_token', response.token);
   }
 
-  // Final sync after OTP verification to get full user data
-  let serverUser = null;
-  try {
-    serverUser = await request('/auth/sync-supabase-user', {
-      method: 'POST',
-      body: JSON.stringify({
-        email,
-        name: data.user?.user_metadata?.full_name,
-        supabaseId: data.user?.id
-      })
-    });
-  } catch (e) {
-    console.warn('Email OTP verification sync failed:', e);
-  }
-
-  return {
-    token: data.session?.access_token,
-    user: serverUser?.user ? {
-      ...serverUser.user,
-      id: data.user?.id || serverUser.user.id
-    } : {
-      id: data.user?.id,
-      email: data.user?.email,
-      name: data.user?.user_metadata?.full_name || data.user?.email?.split('@')[0],
-      role: 'USER'
-    }
-  };
+  return response;
 }
 
 export async function resendEmailOTP(email: string) {
-  const { error } = await supabase.auth.resend({
-    type: 'signup',
-    email
+  const response = await request('/auth/resend-email-otp', {
+    method: 'POST',
+    body: JSON.stringify({ email })
   });
-
-  if (error) throw error;
-  return { message: 'تم إعادة إرسال كود التحقق بنجاح' };
+  return response;
 }
 
 export async function sendWhatsAppOTP(phone: string, name?: string, isResetPassword?: boolean) {
@@ -877,66 +770,42 @@ export async function verifyWhatsAppOTP(phone: string, code: string, fullName?: 
 }
 
 export async function updateProfile(userData: { name: string; avatar?: string }) {
-  // Update on our server
-  const serverUpdate = await request('/auth/me', {
+  const response = await request('/auth/me', {
     method: 'PUT',
     body: JSON.stringify(userData),
   });
-
-  // Also update on Supabase for consistency if user is logged into Supabase
-  try {
-    await supabase.auth.updateUser({
-      data: {
-        full_name: userData.name,
-        avatar_url: userData.avatar
-      }
-    });
-  } catch (e) {
-    console.warn('Supabase profile update failed (optional):', e);
-  }
-
-  return serverUpdate;
+  return response;
 }
 
 export async function deleteAccount() {
   const response = await request('/auth/me', {
     method: 'DELETE',
   });
-  
-  // Also sign out from Supabase
-  await supabase.auth.signOut();
-  
-  // Clear local storage
   localStorage.removeItem('auth_token');
-  
   return response;
 }
 
-export async function verifyOTP(data: { phone: string; otp: string; type?: 'signup' | 'sms' }) {
-  const { data: result, error } = await (supabase.auth as any).verifyOtp({
-    phone: data.phone,
-    token: data.otp,
-    type: data.type || 'sms',
+export async function verifyOTP(data: { phone: string; otp: string; type?: 'signup' | 'sms'; full_name?: string; password?: string }) {
+  const response = await request('/auth/verify-otp', {
+    method: 'POST',
+    body: JSON.stringify({ phone: data.phone, code: data.otp, fullName: data.full_name, password: data.password }),
   });
-  if (error) throw error;
-  if (result.session) {
-    localStorage.setItem('auth_token', result.session.access_token);
+  if (response.token) {
+    localStorage.setItem('auth_token', response.token);
   }
-  return result;
+  return response;
 }
 
-export async function resendOTP(data: { phone: string; type?: 'signup' | 'sms' }) {
-  const { data: result, error } = await (supabase.auth as any).resend({
-    type: data.type || 'sms',
-    phone: data.phone,
+export async function resendOTP(data: { phone: string; type?: 'signup' | 'sms'; name?: string }) {
+  const response = await request('/auth/send-otp', {
+    method: 'POST',
+    body: JSON.stringify({ phone: data.phone, name: data.name }),
   });
-  if (error) throw error;
-  return result;
+  return response;
 }
 
 export function logout() {
   localStorage.removeItem('auth_token');
-  supabase.auth.signOut();
 }
 
 // --- Tracking Service ---
