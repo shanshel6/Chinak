@@ -214,6 +214,36 @@ const CheckoutPaymentAddress: React.FC = () => {
     </div>
   );
 
+  // Check if user has any addresses
+  if (!loading && addresses.length === 0) {
+    return (
+      <div className="relative flex min-h-screen w-full flex-col items-center justify-center bg-background-light dark:bg-background-dark shadow-2xl font-display text-text-primary-light dark:text-text-primary-dark antialiased p-6" dir="rtl">
+        <div className="flex flex-col items-center gap-6 text-center max-w-md">
+          <div className="w-20 h-20 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
+            <MapPin size={40} className="text-slate-400" />
+          </div>
+          <div className="space-y-2">
+            <h2 className="text-xl font-bold">لا يوجد عنوان</h2>
+            <p className="text-sm text-slate-500 dark:text-slate-400">يجب إضافة عنوان التوصيل قبل إتمام الطلب</p>
+          </div>
+          <button
+            onClick={() => navigate('/add-address', { state: { fromCheckout: true } })}
+            className="w-full h-14 bg-primary hover:bg-primary-dark text-white font-bold rounded-2xl shadow-lg shadow-primary/30 transition-all active:scale-[0.98] flex items-center justify-center gap-2"
+          >
+            <MapPinPlus size={20} />
+            إضافة عنوان جديد
+          </button>
+          <button
+            onClick={() => navigate(-1)}
+            className="text-sm text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-300"
+          >
+            العودة
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="relative flex min-h-screen w-full flex-col bg-background-light dark:bg-background-dark shadow-2xl font-display text-text-primary-light dark:text-text-primary-dark antialiased pb-32" dir="rtl">
       <header className="sticky top-0 z-50 bg-surface-light/90 dark:bg-surface-dark/90 backdrop-blur-md border-b border-border-light dark:border-border-dark transition-colors duration-300 pt-safe">
