@@ -747,7 +747,7 @@ const ProductDetails: React.FC = () => {
   }
 
   return (
-    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden bg-background-light dark:bg-background-dark pb-32 pb-safe pt-safe" dir="rtl">
+    <>
       <ProductHeader 
         onBack={() => navigate(-1)}
         onShare={handleShare}
@@ -760,6 +760,7 @@ const ProductDetails: React.FC = () => {
         }}
         isWishlisted={isProductInWishlist(product.id)}
       />
+      <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden bg-background-light dark:bg-background-dark pb-32 pb-safe pt-safe" dir="rtl">
       
       <div className="md:grid md:grid-cols-2 md:gap-8 lg:gap-12 md:px-6 md:pt-6">
         <div className="md:sticky md:top-24 h-fit pt-16 md:pt-0">
@@ -926,7 +927,8 @@ const ProductDetails: React.FC = () => {
         onConfirm={handleNotesConfirm}
         productName={product?.name || ''}
       />
-    </div>
+      </div>
+    </>
   );
 };
 
