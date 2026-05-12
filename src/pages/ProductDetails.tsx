@@ -815,8 +815,13 @@ const ProductDetails: React.FC = () => {
             hasMore={similarProductsHasMore}
             onLoadMore={loadMoreSimilarProducts}
             onProductClick={(id) => {
+              console.log('[Similar Products] Clicked product:', id);
               const selectedProduct = similarProducts.find(p => p.id === id);
-              navigate(`/product?id=${id}`, { state: { initialProduct: selectedProduct } });
+              console.log('[Similar Products] Found product:', !!selectedProduct);
+              if (selectedProduct) {
+                console.log('[Similar Products] Navigating to product:', id);
+                window.location.href = `/product?id=${id}`;
+              }
             }}
           />
 

@@ -27,7 +27,7 @@ const SimilarProducts: React.FC<SimilarProductsProps> = ({ products, onProductCl
     toggleWishlist(product.id);
   };
 
-  const loadMoreRef = useRef<HTMLButtonElement>(null);
+  const loadMoreRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!hasMore || !onLoadMore) return;
@@ -38,7 +38,7 @@ const SimilarProducts: React.FC<SimilarProductsProps> = ({ products, onProductCl
           onLoadMore();
         }
       },
-      { threshold: 0.5 }
+      { threshold: 0.1 }
     );
 
     if (loadMoreRef.current) {
@@ -89,21 +89,17 @@ const SimilarProducts: React.FC<SimilarProductsProps> = ({ products, onProductCl
             isProductInWishlist={isProductInWishlist}
           />
         ))}
-        {hasMore && onLoadMore && (
-          <button
-            ref={loadMoreRef}
-            onClick={onLoadMore}
-            disabled={loading}
-            className="rounded-[24px] bg-primary/10 dark:bg-primary/20 min-h-[300px] flex items-center justify-center hover:bg-primary/20 dark:hover:bg-primary/30 transition-colors"
-          >
-            {loading ? (
-              <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
-            ) : (
-              <span className="text-primary font-black">تحميل المزيد</span>
-            )}
-          </button>
-        )}
       </div>
+      {hasMore && onLoadMore && (
+        <div ref={loadMoreRef} className="py-4 flex justify-center">
+          {loading ? (
+            <div className="flex items-center gap-2">
+              <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+              <span className="text-xs text-slate-500">تحميل...</span>
+            </div>
+          ) : null}
+        </div>
+      )}
     </div>
   );
 };
