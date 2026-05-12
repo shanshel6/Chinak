@@ -1473,7 +1473,7 @@ export async function deleteReview(id: number | string, token?: string | null) {
 
 // Addresses
 export async function fetchAddresses() {
-  return request('/addresses', { skipMaintenanceTrigger: true });
+  return request('/addresses', { skipMaintenanceTrigger: true, skipCache: true });
 }
 
 export async function fetchAddressById(id: number | string) {
