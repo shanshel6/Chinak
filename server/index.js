@@ -29,7 +29,6 @@ import { calculateOrderShipping, calculateProductShipping, getAdjustedPrice } fr
 import { setupLinkCheckerCron, checkAllProductLinks } from './services/linkCheckerService.js';
 import { embedImage, analyzeImageObjects, embedImageCrop, embedImageRaw, warmupClipService } from './services/clipService.js';
 import { ensureProductImageEmbeddings, searchProductsByImageVector } from './services/productImageVectorService.js';
-import { createClient } from '@supabase/supabase-js';
 import multer from 'multer';
 
 // Setup multer for memory storage (for image uploads)
@@ -108,11 +107,6 @@ if (ENABLE_CLIP_WARMUP) {
 } else {
   console.log('[CLIP] Warmup disabled (set ENABLE_CLIP_WARMUP=true to enable)');
 }
-
-// Supabase Client Initialization
-const supabaseUrl = process.env.SUPABASE_URL || 'https://puxjtecjxfjldwxiwzrk.supabase.co';
-const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InB1eGp0ZWNqeGZqbGR3eGl3enJrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc5NDEyNjMsImV4cCI6MjA4MzUxNzI2M30.r9TxaSGhOEWeb3RP_BEsHGQ1GOBpI0-mkU0XdW3FEOc';
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 // --- Global Helpers ---
 
@@ -1136,8 +1130,7 @@ app.get('/api/health', async (req, res) => {
     timestamp: new Date().toISOString(),
     env: process.env.NODE_ENV || 'development',
     port: process.env.PORT || 5001,
-    has_db_url: !!process.env.DATABASE_URL,
-    has_supabase_url: !!process.env.SUPABASE_URL
+    has_db_url: !!process.env.DATABASE_URL
   });
 });
 
@@ -1481,78 +1474,8 @@ const authenticateToken = async (req, res, next) => {
   }
 
   try {
-    // Try Supabase Auth first
-    console.log('[Auth] Checking Supabase token...');
-    let supabaseUser = null;
-    let supabaseError = null;
-    
-    try {
-      // Only try Supabase if it looks like a Supabase token or if we want to be safe
-      // Supabase tokens are usually very long JWTs
-      const result = await supabase.auth.getUser(token);
-      supabaseUser = result.data?.user;
-      supabaseError = result.error;
-    } catch (sbErr) {
-      console.log('[Auth] Supabase getUser threw error (probably not a Supabase token):', sbErr.message);
-    }
-    
-    if (supabaseUser) {
-      console.log('[Auth] Supabase user found:', supabaseUser.email);
-      // Find or create local user synced with Supabase
-      let user = await prisma.user.findUnique({
-        where: { supabaseId: supabaseUser.id }
-      });
-
-      if (!user) {
-        console.log('[Auth] Syncing new Supabase user to local DB...');
-        // Try finding by email
-        user = await prisma.user.findUnique({
-          where: { email: supabaseUser.email }
-        });
-
-        if (user) {
-          // Update existing user with supabaseId and name if missing
-          user = await prisma.user.update({
-            where: { id: user.id },
-            data: { 
-              supabaseId: supabaseUser.id,
-              name: user.name || supabaseUser.user_metadata?.full_name || supabaseUser.email.split('@')[0]
-            }
-          });
-        } else {
-          // Create new local user
-          user = await prisma.user.create({
-            data: {
-              email: supabaseUser.email,
-              supabaseId: supabaseUser.id,
-              name: supabaseUser.user_metadata?.full_name || supabaseUser.email.split('@')[0] || 'User',
-              role: 'USER',
-              isVerified: true
-            }
-          });
-        }
-      } else if (!user.name || user.name === 'User') {
-        // Update name if it's missing or just 'User'
-        const sbName = supabaseUser.user_metadata?.full_name;
-        if (sbName && sbName !== user.name) {
-          user = await prisma.user.update({
-            where: { id: user.id },
-            data: { name: sbName }
-          });
-        }
-      }
-
-      req.user = { 
-        id: user.id, 
-        role: user.role, 
-        name: user.name,
-        supabaseId: supabaseUser.id
-      };
-      return next();
-    }
-
-    // Fallback to local JWT if Supabase fails or returns no user
-    console.log('[Auth] Supabase check failed, trying local JWT...');
+    // Only use local JWT authentication (no Supabase)
+    console.log('[Auth] Checking local JWT...');
     try {
       const verified = jwt.verify(token, JWT_SECRET);
       console.log('[Auth] Local JWT verified for user ID:', verified.id);
@@ -1610,50 +1533,6 @@ app.get('/api/auth/check-user/:phone', async (req, res) => {
 });
 
 // --- Email Auth Endpoints ---
-app.post('/api/auth/sync-supabase-user', async (req, res) => {
-  const email = normalizeEmail(req.body.email);
-  const { name, supabaseId } = req.body;
-  if (!email) return res.status(400).json({ error: 'Email is required' });
-
-  try {
-    const user = await prisma.user.upsert({
-      where: { email },
-      update: { 
-        supabaseId,
-        name: name || undefined,
-        isVerified: true 
-      },
-      create: {
-        email,
-        name: name || email.split('@')[0] || 'User',
-        supabaseId,
-        role: 'USER',
-        isVerified: true
-      }
-    });
-
-    const token = jwt.sign(
-      { id: user.id, role: user.role, email: user.email },
-      JWT_SECRET,
-      { expiresIn: '36500d' }
-    );
-
-    res.json({
-      token,
-      user: {
-        id: user.id.toString(),
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        isVerified: user.isVerified
-      }
-    });
-  } catch (error) {
-    console.error('Sync Supabase User Error:', error);
-    res.status(500).json({ error: 'Failed to sync user' });
-  }
-});
-
 app.get('/api/auth/check-email/:email', async (req, res) => {
   const email = normalizeEmail(req.params.email);
   if (!email) return res.status(400).json({ error: 'Email is required' });
