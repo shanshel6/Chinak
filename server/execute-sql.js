@@ -15,12 +15,17 @@ async function executeSQL() {
     // Add notes column to Order table
     console.log('Adding notes column to Order table...');
     await client.query('ALTER TABLE "Order" ADD COLUMN IF NOT EXISTS "notes" TEXT');
-    console.log('Notes column added successfully');
+    console.log('Notes column added to Order table successfully');
+
+    // Add notes column to OrderItem table
+    console.log('Adding notes column to OrderItem table...');
+    await client.query('ALTER TABLE "OrderItem" ADD COLUMN IF NOT EXISTS "notes" TEXT');
+    console.log('Notes column added to OrderItem table successfully');
 
     // Create admin user
     console.log('Creating admin user...');
     await client.query(`
-      INSERT INTO "User" (email, password, name, role, permissions, "isVerified", "createdAt", "updatedAt") 
+      INSERT INTO "User" (email, password, name, role, permissions, "isVerified", "createdAt", "updatedAt")
       VALUES ('admin@example.com', '$2b$10$oyCMtbA1pFlrkJXzOBtTZOAkOtYOmFI./iK2XuaHa2YDQ.O4Jjjm6', 'Admin', 'ADMIN', '["full_access"]', true, NOW(), NOW())
       ON CONFLICT (email) DO NOTHING
     `);
