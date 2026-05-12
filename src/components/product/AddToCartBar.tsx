@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { ShoppingCart, RefreshCw, ShoppingBag } from 'lucide-react';
 
 interface AddToCartBarProps {
@@ -20,14 +20,6 @@ const AddToCartBar: React.FC<AddToCartBarProps> = ({
   onGoToCart,
   isActive = true,
 }) => {
-  const [isVisible, setIsVisible] = useState(false);
-
-  useEffect(() => {
-    setIsVisible(true);
-  }, []);
-
-  if (!isVisible) return null;
-
   const handleWhatsAppClick = () => {
     const message = encodeURIComponent(`مرحباً، أود الاستفسار عن هذا المنتج: ${productId}`);
     window.open(`https://wa.me/13223001309?text=${message}`, '_blank');

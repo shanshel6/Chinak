@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { ArrowLeft, Heart, Share2 } from 'lucide-react';
 
 interface ProductHeaderProps {
@@ -14,14 +14,6 @@ const ProductHeader: React.FC<ProductHeaderProps> = ({
   onToggleWishlist,
   isWishlisted,
 }) => {
-  const [isVisible, setIsVisible] = useState(false);
-
-  useEffect(() => {
-    setIsVisible(true);
-  }, []);
-
-  if (!isVisible) return null;
-
   return (
     <header className="fixed top-0 left-0 right-0 z-[99999] flex items-center justify-between p-4 pt-[calc(env(safe-area-inset-top)+0.5rem)] bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800">
       <button 
