@@ -885,26 +885,6 @@ const Home: React.FC = () => {
             <Camera size={18} />
           </button>
         </div>
-        {/* Banner for search by photo */}
-        <div 
-          onClick={handleSearchByPhotoBannerClick}
-          className="mx-4 mt-4 p-4 bg-gradient-to-r from-primary/10 to-primary/5 dark:from-primary/20 dark:to-primary/10 rounded-2xl border border-primary/20 dark:border-primary/30 cursor-pointer transition-all hover:scale-[1.02] active:scale-[0.98]"
-        >
-          <div className="flex items-center gap-4">
-            <div className="flex-shrink-0 w-12 h-12 rounded-full bg-primary/20 dark:bg-primary/30 flex items-center justify-center">
-              <Camera size={24} className="text-primary" />
-            </div>
-            <div className="flex-1">
-              <p className="text-base font-black text-primary dark:text-primary-light">🎉 الآن يمكنك البحث بالصورة!</p>
-              <p className="text-sm font-medium text-slate-600 dark:text-slate-400">اضغط هنا للبحث بصورة أو لقطة شاشة</p>
-            </div>
-            <div className="flex-shrink-0">
-              <div className="w-8 h-8 rounded-full bg-primary text-white flex items-center justify-center">
-                <Search size={16} />
-              </div>
-            </div>
-          </div>
-        </div>
         {recentCategories.length > 0 && selectedCategoryId === 'all' && (
           <div className="border-t border-slate-100 dark:border-slate-800 px-4 py-3">
             <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide">
@@ -921,6 +901,27 @@ const Home: React.FC = () => {
             </div>
           </div>
         )}
+      </div>
+
+      {/* Banner for search by photo - non-sticky section */}
+      <div 
+        onClick={handleSearchByPhotoBannerClick}
+        className="mx-4 mt-4 p-4 bg-gradient-to-r from-primary/10 to-primary/5 dark:from-primary/20 dark:to-primary/10 rounded-2xl border border-primary/20 dark:border-primary/30 cursor-pointer transition-all hover:scale-[1.02] active:scale-[0.98]"
+      >
+        <div className="flex items-center gap-4">
+          <div className="flex-shrink-0 w-12 h-12 rounded-full bg-primary/20 dark:bg-primary/30 flex items-center justify-center">
+            <Camera size={24} className="text-primary" />
+          </div>
+          <div className="flex-1">
+            <p className="text-base font-black text-primary dark:text-primary-light">🎉 الآن يمكنك البحث بالصورة!</p>
+            <p className="text-sm font-medium text-slate-600 dark:text-slate-400">إذا كنت لا تعرف اسم المنتج، فقط ابحث عنه بالصورة أو لقطة الشاشة، جربها الآن!</p>
+          </div>
+          <div className="flex-shrink-0">
+            <div className="w-8 h-8 rounded-full bg-primary text-white flex items-center justify-center">
+              <Search size={16} />
+            </div>
+          </div>
+        </div>
       </div>
 
         {error && (
