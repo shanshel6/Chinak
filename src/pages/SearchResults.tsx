@@ -1,16 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { AlertCircle, Search, ArrowRight, Camera, X } from 'lucide-react';
-import { searchProducts, searchProductsByImage, searchProductsByImageCrop, searchProductsByCategory, searchCategorySuggestions } from '../services/api';
+import { searchProductsByImage, searchProductsByImageCrop, searchProductsByCategory, searchCategorySuggestions } from '../services/api';
 import type { CategorySuggestion } from '../services/api';
 import { useAuthStore } from '../store/useAuthStore';
 import { normalizeWishlistProductId, useWishlistStore } from '../store/useWishlistStore';
-import { useToastStore } from '../store/useToastStore';
-import Skeleton from '../components/Skeleton';
 import ProductCard from '../components/home/ProductCard';
 import type { Product } from '../types/product';
 import { usePageCacheStore } from '../store/usePageCacheStore';
-import FilterBar from '../components/home/FilterBar';
 import type { ConditionFilter, PriceFilter } from '../components/home/FilterBar';
 
 const SearchResults: React.FC = () => {
@@ -566,24 +563,6 @@ const SearchResults: React.FC = () => {
   useEffect(() => {
     hasMoreRef.current = hasMore;
   }, [hasMore]);
-
-  useEffect(() => {
-    conditionFilterRef.current = conditionFilter;
-  }, [conditionFilter]);
-
-  useEffect(() => {
-    priceFilterRef.current = priceFilter;
-  }, [priceFilter]);
-
-  useEffect(() => {
-    setDraftConditionFilter(conditionFilter);
-    setDraftPriceFilter(priceFilter);
-  }, [conditionFilter, priceFilter]);
-
-  const applyFilters = useCallback(() => {
-    setConditionFilter(draftConditionFilter);
-    setPriceFilter(draftPriceFilter);
-  }, [draftConditionFilter, draftPriceFilter]);
 
   const filteredRecentTerms = useMemo(() => {
     const q = queryInput.trim().toLowerCase();
