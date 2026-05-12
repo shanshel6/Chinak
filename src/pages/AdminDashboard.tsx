@@ -1984,7 +1984,24 @@ const AdminDashboard: React.FC = () => {
           </thead>
           <tbody className="divide-y divide-slate-50 dark:divide-slate-800">
             {orders.map((order) => (
-              <tr key={order.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+              <tr 
+                key={order.id} 
+                className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors cursor-pointer"
+                onClick={async () => {
+                  try {
+                    setModalLoading(true);
+                    setSelectedOrder(order);
+                    setShowOrderModal(true);
+                    const token = getAuthToken();
+                    const fullOrder = await fetchAdminOrderDetails(order.id, token);
+                    setSelectedOrder(fullOrder);
+                  } catch (error) {
+                    showToast('فشل تحميل تفاصيل الطلب', 'error');
+                  } finally {
+                    setModalLoading(false);
+                  }
+                }}
+              >
                 <td className="px-6 py-4 font-black text-sm text-slate-900 dark:text-white">
                   #{order.id}
                 </td>
@@ -2020,6 +2037,7 @@ const AdminDashboard: React.FC = () => {
                       type="number"
                       defaultValue={order.internationalShippingFee || ''}
                       placeholder="0"
+                      onClick={(e) => e.stopPropagation()}
                       onBlur={(e) => {
                         const val = e.target.value === '' ? 0 : parseFloat(e.target.value);
                         if (val !== (order.internationalShippingFee || 0)) {
@@ -2033,6 +2051,7 @@ const AdminDashboard: React.FC = () => {
                 <td className="px-6 py-4 text-center">
                   <select 
                     value={order.status}
+                    onClick={(e) => e.stopPropagation()}
                     onChange={(e) => handleUpdateOrderStatus(order.id, e.target.value)}
                     className={`px-3 py-1.5 rounded-full text-[10px] font-black border-none focus:ring-2 focus:ring-primary/20 cursor-pointer transition-all ${getStatusConfig(order.status).class}`}
                   >
@@ -2048,7 +2067,8 @@ const AdminDashboard: React.FC = () => {
                 <td className="px-6 py-4 text-center">
                   <div className="flex items-center justify-center gap-2">
                     <button 
-                      onClick={async () => {
+                      onClick={async (e) => {
+                        e.stopPropagation();
                         try {
                           setModalLoading(true);
                           setSelectedOrder(order);
@@ -2067,7 +2087,10 @@ const AdminDashboard: React.FC = () => {
                     >
                       <Eye size={18} />
                     </button>
-                    <button className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg text-slate-400 transition-all">
+                    <button 
+                      onClick={(e) => e.stopPropagation()}
+                      className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg text-slate-400 transition-all"
+                    >
                       <MoreVertical size={18} />
                     </button>
                   </div>
