@@ -747,7 +747,7 @@ const ProductDetails: React.FC = () => {
   }
 
   return (
-    <>
+    <React.Fragment>
       <ProductHeader 
         onBack={() => navigate(-1)}
         onShare={handleShare}
@@ -909,7 +909,7 @@ const ProductDetails: React.FC = () => {
             </div>
           </div>
         </div>
-
+      </div>
       </div>
       
       <AddToCartBar 
@@ -928,7 +928,7 @@ const ProductDetails: React.FC = () => {
         onConfirm={handleNotesConfirm}
         productName={product?.name || ''}
       />
-    </>
+    </React.Fragment>
   );
 };
 
