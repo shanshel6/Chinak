@@ -10664,6 +10664,20 @@ app.post('/api/addresses', authenticateToken, async (req, res) => {
     
     console.log('Creating address for user:', userId, 'Data:', { type, name, phone, street, city, buildingNo, floorNo, isDefault });
 
+    // Validate required fields
+    if (!name || !name.trim()) {
+      return res.status(400).json({ error: 'Name is required' });
+    }
+    if (!phone || !phone.trim()) {
+      return res.status(400).json({ error: 'Phone is required' });
+    }
+    if (!street || !street.trim()) {
+      return res.status(400).json({ error: 'Street is required' });
+    }
+    if (!city || !city.trim()) {
+      return res.status(400).json({ error: 'City is required' });
+    }
+
     // Check if address already exists for this user to avoid duplicates
     const existing = await prisma.address.findFirst({
       where: {
@@ -10691,12 +10705,12 @@ app.post('/api/addresses', authenticateToken, async (req, res) => {
       data: {
         userId,
         type: type || 'المنزل',
-        name,
-        phone,
-        street,
-        city,
-        buildingNo: buildingNo || '',
-        floorNo: floorNo || '',
+        name: name.trim(),
+        phone: phone.trim(),
+        street: street.trim(),
+        city: city.trim(),
+        buildingNo: buildingNo?.trim() || '',
+        floorNo: floorNo?.trim() || '',
         isDefault: !!isDefault
       }
     });
