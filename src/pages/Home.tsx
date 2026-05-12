@@ -7,10 +7,8 @@ import { normalizeWishlistProductId, useWishlistStore } from '../store/useWishli
 import { usePageCacheStore } from '../store/usePageCacheStore';
 import Skeleton from '../components/Skeleton';
 import { useTranslation } from 'react-i18next';
-import FilterBar from '../components/home/FilterBar';
-import type { ConditionFilter, PriceFilter } from '../components/home/FilterBar';
 import ProductCard from '../components/home/ProductCard';
-import { Grid2X2, Smartphone, Shirt, Sparkles, Banknote, AlertCircle, PackageSearch, Search, Camera } from 'lucide-react';
+import { Grid2X2, Smartphone, Shirt, Sparkles, Banknote, AlertCircle, Camera, Search, PackageSearch } from 'lucide-react';
 import type { Product } from '../types/product';
 
 const HOME_CATEGORY_CACHE_KEY = 'home_category_cached_products_v1';
@@ -50,10 +48,6 @@ const Home: React.FC = () => {
   // Infinite Scroll & Categories State
   const [hasMore, setHasMore] = useState(true);
   const [selectedCategoryId, setSelectedCategoryId] = useState(homeCategoryId);
-  const [conditionFilter, setConditionFilter] = useState<ConditionFilter>(null);
-  const [priceFilter, setPriceFilter] = useState<PriceFilter>(null);
-  const [draftConditionFilter, setDraftConditionFilter] = useState<ConditionFilter>(null);
-  const [draftPriceFilter, setDraftPriceFilter] = useState<PriceFilter>(null);
   const scrollTargetRef = useRef<HTMLElement[]>([]);
   const observer = useRef<IntersectionObserver | null>(null);
   const autoLoadGuardRef = useRef({ categoryId: homeCategoryId, lastCount: 0, stagnantAttempts: 0 });
@@ -210,7 +204,7 @@ const Home: React.FC = () => {
   }, [mergeUniqueProducts, normalizeProductId, readCategoryCachedProducts, readGlobalCachedProducts, setHomeData]);
 
   const loadData = useCallback(async (pageNum: number, categoryId: string, isInitial = false, retryCount = 0) => {
-    const pageRequestKey = `${categoryId}:${pageNum}:${conditionFilter || 'all'}:${priceFilter || 'all'}`;
+    const pageRequestKey = `${categoryId}:${pageNum}`;
     if (inFlightPageRequestsRef.current.has(pageRequestKey)) return;
     inFlightPageRequestsRef.current.add(pageRequestKey);
     const requestId = `${categoryId}-${pageNum}-${Date.now()}`;
@@ -221,10 +215,9 @@ const Home: React.FC = () => {
 
     try {
       setError(null);
-      const maxPrice = categoryId === 'under5k' ? 5000 : (priceFilter === '1k' ? 1000 : priceFilter === '5k' ? 5000 : priceFilter === '10k' ? 10000 : priceFilter === '25k' ? 25000 : undefined);
-      const condition = conditionFilter === 'new' ? 'new' : conditionFilter === 'used' ? 'used' : undefined;
+      const maxPrice = categoryId === 'under5k' ? 5000 : undefined;
 
-      const shouldUseRecentFeed = categoryId === 'all' && !maxPrice && !condition;
+      const shouldUseRecentFeed = categoryId === 'all' && !maxPrice;
       if (shouldUseRecentFeed) {
         const FEED_EXPIRY_MS = 10 * 60 * 1000;
         const readRecentFeed = (): { items: Product[]; createdAt: number; termsHash: string } => {
@@ -372,7 +365,7 @@ const Home: React.FC = () => {
         }
       }
 
-      const prodsRes = await fetchProducts(pageNum, 10, maxPrice, condition, categoryId === 'all' && !maxPrice && !condition);
+      const prodsRes = await fetchProducts(pageNum, 10, maxPrice, undefined, categoryId === 'all' && !maxPrice);
 
       // Only proceed if this is still the active request for this category
       if (activeRequestRef.current !== requestId) return;
@@ -448,7 +441,7 @@ const Home: React.FC = () => {
         setLoadingMore(false);
       }
     }
-  }, [mergeUniqueProducts, normalizeProductId, setHomeData, t, readCategoryCachedProducts, writeCategoryCachedProducts, readGlobalCachedProducts, conditionFilter, priceFilter, isAuthenticated]);
+  }, [mergeUniqueProducts, normalizeProductId, setHomeData, t, readCategoryCachedProducts, writeCategoryCachedProducts, readGlobalCachedProducts, isAuthenticated]);
 
   useEffect(() => {
     setRecentCategories(readRecentCategories());
@@ -464,7 +457,7 @@ const Home: React.FC = () => {
     setHasMore(true);
     setPage(1);
     loadData(1, selectedCategoryId, true);
-  }, [selectedCategoryId, conditionFilter, priceFilter, loadData, readRecentCategories]);
+  }, [selectedCategoryId, loadData, readRecentCategories]);
 
   const shuffleProducts = useCallback((items: Product[]) => {
     const copy = [...items];
@@ -501,16 +494,6 @@ const Home: React.FC = () => {
       setLoading(false);
     }
   }, [mergeUniqueProducts, setHomeData, shuffleProducts, t]);
-
-  const applyFilters = useCallback(() => {
-    setConditionFilter(draftConditionFilter);
-    setPriceFilter(draftPriceFilter);
-  }, [draftConditionFilter, draftPriceFilter]);
-
-  useEffect(() => {
-    setDraftConditionFilter(conditionFilter);
-    setDraftPriceFilter(priceFilter);
-  }, [conditionFilter, priceFilter]);
 
   const getCurrentScrollY = useCallback(() => {
     const fixedTargets = scrollTargetRef.current;
@@ -727,6 +710,81 @@ const Home: React.FC = () => {
     toggleWishlist(product.id, product);
   };
 
+  const handleSearchByPhotoBannerClick = () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.style.display = 'none';
+    document.body.appendChild(input);
+    const removeInput = () => {
+      document.body.removeChild(input);
+    };
+    input.onchange = async (e: Event) => {
+      const target = e.target as HTMLInputElement;
+      const file = target.files?.[0];
+      if (!file) {
+        removeInput();
+        return;
+      }
+      try {
+        const fileToDataUrl = (f: File): Promise<string> => {
+          return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result as string);
+            reader.onerror = reject;
+            reader.readAsDataURL(f);
+          });
+        };
+        const fileToJpegDataUrl = async (f: File): Promise<string> => {
+          return new Promise((resolve, reject) => {
+            const img = new Image();
+            const objectUrl = URL.createObjectURL(f);
+            const cleanup = () => {
+              URL.revokeObjectURL(objectUrl);
+            };
+            img.onload = () => {
+              try {
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                if (!ctx) {
+                  cleanup();
+                  throw new Error('canvas_failed');
+                }
+                canvas.width = img.width;
+                canvas.height = img.height;
+                ctx.drawImage(img, 0, 0);
+                const jpegDataUrl = canvas.toDataURL('image/jpeg', 0.85);
+                cleanup();
+                resolve(jpegDataUrl);
+              } catch (err) {
+                cleanup();
+                reject(err);
+              }
+            };
+            img.onerror = () => {
+              cleanup();
+              reject(new Error('decode_failed'));
+            };
+            img.src = objectUrl;
+          });
+        };
+        let payload = '';
+        try {
+          payload = await fileToJpegDataUrl(file);
+        } catch {
+          payload = await fileToDataUrl(file);
+        }
+        if (payload) {
+          sessionStorage.setItem('pendingImageSearch', payload);
+          navigate('/search');
+        }
+      } finally {
+        removeInput();
+      }
+    };
+    input.click();
+  };
+
 
 
   if (loading && products.length === 0) {
@@ -827,17 +885,27 @@ const Home: React.FC = () => {
             <Camera size={18} />
           </button>
         </div>
-        <FilterBar 
-          condition={draftConditionFilter}
-          price={draftPriceFilter}
-          onConditionChange={setDraftConditionFilter}
-          onPriceChange={setDraftPriceFilter}
-          appliedCondition={conditionFilter}
-          appliedPrice={priceFilter}
-          onApply={applyFilters}
-          className="border-t border-slate-100 dark:border-slate-800"
-        />
-        {recentCategories.length > 0 && selectedCategoryId === 'all' && !conditionFilter && !priceFilter && (
+        {/* Banner for search by photo */}
+        <div 
+          onClick={handleSearchByPhotoBannerClick}
+          className="mx-4 mt-4 p-4 bg-gradient-to-r from-primary/10 to-primary/5 dark:from-primary/20 dark:to-primary/10 rounded-2xl border border-primary/20 dark:border-primary/30 cursor-pointer transition-all hover:scale-[1.02] active:scale-[0.98]"
+        >
+          <div className="flex items-center gap-4">
+            <div className="flex-shrink-0 w-12 h-12 rounded-full bg-primary/20 dark:bg-primary/30 flex items-center justify-center">
+              <Camera size={24} className="text-primary" />
+            </div>
+            <div className="flex-1">
+              <p className="text-base font-black text-primary dark:text-primary-light">🎉 الآن يمكنك البحث بالصورة!</p>
+              <p className="text-sm font-medium text-slate-600 dark:text-slate-400">اضغط هنا للبحث بصورة أو لقطة شاشة</p>
+            </div>
+            <div className="flex-shrink-0">
+              <div className="w-8 h-8 rounded-full bg-primary text-white flex items-center justify-center">
+                <Search size={16} />
+              </div>
+            </div>
+          </div>
+        </div>
+        {recentCategories.length > 0 && selectedCategoryId === 'all' && (
           <div className="border-t border-slate-100 dark:border-slate-800 px-4 py-3">
             <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide">
               {recentCategories.map((category) => (

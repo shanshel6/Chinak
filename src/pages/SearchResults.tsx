@@ -1,20 +1,17 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { AlertCircle, Search, ArrowRight, Camera, X } from 'lucide-react';
-import {
-  searchCategorySuggestions,
-  searchProductsByCategory,
-  searchProductsByImage,
-  searchProductsByImageCrop
-} from '../services/api';
+import { searchProducts, searchProductsByImage, searchProductsByImageCrop, searchProductsByCategory, searchCategorySuggestions } from '../services/api';
 import type { CategorySuggestion } from '../services/api';
-import FilterBar from '../components/home/FilterBar';
-import ProductCard from '../components/home/ProductCard';
-import { normalizeWishlistProductId, useWishlistStore } from '../store/useWishlistStore';
 import { useAuthStore } from '../store/useAuthStore';
-import type { ConditionFilter, PriceFilter } from '../components/home/FilterBar';
+import { normalizeWishlistProductId, useWishlistStore } from '../store/useWishlistStore';
+import { useToastStore } from '../store/useToastStore';
+import Skeleton from '../components/Skeleton';
+import ProductCard from '../components/home/ProductCard';
 import type { Product } from '../types/product';
 import { usePageCacheStore } from '../store/usePageCacheStore';
+import FilterBar from '../components/home/FilterBar';
+import type { ConditionFilter, PriceFilter } from '../components/home/FilterBar';
 
 const SearchResults: React.FC = () => {
   const navigate = useNavigate();
@@ -1054,18 +1051,6 @@ const SearchResults: React.FC = () => {
             </button>
           </div>
         </div>
-        {!isImageSearch && (
-          <FilterBar
-            condition={draftConditionFilter}
-            price={draftPriceFilter}
-            onConditionChange={setDraftConditionFilter}
-            onPriceChange={setDraftPriceFilter}
-            appliedCondition={conditionFilter}
-            appliedPrice={priceFilter}
-            onApply={applyFilters}
-            className="border-t border-slate-100 dark:border-slate-800"
-          />
-        )}
       </div>
 
       {showImagePopup && imageSearchPreview && (
