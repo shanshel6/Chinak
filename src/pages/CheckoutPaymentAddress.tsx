@@ -123,13 +123,23 @@ const CheckoutPaymentAddress: React.FC = () => {
     setPaymentStep('processing');
     
     try {
+      // Prepare items for order - exclude notes field if backend doesn't support it yet
+      const orderItems = cartItems.map(item => ({
+        productId: item.productId,
+        variantId: item.variantId,
+        quantity: item.quantity,
+        selectedOptions: item.selectedOptions,
+        shippingMethod: item.shippingMethod,
+        // notes: item.notes // Uncomment if backend supports notes in order creation
+      }));
+      
       // Create the order
       const order = await placeOrder(
         selectedAddressId!, 
         paymentMethod, 
         shippingMethod, 
         appliedCoupon?.code,
-        cartItems
+        orderItems
       );
       
       const currentItems = [...cartItems];
