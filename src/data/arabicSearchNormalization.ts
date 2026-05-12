@@ -29,6 +29,8 @@ const searchMappings: SearchMapping = {
   'مضجع': 'سرير',
   'فراش': 'سرير',
   'فرشة': 'سرير',
+  'جربايه': 'سرير', // Iraqi slang
+  'جربايات': 'سرير',
   
   // Sofas
   'كنبة': 'كنبة',
@@ -38,6 +40,8 @@ const searchMappings: SearchMapping = {
   'كاناب': 'كنبة', // Iraqi slang
   'كانابات': 'كنبة',
   'كانبوه': 'كنبة',
+  'قنفه': 'كنبة', // Iraqi slang
+  'قنفات': 'كنبة',
   
   // Clothes - General
   'ملابس': 'ملابس',
@@ -145,11 +149,18 @@ const searchMappings: SearchMapping = {
   'قُدور': 'أواني',
   'طنجرة': 'أواني', // Iraqi slang
   'طناجر': 'أواني',
+  'قلايه': 'أواني', // Iraqi slang for air fryer
+  'قلايات': 'أواني',
   
   // Electronics
   'إلكترونيات': 'إلكترونيات',
   'أجهزة': 'إلكترونيات',
   'جهاز': 'إلكترونيات',
+  'ماطور': 'إلكترونيات', // Iraqi slang for water pump
+  'مطورات': 'إلكترونيات',
+  'مولده': 'إلكترونيات', // Iraqi slang for electricity generator
+  'مولدات': 'إلكترونيات',
+  'مولد': 'إلكترونيات',
   
   // TV
   'تلفزيون': 'تلفزيون',
@@ -163,6 +174,7 @@ const searchMappings: SearchMapping = {
   'ثلاجات': 'ثلاجة',
   'براد': 'ثلاجة',
   'برادات': 'ثلاجة',
+  'ثلاجه': 'ثلاجة', // Iraqi slang
   
   // Washing machine
   'غسالة': 'غسالة',
@@ -214,6 +226,10 @@ const searchMappings: SearchMapping = {
   // Furniture - General
   'أثاث': 'أثاث',
   'مفروشات': 'أثاث',
+  'خزانة': 'أثاث', // Wardrobe
+  'خزائن': 'أثاث',
+  'كنتور': 'أثاث', // Iraqi slang for wardrobe
+  'كنتورات': 'أثاث',
   
   // Curtains
   'ستائر': 'ستائر',
@@ -265,6 +281,10 @@ const searchMappings: SearchMapping = {
   'أسلاك': 'سلك',
   'كابل': 'سلك',
   'كابلات': 'سلك',
+  'واير': 'سلك', // Iraqi slang
+  'وايرات': 'سلك',
+  'تقسيم': 'سلك', // Iraqi slang
+  'تقاسيم': 'سلك',
   
   // Car
   'سيارة': 'سيارة',
@@ -343,6 +363,7 @@ const searchMappings: SearchMapping = {
   'شماغات': 'ملابس',
   'دشداشة': 'ملابس', // Traditional garment
   'دشداشات': 'ملابس',
+  'مكناسه': 'ملابس', // Iraqi slang
   
   'كلاج': 'حذاء', // Iraqi slang for shoes
   'كلاجات': 'حذاء',
