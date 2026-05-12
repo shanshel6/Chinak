@@ -294,6 +294,7 @@ model Order {
   internationalShippingFee Float       @default(0)
   couponId                 Int?
   createdAt                DateTime    @default(now())
+  notes                    String?     // User notes for the order
   messages                 Message[]
   address                  Address     @relation(fields: [addressId], references: [id])
   coupon                   Coupon?     @relation(fields: [couponId], references: [id])
