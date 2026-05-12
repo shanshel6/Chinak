@@ -757,7 +757,7 @@ const ProductDetails: React.FC = () => {
       />
       
       <div className="md:grid md:grid-cols-2 md:gap-8 lg:gap-12 md:px-6 md:pt-6">
-        <div className="md:sticky md:top-24 h-fit">
+        <div className="md:sticky md:top-24 h-fit pt-16 md:pt-0">
           <ImageGallery 
             images={galleryImages}
             productName={product.name}
