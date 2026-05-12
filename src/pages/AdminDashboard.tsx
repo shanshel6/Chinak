@@ -24,7 +24,8 @@ import {
   Truck,
   Share2,
   Sparkles,
-  Globe
+  Globe,
+  MessageSquare
 } from 'lucide-react';
 import { useLocation, Routes, Route, useNavigate as _useNavigate } from 'react-router-dom';
 import { 
@@ -1815,31 +1816,28 @@ const AdminDashboard: React.FC = () => {
                           </td>
                           <td className="px-4 py-4 text-center">
                             {item.notes ? (
-                              <div>
-                                <button
-                                  onClick={() => {
-                                    setExpandedNotes(prev => {
-                                      const newSet = new Set(prev);
-                                      if (newSet.has(item.id)) {
-                                        newSet.delete(item.id);
-                                      } else {
-                                        newSet.add(item.id);
-                                      }
-                                      return newSet;
-                                    });
-                                  }}
-                                  className="text-[10px] px-2 py-1 rounded-lg bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 font-bold hover:scale-105 transition-all"
-                                >
-                                  {expandedNotes.has(item.id) ? 'إخفاء' : 'عرض'}
-                                </button>
-                                {expandedNotes.has(item.id) && (
-                                  <p className="mt-2 text-[10px] text-slate-600 dark:text-slate-400 bg-slate-50 dark:bg-slate-800 p-2 rounded-lg max-w-[200px] break-words">
-                                    {item.notes}
-                                  </p>
-                                )}
+                              <button
+                                onClick={() => {
+                                  setExpandedNotes(prev => {
+                                    const newSet = new Set(prev);
+                                    if (newSet.has(item.id)) {
+                                      newSet.delete(item.id);
+                                    } else {
+                                      newSet.add(item.id);
+                                    }
+                                    return newSet;
+                                  });
+                                }}
+                                className="inline-flex items-center justify-center p-2 bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 rounded-lg hover:scale-110 transition-all"
+                                title="عرض الملاحظات"
+                              >
+                                <MessageSquare size={16} />
+                              </button>
+                            ) : null}
+                            {expandedNotes.has(item.id) && item.notes && (
+                              <div className="mt-2 text-[10px] sm:text-xs text-slate-600 dark:text-slate-400 bg-slate-50 dark:bg-slate-800 p-2 rounded-lg max-w-[200px] sm:max-w-[300px] break-words mx-auto">
+                                {item.notes}
                               </div>
-                            ) : (
-                              <span className="text-slate-300 text-[10px]">لا توجد ملاحظات</span>
                             )}
                           </td>
                         </tr>
