@@ -9,7 +9,7 @@ import ProductCard from '../components/home/ProductCard';
 import type { Product } from '../types/product';
 import { usePageCacheStore } from '../store/usePageCacheStore';
 import type { ConditionFilter, PriceFilter } from '../components/home/FilterBar';
-import { getSearchVariations } from '../data/arabicSearchNormalization';
+import { normalizeArabicSearchTerm } from '../data/arabicSearchNormalization';
 
 const SearchResults: React.FC = () => {
   const navigate = useNavigate();
@@ -593,13 +593,13 @@ const SearchResults: React.FC = () => {
     const timerId = window.setTimeout(async () => {
       setSuggestionsLoading(true);
       try {
-        const variations = getSearchVariations(q);
-        // Join variations with space to search for all forms
-        const searchQuery = variations.join(' ');
-        const response = await searchCategorySuggestions(searchQuery, 20);
+        // Normalize the search term to handle slang and singular/plural
+        const normalizedQuery = normalizeArabicSearchTerm(q);
+        const response = await searchCategorySuggestions(normalizedQuery, 20);
         if (cancelled) return;
-        setCategorySuggestions(Array.isArray(response.categories) ? response.categories : []);
-      } catch {
+        setCategorySuggestions(Array.isArray(response?.categories) ? response.categories : []);
+      } catch (error) {
+        console.error('Error fetching category suggestions:', error);
         if (cancelled) return;
         setCategorySuggestions([]);
       } finally {
