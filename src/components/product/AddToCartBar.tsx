@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { ShoppingCart, RefreshCw, ShoppingBag } from 'lucide-react';
 
 interface AddToCartBarProps {
@@ -20,6 +20,14 @@ const AddToCartBar: React.FC<AddToCartBarProps> = ({
   onGoToCart,
   isActive = true,
 }) => {
+  const [isVisible, setIsVisible] = useState(false);
+
+  useEffect(() => {
+    setIsVisible(true);
+  }, []);
+
+  if (!isVisible) return null;
+
   const handleWhatsAppClick = () => {
     const message = encodeURIComponent(`مرحباً، أود الاستفسار عن هذا المنتج: ${productId}`);
     window.open(`https://wa.me/13223001309?text=${message}`, '_blank');
@@ -27,7 +35,7 @@ const AddToCartBar: React.FC<AddToCartBarProps> = ({
 
   if (!isActive) {
     return (
-      <div className="fixed bottom-0 left-0 right-0 z-[90] w-full bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl border-t border-slate-200/60 dark:border-slate-800/60 px-4 pt-3 pb-[calc(env(safe-area-inset-bottom)+12px)] shadow-[0_-10px_40px_rgba(0,0,0,0.1)]">
+      <div className="fixed bottom-0 left-0 right-0 z-[99998] w-full bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 px-4 pt-3 pb-[calc(env(safe-area-inset-bottom)+12px)] shadow-[0_-10px_40px_rgba(0,0,0,0.1)]">
         <div className="flex items-center gap-4 h-[64px]">
           {/* WhatsApp Button */}
           <button
@@ -60,7 +68,7 @@ const AddToCartBar: React.FC<AddToCartBarProps> = ({
   }
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-[90] w-full bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl border-t border-slate-200/60 dark:border-slate-800/60 px-4 pt-3 pb-[calc(env(safe-area-inset-bottom)+12px)] shadow-[0_-10px_40px_rgba(0,0,0,0.1)]">
+    <div className="fixed bottom-0 left-0 right-0 z-[99998] w-full bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 px-4 pt-3 pb-[calc(env(safe-area-inset-bottom)+12px)] shadow-[0_-10px_40px_rgba(0,0,0,0.1)]">
       <div className="flex items-center gap-4 h-[64px]">
         {/* WhatsApp Button */}
         <button

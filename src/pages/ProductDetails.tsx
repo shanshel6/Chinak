@@ -910,16 +910,17 @@ const ProductDetails: React.FC = () => {
           </div>
         </div>
 
-        <AddToCartBar 
-            price={inclusivePrice}
-            productId={product.id}
-            onAddToCart={handleAddToCart}
-            isAdding={isAdding}
-            isAdded={isAdded}
-            onGoToCart={() => navigate('/cart')}
-            isActive={product.isActive}
-          />
       </div>
+      
+      <AddToCartBar 
+          price={inclusivePrice}
+          productId={product.id}
+          onAddToCart={handleAddToCart}
+          isAdding={isAdding}
+          isAdded={isAdded}
+          onGoToCart={() => navigate('/cart')}
+          isActive={product.isActive}
+        />
       
       <ProductNotesModal
         isOpen={isNotesModalOpen}
@@ -927,7 +928,6 @@ const ProductDetails: React.FC = () => {
         onConfirm={handleNotesConfirm}
         productName={product?.name || ''}
       />
-      </div>
     </>
   );
 };
