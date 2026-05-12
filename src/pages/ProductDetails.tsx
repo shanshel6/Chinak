@@ -338,6 +338,11 @@ const ProductDetails: React.FC = () => {
   }, [product]);
 
   useEffect(() => {
+    // Reset scroll position when product changes
+    window.scrollTo(0, 0);
+  }, [productId]);
+
+  useEffect(() => {
     const loadData = async () => {
       if (!productId) return;
       

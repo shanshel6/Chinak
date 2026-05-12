@@ -27,7 +27,7 @@ const AddToCartBar: React.FC<AddToCartBarProps> = ({
 
   if (!isActive) {
     return (
-      <div className="fixed bottom-0 left-0 right-0 z-40 w-full bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl border-t border-slate-200/60 dark:border-slate-800/60 px-4 pt-3 pb-[calc(env(safe-area-inset-bottom)+12px)] shadow-[0_-10px_40px_rgba(0,0,0,0.1)] transition-all">
+      <div className="fixed bottom-0 left-0 right-0 z-[90] w-full bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl border-t border-slate-200/60 dark:border-slate-800/60 px-4 pt-3 pb-[calc(env(safe-area-inset-bottom)+12px)] shadow-[0_-10px_40px_rgba(0,0,0,0.1)]">
         <div className="flex items-center gap-4 h-[64px]">
           {/* WhatsApp Button */}
           <button
@@ -60,7 +60,7 @@ const AddToCartBar: React.FC<AddToCartBarProps> = ({
   }
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-40 w-full bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl border-t border-slate-200/60 dark:border-slate-800/60 px-4 pt-3 pb-[calc(env(safe-area-inset-bottom)+12px)] shadow-[0_-10px_40px_rgba(0,0,0,0.1)] transition-all">
+    <div className="fixed bottom-0 left-0 right-0 z-[90] w-full bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl border-t border-slate-200/60 dark:border-slate-800/60 px-4 pt-3 pb-[calc(env(safe-area-inset-bottom)+12px)] shadow-[0_-10px_40px_rgba(0,0,0,0.1)]">
       <div className="flex items-center gap-4 h-[64px]">
         {/* WhatsApp Button */}
         <button
