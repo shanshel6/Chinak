@@ -45,8 +45,6 @@ const SearchResults: React.FC = () => {
   const [isAnalyzingImage, setIsAnalyzingImage] = useState(false);
   const [conditionFilter, setConditionFilter] = useState<ConditionFilter>(null);
   const [priceFilter, setPriceFilter] = useState<PriceFilter>(null);
-  const [draftConditionFilter, setDraftConditionFilter] = useState<ConditionFilter>(null);
-  const [draftPriceFilter, setDraftPriceFilter] = useState<PriceFilter>(null);
   const [results, setResults] = useState<Product[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -452,8 +450,6 @@ const SearchResults: React.FC = () => {
     setIsAnalyzingImage(false);
     setConditionFilter(null);
     setPriceFilter(null);
-    setDraftConditionFilter(null);
-    setDraftPriceFilter(null);
     setResults(cachedSearch.results);
     setHasMore(Boolean(cachedSearch.hasMore));
     hasMoreRef.current = Boolean(cachedSearch.hasMore);
@@ -518,8 +514,6 @@ const SearchResults: React.FC = () => {
       restoredFromCacheRef.current = true;
       setConditionFilter(cached.condition as ConditionFilter);
       setPriceFilter(cached.price as PriceFilter);
-      setDraftConditionFilter(cached.condition as ConditionFilter);
-      setDraftPriceFilter(cached.price as PriceFilter);
       setResults(cached.results);
       setHasMore(Boolean(cached.hasMore));
       hasMoreRef.current = Boolean(cached.hasMore);
