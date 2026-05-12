@@ -417,10 +417,10 @@ const Login: React.FC = () => {
       }
       
       // First verify the recovery OTP to authenticate the user
-      await verifyEmailOTP(normalizedEmail, otpCode, 'recovery');
+      await verifyEmailOTP(normalizedEmail, otpCode);
       
       // Now that we're authenticated via recovery token, we can update the password
-      await resetPassword(newPassword);
+      await resetPassword(normalizedEmail, otpCode, newPassword);
       
       showToast('تم تغيير كلمة المرور بنجاح. يمكنك الآن تسجيل الدخول.', 'success');
       setStep('email');
