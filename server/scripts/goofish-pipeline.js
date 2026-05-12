@@ -2738,24 +2738,48 @@ async function getSearchTermsForRun() {
     }
   }
   
-  // Use custom terms if available
+  // Use custom terms if available - use all terms sequentially, don't batch
   if (customTerms && Array.isArray(customTerms) && customTerms.length > 0) {
-    const finalTerms = customTerms.slice(0, GOOFISH_TERMS_PER_BATCH);
-    const batchId = `custom_${Date.now()}`;
-    const active = { id: batchId, generatedAt: new Date().toISOString(), terms: finalTerms, nextIndex: 0, source: 'custom' };
     const history = loadSearchTermHistory();
+    const existingActiveBatch = history.activeBatch;
+    
+    // Resume from existing batch if it matches custom terms
+    if (existingActiveBatch && existingActiveBatch.source === 'custom' && 
+        Array.isArray(existingActiveBatch.terms) && existingActiveBatch.terms.length === customTerms.length) {
+      const nextIndex = Math.max(0, Math.min(customTerms.length, Number(existingActiveBatch.nextIndex || 0) || 0));
+      console.log(`[Custom Terms] Resuming from term ${nextIndex}/${customTerms.length}`);
+      return { 
+        terms: customTerms, 
+        startIndex: nextIndex, 
+        batchId: existingActiveBatch.id || `custom_${Date.now()}`, 
+        source: 'custom', 
+        checkpoint: existingActiveBatch.checkpoint || null 
+      };
+    }
+    
+    // Start fresh from "床单" (index 48) or specified index
+    const startIndex = 48; // Start from "床单"
+    const batchId = `custom_${Date.now()}`;
+    const active = { 
+      id: batchId, 
+      generatedAt: new Date().toISOString(), 
+      terms: customTerms, 
+      nextIndex: startIndex, 
+      source: 'custom',
+      checkpoint: null
+    };
     const nextHistory = {
-      used: Array.from(new Set([...(Array.isArray(history.used) ? history.used : []), ...finalTerms])),
+      used: customTerms.slice(0, startIndex), // Mark terms before start index as used
       batches: [
         ...(Array.isArray(history.batches) ? history.batches : []),
-        { id: batchId, generatedAt: active.generatedAt, terms: finalTerms, source: 'custom' }
+        { id: batchId, generatedAt: active.generatedAt, terms: customTerms, source: 'custom' }
       ],
       activeBatch: active
     };
     saveSearchTermHistory(nextHistory);
     clearBatchLinksQueue();
-    console.log(`[Custom Terms] Using ${finalTerms.length} custom terms for this batch`);
-    return { terms: finalTerms, startIndex: 0, batchId, source: 'custom', checkpoint: null };
+    console.log(`[Custom Terms] Using all ${customTerms.length} custom terms, starting from index ${startIndex} ("床单")`);
+    return { terms: customTerms, startIndex, batchId, source: 'custom', checkpoint: null };
   }
   
   const existing = Array.isArray(history.used) ? history.used : [];

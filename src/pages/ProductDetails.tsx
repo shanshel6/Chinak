@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
-import { fetchProductById, checkProductPurchase, findProductInGlobalCache, trackInteraction } from '../services/api';
+import { fetchProductById, checkProductPurchase, findProductInGlobalCache, trackInteraction, fetchSimilarProducts } from '../services/api';
 import { normalizeWishlistProductId, useWishlistStore } from '../store/useWishlistStore';
 import { useCartStore } from '../store/useCartStore';
 import { useAuthStore } from '../store/useAuthStore';
@@ -535,25 +535,19 @@ const ProductDetails: React.FC = () => {
   // Fetch similar products after product details are fully loaded
   useEffect(() => {
     if (product && product.id && !loading && !error) {
-      const fetchSimilarProducts = async (page: number = 1) => {
+      const loadSimilarProducts = async (page: number = 1) => {
         console.log('[Similar Products] Fetching similar products for product', product.id);
         setSimilarProductsLoading(true);
         try {
-          const response = await fetch(`/api/products/${product.id}/similar?limit=10&page=${page}`);
-          console.log('[Similar Products] Response status:', response.status);
-          if (response.ok) {
-            const data = await response.json();
-            console.log('[Similar Products] Received data:', data);
-            if (page === 1) {
-              setSimilarProducts(data.products || []);
-            } else {
-              setSimilarProducts(prev => [...prev, ...(data.products || [])]);
-            }
-            setSimilarProductsHasMore(data.hasMore || false);
-            setSimilarProductsPage(page);
+          const data = await fetchSimilarProducts(product.id, page, 10);
+          console.log('[Similar Products] Received data:', data);
+          if (page === 1) {
+            setSimilarProducts(data.products || []);
           } else {
-            console.error('[Similar Products] API error:', response.status, response.statusText);
+            setSimilarProducts(prev => [...prev, ...(data.products || [])]);
           }
+          setSimilarProductsHasMore(data.hasMore || false);
+          setSimilarProductsPage(page);
         } catch (error) {
           console.error('[Similar Products] Failed to fetch:', error);
         } finally {
@@ -563,7 +557,7 @@ const ProductDetails: React.FC = () => {
 
       // Delay fetching similar products by 1 second to ensure product details are fully loaded
       const timer = setTimeout(() => {
-        fetchSimilarProducts(1);
+        loadSimilarProducts(1);
       }, 1000);
 
       return () => clearTimeout(timer);

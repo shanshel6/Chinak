@@ -1450,6 +1450,14 @@ export async function fetchProductReviews(productId: number | string) {
   return [];
 }
 
+export async function fetchSimilarProducts(productId: number | string, page = 1, limit = 10) {
+  const params = new URLSearchParams({
+    page: String(page),
+    limit: String(limit)
+  });
+  return request(`/products/${encodeURIComponent(productId)}/similar?${params.toString()}`, { skipCache: true });
+}
+
 export async function addProductReview(productId: number | string, rating: number, comment: string, images?: string[]) {
   return request(`/products/${productId}/reviews`, {
     method: 'POST',
