@@ -9,6 +9,7 @@ import ProductCard from '../components/home/ProductCard';
 import type { Product } from '../types/product';
 import { usePageCacheStore } from '../store/usePageCacheStore';
 import type { ConditionFilter, PriceFilter } from '../components/home/FilterBar';
+import { normalizeArabicSearchTerm } from '../data/arabicSearchNormalization';
 
 const SearchResults: React.FC = () => {
   const navigate = useNavigate();
@@ -592,7 +593,8 @@ const SearchResults: React.FC = () => {
     const timerId = window.setTimeout(async () => {
       setSuggestionsLoading(true);
       try {
-        const response = await searchCategorySuggestions(q, 20);
+        const normalizedQuery = normalizeArabicSearchTerm(q);
+        const response = await searchCategorySuggestions(normalizedQuery, 20);
         if (cancelled) return;
         setCategorySuggestions(Array.isArray(response.categories) ? response.categories : []);
       } catch {
