@@ -130,7 +130,7 @@ const CheckoutPaymentAddress: React.FC = () => {
         quantity: item.quantity,
         selectedOptions: item.selectedOptions,
         shippingMethod: item.shippingMethod,
-        // notes: item.notes // Uncomment if backend supports notes in order creation
+        notes: item.notes
       }));
       
       // Create the order
