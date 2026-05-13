@@ -177,6 +177,18 @@ const AddAddress: React.FC = () => {
     }
   };
 
+  // Convert Arabic numerals to English numerals
+  const convertToEnglishNumerals = (value: string): string => {
+    const arabicNumerals = ['٠', '١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩'];
+    const englishNumerals = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
+    
+    let converted = value;
+    for (let i = 0; i < arabicNumerals.length; i++) {
+      converted = converted.replace(new RegExp(arabicNumerals[i], 'g'), englishNumerals[i]);
+    }
+    return converted;
+  };
+
   return (
     <div className="relative flex min-h-screen w-full flex-col bg-background-light dark:bg-background-dark font-display text-text-primary-light dark:text-text-primary-dark antialiased pb-10 pb-safe" dir="rtl">
       {/* Header */}
@@ -282,7 +294,7 @@ const AddAddress: React.FC = () => {
                     type="tel" 
                     value={formData.phone}
                     onChange={(e) => {
-                      const val = e.target.value.replace(/\D/g, '');
+                      const val = convertToEnglishNumerals(e.target.value).replace(/\D/g, '');
                       setFormData({ ...formData, phone: val });
                     }}
                   />

@@ -211,6 +211,18 @@ const EditAddress: React.FC = () => {
     }
   };
 
+  // Convert Arabic numerals to English numerals
+  const convertToEnglishNumerals = (value: string): string => {
+    const arabicNumerals = ['٠', '١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩'];
+    const englishNumerals = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
+    
+    let converted = value;
+    for (let i = 0; i < arabicNumerals.length; i++) {
+      converted = converted.replace(new RegExp(arabicNumerals[i], 'g'), englishNumerals[i]);
+    }
+    return converted;
+  };
+
   if (fetching) return (
     <div className="relative flex min-h-screen w-full flex-col items-center justify-center bg-background-light dark:bg-background-dark font-display text-text-primary-light dark:text-text-primary-dark antialiased pt-safe" dir="rtl">
       <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
@@ -322,7 +334,7 @@ const EditAddress: React.FC = () => {
                     type="tel" 
                     value={formData.phone}
                     onChange={(e) => {
-                      const val = e.target.value.replace(/\D/g, '');
+                      const val = convertToEnglishNumerals(e.target.value).replace(/\D/g, '');
                       setFormData({ ...formData, phone: val });
                     }}
                   />
