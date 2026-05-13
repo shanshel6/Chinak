@@ -2446,7 +2446,16 @@ app.get('/api/admin/orders/:id', authenticateToken, isAdmin, hasPermission('mana
       return res.status(404).json({ error: 'Order not found' });
     }
 
-    res.json(order);
+    // Ensure notes are included in the response
+    const orderWithNotes = {
+      ...order,
+      items: order.items.map(item => ({
+        ...item,
+        notes: item.notes || null
+      }))
+    };
+
+    res.json(orderWithNotes);
   } catch (error) {
     console.error('Error fetching order details:', error);
     res.status(500).json({ error: 'Failed to fetch order details' });
