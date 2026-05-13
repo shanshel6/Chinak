@@ -1992,6 +1992,7 @@ const AdminDashboard: React.FC = () => {
                     setShowOrderModal(true);
                     const token = getAuthToken();
                     const fullOrder = await fetchAdminOrderDetails(order.id, token);
+                    console.log('[Admin] Order details received:', JSON.stringify(fullOrder.items.map((i: any) => ({ id: i.id, notes: i.notes })), null, 2));
                     setSelectedOrder(fullOrder);
                   } catch (error) {
                     showToast('فشل تحميل تفاصيل الطلب', 'error');

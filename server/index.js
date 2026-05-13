@@ -11200,6 +11200,7 @@ app.post('/api/orders', authenticateToken, async (req, res) => {
             shippingMethod: item.shippingMethod || 'air',
             notes: item.notes || null
           });
+          console.log('[Order Creation] Item notes:', { productId: resolvedProductId, notes: item.notes });
         }
 
         const newOrder = await tx.order.create({
