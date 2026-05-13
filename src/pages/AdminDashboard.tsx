@@ -24,8 +24,7 @@ import {
   Truck,
   Share2,
   Sparkles,
-  Globe,
-  MessageSquare
+  Globe
 } from 'lucide-react';
 import { useLocation, Routes, Route, useNavigate as _useNavigate } from 'react-router-dom';
 import { 
@@ -105,7 +104,6 @@ const AdminDashboard: React.FC = () => {
   const editingProductId = useState<number | string | null>(null)[0];
   const setEditingProductId = useState<number | string | null>(null)[1];
   const [showOriginalOptions, setShowOriginalOptions] = useState(false);
-  const [expandedNotes, setExpandedNotes] = useState<Set<number>>(new Set());
   
   const [storeSettings, setStoreSettings] = useState({
     airShippingRate: 15400,
@@ -1801,11 +1799,11 @@ const AdminDashboard: React.FC = () => {
                               {/* External 1688 Link */}
                               {item.product?.purchaseUrl ? (
                                 <a 
-                                  href={item.product.purchaseUrl} 
+                                  href={item.product.purchaseUrl.replace('https://', 'xianyu://').replace('http://', 'xianyu://')} 
                                   target="_blank" 
                                   rel="noopener noreferrer"
                                   className="inline-flex items-center justify-center p-2 bg-blue-50 dark:bg-blue-900/20 text-blue-500 rounded-lg hover:scale-110 transition-all"
-                                  title="رابط شراء المنتج (1688)"
+                                  title="رابط شراء المنتج (Xianyu)"
                                 >
                                   <ArrowLeft size={16} className="rotate-[135deg]" />
                                 </a>
@@ -1816,28 +1814,11 @@ const AdminDashboard: React.FC = () => {
                           </td>
                           <td className="px-4 py-4 text-center">
                             {item.notes ? (
-                              <button
-                                onClick={() => {
-                                  setExpandedNotes(prev => {
-                                    const newSet = new Set(prev);
-                                    if (newSet.has(item.id)) {
-                                      newSet.delete(item.id);
-                                    } else {
-                                      newSet.add(item.id);
-                                    }
-                                    return newSet;
-                                  });
-                                }}
-                                className="inline-flex items-center justify-center p-2 bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 rounded-lg hover:scale-110 transition-all"
-                                title="عرض الملاحظات"
-                              >
-                                <MessageSquare size={16} />
-                              </button>
-                            ) : null}
-                            {expandedNotes.has(item.id) && item.notes && (
-                              <div className="mt-2 text-[10px] sm:text-xs text-slate-600 dark:text-slate-400 bg-slate-50 dark:bg-slate-800 p-2 rounded-lg max-w-[200px] sm:max-w-[300px] break-words mx-auto">
+                              <div className="text-[10px] sm:text-xs text-slate-600 dark:text-slate-400 bg-slate-50 dark:bg-slate-800 p-2 rounded-lg max-w-[200px] sm:max-w-[300px] break-words mx-auto">
                                 {item.notes}
                               </div>
+                            ) : (
+                              <span className="text-[10px] sm:text-xs text-slate-400 dark:text-slate-600">-</span>
                             )}
                           </td>
                         </tr>
