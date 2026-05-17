@@ -65,7 +65,7 @@ const AdminLayout = lazy(() => import('./components/AdminLayout'));
 // Loading fallback
 const PageLoader = () => (
   <div className="flex-1 flex items-center justify-center bg-background-light dark:bg-background-dark min-h-[60vh]">
-    <div className="flex flex-col items-center gap-6">
+    <div className="flex flex-col items-center gap-6 animate-in fade-in zoom-in duration-700">
       <div className="flex flex-col items-center gap-1">
         <div className="flex gap-1 mb-2">
           <div className="size-1.5 rounded-full bg-primary animate-bounce [animation-delay:-0.3s]"></div>

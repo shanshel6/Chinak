@@ -717,7 +717,7 @@ const scoreCategorySuggestion = (entry, query) => {
 
 let dynamicCategorySuggestionCache = { at: 0, list: [], assignedSlugs: new Set() };
 let dynamicCategorySuggestionCachePromise = null;
-const DYNAMIC_CATEGORY_SUGGESTION_TTL_MS = 120000;
+const DYNAMIC_CATEGORY_SUGGESTION_TTL_MS = 600000;
 
 const sanitizeFeaturedSearchSentences = (input) => {
   const source = Array.isArray(input)
@@ -5337,13 +5337,23 @@ app.get('/api/products', async (req, res) => {
   const perf = createPerfLog('products', ENABLE_SEARCH_PERF_LOGS || forcePerf);
   perf.log('start', { query: req.query });
   const cacheKey = JSON.stringify(req.query || {});
+  const random = String(req.query.random || '').toLowerCase() === 'true';
+
+  // Skip cache for random requests to ensure fresh results
+  if (!random) {
+    const cached = productsResponseCache.get(cacheKey);
+    if (cached && (Date.now() - cached.at) <= PRODUCTS_RESPONSE_TTL_MS) {
+      perf.log('cache_hit', { ageMs: Date.now() - cached.at });
+      return res.json(cached.payload);
+    }
+  }
+
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 20;
     const skip = (page - 1) * limit;
     const maxPrice = req.query.maxPrice ? parseFloat(req.query.maxPrice) : null;
     const condition = req.query.condition || '';
-    const random = String(req.query.random || '').toLowerCase() === 'true';
 
     // Cache Store Settings for 60 seconds to reduce DB round-trips
     if (!cachedStoreSettings || (Date.now() - cachedStoreSettingsTime > 60000)) {
@@ -5421,20 +5431,38 @@ app.get('/api/products', async (req, res) => {
     const [products, total] = await withDbRetry(async () => {
       const total = await prisma.product.count({ where });
       if (random) {
-        const maxOffset = Math.max(0, total - limit);
-        const randomSkip = maxOffset > 0 ? Math.floor(Math.random() * (maxOffset + 1)) : 0;
-        const rows = await prisma.product.findMany({
-          where,
-          select: productSelect,
-          skip: randomSkip,
-          take: limit,
-          orderBy: { id: 'asc' }
+        // Use SQL RANDOM() for truly random ordering across the entire database
+        const rows = await prisma.$queryRawUnsafe(`
+          SELECT id, name, price, "basePriceIQD", image, "aiMetadata", "neworold", "isFeatured", "featuredSearchSentences", "domesticShippingFee", "deliveryTime"
+          FROM "Product"
+          WHERE "isActive" = true AND "status" = 'PUBLISHED'
+          ${maxPrice !== null && !isNaN(maxPrice) ? `AND price <= ${maxPrice}` : ''}
+          ${condition === 'new' ? `AND "neworold" = true` : condition === 'used' ? `AND ("neworold" = false OR "neworold" IS NULL)` : ''}
+          ORDER BY RANDOM()
+          LIMIT $1
+        `, limit);
+        
+        // Fetch variants for each product
+        const productIds = rows.map(r => r.id);
+        const variants = await prisma.productVariant.findMany({
+          where: { productId: { in: productIds } },
+          select: { id: true, combination: true, price: true, basePriceIQD: true, image: true }
         });
-        for (let i = rows.length - 1; i > 0; i -= 1) {
-          const j = Math.floor(Math.random() * (i + 1));
-          [rows[i], rows[j]] = [rows[j], rows[i]];
+        
+        const variantsMap = new Map();
+        for (const v of variants) {
+          if (!variantsMap.has(v.productId)) {
+            variantsMap.set(v.productId, []);
+          }
+          variantsMap.get(v.productId).push(v);
         }
-        return [rows, total];
+        
+        const rowsWithVariants = rows.map(r => ({
+          ...r,
+          variants: variantsMap.get(r.id) || []
+        }));
+        
+        return [rowsWithVariants, total];
       }
       const rows = await prisma.product.findMany({
         where,
@@ -5474,7 +5502,10 @@ app.get('/api/products', async (req, res) => {
       totalPages: Math.ceil(total / limit),
       engine: 'db'
     };
-    productsResponseCache.set(cacheKey, { at: Date.now(), payload });
+    // Skip cache for random requests to ensure fresh results
+    if (!random) {
+      productsResponseCache.set(cacheKey, { at: Date.now(), payload });
+    }
     res.json(payload);
     perf.log('response_sent', { engine: 'db', returned: products.length });
   } catch (error) {
@@ -8717,7 +8748,7 @@ app.get('/api/search/categories', async (req, res) => {
 
     let freshSuggestionIndex = dynamicCategorySuggestionCache.list;
     let assignedSlugs = dynamicCategorySuggestionCache.assignedSlugs;
-    const cacheExpired = !Array.isArray(freshSuggestionIndex) || !assignedSlugs || (Date.now() - dynamicCategorySuggestionCache.at) > DYNAMIC_CATEGORY_SUGGESTION_TTL_MS;
+    const cacheExpired = dynamicCategorySuggestionCache.at === 0 || !Array.isArray(freshSuggestionIndex) || freshSuggestionIndex.length === 0 || !assignedSlugs || assignedSlugs.size === 0 || (Date.now() - dynamicCategorySuggestionCache.at) > DYNAMIC_CATEGORY_SUGGESTION_TTL_MS;
     if (cacheExpired) {
       if (!dynamicCategorySuggestionCachePromise) {
         dynamicCategorySuggestionCachePromise = (async () => {
@@ -8856,6 +8887,7 @@ app.get('/api/search/categories', async (req, res) => {
     return res.json({ categories });
   } catch (error) {
     console.error('Category suggestion search failed:', error);
+    console.error('Error stack:', error?.stack);
     return res.status(500).json({
       error: 'Failed to load category suggestions',
       details: error?.message || 'Unknown error'
@@ -8950,160 +8982,84 @@ app.get('/api/search/category-products', async (req, res) => {
   try {
     const categoryId = String(req.query.categoryId || '').trim();
     const categoryName = String(req.query.categoryName || '').trim();
-    const categoryPath = String(req.query.categoryPath || '').trim();
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
     const maxPrice = req.query.maxPrice ? Number.parseFloat(String(req.query.maxPrice)) : null;
     const condition = String(req.query.condition || '').trim();
-    // Rebuild category index dynamically from seed file (categories may have been added by pipeline)
-    const freshIndex = buildCategoryIndex();
-    const freshMap = freshIndex?.map instanceof Map ? freshIndex.map : new Map();
 
-    // Also get category info from DB for any categories missing in seed file
-    const dbCategoryRows = await prisma.$queryRawUnsafe(`
-      SELECT DISTINCT
-        "aiMetadata"->>'categorySlug' as slug,
-        "aiMetadata"->>'categoryNameAr' as nameAr,
-        "aiMetadata"->>'categoryNameEn' as nameEn
-      FROM "Product"
-      WHERE "aiMetadata"->>'categorySlug' = $1
-    `, categoryId);
-    const dbCategory = dbCategoryRows?.[0];
-
-    // Also check categories table
-    const categoryTableRows = await prisma.$queryRawUnsafe(`
-      SELECT
-        slug,
-        "name_ar" as nameAr,
-        "name_en" as nameEn
+    // Get category ID from categories table
+    const categoryRow = await prisma.$queryRawUnsafe(`
+      SELECT id, slug, "name_ar" as "nameAr", "name_en" as "nameEn"
       FROM "categories"
       WHERE slug = $1
     `, categoryId);
-    const tableCategory = categoryTableRows?.[0];
-
-    let categoryEntry = freshMap.get(categoryId);
-    if (!categoryEntry && dbCategory) {
-      const nameAr = String(dbCategory.nameAr || '').trim() || categoryId;
-      const nameEn = String(dbCategory.nameEn || '').trim() || categoryId;
-      // Try to get path from seed file by matching nameAr or nameEn
-      const freshIndex = buildCategoryIndex();
-      const freshList = Array.isArray(freshIndex?.list) ? freshIndex.list : [];
-      const seedEntry = freshList.find(c => 
-        String(c.id || '').trim() === categoryId ||
-        String(c.nameAr || '').trim() === nameAr ||
-        String(c.nameEn || '').trim() === nameEn
-      );
-      console.log('[Category Products] dbCategory branch - categoryId:', categoryId, 'nameAr:', nameAr, 'nameEn:', nameEn, 'seedEntry found:', !!seedEntry, 'seedEntry pathAr:', seedEntry?.pathAr);
-      categoryEntry = {
-        id: categoryId,
-        slug: categoryId,
-        nameAr,
-        nameEn,
-        name_ar: nameAr,
-        name_en: nameEn,
-        pathAr: seedEntry?.pathAr || nameAr,
-        pathEn: seedEntry?.pathEn || nameEn,
-        path_ar: seedEntry?.pathAr || nameAr,
-        path_en: seedEntry?.pathEn || nameEn,
-        keywords: []
-      };
-    }
-    if (!categoryEntry && tableCategory) {
-      const nameAr = String(tableCategory.nameAr || '').trim() || categoryId;
-      const nameEn = String(tableCategory.nameEn || '').trim() || categoryId;
-      // Try to get path from seed file by matching nameAr or nameEn
-      const freshIndex = buildCategoryIndex();
-      const freshList = Array.isArray(freshIndex?.list) ? freshIndex.list : [];
-      const seedEntry = freshList.find(c => 
-        String(c.id || '').trim() === categoryId ||
-        String(c.nameAr || '').trim() === nameAr ||
-        String(c.nameEn || '').trim() === nameEn
-      );
-      console.log('[Category Products] tableCategory branch - categoryId:', categoryId, 'nameAr:', nameAr, 'nameEn:', nameEn, 'seedEntry found:', !!seedEntry, 'seedEntry pathAr:', seedEntry?.pathAr);
-      categoryEntry = {
-        id: categoryId,
-        slug: categoryId,
-        nameAr,
-        nameEn,
-        name_ar: nameAr,
-        name_en: nameEn,
-        pathAr: seedEntry?.pathAr || nameAr,
-        pathEn: seedEntry?.pathEn || nameEn,
-        path_ar: seedEntry?.pathAr || nameAr,
-        path_en: seedEntry?.pathEn || nameEn,
-        keywords: []
-      };
-    }
-
-    if (!categoryEntry) {
-      console.warn(`[Category Products] Category '${categoryId}' not found in fresh category index or DB.`);
+    
+    if (!categoryRow || categoryRow.length === 0) {
+      console.warn(`[Category Products] Category '${categoryId}' not found in categories table.`);
       return res.status(400).json({
         error: 'Invalid category ID',
-        message: `Category '${categoryId}' not found in index or DB.`
+        message: `Category '${categoryId}' not found in categories table.`
       });
     }
 
-    const assignedCategorySlugs = getAssignedCategorySlugs(categoryEntry, categoryId);
+    const dbCategoryId = categoryRow[0].id;
+    const dbCategoryName = categoryRow[0].nameAr;
 
-    console.log('[Category Products] categoryId:', categoryId, 'assignedCategorySlugs:', assignedCategorySlugs.length, 'searchText:', req.query.q);
+    console.log('[Category Products] categoryId:', categoryId, 'dbCategoryId:', dbCategoryId, 'dbCategoryId type:', typeof dbCategoryId, 'dbCategoryName:', dbCategoryName);
 
-    // Build query context for this category search
-    const categoryQuery = {
-      searchText: String(req.query.q || '').trim(),
-      displayName: categoryEntry?.nameAr || categoryName,
-      displayPath: categoryEntry?.pathAr || categoryPath
+    const andFilters = [
+      {
+        categoryId: dbCategoryId
+      }
+    ];
+
+    if (Number.isFinite(maxPrice) && maxPrice > 0) {
+      andFilters.push({ price: { lte: maxPrice } });
+    }
+
+    if (condition === 'new') {
+      andFilters.push({ neworold: true });
+    } else if (condition === 'used') {
+      andFilters.push({ OR: [{ neworold: false }, { neworold: null }] });
+    }
+
+    const where = {
+      status: 'PUBLISHED',
+      isActive: true,
+      AND: andFilters
     };
 
-    if (!categoryQuery.searchText && assignedCategorySlugs.length === 0) {
-      console.log('[Category Products] No search text and no assigned slugs, returning empty');
-      return res.json({
-        products: [],
-        total: 0,
-        page,
-        totalPages: 0,
-        hasMore: false,
-        engine: 'category-db'
-      });
-    }
+    const offset = (page - 1) * limit;
 
-    let result = assignedCategorySlugs.length > 0
-      ? await searchProductsByAssignedCategories({
-          categorySlugs: assignedCategorySlugs,
-          page,
-          limit,
-          maxPrice,
-          condition,
-          engine: 'category-assigned-db'
-        })
-      : null;
+    const [productsFromDb, shippingRates] = await Promise.all([
+      withDbRetry(() => prisma.product.findMany({
+        where,
+        skip: offset,
+        take: limit + 1,
+        orderBy: [{ updatedAt: 'desc' }],
+        select: getSearchProductSelect()
+      })),
+      getSearchShippingRates()
+    ]);
 
-    console.log('[Category Products] searchProductsByAssignedCategories result:', result ? { total: result.total, engine: result.engine } : 'null');
+    const pageProducts = productsFromDb.slice(0, limit);
+    const hasMore = productsFromDb.length > limit;
+    const total = offset + pageProducts.length + (hasMore ? 1 : 0);
 
-    if (!result || (result.total === 0 && categoryQuery.searchText)) {
-      console.log('[Category Products] Falling back to searchProductsFromDatabase');
-      result = await searchProductsFromDatabase({
-        query: categoryQuery.searchText,
-        rankingQuery: categoryQuery.displayName || categoryQuery.searchText,
-        page,
-        limit,
-        maxPrice,
-        condition,
-        engine: 'category-db'
-      });
-      console.log('[Category Products] searchProductsFromDatabase result:', result ? { total: result.total, engine: result.engine } : 'null');
-    }
+    console.log('[Category Products] Found products:', pageProducts.length, 'hasMore:', hasMore, 'total:', total);
 
     return res.json({
-      ...result,
-      category: {
-        id: categoryId || categoryEntry?.id || '',
-        nameAr: categoryQuery.displayName,
-        pathAr: categoryQuery.displayPath
-      }
+      products: pageProducts.map((product) => mapSearchProduct(product, shippingRates)),
+      total,
+      page,
+      totalPages: Math.ceil(total / limit),
+      hasMore,
+      engine: 'category-db'
     });
   } catch (error) {
-    console.error('Category product search failed:', error);
-    return res.status(500).json({
+    console.error('[Category Products] Error:', error);
+    console.error('[Category Products] Error stack:', error?.stack);
+    res.status(500).json({
       error: 'Failed to load category products',
       details: error?.message || 'Unknown error'
     });

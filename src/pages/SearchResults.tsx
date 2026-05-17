@@ -7,7 +7,6 @@ import { useAuthStore } from '../store/useAuthStore';
 import { normalizeWishlistProductId, useWishlistStore } from '../store/useWishlistStore';
 import ProductCard from '../components/home/ProductCard';
 import type { Product } from '../types/product';
-import { usePageCacheStore } from '../store/usePageCacheStore';
 import type { ConditionFilter, PriceFilter } from '../components/home/FilterBar';
 import { normalizeArabicSearchTerm } from '../data/arabicSearchNormalization';
 
@@ -22,7 +21,6 @@ const SearchResults: React.FC = () => {
   const initialCategoryId = searchParams.get('categoryId') || '';
   const initialCategoryName = searchParams.get('categoryName') || '';
   const IMAGE_QUERY_LABEL = 'بحث بالصورة';
-  const IMAGE_SEARCH_CACHE_KEY = '__image_search__';
   const IMAGE_SEARCH_STATE_STORAGE_KEY = 'image_search_state_v1';
   const [queryInput, setQueryInput] = useState(initialQuery);
   const [activeQuery, setActiveQuery] = useState(initialCategoryName || initialQuery);
@@ -54,10 +52,8 @@ const SearchResults: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [searchVersion, setSearchVersion] = useState(0);
   const [restored, setRestored] = useState(false);
-  const [initialSearchCacheHydrated, setInitialSearchCacheHydrated] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const restoredFromCacheRef = useRef(false);
   const activeQueryRef = useRef(activeQuery);
   const activeCategoryRef = useRef(activeCategory);
   const pageRef = useRef(page);
@@ -212,9 +208,8 @@ const SearchResults: React.FC = () => {
   }, [isInputFocused, readRecentCategories, readRecentTerms]);
 
   const startImageSearch = useCallback(async (imageBase64: string, width?: number, height?: number) => {
-    restoredFromCacheRef.current = false;
-    setRestored(false);
-    setLoading(false); // don't show loading on main screen yet
+    setRestored(false); 
+    setLoading(false); 
     setLoadingMore(false);
     setResults([]);
     setError(null);
@@ -394,7 +389,7 @@ const SearchResults: React.FC = () => {
   }, [imageSearchInput]);
 
   const clearImageSearch = useCallback(() => {
-    restoredFromCacheRef.current = false;
+    
     setRestored(false);
     setImageSearchInput(null);
     setImageSearchPreview(null);
@@ -414,15 +409,8 @@ const SearchResults: React.FC = () => {
     setQueryInput('');
     setActiveQuery('');
     clearImageSearchStateCache();
-    usePageCacheStore.getState().setSearchData(IMAGE_SEARCH_CACHE_KEY, {
-      results: [],
-      page: 1,
-      hasMore: false,
-      condition: null,
-      price: null,
-      scrollPos: 0
-    });
-    usePageCacheStore.getState().setSearchScrollPos(IMAGE_SEARCH_CACHE_KEY, 0);
+    
+    
     navigate('/search', { replace: true });
     setTimeout(() => {
       if (inputRef.current) inputRef.current.focus();
@@ -439,9 +427,8 @@ const SearchResults: React.FC = () => {
     }
     if (initialQuery.trim()) return;
     const cachedImageState = readImageSearchState();
-    const cachedSearch = usePageCacheStore.getState().getSearchData(IMAGE_SEARCH_CACHE_KEY);
+    const cachedSearch = null;
     if (!cachedImageState || !cachedSearch || !Array.isArray(cachedSearch.results) || cachedSearch.results.length === 0) return;
-    restoredFromCacheRef.current = true;
     setRestored(true);
     setImageSearchInput(cachedImageState.imageSearchInput);
     setImageSearchPreview(cachedImageState.imageSearchPreview);
@@ -487,7 +474,7 @@ const SearchResults: React.FC = () => {
 
   useEffect(() => {
     if (imageSearchInput) return;
-    setInitialSearchCacheHydrated(false);
+    
     setQueryInput(initialQuery);
     setActiveQuery(initialCategoryName || initialQuery);
     setActiveCategory(
@@ -505,14 +492,13 @@ const SearchResults: React.FC = () => {
     if (imageSearchInput) return;
     const key = initialCategoryId ? `category:${initialCategoryId}` : '';
     if (!key) {
-      restoredFromCacheRef.current = false;
+      
       setRestored(false);
-      setInitialSearchCacheHydrated(true);
+      
       return;
     }
-    const cached = usePageCacheStore.getState().getSearchData(key);
+    const cached = null;
     if (cached && Array.isArray(cached.results) && cached.results.length > 0) {
-      restoredFromCacheRef.current = true;
       setConditionFilter(cached.condition as ConditionFilter);
       setPriceFilter(cached.price as PriceFilter);
       setResults(cached.results);
@@ -527,12 +513,12 @@ const SearchResults: React.FC = () => {
       if (pos > 0) {
         restoreScrollWithRetry(pos);
       }
-      setInitialSearchCacheHydrated(true);
+      
       return;
     }
-    restoredFromCacheRef.current = false;
+    
     setRestored(false);
-    setInitialSearchCacheHydrated(true);
+    
   }, [imageSearchInput, initialCategoryId, restoreScrollWithRetry]);
 
   useEffect(() => {
@@ -617,7 +603,7 @@ const SearchResults: React.FC = () => {
     const query = activeQuery.trim();
     const category = activeCategory;
     if (!category?.id) {
-      restoredFromCacheRef.current = false;
+      
       setResults([]);
       setHasMore(false);
       setPage(1);
@@ -629,11 +615,6 @@ const SearchResults: React.FC = () => {
       return;
     }
     if (imageSearchInput) return;
-    if (restoredFromCacheRef.current) {
-      setLoading(false);
-      setLoadingMore(false);
-      return;
-    }
     if (restored) {
       setLoading(false);
       setLoadingMore(false);
@@ -745,7 +726,7 @@ const SearchResults: React.FC = () => {
   }, [imageSearchInput, selectedObjectBox]);
 
   useEffect(() => {
-    const key = imageSearchInput ? IMAGE_SEARCH_CACHE_KEY : activeCategoryKey;
+    const key = activeCategoryKey;
     if (!key) return;
 
     const getScrollMetrics = () => {
@@ -782,35 +763,21 @@ const SearchResults: React.FC = () => {
       window.removeEventListener('scroll', handleScroll);
       window.removeEventListener('touchmove', handleScroll);
     };
-  }, [IMAGE_SEARCH_CACHE_KEY, activeCategoryKey, imageSearchInput, loadMore]);
+  }, [activeCategoryKey, imageSearchInput, loadMore]);
 
   useEffect(() => {
-    const key = imageSearchInput ? IMAGE_SEARCH_CACHE_KEY : activeCategoryKey;
-    if (!initialSearchCacheHydrated) return;
+    const key = activeCategoryKey;
     if (!key) return;
-    usePageCacheStore.getState().setSearchData(key, {
-      results,
-      page,
-      hasMore,
-      condition: imageSearchInput ? null : conditionFilter as any,
-      price: imageSearchInput ? null : priceFilter as any,
-    });
-  }, [IMAGE_SEARCH_CACHE_KEY, activeCategoryKey, conditionFilter, hasMore, imageSearchInput, initialSearchCacheHydrated, page, priceFilter, results]);
+  }, [activeCategoryKey, conditionFilter, hasMore, imageSearchInput, page, priceFilter, results]);
 
   useEffect(() => {
-    const key = imageSearchInput ? IMAGE_SEARCH_CACHE_KEY : activeCategoryKey;
-    if (!initialSearchCacheHydrated) return;
+    const key = activeCategoryKey;
     if (!key) return;
     let timeoutId: any = null;
-    const getScrollY = () => {
-      const se = document.scrollingElement as null | { scrollTop?: unknown };
-      if (se && typeof se.scrollTop === 'number') return se.scrollTop as number;
-      return window.pageYOffset || window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0;
-    };
     const handleScroll = () => {
       if (timeoutId) clearTimeout(timeoutId);
       timeoutId = setTimeout(() => {
-        usePageCacheStore.getState().setSearchScrollPos(key, getScrollY());
+        // Scroll position tracking removed
       }, 150);
     };
     window.addEventListener('scroll', handleScroll, { passive: true });
@@ -820,11 +787,11 @@ const SearchResults: React.FC = () => {
       window.removeEventListener('scroll', handleScroll);
       window.removeEventListener('touchmove', handleScroll);
     };
-  }, [IMAGE_SEARCH_CACHE_KEY, activeCategoryKey, imageSearchInput, initialSearchCacheHydrated]);
+  }, [activeCategoryKey, imageSearchInput]);
 
   const selectCategory = useCallback((category: CategorySuggestion) => {
     const label = category.nameAr || category.pathAr || queryInput.trim();
-    restoredFromCacheRef.current = false;
+    
     setRestored(false);
     setResults([]);
     setHasMore(false);
@@ -879,20 +846,6 @@ const SearchResults: React.FC = () => {
   };
 
   const handleNavigateToProduct = useCallback((id: number | string, product: Product) => {
-    const key = imageSearchInput
-      ? IMAGE_SEARCH_CACHE_KEY
-      : (activeCategoryRef.current?.id ? `category:${activeCategoryRef.current.id}` : '');
-    if (key) {
-      const scrollY = window.pageYOffset || window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0;
-      usePageCacheStore.getState().setSearchScrollPos(key, scrollY);
-      usePageCacheStore.getState().setSearchData(key, {
-        results,
-        page: pageRef.current,
-        hasMore: hasMoreRef.current,
-        condition: imageSearchInput ? null : conditionFilterRef.current as any,
-        price: imageSearchInput ? null : priceFilterRef.current as any,
-      });
-    }
     if (imageSearchInput && imageSearchPreview) {
       persistImageSearchState({
         imageSearchInput,
@@ -1384,7 +1337,7 @@ const SearchResults: React.FC = () => {
                       onMouseDown={(e) => e.preventDefault()}
                       onClick={() => {
                         setQueryInput(term);
-                        restoredFromCacheRef.current = false;
+                        
                         setRestored(false);
                         setResults([]);
                         setHasMore(false);
@@ -1466,3 +1419,4 @@ const SearchResults: React.FC = () => {
 };
 
 export default SearchResults;
+
