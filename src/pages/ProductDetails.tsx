@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo, useRef } from 'react';
+import React, { useEffect, useState, useMemo, useRef, useCallback } from 'react';
 import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import { fetchProductById, checkProductPurchase, findProductInGlobalCache, trackInteraction, fetchSimilarProducts } from '../services/api';
 import { normalizeWishlistProductId, useWishlistStore } from '../store/useWishlistStore';
@@ -569,21 +569,21 @@ const ProductDetails: React.FC = () => {
     }
   }, [product?.id, loading, error]);
 
-  const loadMoreSimilarProducts = () => {
-    if (similarProductsHasMore && !similarProductsLoading && product?.id) {
-      const nextPage = similarProductsPage + 1;
-      setSimilarProductsLoading(true);
-      fetch(`/api/products/${product.id}/similar?limit=10&page=${nextPage}`)
-        .then(res => res.json())
-        .then(data => {
-          setSimilarProducts(prev => [...prev, ...(data.products || [])]);
-          setSimilarProductsHasMore(data.hasMore || false);
-          setSimilarProductsPage(nextPage);
-        })
-        .catch(err => console.error('Failed to load more similar products:', err))
-        .finally(() => setSimilarProductsLoading(false));
+  const loadMoreSimilarProducts = useCallback(async () => {
+    if (!similarProductsHasMore || similarProductsLoading || !product?.id) return;
+    const nextPage = similarProductsPage + 1;
+    setSimilarProductsLoading(true);
+    try {
+      const data = await fetchSimilarProducts(product.id, nextPage, 10);
+      setSimilarProducts(prev => [...prev, ...(data.products || [])]);
+      setSimilarProductsHasMore(data.hasMore || false);
+      setSimilarProductsPage(nextPage);
+    } catch (err) {
+      console.error('Failed to load more similar products:', err);
+    } finally {
+      setSimilarProductsLoading(false);
     }
-  };
+  }, [product?.id, similarProductsHasMore, similarProductsLoading, similarProductsPage]);
 
   const handleShippingMethodChange = (method: 'air' | 'sea') => {
     if (product?.isAirRestricted && method === 'air') return;
