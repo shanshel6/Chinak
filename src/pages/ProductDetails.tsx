@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo, useRef, useCallback } from 'react';
+import React, { useEffect, useState, useMemo, useRef, useCallback, useLayoutEffect } from 'react';
 import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import { fetchProductById, checkProductPurchase, findProductInGlobalCache, trackInteraction, fetchSimilarProducts } from '../services/api';
 import { normalizeWishlistProductId, useWishlistStore } from '../store/useWishlistStore';
@@ -337,9 +337,20 @@ const ProductDetails: React.FC = () => {
       .sort((a: any, b: any) => a.order - b.order);
   }, [product]);
 
+  useLayoutEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
+  }, [productId]);
+
   useEffect(() => {
-    // Reset scroll position when product changes
-    window.scrollTo(0, 0);
+    setSimilarProducts([]);
+    setSimilarProductsPage(1);
+    setSimilarProductsHasMore(false);
+    setSimilarProductsLoading(false);
+    setIsAdded(false);
+    setCurrentVariant(null);
+    userChangedShipping.current = false;
   }, [productId]);
 
   useEffect(() => {
@@ -747,7 +758,7 @@ const ProductDetails: React.FC = () => {
   }
 
   return (
-    <React.Fragment>
+    <React.Fragment key={productId || product.id}>
       <ProductHeader 
         onBack={() => navigate(-1)}
         onShare={handleShare}
@@ -826,7 +837,8 @@ const ProductDetails: React.FC = () => {
               console.log('[Similar Products] Found product:', !!selectedProduct);
               if (selectedProduct) {
                 console.log('[Similar Products] Navigating to product:', id);
-                window.location.href = `/product?id=${id}`;
+                window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+                navigate(`/product?id=${id}`, { state: { initialProduct: selectedProduct }, replace: false });
               }
             }}
           />
