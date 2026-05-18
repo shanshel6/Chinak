@@ -427,8 +427,7 @@ const SearchResults: React.FC = () => {
     }
     if (initialQuery.trim()) return;
     const cachedImageState = readImageSearchState();
-    const cachedSearch = null;
-    if (!cachedImageState || !cachedSearch || !Array.isArray(cachedSearch.results) || cachedSearch.results.length === 0) return;
+    if (!cachedImageState) return;
     setRestored(true);
     setImageSearchInput(cachedImageState.imageSearchInput);
     setImageSearchPreview(cachedImageState.imageSearchPreview);
@@ -438,21 +437,11 @@ const SearchResults: React.FC = () => {
     setIsAnalyzingImage(false);
     setConditionFilter(null);
     setPriceFilter(null);
-    setResults(cachedSearch.results);
-    setHasMore(Boolean(cachedSearch.hasMore));
-    hasMoreRef.current = Boolean(cachedSearch.hasMore);
-    const restoredPage = Math.max(1, Number(cachedSearch.page || 1));
-    setPage(restoredPage);
-    pageRef.current = restoredPage;
     setError(null);
     setLoading(false);
     setLoadingMore(false);
     setActiveQuery(IMAGE_QUERY_LABEL);
     setQueryInput(IMAGE_QUERY_LABEL);
-    const pos = Number(cachedSearch.scrollPos || 0);
-    if (pos > 0) {
-      restoreScrollWithRetry(pos);
-    }
   }, [IMAGE_QUERY_LABEL, initialQuery, readImageSearchState, restoreScrollWithRetry, startImageSearch]);
 
   useEffect(() => {
@@ -489,36 +478,6 @@ const SearchResults: React.FC = () => {
   }, [initialCategoryId, initialCategoryName, initialQuery, imageSearchInput]);
 
   useEffect(() => {
-    if (imageSearchInput) return;
-    const key = initialCategoryId ? `category:${initialCategoryId}` : '';
-    if (!key) {
-      
-      setRestored(false);
-      
-      return;
-    }
-    const cached = null;
-    if (cached && Array.isArray(cached.results) && cached.results.length > 0) {
-      setConditionFilter(cached.condition as ConditionFilter);
-      setPriceFilter(cached.price as PriceFilter);
-      setResults(cached.results);
-      setHasMore(Boolean(cached.hasMore));
-      hasMoreRef.current = Boolean(cached.hasMore);
-      const restoredPage = Math.max(1, Number(cached.page || 1));
-      setPage(restoredPage);
-      pageRef.current = restoredPage;
-      setError(null);
-      setRestored(true);
-      const pos = cached.scrollPos || 0;
-      if (pos > 0) {
-        restoreScrollWithRetry(pos);
-      }
-      
-      return;
-    }
-    
-    setRestored(false);
-    
   }, [imageSearchInput, initialCategoryId, restoreScrollWithRetry]);
 
   useEffect(() => {

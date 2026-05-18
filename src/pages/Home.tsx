@@ -23,7 +23,7 @@ const Home: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
 
   const [hasMore, setHasMore] = useState(true);
-  const [page, setPage] = useState(1);
+  const pageRef = useRef(1);
   const productsRef = useRef<Product[]>([]);
   const observer = useRef<IntersectionObserver | null>(null);
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
@@ -102,11 +102,8 @@ const Home: React.FC = () => {
     
     observer.current = new IntersectionObserver(entries => {
       if (entries[0].isIntersecting && hasMore && !loadingMore && !loading) {
-        setPage(prevPage => {
-          const nextPage = prevPage + 1;
-          loadData(nextPage);
-          return nextPage;
-        });
+        pageRef.current += 1;
+        loadData(pageRef.current);
       }
     }, { rootMargin: '200% 0px', threshold: 0 });
     
@@ -129,11 +126,8 @@ const Home: React.FC = () => {
     const needsMoreContent = docHeight <= viewportHeight + 160;
     if (!needsMoreContent) return;
     
-    setPage(prevPage => {
-      const nextPage = prevPage + 1;
-      loadData(nextPage);
-      return nextPage;
-    });
+    pageRef.current += 1;
+    loadData(pageRef.current);
   }, [loading, loadingMore, hasMore, products.length, loadData]);
 
   const isProductInWishlist = (productId: number | string) => {
@@ -151,8 +145,8 @@ const Home: React.FC = () => {
     toggleWishlist(product.id, product);
   };
 
-  const handleNavigateToProduct = useCallback((id: number | string, product: Product) => {
-    navigate(`/product?id=${id}`, { state: { initialProduct: product } });
+  const handleNavigateToProduct = useCallback((id: number | string) => {
+    navigate(`/product/${id}`);
   }, [navigate]);
 
   const handleSearchByPhotoBannerClick = () => {
