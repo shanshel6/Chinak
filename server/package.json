@@ -8,7 +8,8 @@
     "start": "node index.js",
     "prisma:generate": "prisma generate",
     "postinstall": "prisma generate",
-    "seed": "node prisma/seed.js"
+    "seed": "node prisma/seed.js",
+    "embed:categories": "node scripts/embedCategories.js"
   },
   "keywords": [],
   "author": "",

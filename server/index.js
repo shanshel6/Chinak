@@ -29,6 +29,7 @@ import { calculateOrderShipping, calculateProductShipping, getAdjustedPrice } fr
 import { setupLinkCheckerCron, checkAllProductLinks } from './services/linkCheckerService.js';
 import { embedImage, analyzeImageObjects, embedImageCrop, embedImageRaw, warmupClipService } from './services/clipService.js';
 import { ensureProductImageEmbeddings, searchProductsByImageVector } from './services/productImageVectorService.js';
+import { loadCategoryVectors, searchByEmbedding, hasCachedVectors } from './services/categoryEmbeddingService.js';
 import multer from 'multer';
 
 // Setup multer for memory storage (for image uploads)
@@ -8850,19 +8851,31 @@ app.get('/api/search/categories', async (req, res) => {
 
     console.log('[Category Search] Cache built:', { totalCategories: freshSuggestionIndex.length, assignedSlugs: assignedSlugs.size, query: q });
 
+    const embeddingScores = hasCachedVectors() ? await searchByEmbedding(q, 50) : [];
+    const embeddingScoreMap = new Map();
+    for (const es of embeddingScores) {
+      const existing = embeddingScoreMap.get(es.slug) || 0;
+      if (es.score > existing) embeddingScoreMap.set(es.slug, es.score);
+    }
+    console.log('[Category Search] Embedding matches:', embeddingScores.length, 'top score:', embeddingScores[0]?.score?.toFixed(4) || 'N/A');
+
     const scoredCategories = freshSuggestionIndex
       .filter((entry) => assignedSlugs.has(String(entry.id || '').trim()))
       .map((entry) => {
         const { score, matchedText } = scoreCategorySuggestion(entry, q);
-        return score > 0
+        const embScore = embeddingScoreMap.get(String(entry.id || '').trim()) || 0;
+        const blendedScore = score > 0
+          ? score + (embScore * 180)
+          : (embScore > 0.35 ? embScore * 200 : 0);
+        return blendedScore > 0
           ? {
               id: entry.id,
               nameAr: entry.nameAr,
               pathAr: entry.pathAr,
               nameEn: entry.nameEn,
               pathEn: entry.pathEn,
-              matchedText,
-              score,
+              matchedText: matchedText || (embScore > 0.4 ? entry.nameAr : ''),
+              score: blendedScore,
               depth: entry.pathSegmentsAr.length || splitCategoryPath(entry.pathAr).length
             }
           : null;
@@ -11874,6 +11887,7 @@ setupLinkCheckerCron();
 
 console.log('Attempting to start server on port:', process.env.PORT || 5001);
 console.log('[Perf] ENABLE_SEARCH_PERF_LOGS =', ENABLE_SEARCH_PERF_LOGS, `(raw: ${String(process.env.ENABLE_SEARCH_PERF_LOGS || '')})`);
+console.log('[Embedding] Category vectors cached:', hasCachedVectors());
 
 const server = httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`Server is running on port ${PORT} (accessible from network)`);
