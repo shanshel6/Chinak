@@ -145,8 +145,8 @@ const Home: React.FC = () => {
     toggleWishlist(product.id, product);
   };
 
-  const handleNavigateToProduct = useCallback((id: number | string) => {
-    navigate(`/product/${id}`);
+  const handleNavigateToProduct = useCallback((id: number | string, product: Product) => {
+    navigate(`/product?id=${id}`, { state: { initialProduct: product } });
   }, [navigate]);
 
   const handleSearchByPhotoBannerClick = () => {
@@ -368,7 +368,7 @@ const Home: React.FC = () => {
                 >
                   <ProductCard 
                     product={product}
-                    onNavigate={handleNavigateToProduct}
+                    onNavigate={(id) => handleNavigateToProduct(id, product)}
                     onAddToWishlist={handleAddToWishlist}
                     isProductInWishlist={isProductInWishlist}
                   />
