@@ -4,6 +4,14 @@ import fs from 'fs/promises';
 import { PrismaClient } from '@prisma/client';
 import dotenv from 'dotenv';
 
+// Helper function to check if text is more than 50% Chinese characters
+function isMostlyChinese(text) {
+  if (!text || text.length < 3) return false; // Allow very short strings
+  const chineseChars = text.match(/[\u4e00-\u9fff]/g) || [];
+  const chineseRatio = chineseChars.length / text.length;
+  return chineseRatio > 0.5;
+}
+
 // Helper function to calculate price multiplier (copied to avoid importing from goofish-pipeline.js)
 function calculatePriceMultiplier(basePriceIQD) {
   return 1.2;
@@ -317,6 +325,12 @@ async function insertProduct(productData, goofishMappings, categories) {
         if (!productData.images || productData.images.length === 0) {
           console.log(`[Queue] Skipping product ${productData.itemId} - no images available`);
           throw new Error('Product has no images, skipping');
+        }
+
+        // Skip products with mostly Chinese names
+        if (isMostlyChinese(productData.name)) {
+          console.log(`[Queue] Skipping product ${productData.itemId} - name is mostly Chinese: ${productData.name.substring(0, 50)}...`);
+          throw new Error('Product name is mostly Chinese, skipping');
         }
 
         console.log(`[Queue] Creating product in database...`);

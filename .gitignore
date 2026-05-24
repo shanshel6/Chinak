@@ -65,6 +65,18 @@ server/*.html
 !server/tsconfig.json
 server/scripts/pdd_cookies.json
 
+# Product Queue and Scraper Logs
+product-queue/
+rapid-scraper/
+*.json
+!package.json
+!package-lock.json
+!tsconfig.json
+!composer.json
+!admin-app/package.json
+!admin-app/tsconfig.json
+!admin-app/capacitor.config.json
+
 # Android
 android/.gradle/
 android/app/build/

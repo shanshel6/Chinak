@@ -1,26 +1,25 @@
-import pkg from '@prisma/client';
-const { PrismaClient } = pkg;
-const prisma = new PrismaClient();
+import prisma from './server/prismaClient.js';
 
-async function checkProducts() {
-  const products = await prisma.product.findMany({
-    take: 5,
-    orderBy: { createdAt: 'desc' },
-    include: { options: true }
-  });
-  
-  console.log('Recent Products:');
-  products.forEach(p => {
-    console.log(`- ID: ${p.id}, Name: ${p.name}, ChineseName: ${p.chineseName}, Status: ${p.status}`);
-    if (p.options) {
-      console.log('  Options:');
-      p.options.forEach(o => {
-        console.log(`    - ${o.name}: ${o.values}`);
-      });
+async function check() {
+  try {
+    const products = await prisma.product.findMany({ take: 5 });
+    console.log('Sample Products:');
+    products.forEach(p => {
+      console.log(`ID: ${p.id}, Status: ${p.status}, Active: ${p.isActive}`);
+    });
+    
+    const product = await prisma.product.findUnique({ where: { id: 4676 } });
+    if (product) {
+      console.log('\nProduct 4676:');
+      console.log(`ID: ${product.id}, Name: ${product.name}, Price: ${product.price}, Status: ${product.status}`);
+    } else {
+      console.log('\nProduct 4676 NOT FOUND');
     }
-  });
-  
-  await prisma.$disconnect();
+  } catch (err) {
+    console.error('Error:', err);
+  } finally {
+    await prisma.$disconnect();
+  }
 }
 
-checkProducts();
+check();

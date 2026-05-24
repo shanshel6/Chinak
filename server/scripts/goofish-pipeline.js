@@ -1055,8 +1055,8 @@ const siliconflowAgent = new https.Agent({
 
 // Circuit breaker: skip AI calls after N consecutive failures
 let sfConsecutiveFailures = 0;
-const SF_FAILURE_THRESHOLD = 10;
-const SF_COOLDOWN_MS = 10000;
+const SF_FAILURE_THRESHOLD = 20;
+const SF_COOLDOWN_MS = 30000;
 let sfCircuitOpenUntil = 0;
 
 // Reset circuit breaker on startup
@@ -1065,7 +1065,7 @@ sfCircuitOpenUntil = 0;
 
 const GOOFISH_TERM_AI_CALL_TIMEOUT_MS = Math.max(5000, parseInt(process.env.GOOFISH_TERM_AI_CALL_TIMEOUT_MS || '60000', 10) || 60000);
 const GOOFISH_TERM_AI_MAX_ATTEMPTS = Math.max(1, parseInt(process.env.GOOFISH_TERM_AI_MAX_ATTEMPTS || '3', 10) || 3);
-const GOOFISH_AI_MODEL = String(process.env.GOOFISH_AI_MODEL || 'Qwen/Qwen3-235B-A22B-Instruct-2507').trim() || 'Qwen/Qwen3-235B-A22B-Instruct-2507';
+const GOOFISH_AI_MODEL = String(process.env.GOOFISH_AI_MODEL || 'Qwen/Qwen3-14B').trim() || 'Qwen/Qwen3-14B';
 const GOOFISH_AI_RATE_LIMIT_DELAY_MS = Math.max(0, Number.parseInt(process.env.GOOFISH_AI_RATE_LIMIT_DELAY_MS || '200', 10) || 200);
 const GOOFISH_ENABLE_TRANSLATION_RETRY = String(process.env.GOOFISH_ENABLE_TRANSLATION_RETRY || '').toLowerCase() === 'true';
 const GOOFISH_SKIP_ON_TRANSLATION_FAILURE = String(process.env.GOOFISH_SKIP_ON_TRANSLATION_FAILURE || 'true').toLowerCase() !== 'false';
@@ -2757,8 +2757,8 @@ async function getSearchTermsForRun() {
       };
     }
     
-    // Start fresh from "床单" (index 48) or specified index
-    const startIndex = 48; // Start from "床单"
+    // Start fresh from term 141 (index 140)
+    const startIndex = 140; // Start from term 141
     const batchId = `custom_${Date.now()}`;
     const active = { 
       id: batchId, 
@@ -2778,7 +2778,7 @@ async function getSearchTermsForRun() {
     };
     saveSearchTermHistory(nextHistory);
     clearBatchLinksQueue();
-    console.log(`[Custom Terms] Using all ${customTerms.length} custom terms, starting from index ${startIndex} ("床单")`);
+    console.log(`[Custom Terms] Using all ${customTerms.length} custom terms, starting from index ${startIndex} (term ${startIndex + 1})`);
     return { terms: customTerms, startIndex, batchId, source: 'custom', checkpoint: null };
   }
   
@@ -3308,6 +3308,10 @@ async function translateFullTitleToArabic(title, fallbackText = '') {
         content: `Translate this Chinese product title to a neat and simple Arabic product name. Keep it SHORT and CLEAN (2-5 words maximum). MUST include the product type first. MUST include the brand name if available in the title. You may add material and color after the product type if relevant. CRITICAL: Do NOT mention any prices, currency symbols, or monetary values in the name. Exclude size, seller policies, shipping, price, negotiation terms, promotional text, and unnecessary details. Keep English brand names if present. Return Arabic ONLY (except brand names), no JSON, no explanation.\nTitle: ${source}`
       }
     ], 0.2, 200, { timeoutMs: GOOFISH_AI_CALL_TIMEOUT_MS });
+    if (!result) {
+      console.log(`[translateFullTitleToArabic] Circuit breaker or API returned null, using fallback`);
+      return fallbackText || source;
+    }
     console.log(`[translateFullTitleToArabic] Raw result: ${result.substring(0, 50)}...`);
     const translated = cleanAiText(sanitizeTranslationText(result));
     console.log(`[translateFullTitleToArabic] Cleaned: ${translated.substring(0, 30)}...`);
@@ -3361,6 +3365,12 @@ Product title: ${sourceTitle}
 Product details: ${sourceDetail}`
         }
       ], 0.2, 300, { timeoutMs: GOOFISH_AI_CALL_TIMEOUT_MS });
+      
+      if (!result) {
+        console.log(`[translateDetailDescriptionToArabic] Attempt ${attempt} returned null (circuit breaker), using fallback`);
+        lastError = new Error('Circuit breaker open');
+        continue;
+      }
       
       const translated = cleanDescriptionText(result);
       if (!translated) {
