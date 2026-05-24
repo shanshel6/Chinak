@@ -1,6 +1,9 @@
 import { create } from 'zustand';
 import * as api from '../services/api';
 import { socket } from '../services/socket';
+import { useToastStore } from './useToastStore';
+import { LocalNotifications } from '@capacitor/local-notifications';
+import { Capacitor } from '@capacitor/core';
 
 export type AppNotification = {
   id: string | number;
@@ -42,7 +45,7 @@ export const useNotificationStore = create<NotificationState>((set) => ({
     // Remove existing listener if any to avoid duplicates
     socket.off(eventName);
     
-    socket.on(eventName, (newNotif: any) => {
+    socket.on(eventName, async (newNotif: any) => {
       const formattedNotif: AppNotification = {
         id: newNotif.id,
         type: newNotif.type,
@@ -60,6 +63,33 @@ export const useNotificationStore = create<NotificationState>((set) => ({
         notifications: [formattedNotif, ...state.notifications],
         unreadCount: state.unreadCount + 1
       }));
+
+      // Show in-app toast
+      useToastStore.getState().showToast(newNotif.title, 'info', 5000);
+
+      // Trigger Local Push Notification for Background/System Level visibility (iPhone & Android)
+      if (Capacitor.isNativePlatform()) {
+        try {
+          const perm = await LocalNotifications.checkPermissions();
+          if (perm.display === 'granted') {
+            await LocalNotifications.schedule({
+              notifications: [
+                {
+                  title: newNotif.title,
+                  body: newNotif.description,
+                  id: Number(newNotif.id) || Math.floor(Math.random() * 100000),
+                  schedule: { at: new Date(Date.now() + 100) },
+                  sound: 'default',
+                  attachments: [],
+                  extra: { link: newNotif.link }
+                }
+              ]
+            });
+          }
+        } catch (e) {
+          console.error('Failed to show local notification:', e);
+        }
+      }
     });
   },
 

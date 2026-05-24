@@ -59,6 +59,8 @@ import { performCacheMaintenance } from './services/api';
 import { App as CapApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import type { PluginListenerHandle } from '@capacitor/core';
+import { LocalNotifications } from '@capacitor/local-notifications';
+import { PushNotifications } from '@capacitor/push-notifications';
 
 const AdminLayout = lazy(() => import('./components/AdminLayout'));
 
@@ -320,6 +322,27 @@ function App() {
   const isServerDown = useMaintenanceStore((state) => state.isServerDown);
 
   useEffect(() => {
+    // Register Push Notifications on Startup for Native Platforms
+    const setupPush = async () => {
+      if (Capacitor.isNativePlatform()) {
+        try {
+          let permStatus = await PushNotifications.checkPermissions();
+          if (permStatus.receive === 'prompt') {
+            permStatus = await PushNotifications.requestPermissions();
+          }
+          if (permStatus.receive === 'granted') {
+            await PushNotifications.register();
+          }
+
+          // Also request Local Notifications permissions
+          await LocalNotifications.requestPermissions();
+        } catch (e) {
+          console.error('Push registration error:', e);
+        }
+      }
+    };
+    setupPush();
+
     performCacheMaintenance();
     ensureGuestSession();
     checkAuth();
