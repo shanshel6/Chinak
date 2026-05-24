@@ -2468,6 +2468,44 @@ app.get('/api/admin/orders/:id', authenticateToken, isAdmin, hasPermission('mana
   }
 });
 
+// ADMIN: Update order payment method
+app.put('/api/admin/orders/:id/payment-method', authenticateToken, isAdmin, async (req, res) => {
+  const orderId = safeParseId(req.params.id);
+  const { paymentMethod } = req.body;
+
+  if (!paymentMethod) {
+    return res.status(400).json({ error: 'Payment method is required' });
+  }
+
+  try {
+    const order = await prisma.order.update({
+      where: { id: orderId },
+      data: { paymentMethod },
+      include: { user: true }
+    });
+
+    // Notify user about payment method update
+    let methodArabic = paymentMethod === 'zain_cash' ? 'زين كاش' : 
+                       paymentMethod === 'super_key' ? 'سوبر كي' : 
+                       paymentMethod === 'cash' ? 'دفع نقدي' : paymentMethod;
+
+    await createUserNotification(
+      order.userId,
+      'تحديث وسيلة الدفع 💳',
+      `تم تحديد وسيلة الدفع لطلبك رقم #${orderId} لتكون: ${methodArabic}. يمكنك الآن إكمال عملية الدفع.`,
+      'order',
+      'payments',
+      'blue',
+      `/shipping-tracking?id=${orderId}`
+    );
+
+    res.json({ success: true, order });
+  } catch (error) {
+    console.error('Failed to update payment method:', error);
+    res.status(500).json({ error: 'Failed to update payment method' });
+  }
+});
+
 // ADMIN: Update product price from order
 app.put('/api/admin/products/:id/price-from-order', authenticateToken, isAdmin, async (req, res) => {
   const rawId = req.params.id;

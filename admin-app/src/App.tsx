@@ -38,7 +38,8 @@ import {
   fetchAdminOrderDetails, 
   updateOrderInternationalFee,
   updateProductPriceFromOrder,
-  archiveProductFromOrder
+  archiveProductFromOrder,
+  updateOrderPaymentMethod
 } from './services/api';
 import { socket, joinAdminRoom } from './services/socket';
 import { playOrderSound, stopOrderSound } from './services/sound';
@@ -99,6 +100,21 @@ const App: React.FC = () => {
       alert(`فشل تحديث السعر: ${errorMsg}\n\nURL: ${apiUrl}`);
     } finally {
       setIsUpdatingPrice(false);
+    }
+  };
+
+  const handleUpdatePaymentMethod = async (orderId: number, method: string) => {
+    try {
+      await updateOrderPaymentMethod(orderId, method);
+      loadOrders();
+      if (selectedOrder && selectedOrder.id === orderId) {
+        const updated = await fetchAdminOrderDetails(orderId);
+        setSelectedOrder(updated);
+      }
+      showSuccess('تم تحديث وسيلة الدفع بنجاح');
+    } catch (err) {
+      console.error('Failed to update payment method:', err);
+      alert('فشل في تحديث وسيلة الدفع');
     }
   };
 
@@ -626,6 +642,33 @@ https://chinak-production.up.railway.app/shipping-tracking?id=${order.id}`;
                             <div><div className="text-xs font-bold opacity-70 uppercase tracking-widest">Grand Total</div><div className="text-3xl font-black">{selectedOrder.total.toLocaleString()} IQD</div></div>
                             <div className="bg-white/20 p-4 rounded-2xl"><CreditCard size={32} /></div>
                           </div>
+                        </div>
+                      </div>
+
+                      <div className="bg-slate-50 p-6 rounded-[2rem] border border-slate-100">
+                        <div className="flex items-center gap-3 mb-4 text-purple-600"><CreditCard size={20} /><h4 className="font-black">Payment Method</h4></div>
+                        <div className="grid grid-cols-1 gap-3">
+                          {[
+                            { id: 'zain_cash', label: 'Zain Cash', icon: '📱' },
+                            { id: 'super_key', label: 'Super Key', icon: '🔑' },
+                            { id: 'cash', label: 'Cash on Delivery', icon: '💵' }
+                          ].map((method) => (
+                            <button
+                              key={method.id}
+                              onClick={() => handleUpdatePaymentMethod(selectedOrder.id, method.id)}
+                              className={`flex items-center justify-between p-4 rounded-2xl border-2 transition-all ${
+                                selectedOrder.paymentMethod === method.id
+                                  ? 'border-purple-600 bg-purple-50 text-purple-700'
+                                  : 'border-white bg-white text-slate-400 hover:border-slate-200'
+                              }`}
+                            >
+                              <div className="flex items-center gap-3">
+                                <span className="text-xl">{method.icon}</span>
+                                <span className="font-black text-sm">{method.label}</span>
+                              </div>
+                              {selectedOrder.paymentMethod === method.id && <CheckCircle2 size={18} />}
+                            </button>
+                          ))}
                         </div>
                       </div>
                     </div>

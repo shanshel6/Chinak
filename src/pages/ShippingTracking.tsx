@@ -626,12 +626,15 @@ const ShippingTracking: React.FC = () => {
                 {order.paymentMethod === 'zain_cash' ? 'زين كاش' : 
                  order.paymentMethod === 'super_key' ? 'سوبر كي' : 
                  order.paymentMethod === 'cash' ? 'دفع نقدي' : 
-                 order.paymentMethod === 'credit_card' ? 'بطاقة ائتمان' : (order.paymentMethod || '---')}
+                 order.paymentMethod === 'PENDING' ? 'قيد المراجعة' : (order.paymentMethod || '---')}
               </p>
               <span className="text-xs bg-slate-100 dark:bg-slate-700 px-2 py-1 rounded text-slate-500 uppercase">
-                {order.paymentMethod === 'cash' ? 'CASH' : (order.paymentMethod?.replace('_', ' ') || 'PAYMENT')}
+                {order.paymentMethod === 'PENDING' ? 'REVIEWING' : (order.paymentMethod?.replace('_', ' ') || 'PAYMENT')}
               </span>
             </div>
+            {order.paymentMethod === 'PENDING' && (
+              <p className="text-[10px] text-blue-500 font-bold pr-7">سيقوم فريقنا بتحديد وسيلة الدفع المناسبة لك قريباً.</p>
+            )}
           </div>
 
 

@@ -123,7 +123,7 @@ const CheckoutPaymentAddress: React.FC = () => {
     setPaymentStep('processing');
     
     try {
-      // Prepare items for order - exclude notes field if backend doesn't support it yet
+      // Prepare items for order
       const orderItems = cartItems.map(item => ({
         productId: item.productId,
         variantId: item.variantId,
@@ -133,10 +133,11 @@ const CheckoutPaymentAddress: React.FC = () => {
         notes: item.notes
       }));
       
-      // Create the order
+      // Create the order with 'PENDING' payment method
+      // The actual method will be chosen by admin later
       const order = await placeOrder(
         selectedAddressId!, 
-        paymentMethod, 
+        'PENDING', 
         shippingMethod, 
         appliedCoupon?.code,
         orderItems
@@ -357,110 +358,21 @@ const CheckoutPaymentAddress: React.FC = () => {
           </p>
 
           {/* Price Change Notification */}
-          <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800/50 rounded-2xl p-4 flex items-start gap-3">
-            <div className="text-blue-600 dark:text-blue-400 shrink-0 mt-0.5">
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"></path>
-                <path d="M12 16v-4"></path>
-                <path d="M12 8h.01"></path>
-              </svg>
-            </div>
-            <p className="text-xs text-blue-800 dark:text-blue-200 leading-relaxed font-medium">
-              ملاحظة: في حال وجود أي تغيير في الأسعار، سيتم إعلامكم عبر الواتساب.
-            </p>
+        <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800/50 rounded-2xl p-4 flex items-start gap-3">
+          <div className="text-blue-600 dark:text-blue-400 shrink-0 mt-0.5">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"></path>
+              <path d="M12 16v-4"></path>
+              <path d="M12 8h.01"></path>
+            </svg>
           </div>
-        </section>
+          <p className="text-xs text-blue-800 dark:text-blue-200 leading-relaxed font-medium">
+            ملاحظة: سيقوم فريقنا بمراجعة طلبك وتحديد وسيلة الدفع المناسبة لك والتواصل معك عبر الواتساب.
+          </p>
+        </div>
+      </section>
 
-        <section className="space-y-4 animate-[fadeIn_0.6s_ease-out]">
-          <div className="flex items-center justify-between">
-            <h3 className="text-lg font-bold tracking-tight">طريقة الدفع</h3>
-            <div className="flex flex-col items-end">
-              <span className="text-[10px] text-slate-400 font-black uppercase tracking-wider">المبلغ المطلوب</span>
-              <span className="text-sm font-black text-primary">{total.toLocaleString()} د.ع</span>
-            </div>
-          </div>
-          
-          <div className="grid grid-cols-1 gap-3">
-            {/* Zain Cash */}
-            <button 
-              onClick={() => setPaymentMethod('zain_cash')}
-              className={`relative flex items-center gap-4 p-4 rounded-2xl border-2 transition-all duration-300 ${
-                paymentMethod === 'zain_cash' 
-                  ? 'border-primary bg-primary/5 shadow-md scale-[1.02]' 
-                  : 'border-slate-100 dark:border-slate-800 bg-surface-light dark:bg-surface-dark hover:border-slate-200 dark:hover:border-slate-700 opacity-70'
-              }`}
-            >
-              <div className={`w-12 h-12 rounded-xl flex items-center justify-center overflow-hidden transition-all shadow-sm ${
-                paymentMethod === 'zain_cash' ? 'bg-[#272727]' : 'bg-slate-100 dark:bg-slate-800'
-              }`}>
-                <div className="w-6 h-6 rounded-full border-2 border-[#D6006E] flex items-center justify-center">
-                  <div className="w-1 h-3 bg-white rotate-45"></div>
-                </div>
-              </div>
-              <div className="flex flex-col text-right flex-1">
-                <span className="font-bold text-base">زين كاش</span>
-                <span className="text-[10px] text-slate-500 font-medium">الدفع السريع عبر المحفظة</span>
-              </div>
-              <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all ${
-                paymentMethod === 'zain_cash' ? 'border-primary bg-primary' : 'border-slate-200 dark:border-slate-700'
-              }`}>
-                {paymentMethod === 'zain_cash' && <Check size={14} className="text-white" strokeWidth={4} />}
-              </div>
-            </button>
-
-            {/* Super Key */}
-            <button 
-              onClick={() => setPaymentMethod('super_key')}
-              className={`relative flex items-center gap-4 p-4 rounded-2xl border-2 transition-all duration-300 ${
-                paymentMethod === 'super_key' 
-                  ? 'border-primary bg-primary/5 shadow-md scale-[1.02]' 
-                  : 'border-slate-100 dark:border-slate-800 bg-surface-light dark:bg-surface-dark hover:border-slate-200 dark:hover:border-slate-700 opacity-70'
-              }`}
-            >
-              <div className={`w-12 h-12 rounded-xl flex items-center justify-center transition-all shadow-sm ${
-                paymentMethod === 'super_key' ? 'bg-primary text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-400'
-              }`}>
-                <Key size={24} />
-              </div>
-              <div className="flex flex-col text-right flex-1">
-                <span className="font-bold text-base">سوبر كي</span>
-                <span className="text-[10px] text-slate-500 font-medium">دفع آمن عبر SuperKey</span>
-              </div>
-              <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all ${
-                paymentMethod === 'super_key' ? 'border-primary bg-primary' : 'border-slate-200 dark:border-slate-700'
-              }`}>
-                {paymentMethod === 'super_key' && <Check size={14} className="text-white" strokeWidth={4} />}
-              </div>
-            </button>
-
-            {/* Cash on Delivery */}
-            <button 
-              onClick={() => setPaymentMethod('cash')}
-              className={`relative flex items-center gap-4 p-4 rounded-2xl border-2 transition-all duration-300 ${
-                paymentMethod === 'cash' 
-                  ? 'border-primary bg-primary/5 shadow-md scale-[1.02]' 
-                  : 'border-slate-100 dark:border-slate-800 bg-surface-light dark:bg-surface-dark hover:border-slate-200 dark:hover:border-slate-700 opacity-70'
-              }`}
-            >
-              <div className={`w-12 h-12 rounded-xl flex items-center justify-center transition-all shadow-sm ${
-                paymentMethod === 'cash' ? 'bg-green-500 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-400'
-              }`}>
-                <Wallet size={24} />
-              </div>
-              <div className="flex flex-col text-right flex-1">
-                <span className="font-bold text-base">دفع نقدي</span>
-                <span className="text-[10px] text-slate-500 font-medium">الدفع مقدماً، يجب تسليم المبلغ خلال 3 أيام (في بغداد فقط)</span>
-              </div>
-              <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all ${
-                paymentMethod === 'cash' ? 'border-primary bg-primary' : 'border-slate-200 dark:border-slate-700'
-              }`}>
-                {paymentMethod === 'cash' && <Check size={14} className="text-white" strokeWidth={4} />}
-              </div>
-            </button>
-          </div>
-        </section>
-
-        {/* Order Summary */}
+      {/* Order Summary */}
         <section className="space-y-3 animate-[fadeIn_0.7s_ease-out]">
           <h3 className="text-lg font-bold tracking-tight">ملخص الطلب</h3>
           

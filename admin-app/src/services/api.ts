@@ -55,3 +55,8 @@ export const archiveProductFromOrder = async (productId: number, orderId: number
   const response = await api.put(`/api/admin/products/${productId}/archive-from-order`, { orderId });
   return response.data;
 };
+
+export const updateOrderPaymentMethod = async (orderId: number, paymentMethod: string) => {
+  const response = await api.put(`/api/admin/orders/${orderId}/payment-method`, { paymentMethod });
+  return response.data;
+};
