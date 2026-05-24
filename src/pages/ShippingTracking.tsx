@@ -507,7 +507,18 @@ const ShippingTracking: React.FC = () => {
                       </div>
                     )}
                     <p className="text-xs text-slate-500 dark:text-slate-400">{t('tracking.qty')}: {item.quantity}</p>
-                    <p className="text-sm font-bold text-primary">{item.price.toLocaleString()} {t('common.iqd')}</p>
+                    <div className="flex justify-between items-center">
+                      <p className="text-sm font-bold text-primary">
+                        {item.price === 0 ? (
+                          <span className="text-red-500 bg-red-50 dark:bg-red-900/20 px-2 py-0.5 rounded text-[10px] font-bold">غير متوفر</span>
+                        ) : (
+                          `${item.price.toLocaleString()} ${t('common.iqd')}`
+                        )}
+                      </p>
+                      {item.product?.status === 'ARCHIVED' && item.price !== 0 && (
+                        <span className="text-[10px] text-amber-600 bg-amber-50 dark:bg-amber-900/20 px-1.5 py-0.5 rounded">سيتم تحديث السعر</span>
+                      )}
+                    </div>
                   </div>
                 </div>
               ))}

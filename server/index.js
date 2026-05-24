@@ -2586,7 +2586,8 @@ app.put('/api/admin/products/:id/price-from-order', authenticateToken, isAdmin, 
 // ADMIN: Archive product from order
 app.put('/api/admin/products/:id/archive-from-order', authenticateToken, isAdmin, async (req, res) => {
   const rawId = req.params.id;
-  const logMsg = `[ADMIN_API] Archive attempt for product ${rawId} at ${new Date().toISOString()}\n`;
+  const { orderId } = req.body;
+  const logMsg = `[ADMIN_API] Archive attempt for product ${rawId} from order ${orderId} at ${new Date().toISOString()}\n`;
   try { fs.appendFileSync('./admin_api.log', logMsg); } catch (e) {}
   console.log(logMsg.trim());
   try {
@@ -2599,7 +2600,7 @@ app.put('/api/admin/products/:id/archive-from-order', authenticateToken, isAdmin
       return res.status(404).json({ error: 'Product not found' });
     }
 
-    // Archive globally
+    // 1. Archive globally
     const updatedProduct = await prisma.product.update({
       where: { id: productId },
       data: { 
@@ -2607,6 +2608,63 @@ app.put('/api/admin/products/:id/archive-from-order', authenticateToken, isAdmin
         status: 'ARCHIVED' 
       }
     });
+
+    // 2. If orderId is provided, handle the local order update
+    if (orderId) {
+      const parsedOrderId = safeParseId(orderId);
+      console.log(`[ADMIN_API] Handling local order update for order ${parsedOrderId}`);
+      
+      // Update the price to 0 for this item in this specific order
+      await prisma.orderItem.updateMany({
+        where: { 
+          orderId: parsedOrderId, 
+          productId: productId 
+        },
+        data: { price: 0 }
+      });
+
+      // Recalculate order total
+      const order = await prisma.order.findUnique({ 
+        where: { id: parsedOrderId },
+        include: { items: true }
+      });
+
+      if (order) {
+        const allItems = await prisma.orderItem.findMany({ where: { orderId: parsedOrderId } });
+        const newSubtotal = allItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+        
+        // Use Math.ceil to nearest 250 as per project convention
+        const newTotal = Math.ceil((newSubtotal + (order.internationalShippingFee || 0) - (order.discountAmount || 0)) / 250) * 250;
+
+        await prisma.order.update({
+          where: { id: parsedOrderId },
+          data: { total: newTotal }
+        });
+
+        // 3. Notify user about the removal
+        try {
+          if (typeof createUserNotification === 'function') {
+            await createUserNotification(
+              order.userId,
+              'تحديث في طلبك: منتج غير متوفر ⚠️',
+              `نعتذر، المنتج "${product.name}" غير متوفر حالياً وتمت إزالته من طلبك رقم #${orderId}. تم تحديث المجموع الكلي للطلب.`,
+              'order_update',
+              'notifications',
+              'red',
+              `/shipping-tracking?id=${orderId}`
+            );
+          }
+        } catch (notifyErr) {
+          console.error('[ADMIN_API] Notification failed (non-fatal):', notifyErr);
+        }
+
+        io.to('admin_notifications').emit('order_fee_updated', { 
+          orderId: parsedOrderId, 
+          total: newTotal,
+          status: order.status
+        });
+      }
+    }
 
     console.log(`[ADMIN_API] Product ${productId} archived successfully. Status: ${updatedProduct.status}, isActive: ${updatedProduct.isActive}`);
 
