@@ -1,7 +1,7 @@
 import fs from 'fs';
-try { fs.writeFileSync('e:/mynewproject2/server/server_start.log', 'STARTING ' + new Date().toISOString() + '\n'); } catch (e) {}
+try { fs.writeFileSync('./server_start.log', 'STARTING ' + new Date().toISOString() + '\n'); } catch (e) {}
 process.on('uncaughtException', (err) => {
-  try { fs.appendFileSync('e:/mynewproject2/server/server_crash.log', `ERROR: ${err.message}\n${err.stack}\n`); } catch (e) {}
+  try { fs.appendFileSync('./server_crash.log', `ERROR: ${err.message}\n${err.stack}\n`); } catch (e) {}
 });
 
 import dns from 'node:dns';
@@ -98,6 +98,14 @@ if (fs.existsSync(envPath)) {
   } else {
     console.log('.env file loaded successfully from:', envPath);
     console.log('Keys found in .env:', Object.keys(result.parsed));
+    
+    // Log masked DATABASE_URL for debugging connection issues
+    if (process.env.DATABASE_URL) {
+      const maskedUrl = process.env.DATABASE_URL.replace(/:([^:@]+)@/, ':****@');
+      console.log('DATABASE_URL is set:', maskedUrl);
+    } else {
+      console.warn('DATABASE_URL is NOT set in environment!');
+    }
   }
 } else {
   console.error('.env file NOT found at:', envPath);
@@ -1494,8 +1502,8 @@ const authenticateToken = async (req, res, next) => {
       });
       
       if (user) {
-        // Update verified object with the numeric ID to be safe
-        req.user = { ...verified, id: userId };
+        // Sync role from database to ensure token role is not outdated
+        req.user = { ...verified, id: userId, role: user.role };
         next();
       } else {
         console.log('[Auth] User not found in local DB for ID:', userId);
@@ -2163,21 +2171,12 @@ app.put('/api/auth/me', authenticateToken, async (req, res) => {
 });
 
 const isAdmin = async (req, res, next) => {
-  // Temporary: allow everyone to be admin
-  next();
-  return;
-  
   try {
-    // Check if user exists and has ADMIN role in DB to ensure role changes are immediate
-    const user = await prisma.user.findUnique({
-      where: { id: req.user.id },
-      select: { role: true }
-    });
-
-    if (user && user.role === 'ADMIN') {
-      req.user.role = 'ADMIN'; // Sync token role with DB role for subsequent middlewares
+    // Role is now synced from DB in authenticateToken, but we double check here
+    if (req.user && req.user.role === 'ADMIN') {
       next();
     } else {
+      console.warn(`[Admin Check] Access denied for user ${req.user?.id}. Role: ${req.user?.role}`);
       res.status(403).json({ error: 'Access denied. Admin role required.' });
     }
   } catch (error) {
@@ -2397,8 +2396,14 @@ app.get('/api/admin/orders', authenticateToken, isAdmin, hasPermission('manage_o
           user: {
             select: { name: true, email: true }
           },
-          address: true
-          // Items removed for list performance
+          address: true,
+          items: {
+            include: {
+              product: {
+                select: { name: true, image: true }
+              }
+            }
+          }
         },
         skip,
         take: limit,
@@ -2462,6 +2467,158 @@ app.get('/api/admin/orders/:id', authenticateToken, isAdmin, hasPermission('mana
     res.status(500).json({ error: 'Failed to fetch order details' });
   }
 });
+
+// ADMIN: Update product price from order
+app.put('/api/admin/products/:id/price-from-order', authenticateToken, isAdmin, async (req, res) => {
+  const rawId = req.params.id;
+  const logMsg = `[ADMIN_API] Price update attempt for product ${rawId} at ${new Date().toISOString()}\n`;
+  try { fs.appendFileSync('./admin_api.log', logMsg); } catch (e) {}
+  console.log(logMsg.trim());
+  try {
+    const productId = safeParseId(rawId);
+    const { newPrice, orderId } = req.body;
+    
+    if (newPrice === undefined || !orderId) {
+      const err = `Missing price or orderId: price=${newPrice}, orderId=${orderId}`;
+      try { fs.appendFileSync('./admin_api.log', `ERROR: ${err}\n`); } catch (e) {}
+      return res.status(400).json({ error: err });
+    }
+
+    const parsedOrderId = safeParseId(orderId);
+    const finalNewPrice = parseFloat(newPrice);
+
+    if (isNaN(finalNewPrice)) {
+      return res.status(400).json({ error: 'Invalid price value' });
+    }
+
+    console.log(`[ADMIN_API] Params: productId=${productId}, orderId=${parsedOrderId}, newPrice=${finalNewPrice}`);
+
+    // 2. Fetch records
+    const product = await prisma.product.findUnique({ where: { id: productId } });
+    if (!product) {
+      console.error(`[ADMIN_API] Product ${productId} not found`);
+      return res.status(404).json({ error: `Product ${productId} not found` });
+    }
+
+    const order = await prisma.order.findUnique({ 
+      where: { id: parsedOrderId },
+      include: { items: true }
+    });
+    if (!order) {
+      console.error(`[ADMIN_API] Order ${parsedOrderId} not found`);
+      return res.status(404).json({ error: `Order ${parsedOrderId} not found` });
+    }
+
+    // 3. Perform updates
+    console.log(`[ADMIN_API] Executing updates for product ${productId}...`);
+    
+    // Global update - Update both price and basePriceIQD to ensure consistency
+    await prisma.product.update({
+      where: { id: productId },
+      data: { 
+        price: finalNewPrice,
+        basePriceIQD: finalNewPrice,
+        isActive: true, // Ensure it's active if we are updating price
+        status: 'PUBLISHED' // Ensure it's published
+      }
+    });
+
+    // Also update any variants of this product to the same price if they exist
+    await prisma.productVariant.updateMany({
+      where: { productId: productId },
+      data: { 
+        price: finalNewPrice,
+        basePriceIQD: finalNewPrice
+      }
+    });
+
+    // Local order items update for THIS specific order
+    await prisma.orderItem.updateMany({
+      where: { orderId: parsedOrderId, productId: productId },
+      data: { price: finalNewPrice }
+    });
+
+    // Recalculate order total
+    const allItems = await prisma.orderItem.findMany({ where: { orderId: parsedOrderId } });
+    const newSubtotal = allItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+    
+    // Use Math.ceil to nearest 250 as per project convention
+    const newTotal = Math.ceil((newSubtotal + (order.internationalShippingFee || 0) - (order.discountAmount || 0)) / 250) * 250;
+
+    const updatedOrder = await prisma.order.update({
+      where: { id: parsedOrderId },
+      data: { total: newTotal }
+    });
+
+    console.log(`[ADMIN_API] Success! New order total: ${newTotal}`);
+
+    // 4. Notify user and emit socket
+    try {
+      if (typeof createUserNotification === 'function') {
+        await createUserNotification(
+          order.userId,
+          'تحديث في أسعار طلبك 📢',
+          `تم تحديث سعر منتج في طلبك رقم #${orderId}. السعر الجديد: ${finalNewPrice.toLocaleString()} د.ع.`,
+          'order_update',
+          'notifications',
+          'orange',
+          `/shipping-tracking?id=${orderId}`
+        );
+      }
+    } catch (notifyErr) {
+      console.error('[ADMIN_API] Notification failed (non-fatal):', notifyErr);
+    }
+
+    io.to('admin_notifications').emit('order_fee_updated', { 
+      orderId: parsedOrderId, 
+      fee: order.internationalShippingFee || 0, 
+      total: newTotal,
+      status: order.status
+    });
+
+    res.json({ success: true, newTotal });
+  } catch (error) {
+    console.error('[ADMIN_API] Fatal Error in price-from-order:', error);
+    res.status(500).json({ error: `Server error: ${error.message}` });
+  }
+});
+
+// ADMIN: Archive product from order
+app.put('/api/admin/products/:id/archive-from-order', authenticateToken, isAdmin, async (req, res) => {
+  const rawId = req.params.id;
+  const logMsg = `[ADMIN_API] Archive attempt for product ${rawId} at ${new Date().toISOString()}\n`;
+  try { fs.appendFileSync('./admin_api.log', logMsg); } catch (e) {}
+  console.log(logMsg.trim());
+  try {
+    const productId = safeParseId(rawId);
+    console.log(`[ADMIN_API] Archiving product ID: ${productId}`);
+    
+    // Check if product exists
+    const product = await prisma.product.findUnique({ where: { id: productId } });
+    if (!product) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
+
+    // Archive globally
+    const updatedProduct = await prisma.product.update({
+      where: { id: productId },
+      data: { 
+        isActive: false, 
+        status: 'ARCHIVED' 
+      }
+    });
+
+    console.log(`[ADMIN_API] Product ${productId} archived successfully. Status: ${updatedProduct.status}, isActive: ${updatedProduct.isActive}`);
+
+    io.emit('product_archived', { productId });
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('[ADMIN_API] Archive Error:', error);
+    res.status(500).json({ error: `Server error: ${error.message}` });
+  }
+});
+
 
 // --- User Notifications ---
 app.get('/api/notifications', authenticateToken, async (req, res) => {
@@ -2650,6 +2807,9 @@ app.put('/api/admin/orders/:id/status', authenticateToken, isAdmin, hasPermissio
     });
     
     await sendOrderStatusNotification(id, status, order.userId);
+
+    // Emit real-time update to admins
+    io.to('admin_notifications').emit('order_status_updated', { orderId: safeParseId(id), status });
     
     res.json(updatedOrder);
   } catch (error) {
@@ -2717,6 +2877,14 @@ app.put('/api/admin/orders/:id/international-fee', authenticateToken, isAdmin, h
     if (newStatus !== currentOrder.status) {
       await sendOrderStatusNotification(id, newStatus, order.user.id);
     }
+
+    // Emit real-time update to admins
+    io.to('admin_notifications').emit('order_fee_updated', { 
+      orderId: safeParseId(id), 
+      fee: newFee, 
+      total: newTotal,
+      status: newStatus 
+    });
 
     res.json(order);
   } catch (error) {
