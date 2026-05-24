@@ -152,7 +152,9 @@ const App: React.FC = () => {
     try {
       setLoading(true);
       const data = await fetchOrders();
-      setOrders(data.orders || data);
+      console.log('[ADMIN_APP] Loaded orders:', data);
+      const ordersList = data.orders || data;
+      setOrders(Array.isArray(ordersList) ? ordersList : []);
     } catch (err) {
       console.error('Failed to fetch orders:', err);
     } finally {

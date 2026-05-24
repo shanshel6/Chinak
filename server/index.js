@@ -2358,6 +2358,9 @@ app.get('/api/admin/orders', authenticateToken, isAdmin, hasPermission('manage_o
       where.status = status;
     }
     
+    // Explicitly exclude deleted products or archived orders if needed, 
+    // but here we want to show all orders including PENDING payment
+    
     if (startDate || endDate) {
       where.createdAt = {};
       if (startDate) where.createdAt.gte = new Date(startDate);
@@ -11231,7 +11234,10 @@ app.delete('/api/cart/:id', authenticateToken, async (req, res) => {
 app.post('/api/orders', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.id;
-    const { addressId, shippingMethod = 'air', paymentMethod = 'zain_cash', couponCode, items: bodyItems } = req.body;
+    const { addressId, shippingMethod = 'air', paymentMethod: bodyPaymentMethod, couponCode, items: bodyItems } = req.body;
+    
+    // Default payment method is 'PENDING' if not provided by user
+    const paymentMethod = bodyPaymentMethod || 'PENDING';
     const INT4_MAX = 2147483647;
     const parseInt4 = (value) => {
       const parsed = Number.parseInt(String(value ?? ''), 10);
