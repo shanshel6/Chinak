@@ -19,6 +19,7 @@ import {
   Mail,
   MapPin,
   CreditCard,
+  MessageCircle,
   ChevronRight,
   ChevronDown,
   ChevronUp,
@@ -202,6 +203,35 @@ const App: React.FC = () => {
     } catch (err) {
       console.error('Failed to update status:', err);
     }
+  };
+
+  const handleOpenWhatsApp = (order: any) => {
+    if (!order || !order.address?.phone) {
+      alert('رقم الهاتف غير متوفر');
+      return;
+    }
+
+    const phone = order.address.phone.replace(/\D/g, '');
+    const subtotal = order.total - (order.internationalShippingFee || 0);
+    const fee = order.internationalShippingFee || 0;
+    
+    // Arabic formatted message
+    const message = `مرحباً، بخصوص طلبك رقم #IQ-${order.id}
+
+المجموع الكلي: ${order.total.toLocaleString()} د.ع
+كلفة الشحن الدولي: ${fee.toLocaleString()} د.ع
+
+مدة الشحن المتوقعة:
+✈️ شحن جوي: 10 إلى 20 يوم
+🚢 شحن بحري: شهرين
+
+رابط الفاتورة والتتبع:
+https://chinak-production.up.railway.app/shipping-tracking?id=${order.id}`;
+
+    const encodedMessage = encodeURIComponent(message);
+    const whatsappUrl = `https://wa.me/${phone}?text=${encodedMessage}`;
+    
+    window.open(whatsappUrl, '_blank');
   };
 
   const handleUpdateFee = async (orderId: number, fee: number) => {
@@ -522,7 +552,20 @@ const App: React.FC = () => {
                       <div className="bg-slate-50 p-6 rounded-[2rem] border border-slate-100">
                         <div className="flex items-center gap-3 mb-4 text-blue-600"><Users size={20} /><h4 className="font-black">Customer Information</h4></div>
                         <div className="space-y-4">
-                          <div className="flex items-center gap-4"><div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center border border-slate-100 shadow-sm"><Phone size={18} className="text-slate-400" /></div><div><div className="text-[10px] font-black text-slate-400 uppercase">Phone Number</div><div className="text-sm font-black text-slate-700">{selectedOrder.address?.phone}</div></div></div>
+                          <div className="flex items-center gap-4">
+                            <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center border border-slate-100 shadow-sm"><Phone size={18} className="text-slate-400" /></div>
+                            <div className="flex-1">
+                              <div className="text-[10px] font-black text-slate-400 uppercase">Phone Number</div>
+                              <div className="text-sm font-black text-slate-700">{selectedOrder.address?.phone}</div>
+                            </div>
+                            <button 
+                              onClick={() => handleOpenWhatsApp(selectedOrder)}
+                              className="p-2.5 bg-green-500 text-white rounded-xl shadow-lg shadow-green-200 hover:bg-green-600 active:scale-95 transition-all flex items-center gap-2"
+                            >
+                              <MessageCircle size={18} />
+                              <span className="text-xs font-black">WhatsApp</span>
+                            </button>
+                          </div>
                           <div className="flex items-center gap-4"><div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center border border-slate-100 shadow-sm"><Mail size={18} className="text-slate-400" /></div><div><div className="text-[10px] font-black text-slate-400 uppercase">Email Address</div><div className="text-sm font-black text-slate-700">{selectedOrder.user?.email || 'N/A'}</div></div></div>
                           <div className="flex items-center gap-4"><div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center border border-slate-100 shadow-sm"><MapPin size={18} className="text-slate-400" /></div><div><div className="text-[10px] font-black text-slate-400 uppercase">Shipping Address</div><div className="text-sm font-black text-slate-700 leading-relaxed">{selectedOrder.address?.city}, {selectedOrder.address?.street}, {selectedOrder.address?.buildingNo}</div></div></div>
                         </div>
