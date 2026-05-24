@@ -11543,12 +11543,21 @@ app.post('/api/orders', authenticateToken, async (req, res) => {
 app.get('/api/orders', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.id;
+    console.log(`[USER_API] Fetching orders for user ${userId}`);
     const orders = await prisma.order.findMany({
       where: { userId },
       include: {
         items: { 
           include: { 
-            product: true,
+            product: {
+              select: {
+                id: true,
+                name: true,
+                image: true,
+                status: true,
+                isActive: true
+              }
+            },
             variant: { select: productVariantSelect }
           } 
         },
@@ -11556,8 +11565,10 @@ app.get('/api/orders', authenticateToken, async (req, res) => {
       },
       orderBy: { createdAt: 'desc' }
     });
+    console.log(`[USER_API] Found ${orders.length} orders for user ${userId}`);
     res.json(orders);
   } catch (error) {
+    console.error(`[USER_API] Error for user ${req.user?.id}:`, error);
     res.status(500).json({ error: 'Failed to fetch orders' });
   }
 });
