@@ -4,8 +4,6 @@ import {
   MapPin, 
   ChevronLeft, 
   MapPinPlus, 
-  Key, 
-  Wallet, 
   CheckCircle2, 
   ArrowLeft, 
   Check,
@@ -25,8 +23,6 @@ const CheckoutPaymentAddress: React.FC = () => {
   const { 
     selectedAddressId, 
     setSelectedAddressId, 
-    paymentMethod, 
-    setPaymentMethod,
     shippingMethod,
     appliedCoupon,
     shippingFee: _shippingFee,
