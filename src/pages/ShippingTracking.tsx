@@ -508,13 +508,26 @@ const ShippingTracking: React.FC = () => {
                     )}
                     <p className="text-xs text-slate-500 dark:text-slate-400">{t('tracking.qty')}: {item.quantity}</p>
                     <div className="flex justify-between items-center">
-                      <p className="text-sm font-bold text-primary">
-                        {item.price === 0 ? (
-                          <span className="text-red-500 bg-red-50 dark:bg-red-900/20 px-2 py-0.5 rounded text-[10px] font-bold">غير متوفر</span>
-                        ) : (
-                          `${item.price.toLocaleString()} ${t('common.iqd')}`
+                      <div className="flex flex-col">
+                        <p className="text-sm font-bold text-primary">
+                          {item.price === 0 ? (
+                            <span className="text-red-500 bg-red-50 dark:bg-red-900/20 px-2 py-0.5 rounded text-[10px] font-bold">غير متوفر</span>
+                          ) : (
+                            <div className="flex items-center gap-2">
+                              {item.originalPrice && item.originalPrice !== item.price && (
+                                <span className="text-[10px] font-bold text-slate-400 line-through">{(item.originalPrice).toLocaleString()}</span>
+                              )}
+                              <span>{item.price.toLocaleString()} {t('common.iqd')}</span>
+                            </div>
+                          )}
+                        </p>
+                        {item.price === 0 && (
+                          <p className="text-[10px] text-red-400 font-bold mt-1">نعتذر، هذا المنتج غير متوفر حالياً</p>
                         )}
-                      </p>
+                        {item.originalPrice && item.originalPrice !== item.price && item.price !== 0 && (
+                          <p className="text-[10px] text-blue-500 font-bold mt-1">تم تحديث السعر لهذا المنتج</p>
+                        )}
+                      </div>
                       {item.product?.status === 'ARCHIVED' && item.price !== 0 && (
                         <span className="text-[10px] text-amber-600 bg-amber-50 dark:bg-amber-900/20 px-1.5 py-0.5 rounded">سيتم تحديث السعر</span>
                       )}

@@ -355,6 +355,7 @@ model OrderItem {
   variantId       Int?
   quantity        Int
   price           Float
+  originalPrice   Float?          // Track price before admin update
   selectedOptions String?
   notes           String?
   order           Order           @relation(fields: [orderId], references: [id])

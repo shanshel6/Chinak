@@ -2512,6 +2512,12 @@ app.put('/api/admin/products/:id/price-from-order', authenticateToken, isAdmin, 
     // 3. Perform updates
     console.log(`[ADMIN_API] Executing updates for product ${productId}...`);
     
+    // Store original price if not already stored
+    await prisma.orderItem.updateMany({
+      where: { orderId: parsedOrderId, productId: productId, originalPrice: null },
+      data: { originalPrice: order.items.find(i => i.productId === productId)?.price }
+    });
+
     // Global update - Update both price and basePriceIQD to ensure consistency
     await prisma.product.update({
       where: { id: productId },

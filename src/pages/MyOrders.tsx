@@ -398,8 +398,8 @@ const MyOrders: React.FC = () => {
                           className="w-full h-full"
                         />
                       </div>
-                      <div className="flex flex-1 flex-col min-w-0">
-                        <p className="text-sm font-bold text-slate-900 dark:text-white truncate">{item.product.name}</p>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-bold text-slate-800 dark:text-slate-200 truncate">{item.product.name}</p>
                         {(item.variant && item.variant.combination || item.selectedOptions) && (
                           <div className="flex flex-wrap gap-1 mt-0.5">
                             {(() => {
@@ -437,9 +437,21 @@ const MyOrders: React.FC = () => {
                             })()}
                           </div>
                         )}
-                        <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
-                          {t('tracking.qty')}: {item.quantity} • {(item.price || item.product.price).toLocaleString()} {t('common.iqd')}
-                        </p>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <span className="text-[10px] text-slate-500 dark:text-slate-400">
+                            {t('tracking.qty')}: {item.quantity} •
+                          </span>
+                          {(item.price || item.product.price) === 0 ? (
+                            <span className="text-[10px] font-bold text-red-500 bg-red-50 dark:bg-red-900/20 px-1.5 py-0.5 rounded">غير متوفر</span>
+                          ) : (
+                            <>
+                              {item.originalPrice && item.originalPrice !== (item.price || item.product.price) && (
+                                <span className="text-[10px] font-bold text-slate-400 line-through">{(item.originalPrice).toLocaleString()}</span>
+                              )}
+                              <span className="text-[10px] font-bold text-primary">{(item.price || item.product.price).toLocaleString()} {t('common.iqd')}</span>
+                            </>
+                          )}
+                        </div>
                       </div>
                     </div>
                   ))}
