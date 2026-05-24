@@ -2785,6 +2785,12 @@ const sendOrderStatusNotification = async (orderId, status, userId) => {
         icon = 'payments';
         color = 'orange';
         break;
+      case 'PAYMENT_VERIFIED':
+        title = 'تم تأكيد الدفع ✅';
+        description = `تم تأكيد استلام الدفعة للطلب رقم #${orderId}. سنبدأ بالتجهيز فوراً.`;
+        icon = 'check_circle';
+        color = 'green';
+        break;
       case 'PREPARING':
         title = 'جاري تجهيز طلبك 📦';
         description = `طلبك رقم #${orderId} قيد التجهيز الآن في مستودعاتنا.`;
@@ -2831,6 +2837,11 @@ const sendOrderStatusNotification = async (orderId, status, userId) => {
       color,
       `/shipping-tracking?id=${orderId}`
     );
+
+    // Platform-specific push notifications (placeholder for FCM/OneSignal)
+    // Both iPhone and Android will receive these via their respective push services
+    // if integrated. For now, we ensure the data is consistent.
+    console.log(`[PUSH_NOTIFICATION] Sending to user ${userId}: ${title} - ${description}`);
 
     // Emit real-time order update event
     io.emit(`order_status_updated_${orderId}`, { 
@@ -12060,15 +12071,21 @@ app.post('/api/messages', authenticateToken, async (req, res) => {
 
     // If admin sent message, notify user
     if (sender === 'ADMIN') {
+      const title = 'رسالة جديدة من الدعم الفني 💬';
+      const description = `لديك رسالة جديدة بخصوص الطلب #${orderId}: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`;
+      
       await createUserNotification(
         order.userId,
-        'رسالة جديدة من الدعم الفني 💬',
-        `لديك رسالة جديدة بخصوص الطلب #${orderId}: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`,
+        title,
+        description,
         'system',
         'chat',
         'purple',
         `/chat?orderId=${orderId}`
       );
+
+      // Push notification for Chat (Both iPhone and Android)
+      console.log(`[PUSH_NOTIFICATION_CHAT] Sending to user ${order.userId}: ${title}`);
     } else {
       // If user sent message, notify admin (using the existing createNotification helper for admins)
       await createNotification(
