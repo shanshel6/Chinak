@@ -1,7 +1,15 @@
 import axios from 'axios';
 
+const DEFAULT_URL = 'https://chinak-production.up.railway.app';
+
 const getBaseUrl = () => {
-  return localStorage.getItem('api_url') || 'https://chinak-production.up.railway.app';
+  const stored = localStorage.getItem('api_url');
+  // Force reset if it's an old railway URL but not the current production one
+  if (stored && stored.includes('railway.app') && !stored.includes('chinak-production')) {
+    localStorage.setItem('api_url', DEFAULT_URL);
+    return DEFAULT_URL;
+  }
+  return stored || DEFAULT_URL;
 };
 
 export const api = axios.create({
@@ -9,8 +17,10 @@ export const api = axios.create({
 });
 
 export const updateApiUrl = (url: string) => {
-  localStorage.setItem('api_url', url);
-  api.defaults.baseURL = url;
+  const cleanUrl = url.endsWith('/') ? url.slice(0, -1) : url;
+  localStorage.setItem('api_url', cleanUrl);
+  api.defaults.baseURL = cleanUrl;
+  console.log('[API] URL updated to:', cleanUrl);
 };
 
 api.interceptors.request.use((config) => {

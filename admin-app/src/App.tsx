@@ -50,16 +50,7 @@ const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [apiUrl, setApiUrl] = useState(() => {
-    const stored = localStorage.getItem('api_url');
-    const productionUrl = 'https://chinak-production.up.railway.app';
-    // If no URL stored, or it's not the production URL, default to production
-    if (!stored || (stored.includes('railway.app') && stored !== productionUrl)) {
-      localStorage.setItem('api_url', productionUrl);
-      return productionUrl;
-    }
-    return stored;
-  });
+  const [apiUrl, setApiUrl] = useState(() => localStorage.getItem('api_url') || 'https://chinak-production.up.railway.app');
   const [showSettings, setShowSettings] = useState(false);
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(false);
@@ -152,11 +143,22 @@ const App: React.FC = () => {
     try {
       setLoading(true);
       const data = await fetchOrders();
-      console.log('[ADMIN_APP] Loaded orders:', data);
-      const ordersList = data.orders || data;
-      setOrders(Array.isArray(ordersList) ? ordersList : []);
-    } catch (err) {
+      console.log('[ADMIN_APP] Raw orders data:', data);
+      
+      let ordersList = [];
+      if (Array.isArray(data)) {
+        ordersList = data;
+      } else if (data && Array.isArray(data.orders)) {
+        ordersList = data.orders;
+      } else {
+        console.warn('[ADMIN_APP] Unexpected data format:', data);
+      }
+      
+      setOrders(ordersList);
+    } catch (err: any) {
       console.error('Failed to fetch orders:', err);
+      const msg = err.response?.data?.error || err.message;
+      alert(`فشل في تحميل الطلبات: ${msg}`);
     } finally {
       setLoading(false);
     }
@@ -183,10 +185,19 @@ const App: React.FC = () => {
     }
   };
 
+  const joinAdminRoom = () => {
+    const token = localStorage.getItem('auth_token');
+    if (token) {
+      socket.emit('join_admin_room', { token });
+    }
+  };
+
   const handleLogout = () => {
     localStorage.removeItem('auth_token');
     localStorage.removeItem('user');
     setIsAuthenticated(false);
+    setUser(null);
+    setOrders([]);
     socket.disconnect();
   };
 
@@ -742,6 +753,13 @@ https://chinak-production.up.railway.app/shipping-tracking?id=${order.id}`;
                   >
                     {isArchiving ? <RefreshCw className="animate-spin" /> : <Trash2 size={18} />}
                     حذف المنتج من التطبيق
+                  </button>
+                  <button 
+                    onClick={handleLogout}
+                    className="w-full flex items-center gap-4 p-4 rounded-2xl bg-red-50 text-red-600 hover:bg-red-100 transition-all font-black"
+                  >
+                    <LogOut size={24} />
+                    <span>Logout</span>
                   </button>
                 </div>
               </div>
