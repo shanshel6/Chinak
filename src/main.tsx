@@ -8,45 +8,43 @@ import packageJson from '../package.json';
 
 // Version Check & Cache Busting
 try {
-  const CURRENT_VERSION = packageJson.version;
+  const CURRENT_VERSION = packageJson?.version || '1.0.0';
   const STORED_VERSION_KEY = 'app_version';
   const storedVersion = localStorage.getItem(STORED_VERSION_KEY);
 
-  if (storedVersion !== CURRENT_VERSION) {
+  if (storedVersion && storedVersion !== CURRENT_VERSION) {
     console.log(`New version detected: ${CURRENT_VERSION} (was ${storedVersion}). Clearing cache.`);
     
-    // Clear all local storage except critical auth tokens if needed (or clear all to be safe)
-    // For now, we clear everything to ensure fresh state
+    // Clear all local storage except critical auth tokens if needed
+    // We keep 'app_version' to avoid loop
     localStorage.clear();
     
     // Clear session storage
     sessionStorage.clear();
     
-    // Update version
+    // Update version immediately
     localStorage.setItem(STORED_VERSION_KEY, CURRENT_VERSION);
-    
-    // Force reload if we are in a browser environment
-    if (window.location.search.indexOf('v=' + CURRENT_VERSION) === -1) {
-       // Optional: Reload with version query param to bypass browser cache
-       // window.location.href = window.location.pathname + '?v=' + CURRENT_VERSION;
-    }
+  } else if (!storedVersion) {
+    localStorage.setItem(STORED_VERSION_KEY, CURRENT_VERSION);
   }
 } catch (e) {
-  console.error('Version check failed:', e);
+  // Silent fail for version check to prevent startup crash
+  try { console.error('Version check failed:', e); } catch(_err) {}
 }
 
 // Immediate LocalStorage Cleanup to prevent QuotaExceededError
 try {
   const CACHE_PREFIX = 'app_cache_';
   const keys = Object.keys(localStorage);
-  const cacheKeys = keys.filter(k => k.startsWith(CACHE_PREFIX));
+  const cacheKeys = keys.filter(k => k && k.startsWith(CACHE_PREFIX));
   
-  // If we have many cache keys, clear them all immediately before App starts
   if (cacheKeys.length > 10) {
-    cacheKeys.forEach(k => localStorage.removeItem(k));
+    cacheKeys.forEach(k => {
+      try { localStorage.removeItem(k); } catch(_e) {}
+    });
   }
 } catch (e) {
-  // Ignore localStorage errors here
+  // Ignore localStorage errors
 }
 
 try {
