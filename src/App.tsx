@@ -310,7 +310,7 @@ function App() {
     }))
   );
   
-  const isDarkMode = useThemeStore((state) => state.isDarkMode);
+  // const isDarkMode = useThemeStore((state) => state.isDarkMode); // unused variable removed
   const initChatSocket = useChatStore((state) => state.initSocket);
   
   const fetchNotifications = useNotificationStore((state) => state.fetchNotifications);
