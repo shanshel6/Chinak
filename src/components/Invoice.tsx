@@ -13,7 +13,7 @@ const Invoice = forwardRef<HTMLDivElement, InvoiceProps>(({ order, settings }, r
       {/* Header */}
       <div className="flex justify-between items-start border-b-2 border-slate-100 pb-8 mb-8">
         <div>
-          <h1 className="text-3xl font-black text-primary mb-2">{settings?.storeName || 'متجري'}</h1>
+          <h1 className="text-3xl font-black text-primary mb-2">DFC</h1>
           <p className="text-sm text-slate-500">{settings?.contactEmail}</p>
           <div className="flex items-center gap-1.5 text-sm text-slate-500 mt-1 ltr" dir="ltr">
             <div className="flex items-center justify-center w-4 h-4 rounded-full bg-green-500/10 text-green-600">
@@ -90,6 +90,12 @@ const Invoice = forwardRef<HTMLDivElement, InvoiceProps>(({ order, settings }, r
             <div className="flex justify-between text-sm text-rose-500">
               <span className="font-bold">الخصم:</span>
               <span className="font-bold">-{order.discountAmount.toLocaleString()} {settings?.currency}</span>
+            </div>
+          )}
+          {order.internationalShippingFee > 0 && (
+            <div className="flex justify-between text-sm text-amber-600">
+              <span className="font-bold">كلفة الشحن:</span>
+              <span className="font-bold">{order.internationalShippingFee.toLocaleString()} {settings?.currency}</span>
             </div>
           )}
           <div className="flex justify-between text-lg border-t border-slate-100 pt-3">

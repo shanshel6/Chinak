@@ -24,7 +24,7 @@ function saveDiscoveries(data) {
 async function callSiliconFlowLLM(messages, options = {}) {
   const apiKey = String(process.env.SILICONFLOW_API_KEY || '').trim();
   if (!apiKey) throw new Error('No SILICONFLOW_API_KEY');
-  const sfModel = options.model || process.env.SILICONFLOW_MODEL || 'Qwen/Qwen3-235B-A22B-Instruct-2507';
+  const sfModel = options.model || process.env.SILICONFLOW_MODEL || 'Qwen/Qwen3.5-9B';
   const res = await axios.post(
     'https://api.siliconflow.com/v1/chat/completions',
     {
@@ -32,6 +32,7 @@ async function callSiliconFlowLLM(messages, options = {}) {
       messages,
       max_tokens: options.maxTokens || 100,
       temperature: options.temperature ?? 0.1,
+      enable_thinking: false
     },
     {
       headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },

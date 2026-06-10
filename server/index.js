@@ -28,8 +28,9 @@ import { buildCategoryIndex } from './services/categoryService.js';
 import { calculateOrderShipping, calculateProductShipping, getAdjustedPrice } from './services/shippingService.js';
 import { setupLinkCheckerCron, checkAllProductLinks } from './services/linkCheckerService.js';
 import { embedImage, analyzeImageObjects, embedImageCrop, embedImageRaw, warmupClipService } from './services/clipService.js';
-import { ensureProductImageEmbeddings, searchProductsByImageVector } from './services/productImageVectorService.js';
-import { loadCategoryVectors, searchByEmbedding, hasCachedVectors } from './services/categoryEmbeddingService.js';
+import { ensureProductImageEmbeddings, searchProductsByImageVector, sanitizeProductImageUrl } from './services/productImageVectorService.js';
+import { scrapeGoofishProductImages } from './services/goofishScrapeService.js';
+import { loadCategoryVectors, searchByEmbedding, hasCachedVectors, syncDBVectorsToCache, searchByEmbeddingDB } from './services/categoryEmbeddingService.js';
 import multer from 'multer';
 
 // Setup multer for memory storage (for image uploads)
@@ -78,6 +79,7 @@ const createTaskQueue = (maxQueued = 1) => {
 };
 
 const runClipTask = createTaskQueue(Math.max(1, Number.parseInt(String(process.env.CLIP_MAX_QUEUE || ''), 10) || 1));
+const scrapeProductImagesQueue = createTaskQueue(Math.max(1, Number.parseInt(String(process.env.SCRAPE_PRODUCT_IMAGES_MAX_QUEUE || ''), 10) || 1));
 const ENABLE_CLIP_WARMUP = ['true', '1', 'yes', 'on'].includes(String(process.env.ENABLE_CLIP_WARMUP || '').trim().toLowerCase());
 
 const __filename = fileURLToPath(import.meta.url);
@@ -8655,6 +8657,75 @@ app.get('/api/products/:id', async (req, res) => {
   }
 });
 
+app.post('/api/products/:id/scrape-images', async (req, res) => {
+  const productId = safeParseId(req.params.id);
+  if (!productId) return res.status(400).json({ error: 'Invalid product ID' });
+
+  try {
+    const product = await prisma.product.findUnique({
+      where: { id: productId },
+      select: { id: true, purchaseUrl: true, image: true }
+    });
+
+    if (!product) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
+
+    if (!product.purchaseUrl) {
+      return res.status(400).json({ error: 'Product has no purchase URL to scrape' });
+    }
+
+    const scrapedUrls = await scrapeProductImagesQueue(async () => {
+      return scrapeGoofishProductImages(product.purchaseUrl, { maxImages: 8, timeoutMs: 120000 });
+    });
+
+    const sanitizedUrls = [...new Set((scrapedUrls || []).map(sanitizeProductImageUrl).filter(Boolean))];
+    if (sanitizedUrls.length === 0) {
+      return res.status(404).json({ error: 'No valid images were found during scrape' });
+    }
+
+    const existingImages = await prisma.productImage.findMany({
+      where: { productId },
+      select: { url: true }
+    });
+    const existingSet = new Set(existingImages.map((img) => sanitizeProductImageUrl(img.url)).filter(Boolean));
+    const newUrls = sanitizedUrls.filter((url) => !existingSet.has(url));
+
+    await prisma.$transaction(async (tx) => {
+      if (!product.image && newUrls.length > 0) {
+        await tx.product.update({
+          where: { id: productId },
+          data: { image: newUrls[0] }
+        });
+      }
+
+      if (newUrls.length > 0) {
+        await tx.productImage.createMany({
+          data: newUrls.map((url, index) => ({
+            productId,
+            url,
+            order: existingImages.length + index,
+            type: 'GALLERY'
+          }))
+        });
+      }
+    });
+
+    return res.json({
+      success: true,
+      scraped: sanitizedUrls,
+      added: newUrls,
+      updated: newUrls.length > 0
+    });
+  } catch (error) {
+    console.error('Error scraping product images:', error);
+    if (error?.statusCode === 503) {
+      return res.status(503).json({ error: error.message || 'Server is busy' });
+    }
+    res.status(500).json({ error: 'Failed to scrape product images' });
+  }
+});
+
 // Check if user has purchased a product
 app.get('/api/products/:id/check-purchase', authenticateToken, async (req, res) => {
   try {
@@ -9135,7 +9206,16 @@ app.get('/api/search/categories', async (req, res) => {
 
     console.log('[Category Search] Cache built:', { totalCategories: freshSuggestionIndex.length, assignedSlugs: assignedSlugs.size, query: q });
 
-    const embeddingScores = hasCachedVectors() ? await searchByEmbedding(q, 50) : [];
+    let embeddingScores = [];
+    if (hasCachedVectors()) {
+      embeddingScores = await searchByEmbedding(q, 50);
+    } else {
+      // Fallback: try DB-backed vectors
+      embeddingScores = await searchByEmbeddingDB(q, 50);
+      if (embeddingScores.length > 0) {
+        console.log('[Category Search] Using DB-backed embeddings (JSON cache empty)');
+      }
+    }
     const embeddingScoreMap = new Map();
     for (const es of embeddingScores) {
       const existing = embeddingScoreMap.get(es.slug) || 0;
@@ -12192,6 +12272,8 @@ setupLinkCheckerCron();
 console.log('Attempting to start server on port:', process.env.PORT || 5001);
 console.log('[Perf] ENABLE_SEARCH_PERF_LOGS =', ENABLE_SEARCH_PERF_LOGS, `(raw: ${String(process.env.ENABLE_SEARCH_PERF_LOGS || '')})`);
 console.log('[Embedding] Category vectors cached:', hasCachedVectors());
+// Sync DB-backed name embeddings into the JSON cache on startup
+syncDBVectorsToCache().catch((err) => console.warn('[Embedding] DB sync failed:', err.message));
 
 const server = httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`Server is running on port ${PORT} (accessible from network)`);

@@ -1,6 +1,18 @@
 @echo off
 setlocal EnableDelayedExpansion
 cd /d %~dp0
+
+echo ========================================
+echo   Pipeline 1 - Custom Search Terms
+echo ========================================
+echo.
+node read-terms.cjs custom-search-terms.json
+if %ERRORLEVEL% NEQ 0 (
+    echo Failed to read terms. Exiting.
+    pause
+    exit /b 1
+)
+echo.
 set NODE_ENV=development
 set DATABASE_URL=postgresql://postgres:DsizocMPoAaTQyhDhiMQxzxQKnnbfjqQ@trolley.proxy.rlwy.net:57322/railway?sslmode=require^&connection_limit=10^&pool_timeout=300^&connect_timeout=120^&keepalives=1^&keepalives_idle=30^&keepalives_interval=10^&keepalives_count=3
 set GOOFISH_DATABASE_URL=postgresql://postgres:DsizocMPoAaTQyhDhiMQxzxQKnnbfjqQ@trolley.proxy.rlwy.net:57322/railway?sslmode=require^&connection_limit=10^&pool_timeout=300^&connect_timeout=120^&keepalives=1^&keepalives_idle=30^&keepalives_interval=10^&keepalives_count=3
@@ -38,23 +50,31 @@ set GOOFISH_PROCESS_LINK_TIMEOUT_MS=120000
 set GOOFISH_DB_RECOVER_WAIT_MS=8000
 set GOOFISH_DB_RECOVER_PING_TIMEOUT_MS=12000
 set GOOFISH_DB_RECOVER_MAX_CYCLES_PER_OP=1
-set GOOFISH_AI_CALL_TIMEOUT_MS=90000
-set GOOFISH_AI_RETRY_MAX_ATTEMPTS=3
+set GOOFISH_AI_CALL_TIMEOUT_MS=30000
+set GOOFISH_AI_RETRY_MAX_ATTEMPTS=10
 set SILICONFLOW_API_KEY=sk-crnipdimfvvgrbbxtvmbrshaqtjdmujbvkpuoifcdxkcalwh
-set SILICONFLOW_MODEL=Qwen/Qwen3-235B-A22B-Instruct-2507
-set GOOFISH_AI_MODEL=Qwen/Qwen3-235B-A22B-Instruct-2507
+set SILICONFLOW_MODEL=Qwen/Qwen3-8B
+set GOOFISH_AI_MODEL=Qwen/Qwen3-8B
 set GOOFISH_AI_SECOND_PASS_DESCRIPTION=true
 set GOOFISH_ENABLE_TRANSLATION_RETRY=false
 set GOOFISH_SKIP_ON_TRANSLATION_FAILURE=true
-set GOOFISH_RESET_TERMS_ON_START=true
-set GOOFISH_ITEMS_PER_SEARCH=90
-set GOOFISH_LINKS_PER_TERM=90
+rem Only reset terms on the first run (when progress file doesn't exist)
+if not exist "%~dp0pipeline-1-progress.json" (
+    set GOOFISH_RESET_TERMS_ON_START=true
+) else (
+    set GOOFISH_RESET_TERMS_ON_START=false
+)
+set GOOFISH_ITEMS_PER_SEARCH=30
+set GOOFISH_LINKS_PER_TERM=30
 set GOOFISH_TERMS_PER_BATCH=1
+set GOOFISH_MAX_PAGES=3
+set GOOFISH_ESTIMATED_ITEMS_PER_PAGE=40
 set GOOFISH_OUTPUT_JSON=true
 set GOOFISH_BATCH_INSERT_FROM_JSON=false
 set GOOFISH_DISABLE_IMAGE_EMBEDDINGS=false
 set GOOFISH_ACCUMULATE_PER_PRODUCT=true
 set GOOFISH_EMBED_USE_PRODUCT_NAME=true
+set GOOFISH_CUSTOM_TERMS_FILE=custom-search-terms.json
 set CLIP_WARMUP=true
 set CLIP_MAX_IMAGE_SIDE=1024
 set CLIP_ENABLE_RESIZE=false

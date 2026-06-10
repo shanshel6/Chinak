@@ -86,6 +86,7 @@ model Category {
   slug            String   @unique
   nameAr          String   @map("name_ar")
   nameEn          String   @map("name_en")
+  nameEmbedding   String?  @map("name_embedding")
   goofishCategoryId String? @map("goofish_category_id")
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt

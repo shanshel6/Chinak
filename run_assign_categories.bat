@@ -22,7 +22,7 @@ set "DATABASE_URL=postgresql://postgres:wpAxoWsjxiQfxCSnAnPdotRRMuDpOIdu@viaduct
 set "DIRECT_URL=postgresql://postgres:wpAxoWsjxiQfxCSnAnPdotRRMuDpOIdu@viaduct.proxy.rlwy.net:34644/railway?sslmode=require&connection_limit=2&pool_timeout=300&connect_timeout=120"
 
 if "%CATEGORY_ASSIGN_MODEL%"=="" (
-  set "CATEGORY_ASSIGN_MODEL=Qwen/Qwen3-14B"
+  set "CATEGORY_ASSIGN_MODEL=Qwen/Qwen3.5-9B"
 )
 
 if "%SILICONFLOW_API_KEY%"=="" (

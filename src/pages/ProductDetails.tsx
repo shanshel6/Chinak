@@ -759,180 +759,182 @@ const ProductDetails: React.FC = () => {
 
   return (
     <React.Fragment key={productId || product.id}>
-      <ProductHeader 
-        onBack={() => navigate(-1)}
-        onShare={handleShare}
-        onToggleWishlist={() => {
-          if (!isAuthenticated) {
-            navigate('/login', { state: { from: `${location.pathname}${location.search}` } });
-            return;
-          }
-          toggleWishlist(product.id, product);
-        }}
-        isWishlisted={isProductInWishlist(product.id)}
-      />
-      <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden bg-background-light dark:bg-background-dark pb-32 pb-safe pt-safe" dir="rtl">
-      
-      <div className="md:grid md:grid-cols-2 md:gap-8 lg:gap-12 md:px-6 md:pt-6">
-        <div className="md:sticky md:top-24 h-fit pt-16 md:pt-0">
-          <ImageGallery 
-            images={galleryImages}
-            productName={product.name}
-            hideIndicators={false}
-          />
-        </div>
-
-        <main className="relative -mt-10 md:mt-0 bg-background-light dark:bg-background-dark rounded-t-[2.5rem] md:rounded-none px-5 md:px-0 pt-8 md:pt-0 shadow-[0_-10px_40px_rgba(0,0,0,0.05)] md:shadow-none z-10 min-h-[50vh]">
-          <ProductInfo 
-            price={pricingParams?.basePrice || 0}
-            originalPrice={product.originalPrice}
-            name={product.name}
-            deliveryTime={product.deliveryTime}
-            domesticShippingFee={product.domesticShippingFee}
-            basePriceIQD={pricingParams?.basePriceIQD}
-            calculatedAirPrice={airPrice}
-            calculatedSeaPrice={seaPrice}
-            shippingMethod={shippingMethod}
-            onShippingMethodChange={handleShippingMethodChange}
-            isAirRestricted={product.isAirRestricted}
-            neworold={product.neworold}
-          />
-
-          <ProductDescription 
-            productName={product.name}
-            description={descriptionFromMetadata}
-          />
-
-          <ProductSpecs specs={displaySpecs} />
-
-          {detailImages.length > 0 && shouldRenderDetails && (
-            <div className="mt-12 space-y-4 px-0">
-              <div className="flex items-center gap-3 mb-6 px-5">
-                <div className="w-1.5 h-6 bg-primary rounded-full" />
-                <h3 className="text-slate-900 dark:text-white text-lg font-black">تفاصيل إضافية</h3>
-              </div>
-              <div className="flex flex-col">
-                {detailImages.map((img: any, idx: number) => (
-                  <LazyImage 
-                    key={idx}
-                    src={img.url} 
-                    alt={`Detail ${idx + 1}`}
-                    width={800}
-                    quality={75}
-                    className="w-full h-auto"
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-
-          <SimilarProducts 
-            products={similarProducts}
-            loading={similarProductsLoading}
-            hasMore={similarProductsHasMore}
-            onLoadMore={loadMoreSimilarProducts}
-            onProductClick={(id) => {
-              console.log('[Similar Products] Clicked product:', id);
-              const selectedProduct = similarProducts.find(p => p.id === id);
-              console.log('[Similar Products] Found product:', !!selectedProduct);
-              if (selectedProduct) {
-                console.log('[Similar Products] Navigating to product:', id);
-                window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
-                navigate(`/product?id=${id}`, { state: { initialProduct: selectedProduct }, replace: false });
-              }
-            }}
-          />
-
-          {/* Spacer for mobile bottom bar - Increased height to prevent overlap */}
-          <div className="h-64 md:h-32"></div>
-        </main>
-
-        {/* Price Change Disclaimer - Moved above shipping tabs */}
-        <div className="fixed left-0 right-0 bottom-[calc(env(safe-area-inset-bottom)+160px)] z-30 px-4 transition-all duration-300">
-          <div className="mx-auto max-w-screen-lg">
-            <div className="w-full bg-amber-50/95 dark:bg-amber-900/20 backdrop-blur-sm border border-amber-100 dark:border-amber-900/30 rounded-xl p-3 flex items-center gap-3 shadow-lg shadow-amber-900/5">
-              <div className="min-w-[20px] text-amber-500">
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-              </div>
-              <p className="text-[13px] leading-tight text-amber-800 dark:text-amber-300 font-bold">
-                تنويه: الأسعار قد تتغير من المصدر. في حال حدوث تغيير، سنقوم بإبلاغك عبر الواتساب قبل إتمام الطلب.
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="fixed left-0 right-0 bottom-[calc(env(safe-area-inset-bottom)+86px)] z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200/70 dark:border-white/10 px-4 pt-3 pb-2 transition-all duration-300">
-          <div className="mx-auto max-w-screen-lg">
-            <div className="flex items-center gap-3">
-              <button
-                onClick={() => handleShippingMethodChange('air')}
-                disabled={product?.isAirRestricted}
-                className={`relative flex-1 h-14 flex items-center gap-3 px-3 rounded-2xl border-2 transition-all duration-300 ${
-                  shippingMethod === 'air'
-                    ? 'border-primary bg-primary/5 shadow-sm shadow-primary/10'
-                    : product?.isAirRestricted
-                      ? 'border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/60 opacity-60 cursor-not-allowed'
-                      : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-slate-300 dark:hover:border-slate-600'
-                }`}
-              >
-                <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors ${
-                  shippingMethod === 'air' ? 'bg-primary text-white' : 'bg-slate-100 dark:bg-slate-700 text-slate-400 dark:text-slate-500'
-                }`}>
-                  <Plane size={20} className={shippingMethod === 'air' ? 'animate-pulse' : ''} strokeWidth={2.5} />
-                </div>
-                <div className="flex flex-col items-start gap-0.5">
-                  <span className={`text-sm font-black ${shippingMethod === 'air' ? 'text-primary' : 'text-slate-600 dark:text-slate-300'}`}>شحن جوي</span>
-                  <span className="text-[10px] font-medium text-slate-400 dark:text-slate-500">10-20 يوم</span>
-                </div>
-                {shippingMethod === 'air' && (
-                  <div className="absolute left-3 top-1/2 -translate-y-1/2 w-2 h-2 bg-primary rounded-full shadow-[0_0_8px_rgba(var(--primary-rgb),0.6)]"></div>
-                )}
-                {!product?.isAirRestricted && (
-                  <span className="absolute top-0 left-3 -translate-y-1/2 text-[9px] font-bold bg-red-50 text-red-600 border border-red-100 px-1.5 py-0.5 rounded-full shadow-sm">
-                    أسرع ⚡
-                  </span>
-                )}
-              </button>
-
-              <button
-                onClick={() => handleShippingMethodChange('sea')}
-                className={`relative flex-1 h-14 flex items-center gap-3 px-3 rounded-2xl border-2 transition-all duration-300 ${
-                  shippingMethod === 'sea'
-                    ? 'border-primary bg-primary/5 shadow-sm shadow-primary/10'
-                    : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-slate-300 dark:hover:border-slate-600'
-                }`}
-              >
-                <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors ${
-                  shippingMethod === 'sea' ? 'bg-primary text-white' : 'bg-slate-100 dark:bg-slate-700 text-slate-400 dark:text-slate-500'
-                }`}>
-                  <Ship size={20} strokeWidth={2.5} />
-                </div>
-                <div className="flex flex-col items-start gap-0.5">
-                  <span className={`text-sm font-black ${shippingMethod === 'sea' ? 'text-primary' : 'text-slate-600 dark:text-slate-300'}`}>شحن بحري</span>
-                  <span className="text-[10px] font-medium text-slate-400 dark:text-slate-500">شهرين تقريباً</span>
-                </div>
-                {shippingMethod === 'sea' && (
-                  <div className="absolute left-3 top-1/2 -translate-y-1/2 w-2 h-2 bg-primary rounded-full shadow-[0_0_8px_rgba(var(--primary-rgb),0.6)]"></div>
-                )}
-                <span className="absolute top-0 left-3 -translate-y-1/2 text-[9px] font-bold bg-green-50 text-green-600 border border-green-100 px-1.5 py-0.5 rounded-full shadow-sm">
-                  أوفر 💰
-                </span>
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-      </div>
-      
-      <AddToCartBar 
-          price={inclusivePrice}
-          productId={product.id}
-          onAddToCart={handleAddToCart}
-          isAdding={isAdding}
-          isAdded={isAdded}
-          onGoToCart={() => navigate('/cart')}
-          isActive={product.isActive}
+      <div className={isNotesModalOpen ? 'hidden' : 'block'}>
+        <ProductHeader 
+          onBack={() => navigate(-1)}
+          onShare={handleShare}
+          onToggleWishlist={() => {
+            if (!isAuthenticated) {
+              navigate('/login', { state: { from: `${location.pathname}${location.search}` } });
+              return;
+            }
+            toggleWishlist(product.id, product);
+          }}
+          isWishlisted={isProductInWishlist(product.id)}
         />
+        <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden bg-background-light dark:bg-background-dark pb-32 pb-safe pt-safe" dir="rtl">
+        
+        <div className="md:grid md:grid-cols-2 md:gap-8 lg:gap-12 md:px-6 md:pt-6">
+          <div className="md:sticky md:top-24 h-fit pt-16 md:pt-0">
+            <ImageGallery 
+              images={galleryImages}
+              productName={product.name}
+              hideIndicators={false}
+            />
+          </div>
+
+          <main className="relative -mt-10 md:mt-0 bg-background-light dark:bg-background-dark rounded-t-[2.5rem] md:rounded-none px-5 md:px-0 pt-8 md:pt-0 shadow-[0_-10px_40px_rgba(0,0,0,0.05)] md:shadow-none z-10 min-h-[50vh]">
+            <ProductInfo 
+              price={pricingParams?.basePrice || 0}
+              originalPrice={product.originalPrice}
+              name={product.name}
+              deliveryTime={product.deliveryTime}
+              domesticShippingFee={product.domesticShippingFee}
+              basePriceIQD={pricingParams?.basePriceIQD}
+              calculatedAirPrice={airPrice}
+              calculatedSeaPrice={seaPrice}
+              shippingMethod={shippingMethod}
+              onShippingMethodChange={handleShippingMethodChange}
+              isAirRestricted={product.isAirRestricted}
+              neworold={product.neworold}
+            />
+
+            <ProductDescription 
+              productName={product.name}
+              description={descriptionFromMetadata}
+            />
+
+            <ProductSpecs specs={displaySpecs} />
+
+            {detailImages.length > 0 && shouldRenderDetails && (
+              <div className="mt-12 space-y-4 px-0">
+                <div className="flex items-center gap-3 mb-6 px-5">
+                  <div className="w-1.5 h-6 bg-primary rounded-full" />
+                  <h3 className="text-slate-900 dark:text-white text-lg font-black">تفاصيل إضافية</h3>
+                </div>
+                <div className="flex flex-col">
+                  {detailImages.map((img: any, idx: number) => (
+                    <LazyImage 
+                      key={idx}
+                      src={img.url} 
+                      alt={`Detail ${idx + 1}`}
+                      width={800}
+                      quality={75}
+                      className="w-full h-auto"
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <SimilarProducts 
+              products={similarProducts}
+              loading={similarProductsLoading}
+              hasMore={similarProductsHasMore}
+              onLoadMore={loadMoreSimilarProducts}
+              onProductClick={(id) => {
+                console.log('[Similar Products] Clicked product:', id);
+                const selectedProduct = similarProducts.find(p => p.id === id);
+                console.log('[Similar Products] Found product:', !!selectedProduct);
+                if (selectedProduct) {
+                  console.log('[Similar Products] Navigating to product:', id);
+                  window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+                  navigate(`/product?id=${id}`, { state: { initialProduct: selectedProduct }, replace: false });
+                }
+              }}
+            />
+
+            {/* Spacer for mobile bottom bar - Increased height to prevent overlap */}
+            <div className="h-64 md:h-32"></div>
+          </main>
+
+          {/* Price Change Disclaimer - Moved above shipping tabs */}
+          <div className="fixed left-0 right-0 bottom-[calc(env(safe-area-inset-bottom)+160px)] z-30 px-4 transition-all duration-300">
+            <div className="mx-auto max-w-screen-lg">
+              <div className="w-full bg-amber-50/95 dark:bg-amber-900/20 backdrop-blur-sm border border-amber-100 dark:border-amber-900/30 rounded-xl p-3 flex items-center gap-3 shadow-lg shadow-amber-900/5">
+                <div className="min-w-[20px] text-amber-500">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                </div>
+                <p className="text-[13px] leading-tight text-amber-800 dark:text-amber-300 font-bold">
+                  تنويه: الأسعار قد تتغير من المصدر. في حال حدوث تغيير، سنقوم بإبلاغك عبر الواتساب قبل إتمام الطلب.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="fixed left-0 right-0 bottom-[calc(env(safe-area-inset-bottom)+86px)] z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200/70 dark:border-white/10 px-4 pt-3 pb-2 transition-all duration-300">
+            <div className="mx-auto max-w-screen-lg">
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => handleShippingMethodChange('air')}
+                  disabled={product?.isAirRestricted}
+                  className={`relative flex-1 h-14 flex items-center gap-3 px-3 rounded-2xl border-2 transition-all duration-300 ${
+                    shippingMethod === 'air'
+                      ? 'border-primary bg-primary/5 shadow-sm shadow-primary/10'
+                      : product?.isAirRestricted
+                        ? 'border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/60 opacity-60 cursor-not-allowed'
+                        : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-slate-300 dark:hover:border-slate-600'
+                  }`}
+                >
+                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors ${
+                    shippingMethod === 'air' ? 'bg-primary text-white' : 'bg-slate-100 dark:bg-slate-700 text-slate-400 dark:text-slate-500'
+                  }`}>
+                    <Plane size={20} className={shippingMethod === 'air' ? 'animate-pulse' : ''} strokeWidth={2.5} />
+                  </div>
+                  <div className="flex flex-col items-start gap-0.5">
+                    <span className={`text-sm font-black ${shippingMethod === 'air' ? 'text-primary' : 'text-slate-600 dark:text-slate-300'}`}>شحن جوي</span>
+                    <span className="text-[10px] font-medium text-slate-400 dark:text-slate-500">10-20 يوم</span>
+                  </div>
+                  {shippingMethod === 'air' && (
+                    <div className="absolute left-3 top-1/2 -translate-y-1/2 w-2 h-2 bg-primary rounded-full shadow-[0_0_8px_rgba(var(--primary-rgb),0.6)]"></div>
+                  )}
+                  {!product?.isAirRestricted && (
+                    <span className="absolute top-0 left-3 -translate-y-1/2 text-[9px] font-bold bg-red-50 text-red-600 border border-red-100 px-1.5 py-0.5 rounded-full shadow-sm">
+                      أسرع ⚡
+                    </span>
+                  )}
+                </button>
+
+                <button
+                  onClick={() => handleShippingMethodChange('sea')}
+                  className={`relative flex-1 h-14 flex items-center gap-3 px-3 rounded-2xl border-2 transition-all duration-300 ${
+                    shippingMethod === 'sea'
+                      ? 'border-primary bg-primary/5 shadow-sm shadow-primary/10'
+                      : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-slate-300 dark:hover:border-slate-600'
+                  }`}
+                >
+                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors ${
+                    shippingMethod === 'sea' ? 'bg-primary text-white' : 'bg-slate-100 dark:bg-slate-700 text-slate-400 dark:text-slate-500'
+                  }`}>
+                    <Ship size={20} strokeWidth={2.5} />
+                  </div>
+                  <div className="flex flex-col items-start gap-0.5">
+                    <span className={`text-sm font-black ${shippingMethod === 'sea' ? 'text-primary' : 'text-slate-600 dark:text-slate-300'}`}>شحن بحري</span>
+                    <span className="text-[10px] font-medium text-slate-400 dark:text-slate-500">شهرين تقريباً</span>
+                  </div>
+                  {shippingMethod === 'sea' && (
+                    <div className="absolute left-3 top-1/2 -translate-y-1/2 w-2 h-2 bg-primary rounded-full shadow-[0_0_8px_rgba(var(--primary-rgb),0.6)]"></div>
+                  )}
+                  <span className="absolute top-0 left-3 -translate-y-1/2 text-[9px] font-bold bg-green-50 text-green-600 border border-green-100 px-1.5 py-0.5 rounded-full shadow-sm">
+                    أوفر 💰
+                  </span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+        </div>
+        
+        <AddToCartBar 
+            price={inclusivePrice}
+            productId={product.id}
+            onAddToCart={handleAddToCart}
+            isAdding={isAdding}
+            isAdded={isAdded}
+            onGoToCart={() => navigate('/cart')}
+            isActive={product.isActive}
+          />
+      </div>
       
       <ProductNotesModal
         isOpen={isNotesModalOpen}

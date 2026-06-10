@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { 
   Package, 
   LogIn, 
@@ -20,13 +20,15 @@ import {
   MapPin,
   CreditCard,
   MessageCircle,
+  FileText,
   ChevronRight,
   ChevronDown,
   ChevronUp,
   Search,
   ExternalLink,
   Save,
-  Trash2
+  Trash2,
+  Share2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Order, User } from './types';
@@ -39,11 +41,19 @@ import {
   updateOrderInternationalFee,
   updateProductPriceFromOrder,
   archiveProductFromOrder,
-  updateOrderPaymentMethod
+  updateOrderPaymentMethod,
+  fetchSettings
 } from './services/api';
-import { socket, joinAdminRoom } from './services/socket';
-import { playOrderSound, stopOrderSound } from './services/sound';
+import { socket, updateSocketUrl } from './services/socket';
+import { playOrderSound } from './services/sound';
 import { LocalNotifications } from '@capacitor/local-notifications';
+import { App as CapApp } from '@capacitor/app';
+import { Share } from '@capacitor/share';
+import { Filesystem, Directory } from '@capacitor/filesystem';
+import { Clipboard } from '@capacitor/clipboard';
+import { jsPDF } from 'jspdf';
+import html2canvas from 'html2canvas';
+import Invoice from './components/Invoice';
 
 const App: React.FC = () => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -52,6 +62,7 @@ const App: React.FC = () => {
   const [password, setPassword] = useState('');
   const [apiUrl, setApiUrl] = useState(() => localStorage.getItem('api_url') || 'https://chinak-production.up.railway.app');
   const [showSettings, setShowSettings] = useState(false);
+  const [settings, setSettings] = useState<any>(null);
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -60,10 +71,15 @@ const App: React.FC = () => {
   const [modalLoading, setModalLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [editingItem, setEditingItem] = useState<any>(null);
+  const [activeItemNote, setActiveItemNote] = useState<{ productName: string; note: string } | null>(null);
   const [newPriceValue, setNewPriceValue] = useState('');
   const [isUpdatingPrice, setIsUpdatingPrice] = useState(false);
   const [isArchiving, setIsArchiving] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
+  const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
+  
+  const invoiceRef = useRef<HTMLDivElement>(null);
+  const quotationRef = useRef<HTMLDivElement>(null);
 
   const showSuccess = (msg: string) => {
     setSuccessMessage(msg);
@@ -87,8 +103,10 @@ const App: React.FC = () => {
       loadOrders();
     } catch (err: any) {
       console.error('[ADMIN_APP] Failed to update price:', err);
-      const errorMsg = err.response?.data?.error || err.message || 'فشل تحديث السعر';
-      alert(`فشل تحديث السعر: ${errorMsg}\n\nURL: ${apiUrl}`);
+      if (err.response?.status !== 401) {
+        const errorMsg = err.response?.data?.error || err.message || 'فشل تحديث السعر';
+        alert(`فشل تحديث السعر: ${errorMsg}\n\nURL: ${apiUrl}`);
+      }
     } finally {
       setIsUpdatingPrice(false);
     }
@@ -103,9 +121,11 @@ const App: React.FC = () => {
         setSelectedOrder(updated);
       }
       showSuccess('تم تحديث وسيلة الدفع بنجاح');
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to update payment method:', err);
-      alert('فشل في تحديث وسيلة الدفع');
+      if (err.response?.status !== 401) {
+        alert('فشل في تحديث وسيلة الدفع');
+      }
     }
   };
 
@@ -127,8 +147,10 @@ const App: React.FC = () => {
       loadOrders();
     } catch (err: any) {
       console.error('[ADMIN_APP] Failed to archive product:', err);
-      const errorMsg = err.response?.data?.error || err.message || 'فشل حذف المنتج';
-      alert(`فشل حذف المنتج: ${errorMsg}\n\nURL: ${apiUrl}`);
+      if (err.response?.status !== 401) {
+        const errorMsg = err.response?.data?.error || err.message || 'فشل حذف المنتج';
+        alert(`فشل حذف المنتج: ${errorMsg}\n\nURL: ${apiUrl}`);
+      }
     } finally {
       setIsArchiving(false);
     }
@@ -137,7 +159,21 @@ const App: React.FC = () => {
   const handleUpdateApiUrl = (url: string) => {
     setApiUrl(url);
     updateApiUrl(url);
+    updateSocketUrl(url);
+    socket.connect();
   };
+
+  useEffect(() => {
+    const loadSettings = async () => {
+      try {
+        const data = await fetchSettings();
+        setSettings(data);
+      } catch (err) {
+        console.error('Failed to load settings:', err);
+      }
+    };
+    loadSettings();
+  }, []);
 
   const loadOrders = useCallback(async () => {
     try {
@@ -157,10 +193,20 @@ const App: React.FC = () => {
       setOrders(ordersList);
     } catch (err: any) {
       console.error('Failed to fetch orders:', err);
-      const msg = err.response?.data?.error || err.message;
-      alert(`فشل في تحميل الطلبات: ${msg}`);
+      if (err.response?.status !== 401) {
+        const msg = err.response?.data?.error || err.message;
+        alert(`فشل في تحميل الطلبات: ${msg}`);
+      }
     } finally {
       setLoading(false);
+    }
+  }, []);
+
+  const joinAdminRoomLocal = useCallback(() => {
+    const token = localStorage.getItem('auth_token');
+    if (token && socket.connected) {
+      console.log('[ADMIN_APP] Joining admin room...');
+      socket.emit('join_admin_room');
     }
   }, []);
 
@@ -177,18 +223,11 @@ const App: React.FC = () => {
       loadOrders();
       
       socket.connect();
-      joinAdminRoom();
+      // Wait a bit for connection before joining room, or use the connect listener
     } catch (err: any) {
       setError(err.response?.data?.error || 'Login failed');
     } finally {
       setLoading(false);
-    }
-  };
-
-  const joinAdminRoom = () => {
-    const token = localStorage.getItem('auth_token');
-    if (token) {
-      socket.emit('join_admin_room', { token });
     }
   };
 
@@ -207,12 +246,14 @@ const App: React.FC = () => {
     // Attempt to convert to xianyu deep link if it's a taobao/xianyu web link
     // Standard format for xianyu/taobao is usually https://item.taobao.com/item.htm?id=xxx
     // Deep link format: fleamarket://item?id=xxx
+    // For Android, we can also use intent scheme to force open the app
     let finalUrl = url;
     try {
       const urlObj = new URL(url);
       const id = urlObj.searchParams.get('id');
       if (id && (url.includes('taobao.com') || url.includes('xianyu.com') || url.includes('idlefish.com'))) {
-        finalUrl = `fleamarket://item?id=${id}`;
+        // Use intent scheme for Android to force open the app directly
+        finalUrl = `intent://item?id=${id}#Intent;scheme=fleamarket;package=com.taobao.idlefish;end`;
       }
     } catch (e) {
       console.error('URL parsing failed, using original', e);
@@ -234,33 +275,208 @@ const App: React.FC = () => {
     }
   };
 
-  const handleOpenWhatsApp = (order: any) => {
+  const generateAndSharePDF = async (order: any, mode: 'invoice' | 'quotation') => {
+    const ref = mode === 'invoice' ? invoiceRef : quotationRef;
+    if (!ref.current) {
+      console.error('Ref not found for mode:', mode);
+      return null;
+    }
+    
+    try {
+      setIsGeneratingPDF(true);
+      const element = ref.current;
+      
+      // Use a smaller scale and windowWidth for mobile performance
+      const canvas = await html2canvas(element, {
+        scale: 1.5,
+        useCORS: true,
+        logging: false,
+        backgroundColor: '#ffffff',
+        windowWidth: 800
+      });
+      
+      const imgData = canvas.toDataURL('image/jpeg', 0.8);
+      const pdf = new jsPDF({
+        orientation: 'portrait',
+        unit: 'mm',
+        format: 'a4'
+      });
+      
+      const imgProps = pdf.getImageProperties(imgData);
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+      
+      pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight);
+      
+      const pdfBase64 = pdf.output('datauristring').split(',')[1];
+      const fileName = `DFC-${mode === 'invoice' ? 'Invoice' : 'Quotation'}-IQ-${order.id}.pdf`;
+      
+      // Save to temporary filesystem for sharing
+      const savedFile = await Filesystem.writeFile({
+        path: fileName,
+        data: pdfBase64,
+        directory: Directory.Cache
+      });
+      
+      return savedFile.uri;
+    } catch (err) {
+      console.error('Failed to generate PDF:', err);
+      return null;
+    } finally {
+      setIsGeneratingPDF(false);
+    }
+  };
+
+  const handleOpenWhatsApp = async (order: any) => {
     if (!order || !order.address?.phone) {
       alert('رقم الهاتف غير متوفر');
       return;
     }
 
     const phone = order.address.phone.replace(/\D/g, '');
-    const subtotal = order.total - (order.internationalShippingFee || 0);
     const fee = order.internationalShippingFee || 0;
     
-    // Arabic formatted message
-    const message = `مرحباً، بخصوص طلبك رقم #IQ-${order.id}
+    // Generate items list with detailed info and notes
+    const itemsList = (order.items || []).map((item: any) => {
+      const notes = item.notes ? `\n    └─ ملاحظة: ${item.notes}` : '';
+      const options = item.selectedOptions ? 
+        `\n    └─ التفاصيل: ${typeof item.selectedOptions === 'string' ? item.selectedOptions : JSON.stringify(item.selectedOptions)}` : '';
+      const itemTotal = (item.price * item.quantity).toLocaleString();
+      return `• ${item.product?.name || 'منتج'}
+    الكمية: ${item.quantity} x ${item.price.toLocaleString()} د.ع = ${itemTotal} د.ع${options}${notes}`;
+    }).join('\n\n');
 
-المجموع الكلي: ${order.total.toLocaleString()} د.ع
+    // Arabic formatted message for quotation
+    const message = `مرحباً، هذا هو عرض سعر من DFC للمنتجات التي طلبتها
+
+-----------------------------------
+📋 طلب رقم: #IQ-${order.id}
+التاريخ: ${new Date(order.createdAt).toLocaleDateString('ar-IQ')}
+-----------------------------------
+
+المنتجات المطلوبة:
+${itemsList}
+
+-----------------------------------
+المجموع الفرعي: ${(order.total - fee).toLocaleString()} د.ع
 كلفة الشحن الدولي: ${fee.toLocaleString()} د.ع
+-----------------------------------
+💰 المجموع الكلي: ${order.total.toLocaleString()} د.ع
+-----------------------------------
 
 مدة الشحن المتوقعة:
 ✈️ شحن جوي: 10 إلى 20 يوم
 🚢 شحن بحري: شهرين
 
-رابط الفاتورة والتتبع:
+رابط التتبع:
 https://chinak-production.up.railway.app/shipping-tracking?id=${order.id}`;
 
-    const encodedMessage = encodeURIComponent(message);
-    const whatsappUrl = `https://wa.me/${phone}?text=${encodedMessage}`;
+    // Copy phone number to clipboard to help user find contact
+    try {
+      await Clipboard.write({
+        string: phone
+      });
+      showSuccess(`تم نسخ رقم الهاتف: ${phone}`);
+    } catch (e) {
+      console.error('Failed to copy phone number', e);
+    }
+
+    // Generate PDF first
+    const pdfUri = await generateAndSharePDF(order, 'quotation');
     
-    window.open(whatsappUrl, '_blank');
+    if (pdfUri) {
+      // Share PDF and message together if possible
+      try {
+        await Share.share({
+          title: `Quotation #IQ-${order.id}`,
+          text: `رقم العميل: ${phone}\n\n${message}`,
+          url: pdfUri,
+          dialogTitle: 'ارسال عرض السعر عبر واتساب'
+        });
+      } catch (e) {
+        // Fallback to wa.me if share fails
+        const encodedMessage = encodeURIComponent(message);
+        window.open(`https://wa.me/${phone}?text=${encodedMessage}`, '_blank');
+      }
+    } else {
+      const encodedMessage = encodeURIComponent(message);
+      window.open(`https://wa.me/${phone}?text=${encodedMessage}`, '_blank');
+    }
+  };
+
+  const handleSendInvoice = async (order: any) => {
+    if (!order || !order.address?.phone) {
+      alert('رقم الهاتف غير متوفر');
+      return;
+    }
+
+    const phone = order.address.phone.replace(/\D/g, '');
+    const fee = order.internationalShippingFee || 0;
+    
+    // Generate items list with detailed info and notes
+    const itemsList = (order.items || []).map((item: any) => {
+      const notes = item.notes ? `\n    └─ ملاحظة: ${item.notes}` : '';
+      const options = item.selectedOptions ? 
+        `\n    └─ التفاصيل: ${typeof item.selectedOptions === 'string' ? item.selectedOptions : JSON.stringify(item.selectedOptions)}` : '';
+      const itemTotal = (item.price * item.quantity).toLocaleString();
+      return `• ${item.product?.name || 'منتج'}
+    الكمية: ${item.quantity} x ${item.price.toLocaleString()} د.ع = ${itemTotal} د.ع${options}${notes}`;
+    }).join('\n\n');
+
+    // Arabic formatted message for invoice (payment confirmation)
+    const message = `مرحباً من DFC، تم استلام مبلغ طلبك بنجاح ✅
+إليك فاتورة تأكيد الدفع وتفاصيل طلبك الجاري تجهيزه.
+
+-----------------------------------
+🧾 فاتورة رقم: #IQ-${order.id}
+التاريخ: ${new Date(order.createdAt).toLocaleDateString('ar-IQ')}
+الحالة: تم استلام الدفع - قيد التجهيز
+-----------------------------------
+
+تفاصيل المنتجات:
+${itemsList}
+
+-----------------------------------
+المجموع الفرعي: ${(order.total - fee).toLocaleString()} د.ع
+كلفة الشحن الدولي: ${fee.toLocaleString()} د.ع
+-----------------------------------
+💰 المجموع الكلي المسدد: ${order.total.toLocaleString()} د.ع
+-----------------------------------
+
+نشكركم على ثقتكم بنا. سيتم إعلامكم عند شحن الطلب.
+
+رابط التتبع والفاتورة:
+https://chinak-production.up.railway.app/shipping-tracking?id=${order.id}`;
+
+    // Copy phone number to clipboard
+    try {
+      await Clipboard.write({
+        string: phone
+      });
+      showSuccess(`تم نسخ رقم الهاتف: ${phone}`);
+    } catch (e) {
+      console.error('Failed to copy phone number', e);
+    }
+
+    // Generate PDF first
+    const pdfUri = await generateAndSharePDF(order, 'invoice');
+    
+    if (pdfUri) {
+      try {
+        await Share.share({
+          title: `Invoice #IQ-${order.id}`,
+          text: `رقم العميل: ${phone}\n\n${message}`,
+          url: pdfUri,
+          dialogTitle: 'ارسال الفاتورة عبر واتساب'
+        });
+      } catch (e) {
+        const encodedMessage = encodeURIComponent(message);
+        window.open(`https://wa.me/${phone}?text=${encodedMessage}`, '_blank');
+      }
+    } else {
+      const encodedMessage = encodeURIComponent(message);
+      window.open(`https://wa.me/${phone}?text=${encodedMessage}`, '_blank');
+    }
   };
 
   const handleUpdateFee = async (orderId: number, fee: number) => {
@@ -283,62 +499,103 @@ https://chinak-production.up.railway.app/shipping-tracking?id=${order.id}`;
       setIsAuthenticated(true);
       setUser(JSON.parse(savedUser));
       loadOrders();
-      socket.connect();
+      if (!socket.connected) {
+        socket.connect();
+      }
     }
 
     LocalNotifications.requestPermissions();
 
-    socket.on('new_order', async (order: Order) => {
-      // Add new order to the top of the list immediately
-      setOrders(prev => [order, ...prev]);
-      playOrderSound();
-      
-      await LocalNotifications.schedule({
-        notifications: [
-          {
-            title: "طلب جديد! 🛍️",
-            body: `طلب رقم #${order.id} بمبلغ ${order.total.toLocaleString()} د.ع`,
-            id: order.id,
-            schedule: { at: new Date(Date.now() + 100) },
-            sound: 'res://raw/order_received',
-            actionTypeId: "",
-            extra: null
+    // App State Listener to handle background/foreground
+    const stateListener = CapApp.addListener('appStateChange', ({ isActive }) => {
+      console.log('[ADMIN_APP] App state changed. Is active:', isActive);
+      if (isActive) {
+        const token = localStorage.getItem('auth_token');
+        if (token) {
+          loadOrders();
+          if (!socket.connected) {
+            socket.connect();
+          } else {
+            joinAdminRoomLocal();
           }
-        ]
-      });
+        }
+      }
     });
 
-    socket.on('order_status_updated', (data: { orderId: number, status: string }) => {
+    // Polling fallback - refresh every 60 seconds even if socket fails
+    const pollingInterval = setInterval(() => {
+      const token = localStorage.getItem('auth_token');
+      if (token) {
+        console.log('[ADMIN_APP] Polling orders fallback...');
+        loadOrders();
+        if (!socket.connected) {
+          socket.connect();
+        }
+      }
+    }, 60000);
+
+    const onConnect = () => {
+      console.log('[ADMIN_APP] Socket connected');
+      joinAdminRoomLocal();
+    };
+
+    const onNewOrder = async (order: Order) => {
+      console.log('[ADMIN_APP] New order received via socket:', order.id);
+      
+      setOrders(prev => {
+        if (prev.some(o => o.id === order.id)) return prev;
+        return [order, ...prev];
+      });
+      
+      playOrderSound();
+      
+      // Background-friendly notification loop (30 seconds total)
+      const notifications = [];
+      for (let i = 0; i < 10; i++) {
+        notifications.push({
+          title: "طلب جديد! 🛍️",
+          body: `طلب رقم #${order.id} بمبلغ ${order.total.toLocaleString()} د.ع`,
+          id: (Number(order.id) % 1000000) + i,
+          schedule: { at: new Date(Date.now() + (i * 3000) + 100) }, // Every 3 seconds
+          sound: 'res://raw/order_received',
+          actionTypeId: "VIEW_ORDER",
+          extra: { orderId: order.id }
+        });
+      }
+      
+      try {
+        await LocalNotifications.schedule({ notifications });
+      } catch (err) {
+        console.error('[ADMIN_APP] Failed to schedule notifications:', err);
+      }
+    };
+
+    const onStatusUpdate = (data: { orderId: number, status: string }) => {
       setOrders(prev => prev.map(o => 
         o.id === data.orderId ? { ...o, status: data.status } : o
       ));
-      if (selectedOrder && selectedOrder.id === data.orderId) {
-        setSelectedOrder((prev: any) => ({ ...prev, status: data.status }));
-      }
-    });
+    };
 
-    socket.on('order_fee_updated', (data: { orderId: number, fee: number, total: number }) => {
+    const onFeeUpdate = (data: { orderId: number, fee: number, total: number }) => {
       setOrders(prev => prev.map(o => 
         o.id === data.orderId ? { ...o, internationalShippingFee: data.fee, total: data.total } : o
       ));
-      if (selectedOrder && selectedOrder.id === data.orderId) {
-        setSelectedOrder((prev: any) => ({ ...prev, internationalShippingFee: data.fee, total: data.total }));
-      }
-    });
+    };
 
-    socket.on('connect', () => {
-      if (localStorage.getItem('auth_token')) {
-        joinAdminRoom();
-      }
-    });
+    socket.on('connect', onConnect);
+    socket.on('new_order', onNewOrder);
+    socket.on('order_status_updated', onStatusUpdate);
+    socket.on('order_fee_updated', onFeeUpdate);
 
     return () => {
-      socket.off('new_order');
-      socket.off('order_status_updated');
-      socket.off('order_fee_updated');
-      socket.off('connect');
+      stateListener.then(l => l.remove());
+      clearInterval(pollingInterval);
+      socket.off('connect', onConnect);
+      socket.off('new_order', onNewOrder);
+      socket.off('order_status_updated', onStatusUpdate);
+      socket.off('order_fee_updated', onFeeUpdate);
     };
-  }, [loadOrders]);
+  }, [loadOrders, joinAdminRoomLocal]);
 
   const getStatusConfig = (status: string) => {
     switch (status.toUpperCase()) {
@@ -592,7 +849,14 @@ https://chinak-production.up.railway.app/shipping-tracking?id=${order.id}`;
                               className="p-2.5 bg-green-500 text-white rounded-xl shadow-lg shadow-green-200 hover:bg-green-600 active:scale-95 transition-all flex items-center gap-2"
                             >
                               <MessageCircle size={18} />
-                              <span className="text-xs font-black">WhatsApp</span>
+                              <span className="text-xs font-black">Quotation</span>
+                            </button>
+                            <button 
+                              onClick={() => handleSendInvoice(selectedOrder)}
+                              className="p-2.5 bg-blue-600 text-white rounded-xl shadow-lg shadow-blue-200 hover:bg-blue-700 active:scale-95 transition-all flex items-center gap-2"
+                            >
+                              <FileText size={18} />
+                              <span className="text-xs font-black">Invoice</span>
                             </button>
                           </div>
                           <div className="flex items-center gap-4"><div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center border border-slate-100 shadow-sm"><Mail size={18} className="text-slate-400" /></div><div><div className="text-[10px] font-black text-slate-400 uppercase">Email Address</div><div className="text-sm font-black text-slate-700">{selectedOrder.user?.email || 'N/A'}</div></div></div>
@@ -605,8 +869,8 @@ https://chinak-production.up.railway.app/shipping-tracking?id=${order.id}`;
                         <div className="space-y-4">
                           {selectedOrder.items?.map((item: any, idx: number) => (
                           <div key={idx} className="bg-white p-4 rounded-2xl flex items-center gap-4 border border-slate-100 hover:border-blue-200 transition-colors cursor-pointer" onClick={(e) => { 
-                            // Only open edit modal if we didn't click the xianyu button
-                            if (!(e.target as HTMLElement).closest('.xianyu-btn')) {
+                            // Only open edit modal if we didn't click an action icon
+                            if (!(e.target as HTMLElement).closest('.item-action-btn')) {
                               setEditingItem(item); 
                               setNewPriceValue(item.price.toString()); 
                             }
@@ -615,18 +879,35 @@ https://chinak-production.up.railway.app/shipping-tracking?id=${order.id}`;
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-start justify-between gap-2">
                                   <h5 className="font-black text-slate-800 text-sm truncate">{item.product?.name}</h5>
-                                  {item.product?.purchaseUrl && (
-                                    <button 
-                                      onClick={(e) => {
-                                        e.stopPropagation(); // Stop event from reaching the parent div
-                                        handleOpenXianyu(item.product.purchaseUrl!);
-                                      }}
-                                      className="xianyu-btn p-1.5 bg-yellow-400 text-slate-900 rounded-lg shadow-sm hover:bg-yellow-500 transition-colors shrink-0"
-                                      title="Open in Xianyu"
-                                    >
-                                      <ExternalLink size={14} />
-                                    </button>
-                                  )}
+                                  <div className="flex items-center gap-2 shrink-0">
+                                    {typeof item.notes === 'string' && item.notes.trim() && (
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setActiveItemNote({
+                                            productName: item.product?.name || 'Product note',
+                                            note: item.notes.trim()
+                                          });
+                                        }}
+                                        className="item-action-btn p-1.5 bg-amber-100 text-amber-600 rounded-lg shadow-sm hover:bg-amber-200 transition-colors"
+                                        title="View customer note"
+                                      >
+                                        <FileText size={14} />
+                                      </button>
+                                    )}
+                                    {item.product?.purchaseUrl && (
+                                      <button 
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleOpenXianyu(item.product.purchaseUrl!);
+                                        }}
+                                        className="item-action-btn p-1.5 bg-yellow-400 text-slate-900 rounded-lg shadow-sm hover:bg-yellow-500 transition-colors"
+                                        title="Open in Xianyu"
+                                      >
+                                        <ExternalLink size={14} />
+                                      </button>
+                                    )}
+                                  </div>
                                 </div>
                                 <div className="text-xs font-bold text-slate-400 mt-1 flex items-center gap-2">
                                   <span>{item.quantity} x {item.price.toLocaleString()} IQD</span>
@@ -754,13 +1035,41 @@ https://chinak-production.up.railway.app/shipping-tracking?id=${order.id}`;
                     {isArchiving ? <RefreshCw className="animate-spin" /> : <Trash2 size={18} />}
                     حذف المنتج من التطبيق
                   </button>
-                  <button 
-                    onClick={handleLogout}
-                    className="w-full flex items-center gap-4 p-4 rounded-2xl bg-red-50 text-red-600 hover:bg-red-100 transition-all font-black"
-                  >
-                    <LogOut size={24} />
-                    <span>Logout</span>
-                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {activeItemNote && (
+          <div className="fixed inset-0 z-[140] flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-md">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white w-full max-w-md rounded-[2rem] shadow-2xl overflow-hidden"
+            >
+              <div className="p-6 border-b border-slate-100 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-amber-100 text-amber-600">
+                    <FileText size={18} />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-black text-slate-900">Customer Note</h3>
+                    <p className="text-xs font-bold text-slate-400 truncate max-w-[220px]">{activeItemNote.productName}</p>
+                  </div>
+                </div>
+                <button onClick={() => setActiveItemNote(null)} className="p-2 text-slate-400 hover:text-red-500 transition-colors">
+                  <X size={20} />
+                </button>
+              </div>
+              <div className="p-6">
+                <div className="rounded-2xl border border-amber-100 bg-amber-50 p-4">
+                  <p className="whitespace-pre-wrap break-words text-sm font-bold leading-relaxed text-slate-700">
+                    {activeItemNote.note}
+                  </p>
                 </div>
               </div>
             </motion.div>
@@ -783,14 +1092,29 @@ https://chinak-production.up.railway.app/shipping-tracking?id=${order.id}`;
         )}
       </AnimatePresence>
 
-      {/* Floating Stop Sound Button (Only visible when sound could be playing) */}
-      <button 
-        onClick={() => { stopOrderSound(); }} 
-        className="fixed bottom-6 right-6 w-14 h-14 bg-red-600 text-white rounded-full shadow-2xl flex items-center justify-center hover:bg-red-700 active:scale-90 transition-all z-[200] border-4 border-white"
-        title="Stop Notification Sound"
-      >
-        <X size={28} />
-      </button>
+      {/* Hidden Invoice Components for PDF Generation */}
+      <div className="fixed -left-[2000px] top-0 opacity-0 pointer-events-none overflow-hidden">
+        {selectedOrder && (
+          <>
+            <div ref={invoiceRef}>
+              <Invoice order={selectedOrder} settings={settings} mode="invoice" />
+            </div>
+            <div ref={quotationRef}>
+              <Invoice order={selectedOrder} settings={settings} mode="quotation" />
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* Loading Overlay for PDF Generation */}
+      {isGeneratingPDF && (
+        <div className="fixed inset-0 z-[1000] bg-black/50 backdrop-blur-sm flex items-center justify-center">
+          <div className="bg-white p-8 rounded-3xl shadow-2xl flex flex-col items-center gap-4">
+            <RefreshCw className="animate-spin text-blue-600" size={48} />
+            <p className="font-black text-slate-800">جاري تجهيز الملف...</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

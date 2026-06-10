@@ -1,12 +1,36 @@
-import { io } from 'socket.io-client';
+import { io, Socket } from 'socket.io-client';
 
-const SOCKET_URL = 'https://chinak-production.up.railway.app';
-// const SOCKET_URL = 'http://localhost:5001';
+const DEFAULT_SOCKET_URL = 'https://chinak-production.up.railway.app';
 
-export const socket = io(SOCKET_URL, {
+export let socket = io(localStorage.getItem('api_url') || DEFAULT_SOCKET_URL, {
   autoConnect: false,
+  reconnection: true,
+  reconnectionAttempts: Infinity,
+  reconnectionDelay: 1000,
+  reconnectionDelayMax: 5000,
+  timeout: 20000,
+  transports: ['websocket', 'polling'],
 });
 
+export const updateSocketUrl = (newUrl: string) => {
+  if (socket) {
+    socket.disconnect();
+  }
+  socket = io(newUrl, {
+    autoConnect: false,
+    reconnection: true,
+    reconnectionAttempts: Infinity,
+    reconnectionDelay: 1000,
+    reconnectionDelayMax: 5000,
+    timeout: 20000,
+    transports: ['websocket', 'polling'],
+  });
+  return socket;
+};
+
 export const joinAdminRoom = () => {
-  socket.emit('join_admin_room');
+  if (socket && socket.connected) {
+    console.log('[SOCKET] Emitting join_admin_room');
+    socket.emit('join_admin_room');
+  }
 };

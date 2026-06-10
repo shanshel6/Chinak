@@ -22,6 +22,25 @@ allprojects {
         google()
         mavenCentral()
     }
+    
+    subprojects {
+        afterEvaluate { project ->
+            if (project.hasProperty('android')) {
+                project.android {
+                    compileOptions {
+                        sourceCompatibility JavaVersion.VERSION_17
+                        targetCompatibility JavaVersion.VERSION_17
+                    }
+                }
+                // Force Kotlin toolchain to 17 if the plugin is applied
+                if (project.plugins.hasPlugin('kotlin-android') || project.plugins.hasPlugin('kotlin')) {
+                    kotlin {
+                        jvmToolchain(17)
+                    }
+                }
+            }
+        }
+    }
 }
 
 task clean(type: Delete) {

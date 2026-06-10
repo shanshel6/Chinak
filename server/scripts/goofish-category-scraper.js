@@ -14,6 +14,7 @@ const envPath = path.join(__dirname, '..', '.env');
 dotenv.config({ path: envPath });
 
 import { canonicalCategories, mapToCanonicalCategory, normalizeCategoryText } from '../services/categoryCanonicalService.js';
+import { ensureProductImageEmbeddings } from '../services/productImageVectorService.js';
 
 const categoryBySlug = new Map(canonicalCategories.map((category) => [category.slug, category]));
 
@@ -168,6 +169,7 @@ function calculatePriceMultiplier(basePriceIQD) {
 }
 
 const SILICONFLOW_API_KEY = String(process.env.SILICONFLOW_API_KEY || '').trim();
+const GOOFISH_AI_MODEL = String(process.env.GOOFISH_AI_MODEL || 'Qwen/Qwen3.5-9B').trim() || 'Qwen/Qwen3.5-9B';
 const DISABLE_DB_WRITE = String(process.env.GOOFISH_DISABLE_DB_WRITE || '').toLowerCase() === 'true';
 const configuredMaxProducts = parseInt(process.env.GOOFISH_MAX_PRODUCTS || '', 10);
 const MAX_PRODUCTS_TO_PROCESS = Number.isFinite(configuredMaxProducts) && configuredMaxProducts > 0
@@ -177,7 +179,7 @@ const OUTPUT_JSON = String(process.env.GOOFISH_OUTPUT_JSON || '').toLowerCase() 
 const REQUIRE_DB_WRITE = String(process.env.GOOFISH_REQUIRE_DB_WRITE || 'true').toLowerCase() !== 'false';
 const AI_ONLY_TERMS = String(process.env.GOOFISH_AI_ONLY_TERMS || '').toLowerCase() === 'true';
 const TRANSLATION_CACHE_PATH = path.join(__dirname, 'goofish-translation-cache.json');
-const ITEMS_PER_SEARCH = Math.max(1, parseInt(process.env.GOOFISH_ITEMS_PER_SEARCH || '90', 10) || 90);
+const ITEMS_PER_SEARCH = Math.max(1, parseInt(process.env.GOOFISH_ITEMS_PER_SEARCH || '30', 10) || 30);
 const KEYWORDS_PER_PRODUCT = Math.max(10, Math.min(50, parseInt(process.env.GOOFISH_KEYWORDS_PER_PRODUCT || '30', 10) || 30));
 const GOOFISH_AI_TITLE_MAX_CHARS = Math.max(40, parseInt(process.env.GOOFISH_AI_TITLE_MAX_CHARS || '140', 10) || 140);
 const GOOFISH_AI_SECOND_PASS_DESCRIPTION = String(process.env.GOOFISH_AI_SECOND_PASS_DESCRIPTION || 'false').toLowerCase() === 'true';
@@ -238,7 +240,7 @@ function detectRealPriceFromTitle(title, currentPrice) {
   return currentPrice;
 }
 
-const MAX_AI_ATTEMPTS = 3;
+const MAX_AI_ATTEMPTS = 10;
 let dbReady = false;
 let dbChecked = false;
 let activeBrowser = null;
@@ -354,22 +356,44 @@ async function callSiliconFlow(messages, temperature = 0.3, maxTokens = 100) {
   const maxAttempts = 5;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
+      console.log(`[SiliconFlow] Request: model=${GOOFISH_AI_MODEL}, messages=${JSON.stringify(messages).substring(0, 100)}...`);
       const response = await axios.post('https://api.siliconflow.com/v1/chat/completions', {
-        model: "Qwen/Qwen3-8B",
+        model: GOOFISH_AI_MODEL,
         messages,
         temperature,
         max_tokens: maxTokens,
-        stream: false
+        stream: false,
+        // Disable reasoning for faster responses
+        enable_thinking: false
       }, {
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${apiKey}`
         },
-        timeout: 45000
+        timeout: 45000,
+        // Explicitly disable proxy for API calls
+        proxy: false
       });
-      return response.data.choices[0].message.content.trim();
+      const choice = response.data.choices[0];
+      const content = choice.message.content?.trim() || '';
+      const reasoning = choice.message.reasoning_content?.trim() || '';
+      
+      if (reasoning) {
+        console.log(`[SiliconFlow] Reasoning detected (${reasoning.length} chars)`);
+      }
+      
+      if (!content && reasoning && choice.finish_reason === 'length') {
+        console.warn('[SiliconFlow] Model reached token limit during reasoning. No content returned.');
+      }
+      
+      console.log(`[SiliconFlow] Response: ${content.substring(0, 50)}...`);
+      return content || null;
     } catch (error) {
       const status = error?.response?.status;
+      const errorData = error?.response?.data;
+      console.warn(`[SiliconFlow] Error (${status || 'network'}): ${error.message}`);
+      if (errorData) console.warn(`[SiliconFlow] Details: ${JSON.stringify(errorData)}`);
+      
       const isTimeout = String(error?.message || '').includes('timeout');
       // Retry on 429 (Rate Limit), 502 (Bad Gateway), 503 (Service Unavailable), 504 (Gateway Timeout), and 500 (Internal Server Error)
       if (status === 429 || status === 502 || status === 503 || status === 504 || status === 500 || isTimeout) {
@@ -1358,25 +1382,31 @@ async function createBrowser() {
     console.error('Chrome/Edge executable not found on system.');
     process.exit(1);
   }
+  const launchArgs = [
+    '--start-maximized',
+    '--no-sandbox',
+    '--disable-setuid-sandbox',
+    '--disable-blink-features=AutomationControlled',
+    '--disable-infobars',
+    '--excludeSwitches=enable-automation',
+    '--disable-features=IsolateOrigins,site-per-process',
+    '--disable-dev-shm-usage',
+    '--disable-accelerated-2d-canvas',
+    '--disable-gpu'
+  ];
+
+  // Add proxy configuration only if explicitly provided via environment variable
+  if (process.env.PROXY_SERVER) {
+    launchArgs.push(`--proxy-server=${process.env.PROXY_SERVER}`);
+    console.log(`Using proxy server: ${process.env.PROXY_SERVER}`);
+  }
+
   return puppeteer.launch({
     executablePath,
     headless: false,
     defaultViewport: null,
     // userDataDir: path.join(process.cwd(), 'chrome_data'), // Disabled for incognito-like behavior
-    args: [
-      '--start-maximized',
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-blink-features=AutomationControlled',
-      '--disable-infobars',
-      '--excludeSwitches=enable-automation',
-      '--disable-features=IsolateOrigins,site-per-process',
-      '--incognito',
-      '--proxy-server=http://127.0.0.1:7890',
-      '--disable-dev-shm-usage',
-      '--disable-accelerated-2d-canvas',
-      '--disable-gpu'
-    ]
+    args: launchArgs
   });
 }
 
@@ -1392,12 +1422,56 @@ function parseCnyPrice(text) {
   return m ? parseFloat(m[1]) : 0;
 }
 
+function parseSpecsFromConditionText(conditionText) {
+  if (!conditionText) return [];
+  // Split by spaces and filter out empty strings
+  const specs = conditionText.split(/\s+/).filter(spec => spec.trim().length > 0);
+  return specs;
+}
+
+async function translateSpecsToArabic(chineseSpecs) {
+  if (!chineseSpecs || !SILICONFLOW_API_KEY) return null;
+  const source = String(chineseSpecs).trim().slice(0, 500);
+  if (!source) return null;
+
+  try {
+    console.log(`[translateSpecsToArabic] Translating specs: ${source.substring(0, 30)}...`);
+    const result = await callSiliconFlow([
+      {
+        role: 'system',
+        content: 'You are an Arabic e-commerce expert. Translate the following Chinese product specifications into a structured Arabic JSON object. Format: {"Key": "Value"}. Arabic ONLY.'
+      },
+      {
+        role: 'user',
+        content: `Translate these specs to Arabic JSON: ${source}`
+      }
+    ], 0.2, 1000);
+
+    if (!result) return null;
+
+    const jsonMatch = result.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      try {
+        const parsed = JSON.parse(jsonMatch[0]);
+        console.log(`[translateSpecsToArabic] Succeeded with ${Object.keys(parsed).length} keys`);
+        return parsed;
+      } catch (e) {
+        console.warn(`[translateSpecsToArabic] Failed to parse JSON: ${e.message}`);
+      }
+    }
+    return { "التفاصيل": result.trim() };
+  } catch (err) {
+    console.error(`[translateSpecsToArabic] Error: ${err.message}`);
+    return null;
+  }
+}
+
 async function translateFullTitleToArabic(title, fallbackText = '') {
   const source = String(title || '').trim().slice(0, GOOFISH_AI_TITLE_MAX_CHARS);
   if (!source || !SILICONFLOW_API_KEY) return fallbackText || source;
   try {
-    const prompt = `Translate this Chinese product title to Arabic. Return Arabic only.\n${source}`;
-    const result = await callSiliconFlow([{ role: "user", content: prompt }], 0.2, 120);
+    const prompt = `Translate this Chinese product title to Arabic. SHORT and CLEAN (2-5 words). Return Arabic only, no explanation, no invented brands. Use correct terminology (e.g. "مكواة شعر" for straighteners, "مصفف" for stylers). NEVER use "مدفع" for straighteners.\nTitle: ${source}`;
+    const result = await callSiliconFlow([{ role: "user", content: prompt }], 0.2, 1000);
     const translated = cleanAiText(sanitizeTranslationText(result));
     return translated || fallbackText || source;
   } catch {
@@ -1413,11 +1487,9 @@ async function generateTitleAndKeywords(title) {
   try {
     const prompt = `Return JSON only: {"title_ar":"...","description_ar":"...","keywords":["..."]}.
 Translate Chinese title to Arabic.
-title_ar: short ecommerce title.
-description_ar: one natural sentence.
-keywords: exactly ${KEYWORDS_PER_PRODUCT} Arabic single-word search terms, no duplicates.
+RULES: 1) Arabic ONLY. 2) NO hallucinations/invented brands. 3) title_ar: short ecommerce title (2-5 words). 4) description_ar: detailed natural Arabic description. 5) Use correct terminology (e.g. "مكواة شعر" for straighteners, "مصفف" for stylers). NEVER use "مدفع" for straighteners.
 Title: "${fallback}"`;
-    const result = await callSiliconFlow([{ role: "user", content: prompt }], 0.25, 300);
+    const result = await callSiliconFlow([{ role: "user", content: prompt }], 0.25, 2000);
     const raw = String(result || '').trim();
     if (!raw) {
         console.warn(`[AI Debug] generateTitleAndKeywords returned empty for title: ${fallback}`);
@@ -1602,7 +1674,8 @@ async function saveProductToDb(item, existingProductId = null) {
       isRealBrand: typeof item.realBrand === 'boolean' ? item.realBrand : null,
       source: 'goofish',
       scrapedAt: new Date(),
-      ...(item.goofishCategoryId ? { goofishCategoryId: item.goofishCategoryId } : {})
+      ...(item.goofishCategoryId ? { goofishCategoryId: item.goofishCategoryId } : {}),
+      ...(item.specs && item.specs.length > 0 ? { specs: item.specs } : {})
     };
     const keywordsList = ensureKeywordList(item.keywords, item.titleEn || item.title);
     const hasDetectedCondition = typeof item.newOrOld === 'boolean';
@@ -1611,6 +1684,8 @@ async function saveProductToDb(item, existingProductId = null) {
     const basePriceIQD = Math.max(0, Number(item.priceCny || 0) * CNY_TO_IQD_RATE);
     const multiplier = calculatePriceMultiplier(basePriceIQD);
     const priceIQD = Math.round(basePriceIQD * multiplier);
+    const cleanImageUrl = (item.image || '').replace(/_\d+x\d+.*$/, '');
+
     if (existing) {
       try {
         await prisma.product.update({
@@ -1619,6 +1694,7 @@ async function saveProductToDb(item, existingProductId = null) {
             name: item.titleEn || item.title,
             price: priceIQD,
             basePriceIQD,
+            image: cleanImageUrl,
             // keywords: keywordsList, // Removing this because it causes "Unknown argument" error
             aiMetadata: metadata,
             updatedAt: new Date(),
@@ -1635,6 +1711,22 @@ async function saveProductToDb(item, existingProductId = null) {
         // Assign canonical category immediately
         await assignCategoryToProduct(existing.id, keywordsList, item.goofishCategoryId || '');
         console.log(`Updated product: ${item.titleEn || item.title}`);
+        
+        // Generate image embeddings for the updated product
+        try {
+          console.log(`[Embedding] Generating image embeddings for updated product ${existing.id}...`);
+          const embeddingResult = await ensureProductImageEmbeddings({
+            prisma,
+            productId: existing.id,
+            productName: item.titleEn || item.title,
+            fallbackImageUrl: cleanImageUrl,
+            logger: console
+          });
+          console.log(`[Embedding] Image embeddings generated: ${embeddingResult.embeddedCount} images embedded for updated product ${existing.id}`);
+        } catch (embeddingError) {
+          console.warn(`[Embedding] Failed to generate image embeddings for updated product ${existing.id}:`, embeddingError.message);
+          // Don't fail the whole process if embedding fails
+        }
       } catch (updateError) {
         console.error('Update failed, trying raw SQL fallback:', updateError.message);
         const keywordsSql = Prisma.join(keywordsList);
@@ -1644,6 +1736,7 @@ async function saveProductToDb(item, existingProductId = null) {
             SET "price" = ${priceIQD},
                 "basePriceIQD" = ${basePriceIQD},
                 "name" = ${item.titleEn || item.title},
+                "image" = ${cleanImageUrl},
                 "keywords" = ARRAY[${keywordsSql}],
                 "neworold" = ${newOrOldValue},
                 "aiMetadata" = ${JSON.stringify(metadata)}::jsonb,
@@ -1656,6 +1749,7 @@ async function saveProductToDb(item, existingProductId = null) {
             SET "price" = ${priceIQD},
                 "basePriceIQD" = ${basePriceIQD},
                 "name" = ${item.titleEn || item.title},
+                "image" = ${cleanImageUrl},
                 "keywords" = ARRAY[${keywordsSql}],
                 "aiMetadata" = ${JSON.stringify(metadata)}::jsonb,
                 "updatedAt" = NOW()
@@ -1671,7 +1765,7 @@ async function saveProductToDb(item, existingProductId = null) {
             name: item.titleEn || item.title,
             price: priceIQD,
             basePriceIQD,
-            image: item.image,
+            image: cleanImageUrl,
             purchaseUrl: item.url,
             status: 'PUBLISHED',
             isActive: true,
@@ -1701,14 +1795,14 @@ async function saveProductToDb(item, existingProductId = null) {
               INSERT INTO "Product"
                 ("name", "price", "basePriceIQD", "image", "purchaseUrl", "keywords", "neworold", "status", "isActive", "aiMetadata", "createdAt", "updatedAt")
               VALUES
-                (${item.titleEn || item.title}, ${priceIQD}, ${basePriceIQD}, ${item.image}, ${item.url}, ARRAY[${keywordsSql}], ${newOrOldValue}, 'PUBLISHED', true, ${JSON.stringify(metadata)}::jsonb, NOW(), NOW())
+                (${item.titleEn || item.title}, ${priceIQD}, ${basePriceIQD}, ${cleanImageUrl}, ${item.url}, ARRAY[${keywordsSql}], ${newOrOldValue}, 'PUBLISHED', true, ${JSON.stringify(metadata)}::jsonb, NOW(), NOW())
               RETURNING "id"
             `
           : await prisma.$queryRaw`
               INSERT INTO "Product"
                 ("name", "price", "basePriceIQD", "image", "purchaseUrl", "keywords", "status", "isActive", "aiMetadata", "createdAt", "updatedAt")
               VALUES
-                (${item.titleEn || item.title}, ${priceIQD}, ${basePriceIQD}, ${item.image}, ${item.url}, ARRAY[${keywordsSql}], 'PUBLISHED', true, ${JSON.stringify(metadata)}::jsonb, NOW(), NOW())
+                (${item.titleEn || item.title}, ${priceIQD}, ${basePriceIQD}, ${cleanImageUrl}, ${item.url}, ARRAY[${keywordsSql}], 'PUBLISHED', true, ${JSON.stringify(metadata)}::jsonb, NOW(), NOW())
               RETURNING "id"
             `;
         const insertedId = Array.isArray(inserted) ? inserted[0]?.id : null;
@@ -1716,11 +1810,11 @@ async function saveProductToDb(item, existingProductId = null) {
       }
       
       // Add main image
-      if (item.image && newProduct?.id) {
+      if (cleanImageUrl && newProduct?.id) {
         await prisma.productImage.create({
           data: {
             productId: newProduct.id,
-            url: item.image,
+            url: cleanImageUrl,
             order: 0,
             type: 'GALLERY'
           }
@@ -1728,6 +1822,22 @@ async function saveProductToDb(item, existingProductId = null) {
       }
       if (newProduct?.id) {
         console.log(`Saved to DB: id=${newProduct.id} title=${item.titleEn || item.title}`);
+        
+        // Generate image embeddings for the product
+        try {
+          console.log(`[Embedding] Generating image embeddings for product ${newProduct.id}...`);
+          const embeddingResult = await ensureProductImageEmbeddings({
+            prisma,
+            productId: newProduct.id,
+            productName: item.titleEn || item.title,
+            fallbackImageUrl: cleanImageUrl,
+            logger: console
+          });
+          console.log(`[Embedding] Image embeddings generated: ${embeddingResult.embeddedCount} images embedded for product ${newProduct.id}`);
+        } catch (embeddingError) {
+          console.warn(`[Embedding] Failed to generate image embeddings for product ${newProduct.id}:`, embeddingError.message);
+          // Don't fail the whole process if embedding fails
+        }
       } else {
         console.log(`Saved to DB: id=unknown title=${item.titleEn || item.title}`);
       }
@@ -2026,7 +2136,7 @@ async function run() {
 
             if (existingProduct) {
               titleEn = String(existingProduct.name || titleEn).trim();
-              descriptionAr = cleanDescriptionText(String(existingProduct?.aiMetadata?.translatedDescription || titleEn).trim()) || titleEn;
+              descriptionAr = titleEn;
               keywords = ensureKeywordList(existingProduct.keywords, titleEn || it.title);
               needsDetailedDescription = !descriptionAr || descriptionAr.length < 20 || descriptionAr === titleEn || isChineseTerm(descriptionAr);
             }
@@ -2090,6 +2200,12 @@ async function run() {
                 descriptionAr = cleanDescriptionText(descriptionAr);
             }
 
+            // Translate and structure specs
+            let translatedSpecs = null;
+            if (it.conditionText) {
+              translatedSpecs = await translateSpecsToArabic(it.conditionText);
+            }
+
             const itemData = {
               title: it.title || '',
               titleEn: titleEn || '',
@@ -2098,8 +2214,10 @@ async function run() {
               newOrOld,
               realBrand,
               priceCny: cny,
-              image: it.image || '',
-              url: resolvedUrl
+              image: (it.image || '').replace(/_\d+x\d+.*$/, ''), // Remove thumbnail suffix for better quality
+              url: resolvedUrl,
+              goofishCategoryId: extractGoofishCategoryId(resolvedUrl),
+              specs: translatedSpecs || it.conditionText || ''
             };
 
             if (OUTPUT_JSON) {

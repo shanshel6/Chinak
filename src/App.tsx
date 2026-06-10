@@ -18,7 +18,6 @@ import ProtectedRoute from './components/ProtectedRoute';
 import BottomNav from './components/BottomNav';
 import ErrorBoundary from './components/ErrorBoundary';
 import MaintenanceScreen from './components/MaintenanceScreen';
-import AppUpdateChecker from './components/AppUpdateChecker';
 
 // Lazy load pages
 const Home = lazy(() => import('./pages/Home'));
@@ -60,7 +59,6 @@ import { App as CapApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import type { PluginListenerHandle } from '@capacitor/core';
 import { LocalNotifications } from '@capacitor/local-notifications';
-import { PushNotifications } from '@capacitor/push-notifications';
 
 const AdminLayout = lazy(() => import('./components/AdminLayout'));
 
@@ -159,7 +157,6 @@ function MainLayout() {
 
   return (
     <div className="w-full min-h-screen bg-white dark:bg-slate-900 shadow-xl relative flex flex-col">
-      <AppUpdateChecker />
       <div className="flex-1 flex flex-col relative">
         <ErrorBoundary>
           <AnimatedRoutes />
@@ -322,26 +319,17 @@ function App() {
   const isServerDown = useMaintenanceStore((state) => state.isServerDown);
 
   useEffect(() => {
-    // Register Push Notifications on Startup for Native Platforms
-    const setupPush = async () => {
+    const setupNotifications = async () => {
       if (Capacitor.isNativePlatform()) {
         try {
-          let permStatus = await PushNotifications.checkPermissions();
-          if (permStatus.receive === 'prompt') {
-            permStatus = await PushNotifications.requestPermissions();
-          }
-          if (permStatus.receive === 'granted') {
-            await PushNotifications.register();
-          }
-
-          // Also request Local Notifications permissions
+          // Only local notifications are initialized at app startup.
           await LocalNotifications.requestPermissions();
         } catch (e) {
-          console.error('Push registration error:', e);
+          console.error('Notification permission error:', e);
         }
       }
     };
-    setupPush();
+    setupNotifications();
 
     performCacheMaintenance();
     ensureGuestSession();
@@ -361,12 +349,9 @@ function App() {
   }, [checkAuth, ensureGuestSession, initChatSocket]);
 
   useEffect(() => {
-    if (isDarkMode) {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
-  }, [isDarkMode]);
+    // Force light mode always
+    document.documentElement.classList.remove('dark');
+  }, []);
 
   useEffect(() => {
     // Only connect socket and fetch user data when we are fully authenticated and done loading

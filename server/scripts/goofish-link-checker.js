@@ -64,8 +64,8 @@ const CNY_TO_IQD_RATE = Number.parseFloat(process.env.GOOFISH_CNY_TO_IQD_RATE ||
 const PRICE_PROFIT_MULTIPLIER = Number.parseFloat(process.env.GOOFISH_PRICE_PROFIT_MULTIPLIER || '1.1') || 1.1;
 const GOOFISH_USE_CHROME_PROFILE = String(process.env.GOOFISH_USE_CHROME_PROFILE || '0').trim() === '1';
 const GOOFISH_AI_CALL_TIMEOUT_MS = Math.max(5000, Number.parseInt(process.env.GOOFISH_AI_CALL_TIMEOUT_MS || '45000', 10) || 45000);
-const GOOFISH_AI_RETRY_MAX_ATTEMPTS = Math.max(1, Number.parseInt(process.env.GOOFISH_AI_RETRY_MAX_ATTEMPTS || '3', 10) || 3);
-const SILICONFLOW_MODEL = process.env.SILICONFLOW_MODEL || 'Qwen/Qwen3-235B-A22B-Instruct-2507';
+const GOOFISH_AI_RETRY_MAX_ATTEMPTS = Math.max(1, Number.parseInt(process.env.GOOFISH_AI_RETRY_MAX_ATTEMPTS || '10', 10) || 10);
+const SILICONFLOW_MODEL = process.env.SILICONFLOW_MODEL || 'Qwen/Qwen3.5-9B';
 const GOOFISH_AI_RATE_LIMIT_DELAY_MS = Math.max(0, Number.parseInt(process.env.GOOFISH_AI_RATE_LIMIT_DELAY_MS || '200', 10) || 200);
 const USER_AGENTS = [
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
@@ -1632,10 +1632,10 @@ async function checkGoofishLinks() {
     console.log('Using pipeline-style incognito browser with saved cookie file.');
   }
 
+  // Add proxy configuration only if explicitly provided via environment variable
   if (process.env.PROXY_SERVER) {
     launchArgs.push(`--proxy-server=${process.env.PROXY_SERVER}`);
-  } else if (process.platform === 'win32') {
-    launchArgs.push('--proxy-server=http://127.0.0.1:7890');
+    console.log(`Using proxy server: ${process.env.PROXY_SERVER}`);
   }
   const browser = await puppeteer.launch({
     executablePath,

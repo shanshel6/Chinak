@@ -12,7 +12,7 @@ echo 4. Update category names if AI suggests better ones
 echo 5. Save a report of all changes
 echo.
 echo API Key: %SILICONFLOW_API_KEY:~0,10%...
-echo Model: Qwen/Qwen3-14B
+echo Model: Qwen/Qwen3.5-9B
 echo.
 pause
 echo.

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { 
   ChevronLeft, 
@@ -22,24 +22,32 @@ import {
   Phone
 } from 'lucide-react';
 import { Clipboard } from '@capacitor/clipboard';
-import { fetchOrderById, cancelOrder, confirmOrderPayment } from '../services/api';
+import { fetchOrderById, cancelOrder, confirmOrderPayment, fetchSettings } from '../services/api';
 import LazyImage from '../components/LazyImage';
+import Invoice from '../components/Invoice';
 import { useNotificationStore } from '../store/useNotificationStore';
 import { useToastStore } from '../store/useToastStore';
 import { useTranslation } from 'react-i18next';
 import { socket, connectSocket } from '../services/socket';
+import { jsPDF } from 'jspdf';
+import html2canvas from 'html2canvas';
+import { Filesystem, Directory } from '@capacitor/filesystem';
+import { Share } from '@capacitor/share';
 
 const ShippingTracking: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { t } = useTranslation();
   const showToast = useToastStore((state) => state.showToast);
+  const invoiceRef = useRef<HTMLDivElement>(null);
   const [order, setOrder] = useState<any>(null);
+  const [settings, setSettings] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [isCancelling, setIsCancelling] = useState(false);
   
   // Payment Modal State
   const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [showInvoiceModal, setShowInvoiceModal] = useState(false);
   const [paymentDone, setPaymentDone] = useState(false);
   const [isConfirmingPayment, setIsConfirmingPayment] = useState(false);
   const [paymentTab, setPaymentTab] = useState<'zain' | 'qi'>('zain');
@@ -232,6 +240,16 @@ const ShippingTracking: React.FC = () => {
   }, [showToast, t, generateTrackingEvents]);
 
   useEffect(() => {
+    const loadSettings = async () => {
+      try {
+        const data = await fetchSettings();
+        setSettings(data);
+      } catch (err) {
+        console.error('Failed to load settings:', err);
+      }
+    };
+    loadSettings();
+
     if (orderId) {
       loadOrder(orderId);
       
@@ -256,6 +274,58 @@ const ShippingTracking: React.FC = () => {
       };
     }
   }, [orderId, loadOrder, showToast, t]);
+
+  const handleDownloadPDF = async () => {
+    if (!invoiceRef.current) return;
+    
+    try {
+      showToast('جاري تجهيز الفاتورة...', 'info');
+      const element = invoiceRef.current;
+      
+      const canvas = await html2canvas(element, {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        backgroundColor: '#ffffff',
+        windowWidth: 800
+      });
+      
+      const imgData = canvas.toDataURL('image/jpeg', 0.8);
+      const pdf = new jsPDF({
+        orientation: 'portrait',
+        unit: 'mm',
+        format: 'a4'
+      });
+      
+      const imgProps = pdf.getImageProperties(imgData);
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+      
+      pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight);
+      
+      const pdfBase64 = pdf.output('datauristring').split(',')[1];
+      const fileName = `DFC-Invoice-IQ-${order.id}.pdf`;
+      
+      // Save to temporary storage and share/preview
+      const savedFile = await Filesystem.writeFile({
+        path: fileName,
+        data: pdfBase64,
+        directory: Directory.Cache
+      });
+
+      await Share.share({
+        title: `DFC Invoice #IQ-${order.id}`,
+        text: 'إليك فاتورة طلبك من DFC',
+        url: savedFile.uri,
+        dialogTitle: 'حفظ أو مشاركة الفاتورة'
+      });
+      
+      showToast('تم تجهيز الفاتورة', 'success');
+    } catch (err) {
+      console.error('Failed to generate PDF:', err);
+      showToast('فشل في تجهيز الفاتورة', 'error');
+    }
+  };
 
   const handleCancelOrder = async () => {
     if (!order || !window.confirm(t('dashboard.orders.cancel_confirm'))) return;
@@ -641,6 +711,15 @@ const ShippingTracking: React.FC = () => {
 
           {/* Actions */}
           <div className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border border-slate-100 dark:border-slate-800 p-4 rounded-2xl shadow-sm mt-4 z-20 relative">
+            {['PREPARING', 'SHIPPED', 'ARRIVED_IRAQ', 'DELIVERED'].includes(order.status?.toUpperCase()) && (
+              <button 
+                onClick={() => setShowInvoiceModal(true)}
+                className="w-full mb-3 py-4 bg-primary text-white rounded-xl font-bold text-lg shadow-xl shadow-primary/30 active:scale-[0.98] transition-all flex items-center justify-center gap-3"
+              >
+                <ReceiptText size={24} />
+                عرض فاتورة الدفع
+              </button>
+            )}
             <div className="flex gap-3">
               <button 
                 onClick={async () => {
@@ -932,6 +1011,59 @@ const ShippingTracking: React.FC = () => {
                   إغلاق
                 </button>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Invoice Modal */}
+      {showInvoiceModal && order && (
+        <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-300">
+          <div 
+            className="w-full max-w-2xl bg-white dark:bg-slate-900 rounded-t-[2rem] sm:rounded-[2rem] shadow-2xl overflow-hidden animate-in slide-in-from-bottom duration-500 border-t sm:border border-slate-200 dark:border-slate-800 rtl flex flex-col max-h-[90vh] pb-safe pt-safe"
+            dir="rtl"
+          >
+            {/* Modal Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800 shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="size-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary">
+                  <ReceiptText size={24} />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-slate-900 dark:text-white">فاتورة الدفع</h3>
+                  <p className="text-xs text-slate-500">تم تأكيد استلام المبلغ</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setShowInvoiceModal(false)}
+                className="size-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 transition-colors"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Modal Body - Scrollable */}
+            <div className="flex-1 overflow-y-auto custom-scrollbar p-0">
+              <div className="bg-white">
+                <Invoice order={order} settings={settings} ref={invoiceRef} />
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-6 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 shrink-0 flex gap-3">
+              <button 
+                onClick={handleDownloadPDF}
+                className="flex-1 py-4 bg-primary text-white rounded-xl font-bold transition-all active:scale-95 flex items-center justify-center gap-2"
+              >
+                <Copy size={20} />
+                تحميل PDF
+              </button>
+              <button 
+                onClick={() => setShowInvoiceModal(false)}
+                className="flex-1 py-4 bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-xl font-bold transition-all active:scale-95"
+              >
+                إغلاق
+              </button>
             </div>
           </div>
         </div>

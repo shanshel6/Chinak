@@ -75,7 +75,7 @@ Do not include any other text or markdown, just the JSON object.`;
       try {
         console.log("Using SiliconFlow...");
         const response = await siliconflow.chat.completions.create({
-          model: 'Qwen/Qwen2.5-7B-Instruct',
+          model: process.env.SILICONFLOW_MODEL || 'Qwen/Qwen3.5-9B',
           messages: [{ role: 'user', content: prompt }],
           response_format: { type: 'json_object' }
         });

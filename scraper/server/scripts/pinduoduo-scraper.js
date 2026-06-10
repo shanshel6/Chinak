@@ -214,13 +214,16 @@ function askQuestion(query) {
 async function enrichWithAI(title, description, price) {
     if (!aiClient) {
         return {
-            translatedTitle: title + " (Translation Pending)",
-            translatedDesc: description + " (Translation Pending)",
+            product_name_ar: title,
+            translatedDescription: description,
+            product_details_ar: {},
             aiMetadata: {
-                synonyms: ["Placeholder"],
-                market_tags: ["Tag"],
-                category_suggestion: "General"
-            }
+                synonyms: [],
+                market_tags: [],
+                category_suggestion: "عام",
+                translatedDescription: description
+            },
+            is_edible: false
         };
     }
 
@@ -230,72 +233,31 @@ async function enrichWithAI(title, description, price) {
         const safePrice = String(price || '').slice(0, 50);
 
         const prompt = `
-        You are a product data enrichment assistant for an Iraqi e-commerce site.
-        
+        You are a product data enrichment assistant for an Iraqi Arabic marketplace.
+
         Original Product Title (Chinese): "${safeTitle}"
         Product Description: "${safeDescription}"
         Price: "${safePrice}"
 
         Task:
-        1. Extract the Brand Name in English (e.g., "Nike", "Sony", "Xiaomi"). If no brand is found, ignore it.
-        2. Translate the Product Name to ARABIC accurately.
-           - TARGET LANGUAGE: ARABIC (Iraq dialect or MSA).
-           - INPUT: Chinese -> OUTPUT: Arabic.
-           - DO NOT output English (except for the Brand Name).
-           - Remove marketing fluff like "hot sale", "new arrival", "2024", "Ready Stock".
-           - Example: "冬季加绒卫衣" -> "كنزة شتوية مبطنة" (NOT "Winter Fleece Sweater").
-        3. Combine them into "product_name_ar" format: "[Arabic Name]".
-           - ONLY include the brand if it is a well-known international brand (e.g. Nike, Adidas, Sony).
-           - If the brand is generic, unknown, or "No Brand", DO NOT include it in the title.
-           - NEVER include text like "No Brand", "Generic", "Other", "ماركة غير معروفة" in the title.
-           - IMPORTANT: You MUST translate the actual title. Do NOT use placeholder text like "اسم المنتج بالعربية".
-        4. Extract "product_details_ar" as a structured Key-Value JSON object in ARABIC.
-        5. Generate "aiMetadata" based strictly on the product Title and Description.
-            - "synonyms": Array of 3-5 alternative Arabic names SPECIFIC to this product.
-            - "market_tags": Array of 3-5 relevant tags in Arabic.
-            - "category_suggestion": A specific category path in Arabic.
-        6. DETECT IF THE PRODUCT IS EDIBLE (Food, Drink, Nuts, Cans, Snacks, Ingredients, Supplements, Vitamins, Medicine).
-            - Set "is_edible": true if it is food/edible/supplement.
-            - Set "is_edible": false if it is NOT edible (e.g. clothes, electronics, tools).
-            - BE VERY CAREFUL. "Food Container" is NOT edible. "Dog Food" IS edible (sort of, but usually restricted). "Almond Oil for Skin" is NOT edible (cosmetic). "Almond Oil for Cooking" IS edible.
-            - If in doubt, set true to be safe.
+        1. Generate a natural Arabic product name from the title and description.
+        2. Translate the description into Arabic.
+        3. Extract useful product details as an Arabic JSON object when possible.
 
-         CRITICAL INSTRUCTIONS:
-         - The "product_name_ar" MUST be in ARABIC script (except the brand).
-        - If the original title is "WASSUP BEAVER...", translate "WASSUP BEAVER" as the Brand, and the rest as the Arabic name.
-        - NEVER return "اسم غير متوفر" (Name Not Available). ALWAYS generate a descriptive Arabic name based on the description if the title is unclear.
-        - Example: If title is "2025 Winter Jacket", output "سترة شتوية 2025".
-        - The translation MUST be high quality and natural for Arabic speakers in Iraq.
-        - If the product name is vague or generic in Chinese, infer the specific type from description or context.
-        - The "product_details_ar" field MUST be a JSON OBJECT (key-value pairs), NOT a string.
-        - Example format for details:
-          "product_details_ar": { 
-              "المادة": "قماش كتان", 
-              "الميزة": "ألوان متعددة", 
-              "التصميم": "إبداعي", 
-              "الاستخدام": "غرفة المعيشة" 
-          }
-        - STRICTLY EXCLUDE any "return policy", "refund", "replacement", "shipping", "free shipping", or "guarantee" information from details.
-        - STRICTLY EXCLUDE any PRICE or COST information (e.g., "السعر", "Price", "29.9 ريال") from details.
-        - DO NOT include keys with EMPTY values (e.g. "الماركة": "" should be removed).
-        - Do NOT include any Chinese characters (like ¥, 包邮, 品牌, etc.) in values.
-        - English text IS ALLOWED for Brand Names and Model Numbers.
-        - Convert all prices and measurements to Arabic format if possible.
-
-        Return ONLY a valid JSON object with this structure (no markdown, no \`\`\`json blocks):
+        Return only a valid JSON object with this structure, and do not include any markdown blocks or extra explanation:
         {
-            "product_name_ar": "Put Translated Name Here",
-            "is_edible": false,
+            "product_name_ar": "اسم المنتج بالعربية",
+            "translatedDescription": "الوصف بالعربية",
             "product_details_ar": {
-                "الماركة": "قيمة",
-                "اللون": "قيمة",
-                "المادة": "قيمة"
+                "اللون": "أحمر",
+                "الحالة": "جديد"
             },
             "aiMetadata": {
-                "synonyms": ["مرادف1", "مرادف2"],
-                "market_tags": ["تاق1", "تاق2"],
-                "category_suggestion": "اسم التصنيف"
-            }
+                "synonyms": ["..."],
+                "market_tags": ["..."],
+                "category_suggestion": "..."
+            },
+            "is_edible": false
         }
         `;
 
@@ -408,18 +370,21 @@ async function enrichWithAI(title, description, price) {
                         }
                     }
 
-                    if (parsed.aiMetadata) {
-                         // Ensure arrays are arrays
-                         if (!Array.isArray(parsed.aiMetadata.synonyms)) parsed.aiMetadata.synonyms = [];
-                         if (!Array.isArray(parsed.aiMetadata.market_tags)) parsed.aiMetadata.market_tags = [];
-                         if (!parsed.aiMetadata.category_suggestion) parsed.aiMetadata.category_suggestion = "ط¹ط§ظ…";
-                    } else {
-                        // Fallback: Try to infer from parsed name if possible, otherwise use generic but marked as fallback
-                         parsed.aiMetadata = {
-                             synonyms: [parsed.product_name_ar], // Use the name itself as a synonym at least
-                             market_tags: ["ظ…ظ†طھط¬ ظ…ظ…ظٹط²"],
-                             category_suggestion: "ط£ط®ط±ظ‰"
-                         };
+                    if (!parsed.aiMetadata || typeof parsed.aiMetadata !== 'object') {
+                        parsed.aiMetadata = {};
+                    }
+
+                    if (!Array.isArray(parsed.aiMetadata.synonyms)) parsed.aiMetadata.synonyms = [parsed.product_name_ar || ''];
+                    if (!Array.isArray(parsed.aiMetadata.market_tags)) parsed.aiMetadata.market_tags = [];
+                    if (!parsed.aiMetadata.category_suggestion) parsed.aiMetadata.category_suggestion = "عام";
+
+                    parsed.translatedDescription = parsed.translatedDescription || parsed.descriptionAr || parsed.product_description_ar || parsed.fullDescriptionAr || parsed.full_description_ar || '';
+                    if (parsed.translatedDescription && !parsed.aiMetadata.translatedDescription) {
+                        parsed.aiMetadata.translatedDescription = parsed.translatedDescription;
+                    }
+
+                    if (!parsed.aiMetadata.translatedDescription) {
+                        parsed.aiMetadata.translatedDescription = parsed.product_name_ar || '';
                     }
 
                     return parsed;

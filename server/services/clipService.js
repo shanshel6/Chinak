@@ -9,11 +9,13 @@ import path from 'node:path';
 // Force IPv4 first to avoid IPv6 timeouts with AliCDN
 dns.setDefaultResultOrder('ipv4first');
 
-// Configure Proxy for Hugging Face if needed
-if (!process.env.HTTPS_PROXY && !process.env.https_proxy && process.env.NODE_ENV !== 'production') {
-   process.env.HTTPS_PROXY = 'http://127.0.0.1:7890';
+// Configure Proxy for Hugging Face if explicitly requested via USE_CLIP_PROXY
+if (process.env.USE_CLIP_PROXY === 'true') {
+   process.env.HTTPS_PROXY = process.env.CLIP_PROXY_URL || 'http://127.0.0.1:7890';
    process.env.NO_PROXY = 'localhost,127.0.0.1,alicdn.com,img.alicdn.com,taobao.com';
-   console.log('[CLIP Service] Setting HTTPS_PROXY to http://127.0.0.1:7890');
+   console.log(`[CLIP Service] Setting HTTPS_PROXY to ${process.env.HTTPS_PROXY}`);
+} else {
+   console.log('[CLIP Service] Direct connection (no proxy)');
 }
 
 // Create a Proxy Agent for global fetch (used by transformers.js)

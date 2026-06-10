@@ -4,7 +4,7 @@ const config: CapacitorConfig = {
   appId: 'com.chinak.app',
   appName: 'DFC',
   webDir: 'dist',
-  version: '1.0.66',
+  version: '1.0.69',
   server: {
     // When using a physical device, the app cannot reach 10.0.2.2 (which is only for emulators).
     // For production/physical device testing, we should use the local dist files.

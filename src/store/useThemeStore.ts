@@ -9,25 +9,16 @@ interface ThemeState {
 
 export const useThemeStore = create<ThemeState>()(
   persist(
-    (set) => ({
+    (_set) => ({
       isDarkMode: false,
-      toggleTheme: () => set((state) => {
-        const nextMode = !state.isDarkMode;
-        if (nextMode) {
-          document.documentElement.classList.add('dark');
-        } else {
-          document.documentElement.classList.remove('dark');
-        }
-        return { isDarkMode: nextMode };
-      }),
-      setTheme: (isDark) => set(() => {
-        if (isDark) {
-          document.documentElement.classList.add('dark');
-        } else {
-          document.documentElement.classList.remove('dark');
-        }
-        return { isDarkMode: isDark };
-      }),
+      toggleTheme: () => {
+        // Dark mode disabled
+        document.documentElement.classList.remove('dark');
+      },
+      setTheme: (_isDark) => {
+        // Always force light mode
+        document.documentElement.classList.remove('dark');
+      },
     }),
     {
       name: 'theme-storage',

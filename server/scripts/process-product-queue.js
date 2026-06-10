@@ -94,9 +94,18 @@ const __dirname = dirname(__filename);
 dotenv.config({ path: join(__dirname, '../../.env'), override: false });
 
 const prisma = new PrismaClient();
-const QUEUE_DIR = join(__dirname, '../../product-queue');
-const PROCESSED_DIR = join(QUEUE_DIR, 'processed');
-const FAILED_DIR = join(QUEUE_DIR, 'failed');
+
+// Support multiple queue directories (comma-separated in GOOFISH_QUEUE_DIR, or default to both)
+const queueDirEnv = process.env.GOOFISH_QUEUE_DIR || 'product-queue,product-queue-2';
+const QUEUE_DIRS = queueDirEnv.split(',').map(d => join(__dirname, '../../' + d.trim()));
+
+function getQueueDirs() {
+  return QUEUE_DIRS.map(dir => ({
+    queueDir: dir,
+    processedDir: join(dir, 'processed'),
+    failedDir: join(dir, 'failed'),
+  }));
+}
 
 const CNY_TO_IQD_RATE = 200;
 const MAX_RETRIES = 10;
@@ -104,7 +113,7 @@ const EMBEDDING_RETRIES = 5;
 
 // AI Configuration
 const SILICONFLOW_API_KEY = String(process.env.SILICONFLOW_API_KEY || '').trim();
-const CATEGORY_MODEL = process.env.SILICONFLOW_MODEL || 'Qwen/Qwen3-235B-A22B-Instruct-2507';
+const CATEGORY_MODEL = process.env.SILICONFLOW_MODEL || 'Qwen/Qwen3.5-9B';
 const CATEGORY_API_TIMEOUT_MS = 120000;
 
 // Helper function to call SiliconFlow API for category generation
@@ -214,37 +223,75 @@ async function updateImageEmbeddingsFromJson(productId, imageEmbeddings) {
         }
 
         const vectorLiteral = vectorToSqlLiteral(imgEmbed.embedding);
-        
-        // Add timeout to prevent hanging
-        await Promise.race([
+        const imageOrder = imgEmbed.order != null ? imgEmbed.order : imageEmbeddings.indexOf(imgEmbed);
+        console.log(`[Queue] Embedding URL: ${imgEmbed.url}  order=${imageOrder}  vector_len=${imgEmbed.embedding.length}`);
+
+        // Match by productId + order (index) instead of URL to avoid URL mismatch issues
+        let result = await Promise.race([
           prisma.$executeRawUnsafe(
-            `UPDATE "ProductImage" SET "imageEmbedding" = $1::vector WHERE "productId" = $2 AND "url" = $3`,
+            `UPDATE "ProductImage" SET "imageEmbedding" = $1::vector WHERE "productId" = $2 AND "order" = $3 AND "imageEmbedding" IS NULL`,
             vectorLiteral,
             productId,
-            imgEmbed.url
+            imageOrder
           ),
-          new Promise((_, reject) => 
+          new Promise((_, reject) =>
             setTimeout(() => reject(new Error('Image embedding update timeout')), EMBEDDING_TIMEOUT_MS)
           )
         ]);
-        console.log(`[Queue] Updated embedding for image: ${imgEmbed.url.substring(0, 50)}...`);
+        console.log(`[Queue] UPDATE result: ${result} rows`);
+
+        if (result === 0) {
+          // Fallback: try matching by URL
+          const cleanEmbedUrl = sanitizeImageUrlForDb(imgEmbed.url);
+          result = await Promise.race([
+            prisma.$executeRawUnsafe(
+              `UPDATE "ProductImage" SET "imageEmbedding" = $1::vector WHERE "productId" = $2 AND "url" = $3 AND "imageEmbedding" IS NULL`,
+              vectorLiteral,
+              productId,
+              cleanEmbedUrl
+            ),
+            new Promise((_, reject) =>
+              setTimeout(() => reject(new Error('Image embedding update timeout')), EMBEDDING_TIMEOUT_MS)
+            )
+          ]);
+          console.log(`[Queue] URL fallback UPDATE result: ${result} rows`);
+        }
+
+        // Verify the embedding was actually written
+        const verifyRows = await prisma.$queryRawUnsafe(
+          `SELECT id, ("imageEmbedding" IS NOT NULL) as has_emb FROM "ProductImage" WHERE "productId" = $1 AND "order" = $2`,
+          productId,
+          imageOrder
+        );
+        if (verifyRows.length > 0) {
+          console.log(`[Queue] VERIFY image id=${verifyRows[0].id}: has_embedding=${verifyRows[0].has_emb}`);
+        }
       }
 
       // Update product's main image embedding
       if (imageEmbeddings.length > 0 && imageEmbeddings[0].embedding) {
         const mainVector = vectorToSqlLiteral(imageEmbeddings[0].embedding);
-        
+
         await Promise.race([
           prisma.$executeRawUnsafe(
             `UPDATE "Product" SET "imageEmbedding" = $1::vector WHERE "id" = $2`,
             mainVector,
             productId
           ),
-          new Promise((_, reject) => 
+          new Promise((_, reject) =>
             setTimeout(() => reject(new Error('Main image embedding update timeout')), EMBEDDING_TIMEOUT_MS)
           )
         ]);
         console.log(`[Queue] Updated main image embedding for product ${productId}`);
+
+        // Verify main embedding
+        const verifyMain = await prisma.$queryRawUnsafe(
+          `SELECT ("imageEmbedding" IS NOT NULL) as has_emb FROM "Product" WHERE "id" = $1`,
+          productId
+        );
+        if (verifyMain.length > 0) {
+          console.log(`[Queue] VERIFY main embedding: has_embedding=${verifyMain[0].has_emb}`);
+        }
       }
 
       console.log(`[Queue] Successfully updated ${imageEmbeddings.length} image embeddings`);
@@ -270,13 +317,29 @@ function toErrorText(err) {
   return err.message || String(err);
 }
 
+// Sanitize image URL - convert HEIC and other problematic formats to JPEG
+function sanitizeImageUrlForDb(url) {
+  if (!url || typeof url !== 'string') return url;
+  let sanitized = url.trim();
+  // Remove .webp suffix
+  sanitized = sanitized.replace(/\.webp$/i, '');
+  // Convert .heic (Apple format) to .jpg - Goofish serves HEIC images that are actually JPEG-compatible
+  // Pattern: .heic_450x10000Q90.jpg -> .jpg
+  sanitized = sanitized.replace(/\.heic.*$/i, '.jpg');
+  // Strip AliCDN resize suffixes like _450x10000Q90.jpg or _200x200.jpg
+  sanitized = sanitized.replace(/_\d+x\d+.*$/, '');
+  return sanitized;
+}
+
 // Initialize queue directories
 async function initQueueDirs() {
   try {
-    await fs.mkdir(QUEUE_DIR, { recursive: true });
-    await fs.mkdir(PROCESSED_DIR, { recursive: true });
-    await fs.mkdir(FAILED_DIR, { recursive: true });
-    console.log('[Queue] Queue directories initialized');
+    for (const { queueDir, processedDir, failedDir } of getQueueDirs()) {
+      await fs.mkdir(queueDir, { recursive: true });
+      await fs.mkdir(processedDir, { recursive: true });
+      await fs.mkdir(failedDir, { recursive: true });
+      console.log(`[Queue] Initialized: ${queueDir}`);
+    }
   } catch (err) {
     console.error('[Queue] Failed to initialize queue directories:', err);
     throw err;
@@ -284,8 +347,8 @@ async function initQueueDirs() {
 }
 
 // Move file to processed directory
-async function moveToProcessed(filePath, itemId) {
-  const destPath = join(PROCESSED_DIR, `${itemId}.json`);
+async function moveToProcessed(filePath, itemId, processedDir) {
+  const destPath = join(processedDir, `${itemId}.json`);
   await Promise.race([
     fs.rename(filePath, destPath),
     new Promise((_, reject) => setTimeout(() => reject(new Error('File move timeout')), 10000))
@@ -294,9 +357,9 @@ async function moveToProcessed(filePath, itemId) {
 }
 
 // Move file to failed directory
-async function moveToFailed(filePath, itemId) {
+async function moveToFailed(filePath, itemId, failedDir) {
   try {
-    const destPath = join(FAILED_DIR, `${itemId}.json`);
+    const destPath = join(failedDir, `${itemId}.json`);
     await Promise.race([
       fs.rename(filePath, destPath),
       new Promise((_, reject) => setTimeout(() => reject(new Error('File move timeout')), 10000))
@@ -338,7 +401,7 @@ async function insertProduct(productData, goofishMappings, categories) {
           data: {
             purchaseUrl: productData.url,
             name: productData.name,
-            image: productData.images && productData.images.length > 0 ? productData.images[0] : null,
+            image: productData.images && productData.images.length > 0 ? sanitizeImageUrlForDb(productData.images[0]) : null,
             price: priceIQD,
             basePriceIQD,
             neworold: productData.newOrOld,
@@ -366,10 +429,11 @@ async function insertProduct(productData, goofishMappings, categories) {
         if (productData.images && productData.images.length > 0) {
           for (const imageUrl of productData.images) {
             try {
+              const cleanUrl = sanitizeImageUrlForDb(imageUrl);
               await tx.productImage.create({
                 data: {
                   productId: newProduct.id,
-                  url: imageUrl,
+                  url: cleanUrl,
                   order: productData.images.indexOf(imageUrl),
                   type: 'GALLERY'
                 }
@@ -541,7 +605,7 @@ async function updateImageEmbeddings(product, imageCount) {
 }
 
 // Process a single product file
-async function processProductFile(filePath, goofishMappings, categories) {
+async function processProductFile(filePath, goofishMappings, categories, processedDir, failedDir) {
   const PROCESS_TIMEOUT_MS = 600000; // 10 minute timeout per product
 
   try {
@@ -585,7 +649,7 @@ async function processProductFile(filePath, goofishMappings, categories) {
         }
         
         // Move to processed
-        await moveToProcessed(filePath, productData.itemId);
+        await moveToProcessed(filePath, productData.itemId, processedDir);
         console.log(`✅ Successfully processed product ${productData.itemId}`);
       })(),
       new Promise((_, reject) => 
@@ -595,7 +659,7 @@ async function processProductFile(filePath, goofishMappings, categories) {
     
   } catch (err) {
     console.error(`[Queue] Failed to process product file ${filePath}: ${toErrorText(err)}`);
-    await moveToFailed(filePath, filePath.split(/[\\/]/).pop().replace('.json', ''));
+    await moveToFailed(filePath, filePath.split(/[\\/]/).pop().replace('.json', ''), failedDir);
     throw err;
   }
 }
@@ -638,24 +702,43 @@ async function processQueue() {
     }
     
     console.log('[Queue] Starting queue processor loop...');
+    console.log(`[Queue] Watching directories: ${getQueueDirs().map(d => d.queueDir).join(', ')}`);
     
     while (true) {
       try {
-        const files = await fs.readdir(QUEUE_DIR);
-        const queueFiles = files.filter(f => f.endsWith('.json') && !f.startsWith('.'));
+        // Collect files from all queue directories
+        let allFiles = [];
+        for (const { queueDir, processedDir, failedDir } of getQueueDirs()) {
+          try {
+            const files = await fs.readdir(queueDir);
+            const queueFiles = files.filter(f => f.endsWith('.json') && !f.startsWith('.'));
+            for (const file of queueFiles) {
+              allFiles.push({
+                filePath: join(queueDir, file),
+                processedDir,
+                failedDir,
+                queueDir,
+              });
+            }
+          } catch (dirErr) {
+            console.warn(`[Queue] Could not read directory ${queueDir}: ${dirErr.message}`);
+          }
+        }
         
-        console.log(`[Queue] Checking queue... Found ${queueFiles.length} files waiting`);
+        const totalFiles = allFiles.length;
+        console.log(`[Queue] Checking queues... Found ${totalFiles} files waiting across ${getQueueDirs().length} directories`);
         
-        if (queueFiles.length === 0) {
+        if (totalFiles === 0) {
           await new Promise(r => setTimeout(r, 5000));
           continue;
         }
         
-        console.log(`[Queue] Processing ${queueFiles.length} files in queue`);
+        console.log(`[Queue] Processing ${totalFiles} files`);
         
-        for (const file of queueFiles) {
-          const filePath = join(QUEUE_DIR, file);
-          await processProductFile(filePath, goofishMappings, categories);
+        for (const { filePath, processedDir, failedDir, queueDir } of allFiles) {
+          const dirName = queueDir.split(/[\\/]/).pop();
+          console.log(`[Queue] [${dirName}] Processing: ${filePath.split(/[\\/]/).pop()}`);
+          await processProductFile(filePath, goofishMappings, categories, processedDir, failedDir);
         }
         
       } catch (err) {

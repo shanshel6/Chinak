@@ -14,7 +14,7 @@ const SEED_PATH = path.join(__dirname, 'canonical-categories.seed.json');
 const REPORT_PATH = path.join(__dirname, 'category-name-verification-report.json');
 const PROGRESS_PATH = path.join(__dirname, 'category-verification-progress.json');
 const API_KEY = process.env.SILICONFLOW_API_KEY;
-const MODEL = process.env.SILICONFLOW_MODEL || 'Qwen/Qwen3-235B-A22B-Instruct-2507';
+const MODEL = process.env.SILICONFLOW_MODEL || 'Qwen/Qwen3.5-9B';
 const PRODUCTS_PER_CATEGORY = 20;
 
 // Load categories

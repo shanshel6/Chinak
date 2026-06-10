@@ -16,7 +16,7 @@ import { ensureProductImageEmbeddings } from '../services/productImageVectorServ
 import { embedImage } from '../services/clipService.js';
 import { sanitizeProductImageUrl } from '../services/productImageVectorService.js';
 
-const QUEUE_DIR = join(dirname(fileURLToPath(import.meta.url)), '../../product-queue');
+const QUEUE_DIR = join(dirname(fileURLToPath(import.meta.url)), '../../' + (process.env.GOOFISH_QUEUE_DIR || 'product-queue'));
 const USE_QUEUE_MODE = String(process.env.GOOFISH_USE_QUEUE || '').toLowerCase() === 'true';
 
 // Initialize queue directory
@@ -76,7 +76,7 @@ const SEED_PATH = path.join(__dirname, 'canonical-categories.seed.json');
 const MAPPINGS_PATH = path.join(__dirname, 'goofish-category-mappings.json');
 
 // Custom search terms path
-const CUSTOM_TERMS_PATH = path.join(__dirname, '..', '..', 'custom-search-terms.json');
+const CUSTOM_TERMS_PATH = path.join(__dirname, '..', '..', process.env.GOOFISH_CUSTOM_TERMS_FILE || 'custom-search-terms.json');
 
 // Load custom terms if available
 function loadCustomTerms() {
@@ -128,11 +128,13 @@ const createPrismaClient = () => (prismaDbUrl
   : new PrismaClient());
 let prisma = createPrismaClient();
 export function calculatePriceMultiplier(basePriceIQD) {
-  return 1.25;
+  return 1.2;
 }
 
 const SILICONFLOW_API_KEY = String(process.env.SILICONFLOW_API_KEY || '').trim();
 console.log(`[Debug] SILICONFLOW_API_KEY is set: ${SILICONFLOW_API_KEY ? 'YES (length=' + SILICONFLOW_API_KEY.length + ')' : 'NO'}`);
+console.log(`[Debug] SILICONFLOW_API_KEY prefix: ${SILICONFLOW_API_KEY.substring(0, 10)}...`);
+console.log(`[Debug] SILICONFLOW_API_KEY suffix: ...${SILICONFLOW_API_KEY.substring(SILICONFLOW_API_KEY.length - 5)}`);
 
 const DISABLE_DB_WRITE = String(process.env.GOOFISH_DISABLE_DB_WRITE || '').toLowerCase() === 'true';
 const configuredMaxProducts = parseInt(process.env.GOOFISH_MAX_PRODUCTS || '', 10);
@@ -141,7 +143,7 @@ const configuredMaxProducts = parseInt(process.env.GOOFISH_MAX_PRODUCTS || '', 1
 const CATEGORY_ASSIGN_ENABLED = String(process.env.GOOFISH_CATEGORY_ASSIGN || 'true').toLowerCase() === 'true';
 const CATEGORY_AI_RATE_LIMIT_DELAY_MS = Math.max(0, parseInt(process.env.CATEGORY_AI_RATE_LIMIT_DELAY_MS || '200', 10) || 200);
 const CATEGORY_API_TIMEOUT_MS = parseInt(process.env.CATEGORY_API_TIMEOUT_MS || '120000', 10);
-const CATEGORY_MODEL = process.env.SILICONFLOW_MODEL || 'Qwen/Qwen3-235B-A22B-Instruct-2507';
+const CATEGORY_MODEL = process.env.SILICONFLOW_MODEL || 'Qwen/Qwen3-8B';
 
 // Load category data
 let categories = [];
@@ -218,14 +220,16 @@ async function callSiliconFlowForCategory(prompt, maxRetries = 3) {
             { role: 'user', content: prompt }
           ],
           max_tokens: 500,
-          temperature: 0.3
+          temperature: 0.3,
+          enable_thinking: false
         },
         {
           headers: {
             'Authorization': `Bearer ${SILICONFLOW_API_KEY}`,
             'Content-Type': 'application/json'
           },
-          signal: controller.signal
+          signal: controller.signal,
+          proxy: false
         }
       );
 
@@ -1005,9 +1009,9 @@ const REQUIRE_DB_WRITE = String(process.env.GOOFISH_REQUIRE_DB_WRITE || 'true').
 const AI_ONLY_TERMS = String(process.env.GOOFISH_AI_ONLY_TERMS || '').toLowerCase() === 'true';
 const TRANSLATION_CACHE_PATH = path.join(__dirname, 'goofish-translation-cache.json');
 const TERM_DETAIL_LINKS_PATH = path.join(__dirname, 'goofish-term-detail-links.json');
-const BATCH_LINKS_PATH = path.join(__dirname, 'goofish-batch-links.json');
-const ITEMS_PER_SEARCH = Math.max(1, parseInt(process.env.GOOFISH_ITEMS_PER_SEARCH || '150', 10) || 150);
-const GOOFISH_LINKS_PER_TERM = Math.max(1, parseInt(process.env.GOOFISH_LINKS_PER_TERM || '150', 10) || 150);
+const BATCH_LINKS_PATH = path.join(__dirname, `goofish-batch-links${process.env.GOOFISH_QUEUE_DIR ? '-2' : ''}.json`);
+const ITEMS_PER_SEARCH = Math.max(1, parseInt(process.env.GOOFISH_ITEMS_PER_SEARCH || '30', 10) || 30);
+const GOOFISH_LINKS_PER_TERM = Math.max(1, parseInt(process.env.GOOFISH_LINKS_PER_TERM || '30', 10) || 30);
 const GOOFISH_TERMS_PER_BATCH = Math.max(1, parseInt(process.env.GOOFISH_TERMS_PER_BATCH || '50', 10) || 50);
 const KEYWORDS_PER_PRODUCT = Math.max(8, Math.min(20, parseInt(process.env.GOOFISH_KEYWORDS_PER_PRODUCT || '14', 10) || 14));
 const GOOFISH_AI_TITLE_MAX_CHARS = Math.max(40, parseInt(process.env.GOOFISH_AI_TITLE_MAX_CHARS || '140', 10) || 140);
@@ -1041,8 +1045,8 @@ const GOOFISH_DB_RECOVER_PING_TIMEOUT_MS = Math.max(1000, parseInt(process.env.G
 const GOOFISH_EMBEDDING_STEP_TIMEOUT_MS = Math.max(5000, parseInt(process.env.GOOFISH_EMBEDDING_STEP_TIMEOUT_MS || '90000', 10) || 90000);
 const GOOFISH_DB_RECOVER_MAX_CYCLES_PER_OP = Math.max(0, parseInt(process.env.GOOFISH_DB_RECOVER_MAX_CYCLES_PER_OP || '1', 10) || 1);
 const GOOFISH_PROCESS_LINK_TIMEOUT_MS = Math.max(30000, parseInt(process.env.GOOFISH_PROCESS_LINK_TIMEOUT_MS || '180000', 10) || 180000);
-const GOOFISH_AI_CALL_TIMEOUT_MS = Math.max(5000, parseInt(process.env.GOOFISH_AI_CALL_TIMEOUT_MS || '60000', 10) || 60000);
-const GOOFISH_AI_RETRY_MAX_ATTEMPTS = Math.max(1, parseInt(process.env.GOOFISH_AI_RETRY_MAX_ATTEMPTS || '3', 10) || 3);
+const GOOFISH_AI_CALL_TIMEOUT_MS = Math.max(5000, parseInt(process.env.GOOFISH_AI_CALL_TIMEOUT_MS || '30000', 10) || 30000);
+const GOOFISH_AI_RETRY_MAX_ATTEMPTS = Math.max(1, parseInt(process.env.GOOFISH_AI_RETRY_MAX_ATTEMPTS || '10', 10) || 10);
 
 // Reuse HTTP connections to SiliconFlow to avoid TLS handshake overhead
 const siliconflowAgent = new https.Agent({
@@ -1063,9 +1067,9 @@ let sfCircuitOpenUntil = 0;
 sfConsecutiveFailures = 0;
 sfCircuitOpenUntil = 0;
 
-const GOOFISH_TERM_AI_CALL_TIMEOUT_MS = Math.max(5000, parseInt(process.env.GOOFISH_TERM_AI_CALL_TIMEOUT_MS || '60000', 10) || 60000);
-const GOOFISH_TERM_AI_MAX_ATTEMPTS = Math.max(1, parseInt(process.env.GOOFISH_TERM_AI_MAX_ATTEMPTS || '3', 10) || 3);
-const GOOFISH_AI_MODEL = String(process.env.GOOFISH_AI_MODEL || 'Qwen/Qwen3-14B').trim() || 'Qwen/Qwen3-14B';
+const GOOFISH_TERM_AI_CALL_TIMEOUT_MS = Math.max(5000, parseInt(process.env.GOOFISH_TERM_AI_CALL_TIMEOUT_MS || '20000', 10) || 20000);
+const GOOFISH_TERM_AI_MAX_ATTEMPTS = Math.max(1, parseInt(process.env.GOOFISH_TERM_AI_MAX_ATTEMPTS || '10', 10) || 10);
+const GOOFISH_AI_MODEL = String(process.env.GOOFISH_AI_MODEL || 'Qwen/Qwen3-8B').trim() || 'Qwen/Qwen3-8B';
 const GOOFISH_AI_RATE_LIMIT_DELAY_MS = Math.max(0, Number.parseInt(process.env.GOOFISH_AI_RATE_LIMIT_DELAY_MS || '200', 10) || 200);
 const GOOFISH_ENABLE_TRANSLATION_RETRY = String(process.env.GOOFISH_ENABLE_TRANSLATION_RETRY || '').toLowerCase() === 'true';
 const GOOFISH_SKIP_ON_TRANSLATION_FAILURE = String(process.env.GOOFISH_SKIP_ON_TRANSLATION_FAILURE || 'true').toLowerCase() !== 'false';
@@ -1104,7 +1108,7 @@ const DEFAULT_SEARCH_TERMS = [
   '化妆刷', '口红', '护肤套装', '床上四件套', '收纳盒', '厨房用品',
   '汽车香水', '儿童玩具', '瑜伽裤', '太阳镜', '首饰', '行李箱'
 ];
-const SEARCH_TERMS_PATH = path.join(__dirname, 'goofish-search-terms.json');
+const SEARCH_TERMS_PATH = path.join(__dirname, `goofish-search-terms${process.env.GOOFISH_QUEUE_DIR ? '-2' : ''}.json`);
 const FOOD_BLACKLIST = [
   '食品', '零食', '水果', '蔬菜', '牛奶', '饮料', '咖啡', '茶',
   '面包', '零嘴', '饼干', '蛋糕', '方便面', '火锅', '调味',
@@ -1206,7 +1210,8 @@ async function extractPricesWithAI(description) {
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${apiKey}`
-        }
+        },
+        proxy: false
       });
 
       const content = response.data.choices?.[0]?.message?.content;
@@ -1267,7 +1272,7 @@ function convertCnyToIqdWithProfit(cny) {
   return Math.ceil((Number(cny) || 0) * CNY_TO_IQD_RATE * PRICE_PROFIT_MULTIPLIER / 250) * 250;
 }
 
-const MAX_AI_ATTEMPTS = 3;
+const MAX_AI_ATTEMPTS = 10;
 let dbReady = false;
 let dbChecked = false;
 let dbEngineFailureTimestamps = [];
@@ -1290,7 +1295,7 @@ if (process.env.NODE_ENV === 'production' && process.env.ALLOW_SCRAPER_IN_PROD !
 }
 
 // Simple SiliconFlow client using axios
-async function callSiliconFlow(messages, temperature = 0.3, maxTokens = 100, options = {}) {
+async function callSiliconFlow(messages, temperature = 0.3, maxTokens = 500, options = {}) {
   const apiKey = SILICONFLOW_API_KEY;
   if (!apiKey) return null;
   
@@ -1301,7 +1306,7 @@ async function callSiliconFlow(messages, temperature = 0.3, maxTokens = 100, opt
   }
   
   const timeoutMsRaw = Number.parseInt(String(options?.timeoutMs ?? GOOFISH_AI_CALL_TIMEOUT_MS), 10);
-  const timeoutMs = Number.isFinite(timeoutMsRaw) ? Math.max(5000, timeoutMsRaw) : GOOFISH_AI_CALL_TIMEOUT_MS;
+  const timeoutMs = Number.isFinite(timeoutMsRaw) ? Math.max(30000, timeoutMsRaw) : Math.max(30000, GOOFISH_AI_CALL_TIMEOUT_MS);
   const maxAttemptsRaw = Number.parseInt(String(options?.maxAttempts ?? GOOFISH_AI_RETRY_MAX_ATTEMPTS), 10);
   const maxAttempts = Number.isFinite(maxAttemptsRaw) ? Math.max(1, maxAttemptsRaw) : GOOFISH_AI_RETRY_MAX_ATTEMPTS;
   
@@ -1314,13 +1319,19 @@ async function callSiliconFlow(messages, temperature = 0.3, maxTokens = 100, opt
         messages,
         temperature,
         max_tokens: maxTokens,
-        stream: false
+        stream: false,
+        // Disable reasoning for faster responses
+        enable_thinking: false
       }, {
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${apiKey}`
         },
         timeout: timeoutMs,
+        httpAgent: siliconflowAgent,
+        httpsAgent: siliconflowAgent,
+        // Explicitly disable proxy for API calls
+        proxy: false
       });
       const elapsed = Date.now() - startedAt;
       console.log(`[SiliconFlow] Success in ${elapsed}ms`);
@@ -1330,12 +1341,28 @@ async function callSiliconFlow(messages, temperature = 0.3, maxTokens = 100, opt
         sfConsecutiveFailures = 0;
       }
       
-      // Rate limit delay to respect tier limits
-      if (GOOFISH_AI_RATE_LIMIT_DELAY_MS > 0) {
-        await new Promise((resolve) => setTimeout(resolve, GOOFISH_AI_RATE_LIMIT_DELAY_MS));
+      // Rate limit delay removed — API handles throughput fine, saves ~1h over full run
+      // if (GOOFISH_AI_RATE_LIMIT_DELAY_MS > 0) {
+      //   await new Promise((resolve) => setTimeout(resolve, GOOFISH_AI_RATE_LIMIT_DELAY_MS));
+      // }
+      
+      const choice = response.data.choices[0];
+      const content = choice.message.content?.trim() || '';
+      const reasoning = choice.message.reasoning_content?.trim() || '';
+      
+      if (reasoning) {
+        console.log(`[SiliconFlow] Reasoning detected (${reasoning.length} chars)`);
       }
       
-      return response.data.choices[0].message.content.trim();
+      // If content is empty but reasoning exists, and it's a reasoning model, 
+      // we might want to return the reasoning if it looks like an answer, 
+      // but usually we just need to wait for content.
+      // However, if finish_reason is 'length', it means we ran out of tokens during reasoning.
+      if (!content && reasoning && choice.finish_reason === 'length') {
+        console.warn('[SiliconFlow] Model reached token limit during reasoning. No content returned.');
+      }
+      
+      return content || null;
     } catch (error) {
       const status = error?.response?.status;
       const errorMessage = String(error?.message || '').toLowerCase();
@@ -1465,7 +1492,7 @@ async function convertChineseToPinyin(text) {
         role: 'user',
         content: `Convert the Chinese characters in this text to pinyin. Keep non-Chinese text unchanged:\n${text}`
       }
-    ], 0.2, 200, { timeoutMs: GOOFISH_AI_CALL_TIMEOUT_MS });
+    ], 0.2, 1000, { timeoutMs: GOOFISH_AI_CALL_TIMEOUT_MS });
     return result || text;
   } catch {
     return text;
@@ -2295,6 +2322,12 @@ function loadBatchLinksQueue() {
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== 'object') return null;
     if (!Array.isArray(parsed.termStates)) return null;
+    // Sanitize: replace any non-object termState entries with fresh defaults
+    parsed.termStates = parsed.termStates.map((entry, idx) => {
+      if (entry && typeof entry === 'object' && !Array.isArray(entry)) return entry;
+      console.warn(`[Queue] Repairing corrupted termState at index ${idx} (was ${typeof entry})`);
+      return { term: '', termIndex: idx, items: [], seenUrls: [], collectDone: false, processIndex: 0, updatedAt: null };
+    });
     return parsed;
   } catch {
     return null;
@@ -2587,13 +2620,18 @@ function clearSearchTermHistory() {
 function resetRunProgressKeepTermMemory() {
   try {
     const history = loadSearchTermHistory();
+    // Preserve the currently active batch (if any) so that the pipeline can resume
+    // from the last term it was processing. Previously this function cleared
+    // `activeBatch`, causing the pipeline to start from the first term after a
+    // crash or restart.
     const nextHistory = {
       used: Array.isArray(history.used) ? history.used : [],
       batches: Array.isArray(history.batches) ? history.batches : [],
-      activeBatch: null
+      // Keep the existing activeBatch reference; if none exists it remains null.
+      activeBatch: history.activeBatch || null,
     };
     saveSearchTermHistory(nextHistory);
-    console.log('Run progress reset while preserving term memory.');
+    console.log('Run progress reset while preserving term memory and active batch.');
   } catch (error) {
     console.warn('Failed to reset run progress with term memory:', error?.message || error);
   }
@@ -2694,9 +2732,24 @@ Return a JSON array only, no other text or punctuation.`
 async function getSearchTermsForRun() {
   const history = loadSearchTermHistory();
   const existingQueue = loadBatchLinksQueue();
+
+  // Custom terms always take priority — clear any non-custom active batch
+  if (customTerms && Array.isArray(customTerms) && customTerms.length > 0) {
+    const existingActiveBatch = history.activeBatch;
+    if (existingActiveBatch && existingActiveBatch.source !== 'custom') {
+      console.log('[Custom Terms] Clearing non-custom active batch to use custom terms.');
+      clearActiveBatch(existingActiveBatch.id);
+    }
+    // Also clear any non-custom queue
+    if (existingQueue && existingQueue.source && existingQueue.source !== 'custom') {
+      clearBatchLinksQueue();
+    }
+  }
+
   let activeBatch = history.activeBatch;
 
-  if (!activeBatch && existingQueue?.batchId) {
+  // Only resume non-custom active batches (custom terms handled below)
+  if (!activeBatch && existingQueue?.batchId && (!customTerms || !Array.isArray(customTerms) || customTerms.length === 0)) {
     const matchingBatch = (Array.isArray(history.batches) ? history.batches : [])
       .find((batch) => batch?.id === existingQueue.batchId && Array.isArray(batch?.terms) && batch.terms.length > 0);
     if (matchingBatch && hasPendingBatchQueueWork(existingQueue, matchingBatch.id, matchingBatch.terms.length)) {
@@ -2725,7 +2778,11 @@ async function getSearchTermsForRun() {
 
   if (activeBatch && Array.isArray(activeBatch.terms) && activeBatch.terms.length > 0) {
     const batchSource = activeBatch.source || 'resume';
-    if (AI_ONLY_TERMS && batchSource !== 'ai' && batchSource !== 'custom') {
+    // If custom terms exist but active batch is non-custom, skip it
+    if (customTerms && Array.isArray(customTerms) && customTerms.length > 0 && batchSource !== 'custom') {
+      clearActiveBatch(activeBatch.id);
+      activeBatch = null;
+    } else if (AI_ONLY_TERMS && batchSource !== 'ai' && batchSource !== 'custom') {
       clearActiveBatch(activeBatch.id);
     } else {
       return {
@@ -2742,23 +2799,45 @@ async function getSearchTermsForRun() {
   if (customTerms && Array.isArray(customTerms) && customTerms.length > 0) {
     const history = loadSearchTermHistory();
     const existingActiveBatch = history.activeBatch;
+    const existingQueue = loadBatchLinksQueue();
     
-    // Resume from existing batch if it matches custom terms
+    // Resume from existing batch if it's a custom batch with pending work
     if (existingActiveBatch && existingActiveBatch.source === 'custom' && 
-        Array.isArray(existingActiveBatch.terms) && existingActiveBatch.terms.length === customTerms.length) {
-      const nextIndex = Math.max(0, Math.min(customTerms.length, Number(existingActiveBatch.nextIndex || 0) || 0));
-      console.log(`[Custom Terms] Resuming from term ${nextIndex}/${customTerms.length}`);
-      return { 
-        terms: customTerms, 
-        startIndex: nextIndex, 
-        batchId: existingActiveBatch.id || `custom_${Date.now()}`, 
-        source: 'custom', 
-        checkpoint: existingActiveBatch.checkpoint || null 
-      };
+        Array.isArray(existingActiveBatch.terms) && existingActiveBatch.terms.length > 0) {
+      const savedNextIndex = Math.max(0, Number(existingActiveBatch.nextIndex || 0) || 0);
+      const hasQueueWork = hasPendingBatchQueueWork(existingQueue, existingActiveBatch.id, existingActiveBatch.terms.length);
+      // Resume if there are still terms to process OR there's pending queue work
+      if (savedNextIndex < existingActiveBatch.terms.length || hasQueueWork) {
+        const nextIndex = Math.min(savedNextIndex, customTerms.length);
+        console.log(`[Custom Terms] Resuming from term ${nextIndex}/${customTerms.length}`);
+        return { 
+          terms: customTerms, 
+          startIndex: nextIndex, 
+          batchId: existingActiveBatch.id || `custom_${Date.now()}`, 
+          source: 'custom', 
+          checkpoint: existingActiveBatch.checkpoint || null 
+        };
+      }
     }
     
-    // Start fresh from term 141 (index 140)
-    const startIndex = 140; // Start from term 141
+    // Also check the queue file directly for a valid checkpoint (e.g. after terms file change)
+    if (existingQueue && existingQueue.batchId && existingQueue.source === 'custom' &&
+        Array.isArray(existingQueue.termStates) && existingQueue.termStates.length > 0) {
+      const queueNextIndex = Math.max(0, Number(existingQueue.nextCollectTerm || 0) || 0);
+      if (queueNextIndex < customTerms.length) {
+        console.log(`[Custom Terms] Resuming from queue checkpoint at term ${queueNextIndex}/${customTerms.length}`);
+        return {
+          terms: customTerms,
+          startIndex: queueNextIndex,
+          batchId: existingQueue.batchId,
+          source: 'custom',
+          checkpoint: null
+        };
+      }
+    }
+    
+    // Start fresh from term 1 (index 0)
+    const startIndex = 0;
     const batchId = `custom_${Date.now()}`;
     const active = { 
       id: batchId, 
@@ -2769,7 +2848,7 @@ async function getSearchTermsForRun() {
       checkpoint: null
     };
     const nextHistory = {
-      used: customTerms.slice(0, startIndex), // Mark terms before start index as used
+      used: customTerms.slice(0, startIndex),
       batches: [
         ...(Array.isArray(history.batches) ? history.batches : []),
         { id: batchId, generatedAt: active.generatedAt, terms: customTerms, source: 'custom' }
@@ -3190,7 +3269,10 @@ const isPipelineRestartError = (error) => String(error?.code || '') === 'GOOFISH
 const shouldRestartPipelineForItemError = (error) => {
   if (isPipelineRestartError(error)) return true;
   const text = toErrorText(error);
-  return text.includes('process link ') && text.includes(' timed out after ');
+  // Only restart for true fatal errors (browser crashes, etc.)
+  // Timeouts during link processing are transient (API issues) — skip and continue
+  if (text.includes('process link ') && text.includes(' timed out after ')) return false;
+  return false;
 };
 
 const waitForDbCircuitRecovery = async (maxWaitMs = Math.max(15000, GOOFISH_DB_ENGINE_COOLDOWN_MS + 10000)) => {
@@ -3226,11 +3308,10 @@ async function createBrowser() {
     ]
   };
 
-  // Keep proxy if provided
+  // Add proxy configuration only if explicitly provided via environment variable
   if (process.env.PROXY_SERVER) {
     launchOptions.args.push(`--proxy-server=${process.env.PROXY_SERVER}`);
-  } else if (process.platform === 'win32') {
-    launchOptions.args.push('--proxy-server=http://127.0.0.1:7890');
+    console.log(`Using proxy server: ${process.env.PROXY_SERVER}`);
   }
 
   if (!executablePath && process.platform === 'linux') {
@@ -3253,6 +3334,12 @@ function toAbsoluteImage(src) {
   if (!src) return '';
   if (src.startsWith('//')) return 'https:' + src;
   return src;
+}
+
+// Get the best image URL from an img element, handling lazy-loaded images
+function getImgSrc(img) {
+  if (!img) return '';
+  return img.getAttribute('data-src') || img.getAttribute('data-lazy-src') || img.getAttribute('src') || img.src || '';
 }
 
 function parseCnyPrice(text) {
@@ -3301,13 +3388,13 @@ async function translateFullTitleToArabic(title, fallbackText = '') {
     const result = await callSiliconFlow([
       {
         role: 'system',
-        content: 'You are an Arabic e-commerce product naming expert. Translate Chinese product titles to neat and simple Arabic product names. Keep the name SHORT and CLEAN (2-5 words maximum). Focus on: 1) Product type (most important), 2) Brand name if available (VERY IMPORTANT - include brand name in the name), 3) Material if relevant, 4) Color/style if important. CRITICAL: Do NOT mention any prices, currency symbols, or monetary values in the name. Exclude size, seller policies, shipping, price, negotiation terms, promotional text, and unnecessary details. Keep English brand names if present. Return Arabic ONLY (except brand names), no JSON, no explanation.'
+        content: 'You are an Arabic e-commerce expert. Translate the following Chinese product title into a natural Arabic product name.'
       },
       {
         role: 'user',
-        content: `Translate this Chinese product title to a neat and simple Arabic product name. Keep it SHORT and CLEAN (2-5 words maximum). MUST include the product type first. MUST include the brand name if available in the title. You may add material and color after the product type if relevant. CRITICAL: Do NOT mention any prices, currency symbols, or monetary values in the name. Exclude size, seller policies, shipping, price, negotiation terms, promotional text, and unnecessary details. Keep English brand names if present. Return Arabic ONLY (except brand names), no JSON, no explanation.\nTitle: ${source}`
+        content: `Translate this title to Arabic: ${source}`
       }
-    ], 0.2, 200, { timeoutMs: GOOFISH_AI_CALL_TIMEOUT_MS });
+    ], 0.2, 1000, { timeoutMs: GOOFISH_AI_CALL_TIMEOUT_MS });
     if (!result) {
       console.log(`[translateFullTitleToArabic] Circuit breaker or API returned null, using fallback`);
       return fallbackText || source;
@@ -3425,55 +3512,60 @@ async function generateLongDescriptionFromTitle(title, fallbackText = '') {
     const result = await callSiliconFlow([
       {
         role: 'system',
-        content: 'You are an Arabic e-commerce content expert. Your task is to read the Chinese product title and generate a DETAILED Arabic product description that summarizes all important information. Extract and present all relevant details in a clear, readable format. Output Arabic or English ONLY - no Chinese, Korean, Thai, or other languages.'
+        content: 'You are an Arabic e-commerce expert. Generate a natural Arabic product description based on the Chinese title.'
       },
       {
         role: 'user',
-        content: `Generate a detailed Arabic product description from this Chinese title. Extract and summarize ALL important details:
-
-- Material (e.g., cotton, silk, polyester, viscose)
-- Season (e.g., summer, winter, spring, autumn)
-- Style/type (e.g., sleep robe, pajamas, dress)
-- Sizes available (e.g., M, XL, 80-120cm)
-- Weight/size limits (e.g., suitable for people under 140 jin = 70 kg)
-- Features (e.g., belt, buttons, pockets, zipper, adjustable waist tie)
-- Design details (e.g., colors, patterns, prints)
-- Condition (e.g., brand new, used, with tags)
-- Quantity available (e.g., 2-3 pieces per size)
-- Price information (e.g., clearance price, wholesale, low price)
-- Shipping information (e.g., free shipping, which courier)
-- Brand information (if mentioned)
-- Target audience (e.g., men, women, children, babies)
-
-Make the description comprehensive and natural, like a real product listing. Convert Chinese weight unit "斤" (jin) to kg by dividing by 2. Example: 140斤 = 70 kg, 165斤 = 82.5 kg.
-
-IMPORTANT: The description must be detailed and comprehensive, at least 30-50 words long. Do not just translate the brand name or product type - include ALL the details mentioned in the title.
-
-Title: ${source}`
+        content: `Generate an Arabic description for this product: ${source}`
       }
-    ], 0.2, 600, { timeoutMs: GOOFISH_AI_CALL_TIMEOUT_MS });
-    console.log(`[generateLongDescriptionFromTitle] Raw result: ${result.substring(0, 80)}...`);
-    const translated = cleanDescriptionText(result);
-    console.log(`[generateLongDescriptionFromTitle] Cleaned: ${translated.substring(0, 50)}...`);
-    
-    // Convert any remaining Chinese to pinyin before filtering
-    const withPinyin = await convertChineseToPinyin(translated);
-    console.log(`[generateLongDescriptionFromTitle] After pinyin conversion: ${withPinyin.substring(0, 50)}...`);
-    
-    if (!withPinyin || withPinyin.length < 15) {
-      console.log(`[generateLongDescriptionFromTitle] Translation too short (${withPinyin.length} chars), using fallback`);
+    ], 0.2, 2000, { timeoutMs: GOOFISH_AI_CALL_TIMEOUT_MS });
+    if (!result) {
+      console.log(`[generateLongDescriptionFromTitle] API returned null, using fallback`);
       return fallbackText || source;
     }
-    const filtered = filterArabicEnglishOnly(withPinyin);
-    console.log(`[generateLongDescriptionFromTitle] Filtered: ${filtered.substring(0, 50)}... length=${filtered.length}`);
-    if (filtered.length < 15) {
-      console.log(`[generateLongDescriptionFromTitle] Filtered result too short (${filtered.length} chars), using original`);
-      return withPinyin || fallbackText || source;
-    }
-    return filtered;
+    console.log(`[generateLongDescriptionFromTitle] Raw result: ${result.substring(0, 80)}...`);
+    const translated = cleanDescriptionText(result);
+    return translated || fallbackText || source;
   } catch (err) {
     console.error(`[generateLongDescriptionFromTitle] Error: ${err.message}`);
     return fallbackText || source;
+  }
+}
+
+async function translateSpecsToArabic(chineseSpecs) {
+  if (!chineseSpecs || !SILICONFLOW_API_KEY) return null;
+  const source = String(chineseSpecs).trim().slice(0, 500);
+  if (!source) return null;
+
+  try {
+    console.log(`[translateSpecsToArabic] Translating specs: ${source.substring(0, 30)}...`);
+    const result = await callSiliconFlow([
+      {
+        role: 'system',
+        content: 'You are an Arabic e-commerce expert. Translate the following Chinese product specifications into a structured Arabic JSON object. Format: {"Key": "Value"}. Arabic ONLY.'
+      },
+      {
+        role: 'user',
+        content: `Translate these specs to Arabic JSON: ${source}`
+      }
+    ], 0.2, 1000, { timeoutMs: GOOFISH_AI_CALL_TIMEOUT_MS });
+
+    if (!result) return null;
+
+    const jsonMatch = result.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      try {
+        const parsed = JSON.parse(jsonMatch[0]);
+        console.log(`[translateSpecsToArabic] Succeeded with ${Object.keys(parsed).length} keys`);
+        return parsed;
+      } catch (e) {
+        console.warn(`[translateSpecsToArabic] Failed to parse JSON: ${e.message}`);
+      }
+    }
+    return { "التفاصيل": result.trim() };
+  } catch (err) {
+    console.error(`[translateSpecsToArabic] Error: ${err.message}`);
+    return null;
   }
 }
 
@@ -3485,8 +3577,11 @@ async function generateTitleAndKeywords(title, detailText = '') {
   try {
     // If we have detail text, use the detail description function for longer descriptions
     if (detailText && detailText.length > 20) {
-      const descriptionAr = await translateDetailDescriptionToArabic(title, detailText, fallback);
-      const titleAr = await translateFullTitleToArabic(title, fallback);
+      // Optimization: run both AI calls in parallel instead of sequentially
+      const [descriptionAr, titleAr] = await Promise.all([
+        translateDetailDescriptionToArabic(title, detailText, fallback),
+        translateFullTitleToArabic(title, fallback)
+      ]);
       // Use generated content even if quality check fails, as long as it's not empty
       const finalTitleAr = titleAr && titleAr !== fallback && titleAr.length > 2 ? titleAr : fallback;
       const finalDescriptionAr = descriptionAr && descriptionAr !== fallback && descriptionAr.length > 5 ? descriptionAr : fallback;
@@ -3494,9 +3589,47 @@ async function generateTitleAndKeywords(title, detailText = '') {
       return { titleAr: finalTitleAr, descriptionAr: finalDescriptionAr, keywords: [], translationSucceeded };
     }
     
-    // Separate AI calls: one for name, one for long description
-    const titleAr = await translateFullTitleToArabic(title, fallback);
-    const descriptionAr = await generateLongDescriptionFromTitle(title, fallback);
+    // Optimization: single merged AI call for both title translation + description generation
+    console.log(`[generateTitleAndKeywords] Generating title and description in one call for: ${fallback.substring(0, 30)}...`);
+    const mergedResult = await callSiliconFlow([
+      {
+        role: 'system',
+        content: 'You are an Arabic e-commerce expert. Given a Chinese product title, output a JSON object with two fields:\n- "titleAr": a natural Arabic product name (translated from the title)\n- "descriptionAr": a natural Arabic product description (based on the title)\nOutput ONLY valid JSON, no other text. Arabic text only.'
+      },
+      {
+        role: 'user',
+        content: `Translate and describe this product: ${fallback}`
+      }
+    ], 0.2, 2000, { timeoutMs: GOOFISH_AI_CALL_TIMEOUT_MS });
+
+    let titleAr = null;
+    let descriptionAr = null;
+
+    if (mergedResult) {
+      try {
+        const jsonMatch = mergedResult.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          titleAr = parsed.titleAr ? cleanAiText(sanitizeTranslationText(parsed.titleAr)) : null;
+          descriptionAr = parsed.descriptionAr ? cleanDescriptionText(parsed.descriptionAr) : null;
+        }
+      } catch (e) {
+        console.warn(`[generateTitleAndKeywords] Failed to parse merged JSON, falling back to sequential calls: ${e.message}`);
+      }
+    }
+
+    // Fallback to sequential calls if merged call failed or produced no usable output
+    if (!titleAr && !descriptionAr) {
+      console.log('[generateTitleAndKeywords] Merged call failed, falling back to sequential calls');
+      [titleAr, descriptionAr] = await Promise.all([
+        translateFullTitleToArabic(title, fallback),
+        generateLongDescriptionFromTitle(title, fallback)
+      ]);
+    } else if (!titleAr) {
+      titleAr = await translateFullTitleToArabic(title, fallback);
+    } else if (!descriptionAr) {
+      descriptionAr = await generateLongDescriptionFromTitle(title, fallback);
+    }
     
     console.log(`[generateTitleAndKeywords] titleAr=${titleAr?.substring(0, 30)}... descriptionAr=${descriptionAr?.substring(0, 30)}...`);
     
@@ -3659,13 +3792,13 @@ async function closeLoginPopup(page) {
 
 async function openHomeAndSearch(page, term) {
   await page.goto('https://www.goofish.com/', { waitUntil: 'domcontentloaded', timeout: 60000 });
-  await humanDelay(2000, 3500);
+  await humanDelay(1000, 2000);
   await closeLoginPopup(page);
   await page.waitForSelector('input[class*="search-input--"]', { timeout: 30000 });
   await page.click('input[class*="search-input--"]', { clickCount: 3 });
   await page.keyboard.press('Backspace');
-  await page.type('input[class*="search-input--"]', term, { delay: 40 + Math.floor(Math.random() * 40) });
-  await humanDelay(250, 600);
+  await page.type('input[class*="search-input--"]', term, { delay: 30 + Math.floor(Math.random() * 30) });
+  await humanDelay(150, 400);
   const submitBtn = await page.$('button.search-icon--bewLHteU, button[class*="search-icon--"]');
   if (submitBtn) {
     await submitBtn.click();
@@ -3673,7 +3806,7 @@ async function openHomeAndSearch(page, term) {
     await page.keyboard.press('Enter');
   }
   await page.waitForSelector('#content div[class^="search-container--"] div[class^="feeds-list-container--"] a[class*="feeds-item-wrap--"]', { timeout: 30000 });
-  await humanDelay(1200, 2200);
+  await humanDelay(800, 1500);
   
   // Check "全新" (Brand New) and "包邮" (Free Shipping) checkboxes
   try {
@@ -3697,7 +3830,7 @@ async function openHomeAndSearch(page, term) {
             // Use JavaScript click instead of Puppeteer click
             await checkbox.evaluate(el => el.click());
             console.log('[Filter] Clicked "全新" (Brand New) checkbox');
-            await humanDelay(500, 1000);
+            await humanDelay(200, 500);
           } else {
             console.log('[Filter] "全新" checkbox already checked');
           }
@@ -3714,7 +3847,7 @@ async function openHomeAndSearch(page, term) {
             // Use JavaScript click instead of Puppeteer click
             await checkbox.evaluate(el => el.click());
             console.log('[Filter] Clicked "包邮" (Free Shipping) checkbox');
-            await humanDelay(500, 1000);
+            await humanDelay(200, 500);
           } else {
             console.log('[Filter] "包邮" checkbox already checked');
           }
@@ -3724,7 +3857,7 @@ async function openHomeAndSearch(page, term) {
     
     // Wait for page to refresh after filter selection
     await page.waitForSelector('#content div[class^="search-container--"] div[class^="feeds-list-container--"] a[class*="feeds-item-wrap--"]', { timeout: 30000 });
-    await humanDelay(1000, 2000);
+    await humanDelay(500, 1000);
   } catch (err) {
     console.warn('[Filter] Could not check filter checkboxes:', err.message);
   }
@@ -3826,6 +3959,8 @@ async function saveProductToDb(item, existingProductId = null) {
     const basePriceIQD = Math.max(0, Number(item.priceCny || 0) * CNY_TO_IQD_RATE);
     const multiplier = calculatePriceMultiplier(basePriceIQD);
     const priceIQD = Math.round(basePriceIQD * multiplier);
+    const cleanImageUrl = (item.image || '').replace(/_\d+x\d+.*$/, '');
+
     if (existing) {
       try {
         await prisma.product.update({
@@ -3834,6 +3969,7 @@ async function saveProductToDb(item, existingProductId = null) {
             name: item.titleEn || item.title,
             price: priceIQD,
             basePriceIQD,
+            image: cleanImageUrl,
             // description: item.descriptionAr || '', // Skip Prisma update - use raw SQL fallback
             // keywords: keywordsList, // Removing this because it causes "Unknown argument" error
             aiMetadata: metadata,
@@ -3851,6 +3987,24 @@ async function saveProductToDb(item, existingProductId = null) {
           `;
         }
         console.log(`Updated product: ${item.titleEn || item.title}`);
+        
+        // Generate image embeddings for the updated product
+        if (!process.env.GOOFISH_DISABLE_IMAGE_EMBEDDINGS || process.env.GOOFISH_DISABLE_IMAGE_EMBEDDINGS.toLowerCase() !== 'true') {
+          try {
+            console.log(`[Embedding] Generating image embeddings for updated product ${existing.id}...`);
+            const embeddingResult = await ensureProductImageEmbeddings({
+              prisma,
+              productId: existing.id,
+              productName: item.titleEn || item.title,
+              fallbackImageUrl: cleanImageUrl,
+              logger: console
+            });
+            console.log(`[Embedding] Image embeddings generated: ${embeddingResult.embeddedCount} images embedded for updated product ${existing.id}`);
+          } catch (embeddingError) {
+            console.warn(`[Embedding] Failed to generate image embeddings for updated product ${existing.id}:`, embeddingError.message);
+          }
+        }
+        
         return existing.id;
       } catch (updateError) {
         if (isRetryableDbError(updateError)) {
@@ -3866,6 +4020,7 @@ async function saveProductToDb(item, existingProductId = null) {
                   "basePriceIQD" = ${basePriceIQD},
                   "name" = ${item.titleEn || item.title},
                   "description" = ${item.descriptionAr || ''},
+                  "image" = ${cleanImageUrl},
                   "keywords" = ARRAY[${keywordsSql}],
                   "neworold" = ${newOrOldValue},
                   "aiMetadata" = ${JSON.stringify(metadata)}::jsonb,
@@ -3879,6 +4034,7 @@ async function saveProductToDb(item, existingProductId = null) {
                   "basePriceIQD" = ${basePriceIQD},
                   "name" = ${item.titleEn || item.title},
                   "description" = ${item.descriptionAr || ''},
+                  "image" = ${cleanImageUrl},
                   "keywords" = ARRAY[${keywordsSql}],
                   "aiMetadata" = ${JSON.stringify(metadata)}::jsonb,
                   "updatedAt" = NOW()
@@ -3893,6 +4049,7 @@ async function saveProductToDb(item, existingProductId = null) {
                   "basePriceIQD" = ${basePriceIQD},
                   "name" = ${item.titleEn || item.title},
                   "description" = ${item.descriptionAr || ''},
+                  "image" = ${cleanImageUrl},
                   "neworold" = ${newOrOldValue},
                   "aiMetadata" = ${JSON.stringify(metadata)}::jsonb,
                   "updatedAt" = NOW()
@@ -3905,6 +4062,7 @@ async function saveProductToDb(item, existingProductId = null) {
                   "basePriceIQD" = ${basePriceIQD},
                   "name" = ${item.titleEn || item.title},
                   "description" = ${item.descriptionAr || ''},
+                  "image" = ${cleanImageUrl},
                   "aiMetadata" = ${JSON.stringify(metadata)}::jsonb,
                   "updatedAt" = NOW()
               WHERE "id" = ${existing.id}
@@ -3921,7 +4079,7 @@ async function saveProductToDb(item, existingProductId = null) {
             name: item.titleEn || item.title,
             price: priceIQD,
             basePriceIQD,
-            image: item.image,
+            image: cleanImageUrl,
             purchaseUrl: item.url,
             status: 'PUBLISHED',
             isActive: true,
@@ -3951,7 +4109,7 @@ async function saveProductToDb(item, existingProductId = null) {
           name: String(item.titleEn || item.title || '').slice(0, 380),
           price: priceIQD,
           basePriceIQD,
-          image: item.image,
+          image: cleanImageUrl,
           purchaseUrl: item.url,
           status: 'PUBLISHED',
           isActive: true,
@@ -3985,13 +4143,13 @@ async function saveProductToDb(item, existingProductId = null) {
       }
       
       // Add main image
-      if (item.image && newProduct?.id) {
+      if (cleanImageUrl && newProduct?.id) {
         try {
           await withRetry(
             () => prisma.productImage.createMany({
               data: [{
                 productId: newProduct.id,
-                url: item.image,
+                url: cleanImageUrl,
                 order: 0,
                 type: 'GALLERY'
               }],
@@ -4008,6 +4166,24 @@ async function saveProductToDb(item, existingProductId = null) {
       }
       if (newProduct?.id) {
         console.log(`Saved to DB: id=${newProduct.id} title=${item.titleEn || item.title}`);
+        
+        // Generate image embeddings for the new product
+        if (!process.env.GOOFISH_DISABLE_IMAGE_EMBEDDINGS || process.env.GOOFISH_DISABLE_IMAGE_EMBEDDINGS.toLowerCase() !== 'true') {
+          try {
+            console.log(`[Embedding] Generating image embeddings for product ${newProduct.id}...`);
+            const embeddingResult = await ensureProductImageEmbeddings({
+              prisma,
+              productId: newProduct.id,
+              productName: item.titleEn || item.title,
+              fallbackImageUrl: cleanImageUrl,
+              logger: console
+            });
+            console.log(`[Embedding] Image embeddings generated: ${embeddingResult.embeddedCount} images embedded for product ${newProduct.id}`);
+          } catch (embeddingError) {
+            console.warn(`[Embedding] Failed to generate image embeddings for product ${newProduct.id}:`, embeddingError.message);
+          }
+        }
+        
         // Category assignment moved to detail phase
       } else {
         console.log(`Saved to DB: id=unknown title=${item.titleEn || item.title}`);
@@ -4104,10 +4280,11 @@ async function processProductDetailsToJson(page, url, index) {
       detailItem.soldCount = sellerInfo;
     }
 
-    // Extract image
+    // Extract image (check lazy-load attributes first)
     const mainImage = await page.evaluate(() => {
       const img = document.querySelector('.item-main-window-list--od7DK4Fm img, img.fadeInImg--DnykYtf4, .item-body--P2hJb44_ img, .item-main--N18QxQe1 img');
-      return img?.src || '';
+      if (!img) return '';
+      return getImgSrc(img);
     });
     if (mainImage) {
       detailItem.image = mainImage;
@@ -4473,9 +4650,10 @@ async function processProductDetailsAccumulate(page, product, detailProgress = n
             const usedImgUrl = 'https://gw.alicdn.com/imgextra/i4/O1CN01MQosre1EmUmuzzD3k_!!6000000000394-2-tps-252-60.png';
             const almostNewImgUrl = 'https://gw.alicdn.com/imgextra/i3/O1CN01yU5CER1wslIj9m7bv_!!6000000006364-2-tps-252-60.png';
 
-            const hasNewImg = images.some(img => img.src === newImgUrl);
-            const hasUsedImg = images.some(img => img.src === usedImgUrl);
-            const hasAlmostNewImg = images.some(img => img.src === almostNewImgUrl);
+            const imgSrcs = images.map(img => img.getAttribute('data-src') || img.getAttribute('data-lazy-src') || img.src || '');
+            const hasNewImg = imgSrcs.some(src => src === newImgUrl);
+            const hasUsedImg = imgSrcs.some(src => src === usedImgUrl);
+            const hasAlmostNewImg = imgSrcs.some(src => src === almostNewImgUrl);
 
             if (hasNewImg) return true;
             if (hasUsedImg || hasAlmostNewImg) return false;
@@ -4778,16 +4956,35 @@ Output JSON ONLY (with Arabic keys and Arabic values):`;
           const imgElements = mainWindow ? Array.from(mainWindow.querySelectorAll('img')) : [];
           const imageUrls = [];
           const seenUrls = new Set();
+          const isPlaceholderAlicdnImage = (src) => {
+            if (!src || typeof src !== 'string') return false;
+            const normalized = src.trim().toLowerCase();
+            if (!normalized.includes('alicdn.com')) return false;
+            if (normalized.includes('loading') || normalized.includes('placeholder') || normalized.includes('blank') || normalized.includes('logo') || normalized.includes('icon') || normalized.includes('avatar')) {
+              return true;
+            }
+            if (normalized.includes('/imgextra/') && normalized.endsWith('-2-tps-2-2.png')) {
+              return true;
+            }
+            const tpsMatch = normalized.match(/-2-tps-(\d+)-(\d+)\.png$/);
+            if (tpsMatch) {
+              const w = Number(tpsMatch[1]);
+              const h = Number(tpsMatch[2]);
+              if (w > 0 && h > 0 && w <= 20 && h <= 20) {
+                return true;
+              }
+            }
+            return false;
+          };
           for (const img of imgElements) {
-            const src = img.src || img.getAttribute('data-src');
+            const src = img.getAttribute('data-src') || img.getAttribute('data-lazy-src') || img.src || '';
             if (src && src.includes('alicdn.com') && !src.includes('logo') && !src.includes('icon') && src.length > 20) {
               // Filter out placeholder/white images
-              // Common patterns for placeholder images on alicdn
+              if (isPlaceholderAlicdnImage(src)) {
+                continue;
+              }
               if (src.includes('100x100') || src.includes('50x50') || src.includes('40x40')) {
                 continue; // Skip small placeholder images
-              }
-              if (src.includes('loading') || src.includes('placeholder') || src.includes('blank')) {
-                continue; // Skip loading/placeholder images
               }
               if (src.includes('T1') && src.includes('_.webp')) {
                 continue; // Skip common placeholder pattern
@@ -5238,9 +5435,10 @@ async function processProductDetails(page, product, detailProgress = null) {
             const usedImgUrl = 'https://gw.alicdn.com/imgextra/i4/O1CN01MQosre1EmUmuzzD3k_!!6000000000394-2-tps-252-60.png';
             const almostNewImgUrl = 'https://gw.alicdn.com/imgextra/i3/O1CN01yU5CER1wslIj9m7bv_!!6000000006364-2-tps-252-60.png';
 
-            const hasNewImg = images.some(img => img.src === newImgUrl);
-            const hasUsedImg = images.some(img => img.src === usedImgUrl);
-            const hasAlmostNewImg = images.some(img => img.src === almostNewImgUrl);
+            const imgSrcs = images.map(img => img.getAttribute('data-src') || img.getAttribute('data-lazy-src') || img.src || '');
+            const hasNewImg = imgSrcs.some(src => src === newImgUrl);
+            const hasUsedImg = imgSrcs.some(src => src === usedImgUrl);
+            const hasAlmostNewImg = imgSrcs.some(src => src === almostNewImgUrl);
 
             if (hasNewImg) return true;
             if (hasUsedImg || hasAlmostNewImg) return false;
@@ -5587,7 +5785,7 @@ ${JSON.stringify(extractedSpecs)}
 
 Output JSON ONLY (with Arabic keys and Arabic values):`;
                 
-                const translatedJsonStr = await callSiliconFlow([{ role: "user", content: prompt }], 0.2, 300, { timeoutMs: GOOFISH_AI_CALL_TIMEOUT_MS });
+                const translatedJsonStr = await callSiliconFlow([{ role: "user", content: prompt }], 0.2, 1000, { timeoutMs: GOOFISH_AI_CALL_TIMEOUT_MS });
                 
                 if (translatedJsonStr) {
                   const cleanJson = translatedJsonStr.replace(/```json/g, '').replace(/```/g, '').trim();
@@ -5948,6 +6146,24 @@ Output JSON ONLY (with Arabic keys and Arabic values):`;
 
 async function run() {
   console.log("Starting goofish-pipeline run()...");
+
+  // Pipeline progress tracking helper
+  const isPipeline2 = String(process.env.GOOFISH_QUEUE_DIR || '').includes('2');
+  const pipelineProgressFile = isPipeline2 ? 'pipeline-2-progress.json' : 'pipeline-1-progress.json';
+  const pipelineProgressPath = path.join(__dirname, '..', '..', pipelineProgressFile);
+  function updatePipelineProgress(status, extra) {
+    try {
+      let progress = { lastRun: null, totalTerms: 0, completedTerms: [], failedTerms: [], lastTermIndex: 0, lastTerm: null, status: status, termsList: [] };
+      try { if (fs.existsSync(pipelineProgressPath)) progress = JSON.parse(fs.readFileSync(pipelineProgressPath, 'utf8')); } catch {}
+      const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
+      progress.lastRun = now;
+      progress.status = status;
+      if (extra) Object.assign(progress, extra);
+      fs.writeFileSync(pipelineProgressPath, JSON.stringify(progress, null, 2), 'utf8');
+    } catch (e) { /* ignore */ }
+  }
+  // Update progress on exit
+  process.on('exit', () => { updatePipelineProgress('exited'); });
   
   // Initialize queue directory if queue mode is enabled
   if (USE_QUEUE_MODE) {
@@ -5999,6 +6215,21 @@ async function run() {
   if (GOOFISH_RESET_TERMS_ON_START) {
     resetRunProgressKeepTermMemory();
     clearBatchLinksQueue();
+    
+    // Clear product queue directory if starting fresh
+    if (USE_QUEUE_MODE) {
+      try {
+        if (fs.existsSync(QUEUE_DIR)) {
+          const files = fs.readdirSync(QUEUE_DIR);
+          for (const f of files) {
+            fs.unlinkSync(path.join(QUEUE_DIR, f));
+          }
+          console.log('[Queue] Cleared existing queue files');
+        }
+      } catch (err) {
+        console.warn('[Queue] Failed to clear queue files:', err.message);
+      }
+    }
   }
   if (SILICONFLOW_API_KEY) {
     console.log('AI translation is enabled (using env key).');
@@ -6131,11 +6362,14 @@ async function run() {
     const goToNextSearchPage = async () => {
       await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
       await humanDelay(1000, 2000);
-      const firstBefore = await page.evaluate(() => {
+      // Capture a fingerprint of current page content to detect change
+      const fingerprintBefore = await page.evaluate(() => {
         const container = document.querySelector('#content div[class^="search-container--"] div[class^="feeds-list-container--"]');
         if (!container) return '';
-        const t = container.querySelector('div[class*="row1-wrap-title--"]');
-        return t?.getAttribute('title') || t?.textContent || '';
+        const cards = Array.from(container.querySelectorAll('a[class*="feeds-item-wrap--"]'));
+        // Build fingerprint from first 3 item hrefs + total count
+        const hrefs = cards.slice(0, 3).map(a => a.getAttribute('href') || '');
+        return `${cards.length}|${hrefs.join(',')}`;
       });
       const nextBtn = await page.evaluateHandle(() => {
         const arrows = Array.from(document.querySelectorAll('.search-pagination-arrow-right--CKU78u4z'));
@@ -6151,32 +6385,71 @@ async function run() {
         await page.evaluate(btn => btn.click(), nextBtn);
       }
       await humanDelay(3500, 5500);
-      const firstAfter = await page.evaluate(() => {
-        const container = document.querySelector('#content div[class^="search-container--"] div[class^="feeds-list-container--"]');
-        if (!container) return '';
-        const t = container.querySelector('div[class*="row1-wrap-title--"]');
-        return t?.getAttribute('title') || t?.textContent || '';
-      });
-      return (firstAfter && firstAfter.trim() && firstAfter.trim() !== String(firstBefore || '').trim());
+      // Wait for page content to change (pagination replaces items, not appends)
+      try {
+        await page.waitForFunction(
+          (prevFingerprint) => {
+            const container = document.querySelector('#content div[class^="search-container--"] div[class^="feeds-list-container--"]');
+            if (!container) return false;
+            const cards = Array.from(container.querySelectorAll('a[class*="feeds-item-wrap--"]'));
+            const hrefs = cards.slice(0, 3).map(a => a.getAttribute('href') || '');
+            const fingerprint = `${cards.length}|${hrefs.join(',')}`;
+            return fingerprint !== prevFingerprint;
+          },
+          { timeout: 15000 },
+          fingerprintBefore
+        );
+      } catch {
+        return false;
+      }
+      // Wait for items to be fully loaded
+      await page.waitForSelector('#content div[class^="search-container--"] div[class^="feeds-list-container--"] a[class*="feeds-item-wrap--"]', { timeout: 10000 });
+      await humanDelay(500, 1000);
+      return true;
     };
 
-    const configuredMaxPages = parseInt(process.env.GOOFISH_MAX_PAGES || '5', 10);
-    const estimatedItemsPerPage = Math.max(1, parseInt(process.env.GOOFISH_ESTIMATED_ITEMS_PER_PAGE || '30', 10) || 30);
+    const configuredMaxPages = parseInt(process.env.GOOFISH_MAX_PAGES || '0', 10);
+    const estimatedItemsPerPage = Math.max(1, parseInt(process.env.GOOFISH_ESTIMATED_ITEMS_PER_PAGE || '24', 10) || 24);
     const requiredPagesForTermTarget = Math.max(1, Math.ceil(GOOFISH_LINKS_PER_TERM / estimatedItemsPerPage));
-    const MAX_PAGES = Number.isFinite(configuredMaxPages) && configuredMaxPages > 0
-      ? Math.max(configuredMaxPages, requiredPagesForTermTarget)
-      : requiredPagesForTermTarget;
-    console.log(`Items per search target: ${ITEMS_PER_SEARCH}. Max pages per term: ${MAX_PAGES}.`);
+    const MAX_PAGES = configuredMaxPages > 0 ? configuredMaxPages : Math.max(2, requiredPagesForTermTarget);
+    console.log(`Items per search target: ${ITEMS_PER_SEARCH}. Estimated items/page: ${estimatedItemsPerPage}. Required pages: ${requiredPagesForTermTarget}. Max pages per term: ${MAX_PAGES}.`);
     let allItems = [];
     const extractItems = async () => {
       return await page.evaluate(() => {
         const toAbs = (src) => (src && src.startsWith('//') ? ('https:' + src) : (src || ''));
+        const getImgSrc = (img) => {
+          if (!img) return '';
+          return img.getAttribute('data-src') || img.getAttribute('data-lazy-src') || img.getAttribute('src') || img.src || '';
+        };
+        const isPlaceholderAlicdnImage = (src) => {
+          if (!src || typeof src !== 'string') return false;
+          const normalized = src.trim().toLowerCase();
+          if (!normalized.includes('alicdn.com')) return false;
+          if (normalized.includes('loading') || normalized.includes('placeholder') || normalized.includes('blank') || normalized.includes('logo') || normalized.includes('icon') || normalized.includes('avatar')) {
+            return true;
+          }
+          if (normalized.includes('/imgextra/') && normalized.endsWith('-2-tps-2-2.png')) {
+            return true;
+          }
+          const tpsMatch = normalized.match(/-2-tps-(\d+)-(\d+)\.png$/);
+          if (tpsMatch) {
+            const w = Number(tpsMatch[1]);
+            const h = Number(tpsMatch[2]);
+            if (w > 0 && h > 0 && w <= 20 && h <= 20) {
+              return true;
+            }
+          }
+          return false;
+        };
         const container = document.querySelector('#content div[class^="search-container--"] div[class^="feeds-list-container--"]');
         if (!container) return [];
         const cards = Array.from(container.querySelectorAll('a[class*="feeds-item-wrap--"]'));
         const out = [];
         for (const card of cards) {
           const imgEl = card.querySelector('img[class*="feeds-image--"]');
+          // Try data-src / data-lazy-src first (lazy loaded images), fall back to src
+          const imgSrc = getImgSrc(imgEl);
+          if (!imgSrc || isPlaceholderAlicdnImage(imgSrc)) continue;
           const titleWrap = card.querySelector('div[class*="row1-wrap-title--"]');
           const mainTitle = titleWrap?.getAttribute('title') || titleWrap?.innerText || '';
           const conditionText = Array.from(card.querySelectorAll('div[class*="row2-wrap-cpv--"] span[class*="cpv--"]'))
@@ -6200,7 +6473,7 @@ async function run() {
             title: (mainTitle || '').trim(),
             conditionText: (conditionText || '').trim(),
             priceText: (priceText || '').trim(),
-            image: toAbs(imgEl?.getAttribute('src') || ''),
+            image: toAbs(imgSrc),
             url,
           });
         }
@@ -6263,75 +6536,125 @@ async function run() {
         descriptionAr = cleanDescriptionText(String(existingProduct?.aiMetadata?.translatedDescription || titleEn).trim()) || titleEn;
         keywords = ensureKeywordList(existingProduct.keywords, titleEn || item.title);
       }
-      // Skip AI translation in collection phase - translation will happen in detail phase
-      // const translationDecision = shouldTranslateFromExistingProduct(existingProduct);
-      // if (SILICONFLOW_API_KEY && translationDecision.shouldTranslate) {
-      //   const cachedTranslation = getCachedTranslation(translationCache, item.title);
-      //   const canUseCachedDescription = cachedTranslation
-      //     && cachedTranslation.descriptionAr
-      //     && cachedTranslation.descriptionAr.length >= 24
-      //     && cachedTranslation.descriptionAr !== cachedTranslation.titleAr
-      //     && hasArabic(cachedTranslation.descriptionAr);
-      //   if (canUseCachedDescription) {
-      //     titleEn = cachedTranslation.titleAr;
-      //     descriptionAr = cachedTranslation.descriptionAr;
-      //     keywords = cachedTranslation.keywords;
-      //   } else {
-      //     console.log(`[ProcessCollectedLink] Generating title and keywords for itemId=${goofishItemId || 'n/a'}`);
-      //     const generated = await generateTitleAndKeywords(item.title);
-      //     console.log(`[ProcessCollectedLink] Generated: translationSucceeded=${generated.translationSucceeded} titleAr=${generated.titleAr?.substring(0, 30)}... descriptionAr=${generated.descriptionAr?.substring(0, 30)}...`);
-      //     if (GOOFISH_SKIP_ON_TRANSLATION_FAILURE && !generated.translationSucceeded) {
-      //       console.log(`[ProcessCollectedLink] Translation failed, but continuing with generated content anyway`);
-      //       titleEn = generated.titleAr || titleEn;
-      //       descriptionAr = generated.descriptionAr || descriptionAr;
-      //       keywords = generated.keywords || keywords;
-      //     } else {
-      //       titleEn = generated.titleAr;
-      //       descriptionAr = generated.descriptionAr;
-      //       keywords = generated.keywords;
-      //     }
-      //     if (generated.translationSucceeded) {
-      //       setCachedTranslation(translationCache, item.title, generated);
-      //       pendingCacheWrites += 1;
-      //       if (pendingCacheWrites >= GOOFISH_TRANSLATION_CACHE_FLUSH_EVERY) {
-      //         saveTranslationCache(translationCache);
-      //         pendingCacheWrites = 0;
-      //       }
-      //     }
-      //   }
-      // }
-      // titleEn = sanitizeTranslationText(titleEn);
-      // descriptionAr = cleanDescriptionText(descriptionAr);
-      // if (GOOFISH_ENABLE_TRANSLATION_RETRY && SILICONFLOW_API_KEY && (!descriptionAr || descriptionAr === item.title || isChineseTerm(descriptionAr))) {
-      //   if (isChineseTerm(titleEn)) titleEn = await translateFullTitleToArabic(item.title, item.title);
-      //   descriptionAr = cleanDescriptionText(await translateFullTitleToArabic(item.title, item.title));
-      // }
-      const itemData = {
-        title: item.title || '',
-        titleEn: titleEn || '',
-        descriptionAr: descriptionAr || '',
-        keywords,
-        newOrOld,
-        realBrand,
-        priceCny: cny,
-        image: item.image || '',
-        url: resolvedUrl,
-      };
-      if (OUTPUT_JSON) allItems.push(itemData);
+      // Enable AI translation from search page data - skip detail phase
+      if (SILICONFLOW_API_KEY) {
+        const cachedTranslation = getCachedTranslation(translationCache, item.title);
+        const canUseCachedDescription = cachedTranslation
+          && cachedTranslation.descriptionAr
+          && cachedTranslation.descriptionAr.length >= 24
+          && cachedTranslation.descriptionAr !== cachedTranslation.titleAr
+          && hasArabic(cachedTranslation.descriptionAr);
+        if (canUseCachedDescription) {
+          titleEn = cachedTranslation.titleAr;
+          descriptionAr = cachedTranslation.descriptionAr;
+          keywords = cachedTranslation.keywords;
+        } else {
+          console.log(`[ProcessCollectedLink] Generating title and keywords for itemId=${goofishItemId || 'n/a'}`);
+          const generated = await generateTitleAndKeywords(item.title);
+          console.log(`[ProcessCollectedLink] Generated: translationSucceeded=${generated.translationSucceeded} titleAr=${generated.titleAr?.substring(0, 30)}... descriptionAr=${generated.descriptionAr?.substring(0, 30)}...`);
+          if (GOOFISH_SKIP_ON_TRANSLATION_FAILURE && !generated.translationSucceeded) {
+            console.log(`[ProcessCollectedLink] Translation failed, but continuing with generated content anyway`);
+            titleEn = generated.titleAr || titleEn;
+            descriptionAr = generated.descriptionAr || descriptionAr;
+            keywords = generated.keywords || keywords;
+          } else {
+            titleEn = generated.titleAr;
+            descriptionAr = generated.descriptionAr;
+            keywords = generated.keywords;
+          }
+          if (generated.translationSucceeded) {
+            setCachedTranslation(translationCache, item.title, generated);
+            pendingCacheWrites += 1;
+            if (pendingCacheWrites >= GOOFISH_TRANSLATION_CACHE_FLUSH_EVERY) {
+              saveTranslationCache(translationCache);
+              pendingCacheWrites = 0;
+            }
+          }
+        }
+      }
+      titleEn = sanitizeTranslationText(titleEn);
+      descriptionAr = cleanDescriptionText(descriptionAr);
       
-      // Skip DB insert if batch insert mode or accumulate per product mode is enabled
-      if (BATCH_INSERT_FROM_JSON || GOOFISH_ACCUMULATE_PER_PRODUCT) {
-        const mode = BATCH_INSERT_FROM_JSON ? 'Batch Mode' : 'Accumulate Mode';
-        console.log(`[${mode}] Skipping DB insert for ${goofishItemId || 'n/a'} - will insert later`);
-        return {
-          id: null,
+      // Translate and structure specs
+      let translatedSpecs = null;
+      if (item.conditionText) {
+        translatedSpecs = await translateSpecsToArabic(item.conditionText);
+      }
+
+      if (GOOFISH_ENABLE_TRANSLATION_RETRY && SILICONFLOW_API_KEY && (!descriptionAr || descriptionAr === item.title || isChineseTerm(descriptionAr))) {
+        if (isChineseTerm(titleEn)) titleEn = await translateFullTitleToArabic(item.title, item.title);
+        descriptionAr = cleanDescriptionText(await translateFullTitleToArabic(item.title, item.title));
+      }
+    const itemData = {
+      title: item.title || '',
+      titleEn: titleEn || '',
+      descriptionAr: descriptionAr || '',
+      keywords,
+      newOrOld,
+      realBrand,
+      priceCny: cny,
+      image: item.image || '',
+      url: resolvedUrl,
+      specs: translatedSpecs || item.conditionText || '',
+      categoryId: extractCategoryId(resolvedUrl) || null,
+      imageEmbeddings: [] // New field for queue mode
+    };
+
+    // Generate image embeddings for the item before saving to queue/DB
+    if (!process.env.GOOFISH_DISABLE_IMAGE_EMBEDDINGS || process.env.GOOFISH_DISABLE_IMAGE_EMBEDDINGS.toLowerCase() !== 'true') {
+      const cleanImageUrl = (item.image || '').replace(/_\d+x\d+.*$/, '');
+      if (cleanImageUrl) {
+        try {
+          console.log(`[Embedding] Generating image embedding for itemId=${goofishItemId || 'n/a'} before saving...`);
+          const embedding = await embedImage(cleanImageUrl, titleEn || item.title || null);
+          if (Array.isArray(embedding) && embedding.length > 0 && !embedding.every(v => v === 0)) {
+            itemData.imageEmbeddings.push({
+              url: cleanImageUrl,
+              embedding: embedding,
+              order: 0
+            });
+            console.log(`[Embedding] Generated embedding successfully for itemId=${goofishItemId || 'n/a'}`);
+          }
+        } catch (embedErr) {
+          console.warn(`[Embedding] Failed to generate embedding for itemId=${goofishItemId || 'n/a'}:`, embedErr.message);
+        }
+      }
+    }
+
+    if (OUTPUT_JSON) allItems.push(itemData);
+    
+    // Skip DB insert if batch insert mode or accumulate per product mode is enabled
+    if (BATCH_INSERT_FROM_JSON || GOOFISH_ACCUMULATE_PER_PRODUCT || USE_QUEUE_MODE) {
+      if (USE_QUEUE_MODE) {
+        console.log(`[Queue Mode] Saving product ${goofishItemId || 'n/a'} to queue file...`);
+        const saved = await saveToQueue({
           url: resolvedUrl,
           name: titleEn || item.title,
-          image: item.image || '',
-          imagesChecked: existingProduct?.imagesChecked || false,
-          specs: existingProduct?.specs || null
-        };
+          originalName: item.title,
+          priceCny: cny,
+          newOrOld: newOrOld,
+          description: descriptionAr,
+          specs: translatedSpecs || item.conditionText,
+          images: [item.image].filter(Boolean),
+          imageEmbeddings: itemData.imageEmbeddings,
+          categoryId: itemData.categoryId,
+          isActive: true
+        });
+        if (saved) console.log(`[Queue Mode] Successfully saved product ${goofishItemId || 'n/a'} to queue`);
       }
+
+      const mode = USE_QUEUE_MODE ? 'Queue Mode' : (BATCH_INSERT_FROM_JSON ? 'Batch Mode' : 'Accumulate Mode');
+      console.log(`[${mode}] Skipping DB insert for ${goofishItemId || 'n/a'} - will insert later`);
+      return {
+        id: null,
+        url: resolvedUrl,
+        name: titleEn || item.title,
+        image: item.image || '',
+        imagesChecked: existingProduct?.imagesChecked || false,
+        specs: translatedSpecs || item.conditionText || '',
+        categoryId: extractCategoryId(resolvedUrl) || null
+      };
+    }
       
       if (DISABLE_DB_WRITE) {
         console.log(`[DB Write Disabled] Skipping DB save for ${goofishItemId || 'n/a'}`);
@@ -6341,7 +6664,8 @@ async function run() {
           name: titleEn || item.title,
           image: item.image || '',
           imagesChecked: existingProduct?.imagesChecked || false,
-          specs: existingProduct?.specs || null
+          specs: item.conditionText || '',
+          categoryId: extractCategoryId(resolvedUrl) || null
         };
       }
       
@@ -6361,7 +6685,8 @@ async function run() {
           name: titleEn || item.title,
           image: existingProduct?.image || item.image || '',
           imagesChecked: existingProduct?.imagesChecked || false,
-          specs: existingProduct?.specs || null
+          specs: item.conditionText || '',
+          categoryId: extractCategoryId(resolvedUrl) || null
         };
       }
       let dbId = null;
@@ -6479,7 +6804,10 @@ async function run() {
         const termIndex = queue.nextCollectTerm;
         if (termIndex < searchTerms.length) {
           const term = searchTerms[termIndex];
-          const state = queue.termStates[termIndex] || { term, termIndex, items: [], seenUrls: [], collectDone: false, processIndex: 0 };
+          const rawState = queue.termStates[termIndex];
+          const state = (rawState && typeof rawState === 'object' && !Array.isArray(rawState))
+            ? rawState
+            : { term, termIndex, items: [], seenUrls: [], collectDone: false, processIndex: 0 };
           const seenUrls = new Set(Array.isArray(state.seenUrls) ? state.seenUrls : []);
           let termCollected = Array.isArray(state.items) ? state.items.length : 0;
           console.log(`[TermDebug] phase=collect batchId=${batchId} termIndex=${termIndex + 1}/${searchTerms.length} term="${term}"`);
@@ -6493,7 +6821,41 @@ async function run() {
               pageIndex += 1;
               await closeLoginPopup(page);
               await page.waitForSelector('#content div[class^="search-container--"] div[class^="feeds-list-container--"] a[class*="feeds-item-wrap--"]', { timeout: 30000 });
-              await humanDelay(1600, 2600);
+              await humanDelay(800, 1500);
+              // Ensure the feeds container is scrolled so lazy-loaded items are loaded
+              try {
+                const targetItems = Math.max(estimatedItemsPerPage || 30, 30);
+                const maxScrolls = Math.max(5, Math.min(25, Math.ceil((targetItems / 10) * 2)));
+                await page.evaluate(async (sel, target, maxScrolls) => {
+                  const container = document.querySelector(sel);
+                  if (!container) return;
+                  let prevCount = 0;
+                  for (let i = 0; i < maxScrolls; i++) {
+                    // Scroll container to bottom to trigger lazy load
+                    try { container.scrollTop = container.scrollHeight; } catch (e) {}
+                    // Also scroll window as fallback
+                    try { window.scrollTo(0, document.body.scrollHeight); } catch (e) {}
+                    // Wait a bit for new items to load
+                    await new Promise(r => setTimeout(r, 700 + Math.floor(Math.random() * 800)));
+                    const cards = container.querySelectorAll('a[class*="feeds-item-wrap--"]');
+                    const count = cards ? cards.length : 0;
+                    // Stop early if we reached target
+                    if (count >= target) break;
+                    // If no new cards appeared, wait once more then break
+                    if (count === prevCount) {
+                      await new Promise(r => setTimeout(r, 500));
+                      const now = container.querySelectorAll('a[class*="feeds-item-wrap--"]')?.length || 0;
+                      if (now === prevCount) break;
+                      prevCount = now;
+                    } else {
+                      prevCount = count;
+                    }
+                  }
+                }, '#content div[class^="search-container--"] div[class^="feeds-list-container--"]', targetItems, maxScrolls);
+                await humanDelay(300, 700);
+              } catch (scrollErr) {
+                console.warn('[Collect] Scrolling to load more items failed:', scrollErr?.message || scrollErr);
+              }
               const items = await extractItems();
               console.log(`[Collect][${term}] Page ${pageIndex} -> ${items.length} raw items`);
               for (const it of items) {
@@ -6532,6 +6894,24 @@ async function run() {
           queue.updatedAt = new Date().toISOString();
           saveBatchLinksQueue(queue);
           updateActiveBatchProgress(batchId, termIndex + 1);
+          // Write pipeline progress tracking
+          try {
+            const isPipeline2 = String(process.env.GOOFISH_QUEUE_DIR || '').includes('2');
+            const progressFile = isPipeline2 ? 'pipeline-2-progress.json' : 'pipeline-1-progress.json';
+            const progressPath = path.join(__dirname, '..', '..', progressFile);
+            let progress = { lastRun: null, totalTerms: 0, completedTerms: [], failedTerms: [], lastTermIndex: 0, lastTerm: null, status: 'running', termsList: [] };
+            try { if (fs.existsSync(progressPath)) progress = JSON.parse(fs.readFileSync(progressPath, 'utf8')); } catch {}
+            const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
+            progress.lastRun = now;
+            progress.lastTermIndex = termIndex + 1;
+            progress.lastTerm = searchTerms[termIndex] || null;
+            progress.totalTerms = searchTerms.length;
+            progress.status = 'running';
+            if (!progress.completedTerms) progress.completedTerms = [];
+            if (!progress.failedTerms) progress.failedTerms = [];
+            if (!progress.termsList || progress.termsList.length === 0) progress.termsList = searchTerms;
+            fs.writeFileSync(progressPath, JSON.stringify(progress, null, 2), 'utf8');
+          } catch (progressErr) { /* ignore progress write errors */ }
           queue.phase = 'process';
           queue.nextProcessTerm = termIndex;
           queue.updatedAt = new Date().toISOString();
@@ -6559,7 +6939,10 @@ async function run() {
               console.warn(`[JSON] Failed to clear detail JSON: ${err.message}`);
             }
           }
-          const state = queue.termStates[termIndex];
+          const rawProcessState = queue.termStates[termIndex];
+          const state = (rawProcessState && typeof rawProcessState === 'object' && !Array.isArray(rawProcessState))
+            ? rawProcessState
+            : null;
           if (state) {
             const term = state.term || searchTerms[termIndex];
             const termPosition = `${termIndex + 1}/${searchTerms.length}`;
@@ -6591,10 +6974,8 @@ async function run() {
                   GOOFISH_PROCESS_LINK_TIMEOUT_MS
                 );
                 if (detailTarget) {
-                  await processProductDetails(page, detailTarget, {
-                    current: currentProgress,
-                    total: currentTotalForTerm
-                  });
+                  // Skip product details processing - we already have all data from search page
+                  console.log(`[ProcessItem] Skipping detail phase for itemId=${currentItemId || 'n/a'} - using search page data only`);
                 } else {
                   console.warn(`[ProcessItem] detail phase skipped itemId=${currentItemId || 'n/a'} reason=no-db-target - deleting from database if exists`);
                   // Delete product from database if it exists
@@ -6688,6 +7069,28 @@ async function run() {
       } else {
         console.log('[Pipeline] Batch completed. Generating a fresh term batch and continuing...');
       }
+
+      // If this was a custom terms batch, check if ALL custom terms are done
+      if (source === 'custom' && customTerms && customTerms.length > 0) {
+        const totalCustomTerms = customTerms.length;
+        // Count how many unique terms have been processed across all batches
+        const termHistory = loadSearchTermHistory();
+        const usedTerms = Array.isArray(termHistory.used) ? termHistory.used : [];
+        const processedCount = usedTerms.length;
+        if (processedCount >= totalCustomTerms) {
+          console.log('');
+          console.log('========================================');
+          console.log('  All ' + totalCustomTerms + ' custom terms have been processed!');
+          console.log('  Pipeline is stopping. Run the bat file');
+          console.log('  again with new terms to continue.');
+          console.log('========================================');
+          updatePipelineProgress('completed', { completedTerms: customTerms });
+          break;
+        } else {
+          console.log('[Pipeline] Custom terms progress: ' + processedCount + '/' + totalCustomTerms + ' done. Continuing...');
+        }
+      }
+
       await humanDelay(1000, 2500);
       markPipelineProgress('cycle-sleep-done');
     }

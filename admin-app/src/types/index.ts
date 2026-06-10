@@ -11,6 +11,7 @@ export interface OrderItem {
   productId: number;
   quantity: number;
   price: number;
+  notes?: string | null;
   product: {
     name: string;
     image: string;

@@ -31,6 +31,20 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      console.warn('[API] 401 Unauthorized - Clearing token and reloading...');
+      localStorage.removeItem('auth_token');
+      localStorage.removeItem('user');
+      // Use window.location to force a full app reload and show login screen
+      window.location.reload();
+    }
+    return Promise.reject(error);
+  }
+);
+
 export const login = async (email: string, password: string) => {
   const response = await api.post('/api/auth/email-login', { email, password });
   return response.data;
@@ -68,5 +82,10 @@ export const archiveProductFromOrder = async (productId: number, orderId: number
 
 export const updateOrderPaymentMethod = async (orderId: number, paymentMethod: string) => {
   const response = await api.put(`/api/admin/orders/${orderId}/payment-method`, { paymentMethod });
+  return response.data;
+};
+
+export const fetchSettings = async () => {
+  const response = await api.get('/api/settings');
   return response.data;
 };

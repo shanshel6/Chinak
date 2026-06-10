@@ -2,7 +2,7 @@ const axios = require('axios');
 
 async function testSiliconFlow() {
   const apiKey = 'sk-crnipdimfvvgrbbxtvmbrshaqtjdmujbvkpuoifcdxkcalwh';
-  const model = 'Qwen/Qwen3-14B';
+  const model = 'Qwen/Qwen3.5-9B';
   
   console.log(`Testing SiliconFlow API with model: ${model}`);
   console.log('API Key:', apiKey.slice(0, 8) + '...' + apiKey.slice(-4));
