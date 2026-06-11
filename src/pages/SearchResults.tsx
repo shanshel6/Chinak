@@ -36,7 +36,6 @@ const SearchResults: React.FC = () => {
   const [hasMore, setHasMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchVersion, setSearchVersion] = useState(0);
-  const [restored, setRestored] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const activeQueryRef = useRef(activeQuery);
@@ -1031,9 +1030,9 @@ const SearchResults: React.FC = () => {
                 <ProductCard
                   key={product.id}
                   product={product}
-                  isWishlisted={isProductInWishlist(product.id)}
-                  onWishlist={onAddToWishlist}
-                  onClick={() => handleNavigateToProduct(product.id, product)}
+                  onNavigate={(id) => handleNavigateToProduct(id, product)}
+                  onAddToWishlist={onAddToWishlist}
+                  isProductInWishlist={isProductInWishlist}
                 />
               ))}
             </div>
