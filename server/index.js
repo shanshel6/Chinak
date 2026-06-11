@@ -9588,7 +9588,7 @@ app.get('/api/search', async (req, res) => {
         });
 
         // Sort products in the same order as vector matches
-        const productMap = new Map(productsFromDb.map(p => [p.id, p));
+        const productMap = new Map(productsFromDb.map(p => [p.id, p]));
         const sortedProducts = vectorMatches
           .map(match => productMap.get(match.id))
           .filter(Boolean);

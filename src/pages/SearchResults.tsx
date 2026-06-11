@@ -6,7 +6,7 @@ import { useAuthStore } from '../store/useAuthStore';
 import { normalizeWishlistProductId, useWishlistStore } from '../store/useWishlistStore';
 import ProductCard from '../components/home/ProductCard';
 import type { Product } from '../types/product';
-import type { ConditionFilter, PriceFilter } from '../components/home/FilterBar';
+import type { ConditionFilter } from '../components/home/FilterBar';
 
 const SearchResults: React.FC = () => {
   const navigate = useNavigate();
@@ -28,7 +28,6 @@ const SearchResults: React.FC = () => {
   const [selectedObjectBox, setSelectedObjectBox] = useState<number[] | null>(null);
   const [isAnalyzingImage, setIsAnalyzingImage] = useState(false);
   const [conditionFilter, setConditionFilter] = useState<ConditionFilter>(null);
-  const [priceFilter, setPriceFilter] = useState<PriceFilter>(null);
   const [results, setResults] = useState<Product[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -44,7 +43,6 @@ const SearchResults: React.FC = () => {
   const loadingMoreRef = useRef(loadingMore);
   const hasMoreRef = useRef(hasMore);
   const conditionFilterRef = useRef<ConditionFilter>(conditionFilter);
-  const priceFilterRef = useRef<PriceFilter>(priceFilter);
   const inFlightMoreRef = useRef(false);
   const scrollRatioRef = useRef(0);
   const LIMIT = 30;
@@ -435,9 +433,8 @@ const SearchResults: React.FC = () => {
       rememberSearchTerm(query);
 
       try {
-        const maxPrice = priceFilter === '1k' ? 1000 : priceFilter === '5k' ? 5000 : priceFilter === '10k' ? 10000 : priceFilter === '25k' ? 25000 : undefined;
         const condition = conditionFilter === 'new' ? 'new' : conditionFilter === 'used' ? 'used' : undefined;
-        const response = await searchProducts(query, initialPage, LIMIT, maxPrice, condition);
+        const response = await searchProducts(query, initialPage, LIMIT, undefined, condition);
         if (cancelled) return;
         const orderedResults = Array.isArray(response.products) ? response.products : [];
         setResults(orderedResults);
@@ -456,7 +453,7 @@ const SearchResults: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [activeQuery, conditionFilter, priceFilter, rememberSearchTerm, searchVersion, imageSearchInput]);
+  }, [activeQuery, conditionFilter, rememberSearchTerm, searchVersion, imageSearchInput]);
 
   // New loadMore using embedding search
   const loadMore = useCallback(async () => {
@@ -504,11 +501,9 @@ const SearchResults: React.FC = () => {
     setLoadingMore(true);
     const nextPage = pageRef.current + 1;
     try {
-      const price = priceFilterRef.current;
       const cond = conditionFilterRef.current;
-      const maxPrice = price === '1k' ? 1000 : price === '5k' ? 5000 : price === '10k' ? 10000 : price === '25k' ? 25000 : undefined;
       const condition = cond === 'new' ? 'new' : cond === 'used' ? 'used' : undefined;
-      const response = await searchProducts(query, nextPage, LIMIT, maxPrice, condition);
+      const response = await searchProducts(query, nextPage, LIMIT, undefined, condition);
       if (activeQueryRef.current.trim() !== query) return;
       const incoming = Array.isArray(response.products) ? response.products : [];
       setResults((prev) => {
@@ -914,10 +909,9 @@ const SearchResults: React.FC = () => {
               type="button"
               onClick={() => {
                 setConditionFilter(null);
-                setPriceFilter(null);
               }}
               className={`h-9 px-4 rounded-lg text-xs font-bold whitespace-nowrap transition-colors ${
-                conditionFilter === null && priceFilter === null
+                conditionFilter === null
                   ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900'
                   : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
               }`}
@@ -949,32 +943,6 @@ const SearchResults: React.FC = () => {
               }`}
             >
               مستعمل
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setPriceFilter(priceFilter === '1k' ? null : '1k');
-              }}
-              className={`h-9 px-4 rounded-lg text-xs font-bold whitespace-nowrap transition-colors ${
-                priceFilter === '1k'
-                  ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900'
-                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
-              }`}
-            >
-              حتى 1,000 ر.س
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setPriceFilter(priceFilter === '5k' ? null : '5k');
-              }}
-              className={`h-9 px-4 rounded-lg text-xs font-bold whitespace-nowrap transition-colors ${
-                priceFilter === '5k'
-                  ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900'
-                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
-              }`}
-            >
-              حتى 5,000 ر.س
             </button>
           </div>
         </div>
