@@ -133,7 +133,6 @@ const SearchResults: React.FC = () => {
   }, [isInputFocused, readRecentTerms]);
 
   const startImageSearch = useCallback(async (imageBase64: string, width?: number, height?: number) => {
-    setRestored(false); 
     setLoading(false); 
     setLoadingMore(false);
     setResults([]);
@@ -315,7 +314,6 @@ const SearchResults: React.FC = () => {
 
   const clearImageSearch = useCallback(() => {
     
-    setRestored(false);
     setImageSearchInput(null);
     setImageSearchPreview(null);
     setImageOriginalSize(null);
@@ -352,7 +350,6 @@ const SearchResults: React.FC = () => {
     }
     const cachedImageState = readImageSearchState();
     if (!cachedImageState) return;
-    setRestored(true);
     setImageSearchInput(cachedImageState.imageSearchInput);
     setImageSearchPreview(cachedImageState.imageSearchPreview);
     setImageOriginalSize(cachedImageState.imageOriginalSize);
