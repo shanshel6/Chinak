@@ -136,8 +136,45 @@ if (import.meta.env.PROD) {
   console.info = () => {};
 }
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-)
+// Global error handler: if React fails to mount, show error instead of infinite loading
+const showErrorScreen = (error: Error) => {
+  console.error('App failed to start:', error);
+  const root = document.getElementById('root');
+  if (root) {
+    root.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:center;min-height:100vh;font-family:sans-serif;padding:2rem;text-align:center;background:#fef2f2;">
+        <div style="max-width:500px;">
+          <h1 style="color:#dc2626;font-size:1.5rem;margin-bottom:1rem;">⚠️ Something went wrong</h1>
+          <p style="color:#666;margin-bottom:1rem;">The app failed to load. Try clearing your browser cache and refreshing.</p>
+          <pre style="background:#fee2e2;padding:1rem;border-radius:0.5rem;font-size:0.75rem;text-align:left;overflow:auto;color:#991b1b;">${error.message}\n${error.stack || ''}</pre>
+          <button onclick="localStorage.clear();location.reload()" style="margin-top:1rem;padding:0.75rem 1.5rem;background:#2563eb;color:white;border:none;border-radius:0.5rem;cursor:pointer;font-size:1rem;">Clear Cache & Reload</button>
+        </div>
+      </div>`;
+  }
+};
+
+// Catch errors during module initialization (before React mounts)
+window.addEventListener('error', (event) => {
+  const root = document.getElementById('root');
+  // Only show error screen if React hasn't rendered yet (root still has the initial loader)
+  if (root && root.querySelector('.initial-loader')) {
+    showErrorScreen(new Error(event.message || 'Unknown error'));
+  }
+});
+
+window.addEventListener('unhandledrejection', (event) => {
+  const root = document.getElementById('root');
+  if (root && root.querySelector('.initial-loader')) {
+    showErrorScreen(new Error(String(event.reason || 'Unhandled promise rejection')));
+  }
+});
+
+try {
+  createRoot(document.getElementById('root')!).render(
+    <StrictMode>
+      <App />
+    </StrictMode>,
+  );
+} catch (error: any) {
+  showErrorScreen(error);
+}

@@ -1,14 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { AlertCircle, Search, ArrowRight, Camera, X } from 'lucide-react';
-import { searchProductsByImage, searchProductsByImageCrop, searchProductsByCategory, searchCategorySuggestions } from '../services/api';
-import type { CategorySuggestion } from '../services/api';
+import { searchProductsByImage, searchProductsByImageCrop, searchProducts } from '../services/api';
 import { useAuthStore } from '../store/useAuthStore';
 import { normalizeWishlistProductId, useWishlistStore } from '../store/useWishlistStore';
 import ProductCard from '../components/home/ProductCard';
 import type { Product } from '../types/product';
 import type { ConditionFilter, PriceFilter } from '../components/home/FilterBar';
-import { normalizeArabicSearchTerm } from '../data/arabicSearchNormalization';
 
 const SearchResults: React.FC = () => {
   const navigate = useNavigate();
@@ -18,23 +16,10 @@ const SearchResults: React.FC = () => {
   const toggleWishlist = useWishlistStore((state) => state.toggleWishlist);
   const searchParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
   const initialQuery = searchParams.get('q') || '';
-  const initialCategoryId = searchParams.get('categoryId') || '';
-  const initialCategoryName = searchParams.get('categoryName') || '';
   const IMAGE_QUERY_LABEL = 'بحث بالصورة';
   const IMAGE_SEARCH_STATE_STORAGE_KEY = 'image_search_state_v1';
   const [queryInput, setQueryInput] = useState(initialQuery);
-  const [activeQuery, setActiveQuery] = useState(initialCategoryName || initialQuery);
-  const [activeCategory, setActiveCategory] = useState<CategorySuggestion | null>(
-    initialCategoryId
-      ? {
-          id: initialCategoryId,
-          nameAr: initialCategoryName || initialQuery,
-          pathAr: initialCategoryName || initialQuery
-        }
-      : null
-  );
-  const [categorySuggestions, setCategorySuggestions] = useState<CategorySuggestion[]>([]);
-  const [suggestionsLoading, setSuggestionsLoading] = useState(false);
+  const [activeQuery, setActiveQuery] = useState(initialQuery);
   const [imageSearchInput, setImageSearchInput] = useState<string | null>(null);
   const [imageSearchPreview, setImageSearchPreview] = useState<string | null>(null);
   const [imageOriginalSize, setImageOriginalSize] = useState<{width: number, height: number} | null>(null);
@@ -55,7 +40,6 @@ const SearchResults: React.FC = () => {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const activeQueryRef = useRef(activeQuery);
-  const activeCategoryRef = useRef(activeCategory);
   const pageRef = useRef(page);
   const loadingRef = useRef(loading);
   const loadingMoreRef = useRef(loadingMore);
@@ -66,12 +50,8 @@ const SearchResults: React.FC = () => {
   const scrollRatioRef = useRef(0);
   const LIMIT = 30;
   const RECENT_SEARCH_TERMS_KEY = 'recent_search_terms_v1';
-  const RECENT_CATEGORY_CLICKS_KEY = 'recent_category_clicks_v1';
   const [isInputFocused, setIsInputFocused] = useState(false);
   const isImageSearch = Boolean(imageSearchInput && imageSearchPreview);
-  const activeCategoryKey = activeCategory?.id ? `category:${activeCategory.id}` : '';
-
-  type RecentCategoryEntry = Pick<CategorySuggestion, 'id' | 'nameAr' | 'pathAr'>;
 
   // Manual Crop State
   const cropBoxRef = useRef<HTMLDivElement>(null);
@@ -123,25 +103,6 @@ const SearchResults: React.FC = () => {
     } catch {}
   }, []);
 
-  const restoreScrollWithRetry = useCallback((targetPos: number) => {
-    if (targetPos <= 0) return;
-    let attempts = 0;
-    const tryRestore = () => {
-      attempts += 1;
-      window.scrollTo(0, targetPos);
-      if (document.scrollingElement) {
-        document.scrollingElement.scrollTop = targetPos;
-      }
-      const currentPos = window.pageYOffset || window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0;
-      const reached = Math.abs(currentPos - targetPos) < 4;
-      if (reached || attempts >= 12) return;
-      setTimeout(tryRestore, 120);
-    };
-    requestAnimationFrame(() => {
-      requestAnimationFrame(tryRestore);
-    });
-  }, []);
-
   const rememberSearchTerm = useCallback((term: string) => {
     const clean = term.trim();
     if (!clean) return;
@@ -153,39 +114,6 @@ const SearchResults: React.FC = () => {
       localStorage.setItem(RECENT_SEARCH_TERMS_KEY, JSON.stringify(next));
     } catch {}
   }, []);
-
-  const normalizeRecentCategory = useCallback((value: any): RecentCategoryEntry | null => {
-    if (!value || typeof value !== 'object') return null;
-    const id = String(value.id || '').trim();
-    const nameAr = String(value.nameAr || value.pathAr || '').trim();
-    const pathAr = String(value.pathAr || value.nameAr || '').trim();
-    if (!id || !nameAr) return null;
-    return { id, nameAr, pathAr: pathAr || nameAr };
-  }, []);
-
-  const readRecentCategories = useCallback((): RecentCategoryEntry[] => {
-    try {
-      const raw = localStorage.getItem(RECENT_CATEGORY_CLICKS_KEY);
-      const parsed = raw ? JSON.parse(raw) : [];
-      const list = Array.isArray(parsed) ? parsed : [];
-      return list
-        .map((item) => normalizeRecentCategory(item))
-        .filter((item): item is RecentCategoryEntry => Boolean(item))
-        .slice(0, 12);
-    } catch {
-      return [];
-    }
-  }, [normalizeRecentCategory]);
-
-  const rememberRecentCategory = useCallback((category: CategorySuggestion) => {
-    const normalized = normalizeRecentCategory(category);
-    if (!normalized) return;
-    try {
-      const current = readRecentCategories();
-      const next = [normalized, ...current.filter((item) => item.id !== normalized.id)].slice(0, 12);
-      localStorage.setItem(RECENT_CATEGORY_CLICKS_KEY, JSON.stringify(next));
-    } catch {}
-  }, [normalizeRecentCategory, readRecentCategories]);
 
   const readRecentTerms = useCallback((): string[] => {
     try {
@@ -199,13 +127,11 @@ const SearchResults: React.FC = () => {
   }, []);
 
   const [recentTerms, setRecentTerms] = useState<string[]>(() => readRecentTerms());
-  const [recentCategories, setRecentCategories] = useState<RecentCategoryEntry[]>(() => readRecentCategories());
 
   useEffect(() => {
     if (!isInputFocused) return;
     setRecentTerms(readRecentTerms());
-    setRecentCategories(readRecentCategories());
-  }, [isInputFocused, readRecentCategories, readRecentTerms]);
+  }, [isInputFocused, readRecentTerms]);
 
   const startImageSearch = useCallback(async (imageBase64: string, width?: number, height?: number) => {
     setRestored(false); 
@@ -425,7 +351,6 @@ const SearchResults: React.FC = () => {
       void startImageSearch(pendingImage);
       return;
     }
-    if (initialQuery.trim()) return;
     const cachedImageState = readImageSearchState();
     if (!cachedImageState) return;
     setRestored(true);
@@ -442,7 +367,7 @@ const SearchResults: React.FC = () => {
     setLoadingMore(false);
     setActiveQuery(IMAGE_QUERY_LABEL);
     setQueryInput(IMAGE_QUERY_LABEL);
-  }, [IMAGE_QUERY_LABEL, initialQuery, readImageSearchState, restoreScrollWithRetry, startImageSearch]);
+  }, [IMAGE_QUERY_LABEL, readImageSearchState, startImageSearch]);
 
   useEffect(() => {
     if (!imageSearchInput || !imageSearchPreview) return;
@@ -463,30 +388,13 @@ const SearchResults: React.FC = () => {
 
   useEffect(() => {
     if (imageSearchInput) return;
-    
     setQueryInput(initialQuery);
-    setActiveQuery(initialCategoryName || initialQuery);
-    setActiveCategory(
-      initialCategoryId
-        ? {
-            id: initialCategoryId,
-            nameAr: initialCategoryName || initialQuery,
-            pathAr: initialCategoryName || initialQuery
-          }
-        : null
-    );
-  }, [initialCategoryId, initialCategoryName, initialQuery, imageSearchInput]);
-
-  useEffect(() => {
-  }, [imageSearchInput, initialCategoryId, restoreScrollWithRetry]);
+    setActiveQuery(initialQuery);
+  }, [initialQuery, imageSearchInput]);
 
   useEffect(() => {
     activeQueryRef.current = activeQuery;
   }, [activeQuery]);
-
-  useEffect(() => {
-    activeCategoryRef.current = activeCategory;
-  }, [activeCategory]);
 
   useEffect(() => {
     pageRef.current = page;
@@ -510,76 +418,11 @@ const SearchResults: React.FC = () => {
     return recentTerms.filter((term) => term.toLowerCase().includes(q));
   }, [queryInput, recentTerms]);
 
-  const filteredRecentCategories = useMemo(() => {
-    const q = queryInput.trim().toLowerCase();
-    if (!q) return recentCategories;
-    return recentCategories.filter((category) => {
-      const name = category.nameAr.toLowerCase();
-      const path = category.pathAr.toLowerCase();
-      return name.includes(q) || path.includes(q);
-    });
-  }, [queryInput, recentCategories]);
-
-  useEffect(() => {
-    if (isImageSearch) {
-      setCategorySuggestions([]);
-      setSuggestionsLoading(false);
-      return;
-    }
-
-    const q = queryInput.trim();
-    if (!q || q === IMAGE_QUERY_LABEL) {
-      setCategorySuggestions([]);
-      setSuggestionsLoading(false);
-      return;
-    }
-
-    let cancelled = false;
-    const timerId = window.setTimeout(async () => {
-      setSuggestionsLoading(true);
-      try {
-        // Normalize the search term to handle slang and singular/plural
-        const normalizedQuery = normalizeArabicSearchTerm(q);
-        const response = await searchCategorySuggestions(normalizedQuery, 20);
-        if (cancelled) return;
-        setCategorySuggestions(Array.isArray(response?.categories) ? response.categories : []);
-      } catch (error) {
-        console.error('Error fetching category suggestions:', error);
-        if (cancelled) return;
-        setCategorySuggestions([]);
-      } finally {
-        if (!cancelled) setSuggestionsLoading(false);
-      }
-    }, 50);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timerId);
-    };
-  }, [IMAGE_QUERY_LABEL, isImageSearch, queryInput]);
-
+  // New search effect using embedding search
   useEffect(() => {
     const query = activeQuery.trim();
-    const category = activeCategory;
-    if (!category?.id) {
-      
-      setResults([]);
-      setHasMore(false);
-      setPage(1);
-      pageRef.current = 1;
-      hasMoreRef.current = false;
-      inFlightMoreRef.current = false;
-      scrollRatioRef.current = 0;
-      setError(null);
-      return;
-    }
-    if (imageSearchInput) return;
-    if (restored) {
-      setLoading(false);
-      setLoadingMore(false);
-      return;
-    }
-    rememberSearchTerm(query || category.nameAr || category.pathAr || '');
+    if (!query || imageSearchInput) return;
+
     let cancelled = false;
     const runSearch = async () => {
       setLoading(true);
@@ -593,17 +436,19 @@ const SearchResults: React.FC = () => {
       inFlightMoreRef.current = false;
       scrollRatioRef.current = 0;
       setError(null);
+      rememberSearchTerm(query);
+
       try {
         const maxPrice = priceFilter === '1k' ? 1000 : priceFilter === '5k' ? 5000 : priceFilter === '10k' ? 10000 : priceFilter === '25k' ? 25000 : undefined;
         const condition = conditionFilter === 'new' ? 'new' : conditionFilter === 'used' ? 'used' : undefined;
-        const response = await searchProductsByCategory(category, initialPage, LIMIT, maxPrice, condition);
+        const response = await searchProducts(query, initialPage, LIMIT, maxPrice, condition);
         if (cancelled) return;
         const orderedResults = Array.isArray(response.products) ? response.products : [];
         setResults(orderedResults);
         setHasMore(Boolean(response.hasMore));
       } catch (searchError: any) {
         if (cancelled) return;
-        const message = searchError?.message || 'فشل تحميل منتجات القسم';
+        const message = searchError?.message || 'فشل البحث';
         setResults([]);
         setHasMore(false);
         setError(message);
@@ -615,20 +460,20 @@ const SearchResults: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [activeCategory, activeQuery, conditionFilter, priceFilter, restored, rememberSearchTerm, searchVersion, imageSearchInput]);
+  }, [activeQuery, conditionFilter, priceFilter, rememberSearchTerm, searchVersion, imageSearchInput]);
 
+  // New loadMore using embedding search
   const loadMore = useCallback(async () => {
     const query = activeQueryRef.current.trim();
-    const category = activeCategoryRef.current;
-    if (!imageSearchInput && !category?.id) return;
-    if (!hasMoreRef.current || loadingRef.current || loadingMoreRef.current) return;
-    if (inFlightMoreRef.current) return;
+    if (imageSearchInput) {
+      // Keep image search logic
+      if (!hasMoreRef.current || loadingRef.current || loadingMoreRef.current) return;
+      if (inFlightMoreRef.current) return;
 
-    inFlightMoreRef.current = true;
-    setLoadingMore(true);
-    const nextPage = pageRef.current + 1;
-    try {
-      if (imageSearchInput) {
+      inFlightMoreRef.current = true;
+      setLoadingMore(true);
+      const nextPage = pageRef.current + 1;
+      try {
         const response = selectedObjectBox
           ? await searchProductsByImageCrop(imageSearchInput, selectedObjectBox, nextPage, LIMIT)
           : await searchProductsByImage(imageSearchInput, nextPage, LIMIT);
@@ -647,17 +492,28 @@ const SearchResults: React.FC = () => {
         setHasMore(Boolean(response.hasMore));
         setPage(nextPage);
         pageRef.current = nextPage;
-        return;
+      } catch (searchError: any) {
+        setError(searchError?.message || 'فشل تحميل المزيد');
+      } finally {
+        setLoadingMore(false);
+        inFlightMoreRef.current = false;
       }
-      
-      if (!category) return;
-      
+      return;
+    }
+
+    if (!query || !hasMoreRef.current || loadingRef.current || loadingMoreRef.current) return;
+    if (inFlightMoreRef.current) return;
+
+    inFlightMoreRef.current = true;
+    setLoadingMore(true);
+    const nextPage = pageRef.current + 1;
+    try {
       const price = priceFilterRef.current;
       const cond = conditionFilterRef.current;
       const maxPrice = price === '1k' ? 1000 : price === '5k' ? 5000 : price === '10k' ? 10000 : price === '25k' ? 25000 : undefined;
       const condition = cond === 'new' ? 'new' : cond === 'used' ? 'used' : undefined;
-      const response = await searchProductsByCategory(category, nextPage, LIMIT, maxPrice, condition);
-      if (activeQueryRef.current.trim() !== query || activeCategoryRef.current?.id !== category?.id) return;
+      const response = await searchProducts(query, nextPage, LIMIT, maxPrice, condition);
+      if (activeQueryRef.current.trim() !== query) return;
       const incoming = Array.isArray(response.products) ? response.products : [];
       setResults((prev) => {
         const merged = [...prev, ...incoming];
@@ -673,21 +529,14 @@ const SearchResults: React.FC = () => {
       setPage(nextPage);
       pageRef.current = nextPage;
     } catch (searchError: any) {
-      if (activeQueryRef.current.trim() !== query || activeCategoryRef.current?.id !== category?.id) return;
-      const message = searchError?.message || 'فشل تحميل المزيد من منتجات القسم';
-      setError(message);
+      setError(searchError?.message || 'فشل تحميل المزيد');
     } finally {
-      if (activeQueryRef.current.trim() === query && (imageSearchInput || activeCategoryRef.current?.id === category?.id)) {
-        setLoadingMore(false);
-      }
+      setLoadingMore(false);
       inFlightMoreRef.current = false;
     }
   }, [imageSearchInput, selectedObjectBox]);
 
   useEffect(() => {
-    const key = activeCategoryKey;
-    if (!key) return;
-
     const getScrollMetrics = () => {
       const scrollingEl = document.scrollingElement || document.documentElement;
       const scrollTop = typeof scrollingEl.scrollTop === 'number'
@@ -722,75 +571,16 @@ const SearchResults: React.FC = () => {
       window.removeEventListener('scroll', handleScroll);
       window.removeEventListener('touchmove', handleScroll);
     };
-  }, [activeCategoryKey, imageSearchInput, loadMore]);
-
-  useEffect(() => {
-    const key = activeCategoryKey;
-    if (!key) return;
-  }, [activeCategoryKey, conditionFilter, hasMore, imageSearchInput, page, priceFilter, results]);
-
-  useEffect(() => {
-    const key = activeCategoryKey;
-    if (!key) return;
-    let timeoutId: any = null;
-    const handleScroll = () => {
-      if (timeoutId) clearTimeout(timeoutId);
-      timeoutId = setTimeout(() => {
-        // Scroll position tracking removed
-      }, 150);
-    };
-    window.addEventListener('scroll', handleScroll, { passive: true });
-    window.addEventListener('touchmove', handleScroll, { passive: true });
-    return () => {
-      if (timeoutId) clearTimeout(timeoutId);
-      window.removeEventListener('scroll', handleScroll);
-      window.removeEventListener('touchmove', handleScroll);
-    };
-  }, [activeCategoryKey, imageSearchInput]);
-
-  const selectCategory = useCallback((category: CategorySuggestion) => {
-    const label = category.nameAr || category.pathAr || queryInput.trim();
-    
-    setRestored(false);
-    setResults([]);
-    setHasMore(false);
-    setPage(1);
-    setError(null);
-    setLoading(true);
-    setCategorySuggestions([]);
-    setActiveCategory(category);
-    setActiveQuery(label);
-    setQueryInput(label);
-    setSearchVersion((v) => v + 1);
-    setIsInputFocused(false);
-    rememberSearchTerm(label);
-    rememberRecentCategory(category);
-    if (inputRef.current) inputRef.current.blur();
-    setRecentTerms(readRecentTerms());
-    setRecentCategories(readRecentCategories());
-    navigate(`/search?q=${encodeURIComponent(label)}&categoryId=${encodeURIComponent(category.id)}&categoryName=${encodeURIComponent(label)}`, { replace: true });
-  }, [navigate, queryInput, readRecentCategories, readRecentTerms, rememberRecentCategory, rememberSearchTerm]);
+  }, [loadMore]);
 
   const submitSearch = () => {
     if (imageSearchInput) return;
     const q = queryInput.trim();
     if (!q || q === IMAGE_QUERY_LABEL) return;
-    const exactMatch = categorySuggestions.find((item) => item.nameAr === q || item.pathAr === q);
-    if (exactMatch) {
-      selectCategory(exactMatch);
-      return;
-    }
-    if (categorySuggestions.length > 0) {
-      selectCategory(categorySuggestions[0]);
-      return;
-    }
-    setActiveCategory(null);
     setActiveQuery(q);
-    setResults([]);
-    setHasMore(false);
-    setPage(1);
-    setLoading(false);
-    setError('اختر قسمًا من القائمة لعرض المنتجات.');
+    setSearchVersion((v) => v + 1);
+    setIsInputFocused(false);
+    setRecentTerms(readRecentTerms());
     navigate(`/search?q=${encodeURIComponent(q)}`, { replace: true });
   };
 
@@ -814,7 +604,7 @@ const SearchResults: React.FC = () => {
       });
     }
     navigate(`/product?id=${id}`, { state: { initialProduct: product } });
-  }, [imageOriginalSize, imageSearchInput, imageSearchPreview, navigate, persistImageSearchState, results, selectedObjectBox]);
+  }, [imageOriginalSize, imageSearchInput, imageSearchPreview, navigate, persistImageSearchState, selectedObjectBox]);
 
   const isProductInWishlist = (productId: number | string) => {
     const normalizedProductId = normalizeWishlistProductId(productId);
@@ -1042,340 +832,258 @@ const SearchResults: React.FC = () => {
                          left: `${left}%`,
                          top: `${top}%`,
                          width: `${width}%`,
-                         height: `${height}%`,
-                         boxShadow: isManual ? '0 0 0 9999px rgba(0, 0, 0, 0.5)' : 'none',
-                         cursor: isManual ? (isDragging ? 'grabbing' : 'grab') : 'pointer',
-                         zIndex: 10,
-                         touchAction: 'none'
+                         height: `${height}%`
                        }}
                      >
                        {isManual && (
                          <>
-                           {/* Resize Handles */}
-                           <div
-                             onMouseDown={(e) => handlePointerDown(e, 'nw')}
-                             onTouchStart={(e) => handlePointerDown(e, 'nw')}
-                             className="absolute -top-2 -left-2 w-5 h-5 bg-white border-2 border-primary rounded-full cursor-nwse-resize z-20"
-                           />
-                           <div
+                           {/* Resize handles */}
+                           <div 
+                             className="absolute -right-1.5 -top-1.5 size-3 bg-white rounded-full border border-primary"
                              onMouseDown={(e) => handlePointerDown(e, 'ne')}
                              onTouchStart={(e) => handlePointerDown(e, 'ne')}
-                             className="absolute -top-2 -right-2 w-5 h-5 bg-white border-2 border-primary rounded-full cursor-nesw-resize z-20"
                            />
-                           <div
-                             onMouseDown={(e) => handlePointerDown(e, 'sw')}
-                             onTouchStart={(e) => handlePointerDown(e, 'sw')}
-                             className="absolute -bottom-2 -left-2 w-5 h-5 bg-white border-2 border-primary rounded-full cursor-nesw-resize z-20"
+                           <div 
+                             className="absolute -left-1.5 -top-1.5 size-3 bg-white rounded-full border border-primary"
+                             onMouseDown={(e) => handlePointerDown(e, 'nw')}
+                             onTouchStart={(e) => handlePointerDown(e, 'nw')}
                            />
-                           <div
+                           <div 
+                             className="absolute -right-1.5 -bottom-1.5 size-3 bg-white rounded-full border border-primary"
                              onMouseDown={(e) => handlePointerDown(e, 'se')}
                              onTouchStart={(e) => handlePointerDown(e, 'se')}
-                             className="absolute -bottom-2 -right-2 w-5 h-5 bg-white border-2 border-primary rounded-full cursor-nwse-resize z-20"
+                           />
+                           <div 
+                             className="absolute -left-1.5 -bottom-1.5 size-3 bg-white rounded-full border border-primary"
+                             onMouseDown={(e) => handlePointerDown(e, 'sw')}
+                             onTouchStart={(e) => handlePointerDown(e, 'sw')}
                            />
                          </>
                        )}
-                       {!isManual && (
-                         <span className="bg-primary text-white text-xs px-2 py-1 rounded-full font-bold shadow-lg transform -translate-y-1/2 -translate-x-1/2 absolute top-0 left-1/2 whitespace-nowrap">
-                           {`عنصر ${idx + 1}`}
-                         </span>
-                       )}
                      </div>
-                   )
+                   );
                 })}
               </div>
-
-              <button 
-                onClick={() => {
-                   if (detectedObjects.length > 0 && detectedObjects[0].label === 'manual') {
+              <div className="mt-6 w-full max-w-md">
+                <button 
+                  onClick={() => {
+                    if (detectedObjects.length > 0) {
                       handleObjectSelection(detectedObjects[0].box);
-                   }
-                }}
-                className="mt-8 bg-primary hover:bg-primary/90 text-white px-8 py-3 rounded-xl font-bold transition-colors z-10 shadow-lg"
-              >
-                البحث عن الجزء المحدد
-              </button>
+                    } else {
+                      handleObjectSelection(null);
+                    }
+                  }}
+                  className="w-full bg-primary text-white py-3.5 rounded-xl font-bold flex items-center justify-center gap-2"
+                >
+                  <Search size={16} />
+                  بحث
+                </button>
+              </div>
             </>
           )}
         </div>
       )}
 
-      {isImageSearch && imageSearchPreview && !showImagePopup && (
-        <div className="px-4 pt-3">
-          <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 p-3 flex flex-col gap-3">
-            <div className="flex items-center gap-3">
-              <div className="relative w-24 h-24 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-900 overflow-hidden group">
-                <img
-                  src={imageSearchPreview}
-                  alt="بحث بالصورة"
-                  className="w-full h-full object-contain"
-                />
-                
-                {/* Object Selection Overlay */}
-                {detectedObjects.length > 0 && (
-                  <div className="absolute inset-0 z-10 pointer-events-none">
-                    {/* Visual indicators for detected objects on the image thumbnail */}
-                    <div className="absolute inset-0 bg-black/10"></div>
-                  </div>
-                )}
-              </div>
-
-              <div className="flex-1 min-w-0 flex flex-col gap-2 w-full overflow-hidden">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <div className="text-sm font-black text-slate-900 dark:text-white">بحث بالصورة</div>
-                    <div className="text-xs font-semibold text-slate-500 dark:text-slate-400 truncate">
-                      {detectedObjects.length > 0 
-                        ? `تم اكتشاف ${detectedObjects.length} عناصر.` 
-                        : 'جاري تحليل الصورة...'}
-                    </div>
-                  </div>
+      {isInputFocused && !isImageSearch && (
+        <div className="bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800 max-h-[40vh] overflow-y-auto">
+          {filteredRecentTerms.length > 0 && (
+            <div className="px-4 pt-4 pb-2">
+              <h3 className="text-xs font-bold text-slate-400 mb-2">بحث حديث</h3>
+              <div className="flex flex-wrap gap-2">
+                {filteredRecentTerms.map((term, idx) => (
                   <button
-                    type="button"
-                    onClick={() => setShowImagePopup(true)}
-                    className="text-xs font-bold text-primary bg-primary/10 px-2 py-1 rounded-lg"
+                    key={idx}
+                    onClick={() => {
+                      setQueryInput(term);
+                      setActiveQuery(term);
+                      setSearchVersion((v) => v + 1);
+                      setIsInputFocused(false);
+                      navigate(`/search?q=${encodeURIComponent(term)}`, { replace: true });
+                    }}
+                    className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-xs font-semibold rounded-full"
                   >
-                    تعديل التحديد
-                  </button>
-                </div>
-
-                {/* Detected Objects List - Now as Image Thumbnails */}
-                {detectedObjects.length > 0 && imageOriginalSize && (
-                  <div className="flex overflow-x-auto gap-2 pb-2 hide-scrollbar w-full" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
-                    {detectedObjects.map((obj, idx) => {
-                      const isSelected = selectedObjectBox && 
-                        JSON.stringify(selectedObjectBox) === JSON.stringify(obj.box);
-                      
-                      const [xmin, ymin, xmax, ymax] = obj.box;
-                      
-                      // Calculate the crop coordinates for background-position
-                      // We use percentage to position the background image inside the square thumbnail
-                      const widthPercent = (imageOriginalSize.width / (xmax - xmin)) * 100;
-                      const heightPercent = (imageOriginalSize.height / (ymax - ymin)) * 100;
-                      
-                      const leftPercent = (xmin / (imageOriginalSize.width - (xmax - xmin))) * 100 || 0;
-                      const topPercent = (ymin / (imageOriginalSize.height - (ymax - ymin))) * 100 || 0;
-
-                      return (
-                        <button
-                          key={idx}
-                          onClick={() => handleObjectSelection(obj.box)}
-                          className={`relative flex-shrink-0 size-16 rounded-xl overflow-hidden transition-all border-2 ${
-                            isSelected 
-                              ? 'border-primary shadow-md shadow-primary/20 ring-2 ring-primary ring-offset-2 ring-offset-white dark:ring-offset-slate-800' 
-                              : 'border-transparent opacity-70 hover:opacity-100'
-                          }`}
-                        >
-                          <div 
-                            className="absolute inset-0 bg-no-repeat"
-                            style={{
-                              backgroundImage: `url(${imageSearchPreview})`,
-                              backgroundSize: `${widthPercent}% ${heightPercent}%`,
-                              backgroundPosition: `${leftPercent}% ${topPercent}%`
-                            }}
-                          />
-                          {isSelected && (
-                            <div className="absolute inset-0 border-[2px] border-primary rounded-xl z-10 pointer-events-none" />
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                className="flex-1 px-3 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-100 text-xs font-black hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
-              >
-                تغيير الصورة
-              </button>
-              <button
-                type="button"
-                onClick={clearImageSearch}
-                className="px-4 py-2.5 rounded-xl bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 text-xs font-black hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors"
-              >
-                مسح
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {!isImageSearch && isInputFocused && queryInput.trim() && (
-        <div className="px-4 pt-3">
-          <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 p-3">
-            <div className="flex items-center justify-between mb-2">
-              <div className="text-xs font-black text-slate-700 dark:text-slate-200">الأقسام المطابقة</div>
-              {suggestionsLoading && (
-                <div className="text-[11px] font-bold text-slate-400 dark:text-slate-500">جاري البحث...</div>
-              )}
-            </div>
-            {categorySuggestions.length > 0 ? (
-              <div className="flex flex-col gap-2">
-                {categorySuggestions.map((category) => (
-                  <button
-                    key={category.id}
-                    type="button"
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => selectCategory(category)}
-                    className="w-full text-right px-3 py-3 rounded-xl bg-slate-50 dark:bg-slate-700/60 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
-                  >
-                    <div className="text-sm font-black text-slate-900 dark:text-white">
-                      {category.nameAr}
-                    </div>
-                    <div className="text-xs font-semibold text-slate-500 dark:text-slate-400 truncate">
-                      {category.pathAr}
-                    </div>
+                    {term}
                   </button>
                 ))}
-              </div>
-            ) : (
-              !suggestionsLoading && (
-                <div className="text-sm font-semibold text-slate-500 dark:text-slate-400">
-                  لا توجد أقسام مطابقة، جرّب كتابة اسم مختلف.
-                </div>
-              )
-            )}
-          </div>
-        </div>
-      )}
-
-      {!isImageSearch && isInputFocused && !queryInput.trim() && (filteredRecentCategories.length > 0 || filteredRecentTerms.length > 0) && (
-        <div className="px-4 pt-3">
-          <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 p-3">
-            <div className="flex items-center justify-between mb-2">
-              <div className="text-xs font-black text-slate-700 dark:text-slate-200">آخر ما فتحت في البحث</div>
-              <button
-                type="button"
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => {
-                  try {
-                    localStorage.removeItem(RECENT_SEARCH_TERMS_KEY);
-                    localStorage.removeItem(RECENT_CATEGORY_CLICKS_KEY);
-                  } catch {}
-                  setRecentTerms([]);
-                  setRecentCategories([]);
-                }}
-                className="text-[11px] font-bold text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
-              >
-                مسح
-              </button>
-            </div>
-            {filteredRecentCategories.length > 0 && (
-              <div className="mb-3 flex flex-col gap-2">
-                <div className="text-[11px] font-black text-slate-500 dark:text-slate-400">الأقسام الأخيرة</div>
-                {filteredRecentCategories.slice(0, 6).map((category) => (
-                  <button
-                    key={category.id}
-                    type="button"
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => selectCategory(category)}
-                    className="w-full text-right px-3 py-3 rounded-xl bg-slate-50 dark:bg-slate-700/60 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
-                  >
-                    <div className="text-sm font-black text-slate-900 dark:text-white">
-                      {category.nameAr}
-                    </div>
-                    <div className="text-xs font-semibold text-slate-500 dark:text-slate-400 truncate">
-                      {category.pathAr}
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
-            {filteredRecentTerms.length > 0 && (
-              <div className="flex flex-col gap-2">
-                <div className="text-[11px] font-black text-slate-500 dark:text-slate-400">عمليات البحث الأخيرة</div>
-                <div className="flex flex-wrap gap-2">
-                  {filteredRecentTerms.slice(0, 12).map((term) => (
-                    <button
-                      key={term}
-                      type="button"
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => {
-                        setQueryInput(term);
-                        
-                        setRestored(false);
-                        setResults([]);
-                        setHasMore(false);
-                        setPage(1);
-                        setError(null);
-                        setLoading(false);
-                        setActiveCategory(null);
-                        setActiveQuery(term);
-                        navigate(`/search?q=${encodeURIComponent(term)}`, { replace: true });
-                        if (inputRef.current) inputRef.current.focus();
-                      }}
-                      className="px-3 py-1.5 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-100 text-xs font-bold"
-                    >
-                      {term}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {error && (
-        <div className="mx-4 mt-4 rounded-2xl border border-red-200 dark:border-red-900/40 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 p-4 flex items-start gap-3">
-          <AlertCircle size={18} className="mt-0.5" />
-          <div className="text-sm font-semibold">{error}</div>
-        </div>
-      )}
-
-      {!error && activeCategory?.id && activeQuery.trim() && !loading && results.length === 0 && (
-        <div className="mx-4 mt-10 text-center text-slate-500 dark:text-slate-400 font-semibold">
-          لا توجد نتائج
-        </div>
-      )}
-
-      {loading && (
-        <div className="mx-4 mt-10 flex items-center justify-center">
-          <div className="h-8 w-8 border-2 border-t-transparent border-primary rounded-full animate-spin"></div>
-        </div>
-      )}
-
-      {results.length > 0 && (
-        <>
-          <div className="px-4 mt-4 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 md:gap-4">
-            {results.map((product) => (
-              <ProductCard
-                key={product.id}
-                product={product}
-                onNavigate={(id) => handleNavigateToProduct(id, product)}
-                onAddToWishlist={onAddToWishlist}
-                isProductInWishlist={isProductInWishlist}
-                allowAdminFeatureControls={!imageSearchInput && Boolean(activeQuery.trim())}
-                searchContextQuery={activeQuery}
-              />
-            ))}
-          </div>
-
-          {loadingMore && (
-            <div className="flex flex-col items-center justify-center py-6 gap-3">
-              <div className="flex items-center gap-3 px-6 py-3 rounded-2xl bg-white dark:bg-slate-800 shadow-xl shadow-slate-200/50 dark:shadow-none border border-slate-100 dark:border-slate-700 animate-pulse">
-                <div className="h-5 w-5 border-2 border-t-transparent border-primary rounded-full animate-spin"></div>
-                <span className="text-sm font-black text-slate-900 dark:text-white">جاري تحميل المزيد...</span>
               </div>
             </div>
           )}
+        </div>
+      )}
 
-          {!loadingMore && !hasMore && results.length > 0 && (
-            <div className="flex flex-col items-center justify-center py-8 gap-3">
-              <div className="h-px w-12 bg-slate-200 dark:bg-slate-700"></div>
-              <p className="text-sm font-bold text-slate-400 dark:text-slate-500">وصلت إلى نهاية النتائج</p>
-              <div className="h-px w-12 bg-slate-200 dark:bg-slate-700"></div>
+      {!isInputFocused && (
+        <div className="px-4 py-3">
+          <div className="h-10 flex items-center gap-3 overflow-x-auto pb-1 -mb-1">
+            <button
+              type="button"
+              onClick={() => {
+                setConditionFilter(null);
+                setPriceFilter(null);
+              }}
+              className={`h-9 px-4 rounded-lg text-xs font-bold whitespace-nowrap transition-colors ${
+                conditionFilter === null && priceFilter === null
+                  ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
+              }`}
+            >
+              الكل
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setConditionFilter(conditionFilter === 'new' ? null : 'new');
+              }}
+              className={`h-9 px-4 rounded-lg text-xs font-bold whitespace-nowrap transition-colors ${
+                conditionFilter === 'new'
+                  ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
+              }`}
+            >
+              جديد
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setConditionFilter(conditionFilter === 'used' ? null : 'used');
+              }}
+              className={`h-9 px-4 rounded-lg text-xs font-bold whitespace-nowrap transition-colors ${
+                conditionFilter === 'used'
+                  ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
+              }`}
+            >
+              مستعمل
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setPriceFilter(priceFilter === '1k' ? null : '1k');
+              }}
+              className={`h-9 px-4 rounded-lg text-xs font-bold whitespace-nowrap transition-colors ${
+                priceFilter === '1k'
+                  ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
+              }`}
+            >
+              حتى 1,000 ر.س
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setPriceFilter(priceFilter === '5k' ? null : '5k');
+              }}
+              className={`h-9 px-4 rounded-lg text-xs font-bold whitespace-nowrap transition-colors ${
+                priceFilter === '5k'
+                  ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
+              }`}
+            >
+              حتى 5,000 ر.س
+            </button>
+          </div>
+        </div>
+      )}
+
+      {loading ? (
+        <div className="px-4 py-12">
+          <div className="grid grid-cols-2 gap-4">
+            {[1, 2, 3, 4].map((i) => (
+              <div key={i} className="bg-white dark:bg-slate-800 rounded-2xl overflow-hidden">
+                <div className="aspect-[4/3] bg-slate-100 dark:bg-slate-700 animate-pulse" />
+                <div className="p-3 flex flex-col gap-2">
+                  <div className="h-4 w-3/4 bg-slate-100 dark:bg-slate-700 rounded animate-pulse" />
+                  <div className="h-3 w-1/2 bg-slate-100 dark:bg-slate-700 rounded animate-pulse" />
+                  <div className="h-4 w-1/3 bg-slate-100 dark:bg-slate-700 rounded animate-pulse" />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : error ? (
+        <div className="px-4 py-12">
+          <div className="flex flex-col items-center justify-center gap-3 text-center">
+            <div className="w-12 h-12 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center text-red-500">
+              <AlertCircle size={24} />
+            </div>
+            <div>
+              <p className="text-sm font-bold text-slate-900 dark:text-white mb-1">حصل خطأ</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400">{error}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSearchVersion((v) => v + 1)}
+              className="px-4 py-2 bg-slate-900 dark:bg-white text-white dark:text-slate-900 rounded-lg text-xs font-bold"
+            >
+              إعادة المحاولة
+            </button>
+          </div>
+        </div>
+      ) : results.length > 0 ? (
+        <>
+          <div className="px-4 pb-4">
+            <p className="text-xs text-slate-500 font-medium mt-1 mb-3">
+              {hasMore ? `+${results.length} منتجات` : `${results.length} منتجات`}
+            </p>
+          </div>
+          <div className="px-4 pb-6">
+            <div className="grid grid-cols-2 gap-4">
+              {results.map((product) => (
+                <ProductCard
+                  key={product.id}
+                  product={product}
+                  isWishlisted={isProductInWishlist(product.id)}
+                  onWishlist={onAddToWishlist}
+                  onClick={() => handleNavigateToProduct(product.id, product)}
+                />
+              ))}
+            </div>
+          </div>
+          {loadingMore && (
+            <div className="px-4 pb-12">
+              <div className="grid grid-cols-2 gap-4">
+                {[1, 2].map((i) => (
+                  <div key={i} className="bg-white dark:bg-slate-800 rounded-2xl overflow-hidden">
+                    <div className="aspect-[4/3] bg-slate-100 dark:bg-slate-700 animate-pulse" />
+                    <div className="p-3 flex flex-col gap-2">
+                      <div className="h-4 w-3/4 bg-slate-100 dark:bg-slate-700 rounded animate-pulse" />
+                      <div className="h-3 w-1/2 bg-slate-100 dark:bg-slate-700 rounded animate-pulse" />
+                      <div className="h-4 w-1/3 bg-slate-100 dark:bg-slate-700 rounded animate-pulse" />
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </>
+      ) : (
+        !activeQuery.trim() && !isImageSearch ? (
+          <div className="px-4 py-12">
+            <div className="flex flex-col items-center justify-center gap-3 text-center">
+              <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-400">
+                <Search size={24} />
+              </div>
+              <div>
+                <p className="text-sm font-bold text-slate-900 dark:text-white mb-1">ابحث عن منتجات</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">اكتب ما تبحث عنه أو اختر صورة للبحث</p>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="px-4 py-12">
+            <div className="flex flex-col items-center justify-center gap-3 text-center">
+              <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-400">
+                <Search size={24} />
+              </div>
+              <div>
+                <p className="text-sm font-bold text-slate-900 dark:text-white mb-1">لم نجد نتائج</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">حاول استخدام كلمات بحث أخرى</p>
+              </div>
+            </div>
+          </div>
+        )
       )}
     </div>
   );
 };
 
 export default SearchResults;
-

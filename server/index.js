@@ -24,6 +24,7 @@ import axios from 'axios';
 import { fileURLToPath } from 'url';
 import prisma from './prismaClient.js';
 import { processProductAI, processProductEmbedding, hybridSearch, estimateProductPhysicals, normalizeArabic } from './services/aiService.js';
+import { embedText } from './services/clipService.js';
 import { buildCategoryIndex } from './services/categoryService.js';
 import { calculateOrderShipping, calculateProductShipping, getAdjustedPrice } from './services/shippingService.js';
 import { setupLinkCheckerCron, checkAllProductLinks } from './services/linkCheckerService.js';
@@ -4350,10 +4351,7 @@ app.get('/api/tools/rapid/item-detail', async (req, res) => {
       attributes: itemData.Attributes || [],
       props: itemData.Attributes || [],
       raw: {
-        Description: description,
-        ConfiguredItems: itemData.ConfiguredItems || [],
-        Attributes: itemData.Attributes || [],
-        desc_imgs: descriptionImages
+        Description: description
       }
     };
     await prisma.rapidItemCache.upsert({
@@ -4391,6 +4389,95 @@ app.get('/api/tools/rapid/item-detail', async (req, res) => {
     return res.status(500).json({ error: 'Failed to fetch item detail' });
   }
 });
+
+  /**
+   * Photo‑embedding search endpoint.
+   * Accepts a text query (Arabic or any language), generates a CLIP text embedding,
+   * then performs a nearest‑neighbor search against stored product image embeddings.
+   * Returns products ordered from most similar to least similar.
+   */
+  app.get('/api/products/search-by-photo', async (req, res) => {
+    const query = String(req.query.search || '').trim();
+    if (!query) {
+      return res.status(400).json({ error: 'Missing required query parameter: search' });
+    }
+
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+    const offset = (page - 1) * limit;
+
+    try {
+      // 1️⃣ Generate text embedding using CLIP
+      const embedding = await embedText(query);
+      if (!embedding || embedding.length === 0) {
+        throw new Error('Failed to generate embedding');
+      }
+
+      // 2️⃣ Search product images by vector similarity
+      const matches = await searchProductsByImageVector(prisma, embedding, limit, offset);
+
+      if (!matches || matches.length === 0) {
+        return res.json({ products: [], total: 0, page, totalPages: 0, engine: 'vector' });
+      }
+
+      // 3️⃣ Load full product data for the matched IDs
+      const productIds = matches.map(m => m.id);
+      const products = await prisma.product.findMany({
+        where: { id: { in: productIds }, isActive: true, status: 'PUBLISHED' },
+        select: {
+          id: true,
+          name: true,
+          price: true,
+          basePriceIQD: true,
+          image: true,
+          aiMetadata: true,
+          neworold: true,
+          isFeatured: true,
+          featuredSearchSentences: true,
+          domesticShippingFee: true,
+          deliveryTime: true,
+          variants: { select: { id: true, combination: true, price: true, basePriceIQD: true, image: true } }
+        }
+      });
+
+      // Map for quick lookup
+      const productMap = new Map();
+      for (const p of products) {
+        productMap.set(p.id, p);
+      }
+
+      // 4️⃣ Build response preserving the order returned by the vector search
+      const resultProducts = matches.map(m => {
+        const p = productMap.get(m.id);
+        if (!p) return null;
+        const aiMetadata = parseAiMetadata(p.aiMetadata);
+        const processed = applyDynamicPricingToProduct(p, {});
+        const isRealBrand = typeof aiMetadata?.isRealBrand === 'boolean' ? aiMetadata.isRealBrand : null;
+        const neworold = (p.neworold !== null && p.neworold !== undefined) ? p.neworold : extractNewOrOld(aiMetadata);
+        return {
+          ...processed,
+          aiMetadata,
+          isRealBrand,
+          neworold,
+          similarity: m.similarity,
+          matchedImageId: m.matchedImageId,
+          matchedImageUrl: m.matchedImageUrl,
+          matchedImageOrder: m.matchedImageOrder
+        };
+      }).filter(Boolean);
+
+      res.json({
+        products: resultProducts,
+        total: resultProducts.length,
+        page,
+        totalPages: Math.ceil(resultProducts.length / limit),
+        engine: 'vector'
+      });
+    } catch (error) {
+      console.error('[Photo Search] Error:', error);
+      res.status(500).json({ error: 'Failed to perform photo embedding search', details: error.message });
+    }
+  });
 
 app.get('/api/tools/rapid/item-reviews', async (req, res) => {
   try {
@@ -9460,6 +9547,77 @@ app.get('/api/search', async (req, res) => {
       return res.json({ products: [], total: 0, page, totalPages: 0, hasMore: false, engine: 'db' });
     }
 
+    // Use CLIP text embedding and image similarity search
+    try {
+      const textEmbedding = await embedText(q);
+      perf.log('clip_embedding_done');
+      
+      // Check if we got a valid embedding
+      if (!textEmbedding || textEmbedding.length !== 512 || textEmbedding.every(v => v === 0)) {
+        throw new Error('Invalid CLIP embedding');
+      }
+
+      // Search products by image vector
+      const vectorMatches = await searchProductsByImageVector(prisma, textEmbedding, 500, 0);
+      perf.log('vector_search_done', { matches: vectorMatches.length });
+
+      if (vectorMatches.length > 0) {
+        const offset = (page - 1) * limit;
+        const productIds = vectorMatches.map(m => m.id);
+
+        // Get product details
+        const whereCondition = {
+          id: { in: productIds },
+          status: 'PUBLISHED',
+          isActive: true
+        };
+
+        if (Number.isFinite(maxPrice) && maxPrice > 0) {
+          whereCondition.price = { lte: maxPrice };
+        }
+
+        if (condition === 'new') {
+          whereCondition.neworold = true;
+        } else if (condition === 'used') {
+          whereCondition.OR = [{ neworold: false }, { neworold: null }];
+        }
+
+        const productsFromDb = await prisma.product.findMany({
+          where: whereCondition,
+          select: getSearchProductSelect()
+        });
+
+        // Sort products in the same order as vector matches
+        const productMap = new Map(productsFromDb.map(p => [p.id, p));
+        const sortedProducts = vectorMatches
+          .map(match => productMap.get(match.id))
+          .filter(Boolean);
+
+        const shippingRates = await getSearchShippingRates();
+        const mappedProducts = sortedProducts.map(p => mapSearchProduct(p, shippingRates));
+
+        // Apply pagination
+        const pagedProducts = mappedProducts.slice(offset, offset + limit);
+        const hasMore = mappedProducts.length > offset + limit;
+        const total = mappedProducts.length;
+
+        const result = {
+          products: pagedProducts,
+          total,
+          page,
+          totalPages: Math.ceil(total / limit),
+          hasMore,
+          engine: 'clip-image'
+        };
+
+        perf.log('response_sent', { engine: 'clip-image', returned: pagedProducts.length, total });
+        return res.json(result);
+      }
+    } catch (clipError) {
+      console.warn('[Search] CLIP search failed, falling back to database search:', clipError.message);
+    }
+
+    // Fall back to original search if CLIP fails
     const result = await searchProductsFromDatabase({
       query: q,
       rankingQuery: q,

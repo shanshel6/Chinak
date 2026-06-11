@@ -254,7 +254,12 @@ export const findProductInGlobalCache = persistentCache.findProductInLists;
 export const performCacheMaintenance = persistentCache.maintenance;
 
 // Run maintenance immediately on load to prevent QuotaExceededError
-performCacheMaintenance();
+try {
+  performCacheMaintenance();
+} catch (_e) {
+  // Prevent module-level crash from blocking app startup
+  console.warn('Startup cache maintenance failed:', _e);
+}
 
 export function getAuthHeaders(): Record<string, string> {
   const token = localStorage.getItem('auth_token')?.trim();
