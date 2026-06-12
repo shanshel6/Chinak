@@ -880,6 +880,28 @@ const buildTextSearchSynonyms = (groups) => {
 
 const ARABIC_TEXT_SYNONYMS = buildTextSearchSynonyms(ARABIC_SYNONYM_GROUPS);
 
+function getEnglishEquivalents(text) {
+  const normalizedText = normalizeSearchText(text);
+  const englishTerms = [];
+  
+  // Check each synonym group
+  for (const group of ARABIC_SYNONYM_GROUPS) {
+    const hasMatch = group.some(term => {
+      const normalizedTerm = normalizeSearchText(term);
+      return normalizedText.includes(normalizedTerm) || normalizedTerm.includes(normalizedText);
+    });
+    
+    if (hasMatch) {
+      // Add English terms from this group (terms that have Latin characters)
+      const englishInGroup = group.filter(term => /[a-zA-Z]/.test(term));
+      englishTerms.push(...englishInGroup);
+    }
+  }
+  
+  // Return unique English terms
+  return [...new Set(englishTerms)];
+}
+
 const IRAQI_SLANG_NORMALIZATION_MAP = {
   كنتور: ['دولاب', 'خزانة', 'خزانه', 'دولاب ملابس', 'خزانة ملابس'],
   قنتور: ['دولاب', 'خزانة', 'خزانه', 'دولاب ملابس', 'خزانة ملابس'],
@@ -9549,7 +9571,15 @@ app.get('/api/search', async (req, res) => {
 
     // Use CLIP text embedding and image similarity search
     try {
-      const textEmbedding = await embedText(q);
+      // Get English equivalents for Arabic query (CLIP is English-only)
+      const englishEquivalents = getEnglishEquivalents(q);
+      const clipText = englishEquivalents.length > 0 
+        ? englishEquivalents.join(' ') 
+        : q; // Fallback to original if no English equivalents
+      
+      console.log(`[Search] Using CLIP text: "${clipText}" (original: "${q}")`);
+      
+      const textEmbedding = await embedText(clipText);
       perf.log('clip_embedding_done');
       
       // Check if we got a valid embedding
