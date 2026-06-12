@@ -9117,15 +9117,35 @@ const searchProductsFromDatabase = async ({
   // First map then shuffle products for random order like home page
   const mappedProducts = productsFromDb.map((product) => mapSearchProduct(product, shippingRates));
   
-  const shuffleArray = (arr) => {
+  // Function to shuffle with a consistent seed based on query
+  const seededShuffle = (arr, seedStr) => {
+    // Create a simple hash from the seed string
+    let hash = 0;
+    for (let i = 0; i < seedStr.length; i++) {
+      const char = seedStr.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // Convert to 32bit integer
+    }
+    
+    // Simple seeded random generator
+    const seededRandom = (() => {
+      let s = Math.abs(hash);
+      return () => {
+        s = (s * 9301 + 49297) % 233280;
+        return s / 233280;
+      };
+    })();
+    
+    // Shuffle array using seeded random
     const a = [...arr];
     for (let i = a.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
+      const j = Math.floor(seededRandom() * (i + 1));
       [a[i], a[j]] = [a[j], a[i]];
     }
     return a;
   };
-  const shuffledProducts = shuffleArray(mappedProducts);
+  
+  const shuffledProducts = seededShuffle(mappedProducts, effectiveQuery);
 
   const pagedProducts = shuffledProducts.slice(offset, offset + limit);
   const hasMore = shuffledProducts.length > offset + limit;
@@ -9600,11 +9620,15 @@ app.get('/api/search', async (req, res) => {
 
       if (vectorMatches.length > 0) {
         const offset = (page - 1) * limit;
-        const productIds = vectorMatches.map(m => m.id);
-
-        // Get product details
+        
+        // Get product details and attach similarity scores
+        const productMap = new Map();
+        for (const match of vectorMatches) {
+          productMap.set(match.id, match);
+        }
+        
         const whereCondition = {
-          id: { in: productIds },
+          id: { in: vectorMatches.map(m => m.id) },
           status: 'PUBLISHED',
           isActive: true
         };
@@ -9624,30 +9648,63 @@ app.get('/api/search', async (req, res) => {
           select: getSearchProductSelect()
         });
 
-        // Sort products in the same order as vector matches
-        const productMap = new Map(productsFromDb.map(p => [p.id, p]));
-        const sortedProducts = vectorMatches
-          .map(match => productMap.get(match.id))
-          .filter(Boolean);
-
+        // Combine product details with similarity scores
+        const productsWithScores = productsFromDb.map(product => {
+          const match = productMap.get(product.id);
+          return {
+            ...product,
+            similarity: match ? match.similarity : 0
+          };
+        }).sort((a, b) => b.similarity - a.similarity); // Keep sorted by similarity first
+        
         const shippingRates = await getSearchShippingRates();
-        const mappedProducts = sortedProducts.map(p => mapSearchProduct(p, shippingRates));
-
-        // Shuffle products for random order like home page
-        const shuffleArray = (arr) => {
+        const mappedProducts = productsWithScores.map(p => mapSearchProduct(p, shippingRates));
+        
+        // Function to shuffle with a consistent seed based on query
+        const seededShuffle = (arr, seedStr) => {
+          // Create a simple hash from the seed string
+          let hash = 0;
+          for (let i = 0; i < seedStr.length; i++) {
+            const char = seedStr.charCodeAt(i);
+            hash = ((hash << 5) - hash) + char;
+            hash = hash & hash; // Convert to 32bit integer
+          }
+          
+          // Simple seeded random generator
+          const seededRandom = (() => {
+            let s = Math.abs(hash);
+            return () => {
+              s = (s * 9301 + 49297) % 233280;
+              return s / 233280;
+            };
+          })();
+          
+          // Shuffle array using seeded random
           const a = [...arr];
           for (let i = a.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
+            const j = Math.floor(seededRandom() * (i + 1));
             [a[i], a[j]] = [a[j], a[i]];
           }
           return a;
         };
-        const shuffledProducts = shuffleArray(mappedProducts);
-
+        
+        // Split into similarity tiers
+        const tierSize = Math.ceil(mappedProducts.length / 5); // Split into 5 tiers
+        const tiers = [];
+        for (let i = 0; i < mappedProducts.length; i += tierSize) {
+          tiers.push(mappedProducts.slice(i, i + tierSize));
+        }
+        
+        // Shuffle each tier with consistent seed
+        const shuffledTiers = tiers.map(tier => seededShuffle(tier, q));
+        
+        // Flatten tiers back together (keep tier order: best first)
+        const shuffledProducts = shuffledTiers.flat();
+        
         // Apply pagination
         const pagedProducts = shuffledProducts.slice(offset, offset + limit);
-        const hasMore = mappedProducts.length > offset + limit;
-        const total = mappedProducts.length;
+        const hasMore = shuffledProducts.length > offset + limit;
+        const total = shuffledProducts.length;
 
         const result = {
           products: pagedProducts,
