@@ -355,7 +355,6 @@ const SearchResults: React.FC = () => {
     setShowImagePopup(false);
     setIsAnalyzingImage(false);
     setConditionFilter(null);
-    setPriceFilter(null);
     setError(null);
     setLoading(false);
     setLoadingMore(false);
