@@ -781,9 +781,26 @@ Keep keywords short and relevant.`;
 
 /**
  * Translate Arabic text to English using SiliconFlow with Qwen/Qwen3-8B for CLIP compatibility
+ * Includes database caching for repeated queries
  */
 export async function translateArabicToEnglish(text) {
   try {
+    // 1. Check cache first
+    const cached = await prisma.translationCache.findUnique({
+      where: { arabicQuery: text }
+    });
+
+    if (cached) {
+      // Increment hit count for analytics
+      await prisma.translationCache.update({
+        where: { id: cached.id },
+        data: { hitCount: { increment: 1 } }
+      });
+      console.log(`[AI Debug] Cache hit! "${text}" → "${cached.englishTranslation}"`);
+      return cached.englishTranslation;
+    }
+
+    // 2. If no cache, call AI
     const { siliconflow } = getClients();
     if (!siliconflow) {
       console.warn('[AI Debug] No SiliconFlow client available for translation');
@@ -808,6 +825,17 @@ export async function translateArabicToEnglish(text) {
 
     const translation = response?.choices?.[0]?.message?.content?.trim();
     console.log(`[AI Debug] Translated "${text}" → "${translation}"`);
+
+    // 3. Save translation to cache
+    if (translation) {
+      await prisma.translationCache.create({
+        data: {
+          arabicQuery: text,
+          englishTranslation: translation
+        }
+      });
+    }
+
     return translation || text;
   } catch (error) {
     console.error('[AI Debug] Translation failed:', error.message);

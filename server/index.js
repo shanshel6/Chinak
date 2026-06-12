@@ -9579,9 +9579,9 @@ app.get('/api/search', async (req, res) => {
         clipText = translatedQ;
       }
       
-      // If still no clipText, just use original query (will fall back to DB search)
+      // If still no clipText, use AI translation
       if (!clipText) {
-        clipText = q;
+        clipText = await translateArabicToEnglish(q);
       }
       
       console.log(`[Search] Using CLIP text: "${clipText}" (original: "${q}")`);

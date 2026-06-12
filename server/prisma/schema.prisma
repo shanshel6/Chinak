@@ -70,6 +70,18 @@ model SearchHistory {
   @@index([sessionId])
 }
 
+model TranslationCache {
+  id               Int      @id @default(autoincrement())
+  arabicQuery      String   @unique
+  englishTranslation String
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  hitCount         Int      @default(1) // How many times this translation was used
+
+  @@index([arabicQuery])
+}
+
+
 model Message {
   id        Int      @id @default(autoincrement())
   orderId   Int

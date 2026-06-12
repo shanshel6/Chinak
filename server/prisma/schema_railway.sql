@@ -50,6 +50,24 @@ CREATE TABLE "SearchHistory" (
 );
 
 -- CreateTable
+CREATE TABLE "TranslationCache" (
+    "id" SERIAL NOT NULL,
+    "arabicQuery" TEXT NOT NULL,
+    "englishTranslation" TEXT NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+    "hitCount" INTEGER NOT NULL DEFAULT 1,
+
+    CONSTRAINT "TranslationCache_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateIndex
+CREATE UNIQUE INDEX "TranslationCache_arabicQuery_key" ON "TranslationCache"("arabicQuery");
+
+-- CreateIndex
+CREATE INDEX "TranslationCache_arabicQuery_idx" ON "TranslationCache"("arabicQuery");
+
+-- CreateTable
 CREATE TABLE "Message" (
     "id" SERIAL NOT NULL,
     "orderId" INTEGER NOT NULL,
