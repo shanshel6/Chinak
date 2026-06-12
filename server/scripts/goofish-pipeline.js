@@ -2800,13 +2800,51 @@ async function getSearchTermsForRun() {
   
   // Use custom terms if available - use all terms sequentially, don't batch
   if (customTerms && Array.isArray(customTerms) && customTerms.length > 0) {
+    // Generate a simple hash of the custom terms to detect changes
+    const termsHash = JSON.stringify(customTerms).split('').reduce((a, b) => {
+      a = ((a << 5) - a) + b.charCodeAt(0);
+      return a & a;
+    }, 0).toString(16);
+
     const history = loadSearchTermHistory();
     const existingActiveBatch = history.activeBatch;
     const existingQueue = loadBatchLinksQueue();
+
+    // Check if terms have changed - if yes, clear history and start fresh
+    if (existingActiveBatch?.termsHash && existingActiveBatch.termsHash !== termsHash) {
+      console.log('[Custom Terms] Detected change in custom terms, clearing history and starting fresh!');
+      clearActiveBatch(existingActiveBatch.id);
+      clearBatchLinksQueue();
+      // Reload history after clearing
+      const freshHistory = loadSearchTermHistory();
+      const startIndex = 0;
+      const batchId = `custom_${Date.now()}`;
+      const active = { 
+        id: batchId, 
+        generatedAt: new Date().toISOString(), 
+        terms: customTerms, 
+        termsHash: termsHash,
+        nextIndex: startIndex, 
+        source: 'custom',
+        checkpoint: null
+      };
+      const nextHistory = {
+        used: customTerms.slice(0, startIndex),
+        batches: [
+          ...(Array.isArray(freshHistory.batches) ? freshHistory.batches : []),
+          { id: batchId, generatedAt: active.generatedAt, terms: customTerms, source: 'custom' }
+        ],
+        activeBatch: active
+      };
+      saveSearchTermHistory(nextHistory);
+      console.log(`[Custom Terms] Starting fresh with ${customTerms.length} terms.`);
+      return { terms: customTerms, startIndex, batchId, source: 'custom', checkpoint: null, termsHash: termsHash };
+    }
     
-    // Resume from existing batch if it's a custom batch with pending work
+    // Resume from existing batch if it's a custom batch with pending work and terms haven't changed
     if (existingActiveBatch && existingActiveBatch.source === 'custom' && 
-        Array.isArray(existingActiveBatch.terms) && existingActiveBatch.terms.length > 0) {
+        Array.isArray(existingActiveBatch.terms) && existingActiveBatch.terms.length > 0 &&
+        existingActiveBatch.termsHash === termsHash) {
       const savedNextIndex = Math.max(0, Number(existingActiveBatch.nextIndex || 0) || 0);
       const hasQueueWork = hasPendingBatchQueueWork(existingQueue, existingActiveBatch.id, existingActiveBatch.terms.length);
       // Resume if there are still terms to process OR there's pending queue work
@@ -2818,14 +2856,16 @@ async function getSearchTermsForRun() {
           startIndex: nextIndex, 
           batchId: existingActiveBatch.id || `custom_${Date.now()}`, 
           source: 'custom', 
-          checkpoint: existingActiveBatch.checkpoint || null 
+          checkpoint: existingActiveBatch.checkpoint || null,
+          termsHash: termsHash 
         };
       }
     }
     
-    // Also check the queue file directly for a valid checkpoint (e.g. after terms file change)
+    // Also check the queue file directly for a valid checkpoint with matching terms hash
     if (existingQueue && existingQueue.batchId && existingQueue.source === 'custom' &&
-        Array.isArray(existingQueue.termStates) && existingQueue.termStates.length > 0) {
+        Array.isArray(existingQueue.termStates) && existingQueue.termStates.length > 0 &&
+        existingQueue.termsHash === termsHash) {
       const queueNextIndex = Math.max(0, Number(existingQueue.nextCollectTerm || 0) || 0);
       if (queueNextIndex < customTerms.length) {
         console.log(`[Custom Terms] Resuming from queue checkpoint at term ${queueNextIndex}/${customTerms.length}`);
@@ -2834,7 +2874,8 @@ async function getSearchTermsForRun() {
           startIndex: queueNextIndex,
           batchId: existingQueue.batchId,
           source: 'custom',
-          checkpoint: null
+          checkpoint: null,
+          termsHash: termsHash
         };
       }
     }
@@ -2846,6 +2887,7 @@ async function getSearchTermsForRun() {
       id: batchId, 
       generatedAt: new Date().toISOString(), 
       terms: customTerms, 
+      termsHash: termsHash,
       nextIndex: startIndex, 
       source: 'custom',
       checkpoint: null
@@ -2861,7 +2903,7 @@ async function getSearchTermsForRun() {
     saveSearchTermHistory(nextHistory);
     clearBatchLinksQueue();
     console.log(`[Custom Terms] Using all ${customTerms.length} custom terms, starting from index ${startIndex} (term ${startIndex + 1})`);
-    return { terms: customTerms, startIndex, batchId, source: 'custom', checkpoint: null };
+    return { terms: customTerms, startIndex, batchId, source: 'custom', checkpoint: null, termsHash: termsHash };
   }
   
   const existing = Array.isArray(history.used) ? history.used : [];
@@ -6773,7 +6815,7 @@ async function run() {
       }
       
       console.log(`[Pipeline] Starting term cycle ${cycleIndex}...`);
-      const { terms: searchTerms, startIndex, batchId, source } = await getSearchTermsForRun();
+      const { terms: searchTerms, startIndex, batchId, source, termsHash } = await getSearchTermsForRun();
       const safeStartIndex = Math.max(0, Math.min(searchTerms.length, Number(startIndex || 0) || 0));
       console.log(`Loaded ${searchTerms.length} search terms for this batch.`);
       console.log(`Batch source: ${source}.`);
@@ -6782,12 +6824,14 @@ async function run() {
       const queueMatchesBatch = existingQueue
         && existingQueue.batchId === batchId
         && Array.isArray(existingQueue.termStates)
-        && existingQueue.termStates.length === searchTerms.length;
+        && existingQueue.termStates.length === searchTerms.length
+        && (!termsHash || !existingQueue.termsHash || existingQueue.termsHash === termsHash);
       const queue = queueMatchesBatch
         ? existingQueue
         : {
             batchId,
             source,
+            termsHash: termsHash,
             phase: 'collect',
             nextCollectTerm: safeStartIndex,
             nextProcessTerm: 0,
