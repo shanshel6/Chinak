@@ -131,8 +131,11 @@ export function calculatePriceMultiplier(basePriceIQD) {
   return 1.2;
 }
 
-const SILICONFLOW_API_KEY = String(process.env.SILICONFLOW_API_KEY || '').trim();
-console.log(`[Debug] SILICONFLOW_API_KEY is set: ${SILICONFLOW_API_KEY ? 'YES (length=' + SILICONFLOW_API_KEY.length + ')' : 'NO'}`);
+const isPipeline2 = String(process.env.GOOFISH_QUEUE_DIR || '').includes('2');
+const SILICONFLOW_API_KEY = isPipeline2 
+  ? String(process.env.SILICONFLOW_API_KEY || 'sk-sbkaquplmslwtqghchtceehtkluvpjuarqvnffwkbfvnflfu').trim() 
+  : String(process.env.SILICONFLOW_API_KEY || '').trim();
+console.log(`[Debug] Pipeline ${isPipeline2 ? '2' : '1'} - SILICONFLOW_API_KEY is set: ${SILICONFLOW_API_KEY ? 'YES (length=' + SILICONFLOW_API_KEY.length + ')' : 'NO'}`);
 console.log(`[Debug] SILICONFLOW_API_KEY prefix: ${SILICONFLOW_API_KEY.substring(0, 10)}...`);
 console.log(`[Debug] SILICONFLOW_API_KEY suffix: ...${SILICONFLOW_API_KEY.substring(SILICONFLOW_API_KEY.length - 5)}`);
 

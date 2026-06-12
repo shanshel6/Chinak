@@ -76,6 +76,8 @@ rapid-scraper/
 !admin-app/package.json
 !admin-app/tsconfig.json
 !admin-app/capacitor.config.json
+!custom-search-terms.json
+!custom-search-terms-2.json
 
 # Android
 android/.gradle/
