@@ -9555,6 +9555,7 @@ app.get('/api/search', async (req, res) => {
 
   try {
     const q = String(req.query.q || '').trim();
+    const translatedQ = String(req.query.translatedQ || '').trim();
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
     const maxPrice = req.query.maxPrice ? Number.parseFloat(String(req.query.maxPrice)) : null;
@@ -9573,9 +9574,14 @@ app.get('/api/search', async (req, res) => {
         ? englishEquivalents.join(' ') 
         : null;
       
-      // If no synonyms found, use AI translation
+      // If provided, use translatedQ from frontend
+      if (!clipText && translatedQ) {
+        clipText = translatedQ;
+      }
+      
+      // If still no clipText, just use original query (will fall back to DB search)
       if (!clipText) {
-        clipText = await translateArabicToEnglish(q);
+        clipText = q;
       }
       
       console.log(`[Search] Using CLIP text: "${clipText}" (original: "${q}")`);
