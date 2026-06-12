@@ -9113,26 +9113,22 @@ const searchProductsFromDatabase = async ({
 
   const shippingRates = await getSearchShippingRates();
   perf?.log?.('store_settings_ready', { cacheAgeMs: Date.now() - cachedStoreSettingsTime });
-  const rankedProducts = productsFromDb
-    .map((product) => mapSearchProduct(product, shippingRates))
-    .sort((a, b) => {
-      const aPriority = getNameMatchPriority(a?.name, normalizedRankingQuery);
-      const bPriority = getNameMatchPriority(b?.name, normalizedRankingQuery);
-      const phraseMatchDiff = bPriority.phraseMatch - aPriority.phraseMatch;
-      if (phraseMatchDiff !== 0) return phraseMatchDiff;
-      const allTokensMatchDiff = bPriority.allTokensMatch - aPriority.allTokensMatch;
-      if (allTokensMatchDiff !== 0) return allTokensMatchDiff;
-      const tokenCoverageDiff = bPriority.tokenCoverage - aPriority.tokenCoverage;
-      if (tokenCoverageDiff !== 0) return tokenCoverageDiff;
-      const matchedTokenDiff = bPriority.matchedTokenCount - aPriority.matchedTokenCount;
-      if (matchedTokenDiff !== 0) return matchedTokenDiff;
-      const aUpdated = a?.updatedAt ? new Date(a.updatedAt).getTime() : 0;
-      const bUpdated = b?.updatedAt ? new Date(b.updatedAt).getTime() : 0;
-      return bUpdated - aUpdated;
-    });
+  
+  // First map then shuffle products for random order like home page
+  const mappedProducts = productsFromDb.map((product) => mapSearchProduct(product, shippingRates));
+  
+  const shuffleArray = (arr) => {
+    const a = [...arr];
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  };
+  const shuffledProducts = shuffleArray(mappedProducts);
 
-  const pagedProducts = rankedProducts.slice(offset, offset + limit);
-  const hasMore = rankedProducts.length > offset + limit;
+  const pagedProducts = shuffledProducts.slice(offset, offset + limit);
+  const hasMore = shuffledProducts.length > offset + limit;
   const total = offset + pagedProducts.length + (hasMore ? 1 : 0);
 
   return {
@@ -9631,8 +9627,19 @@ app.get('/api/search', async (req, res) => {
         const shippingRates = await getSearchShippingRates();
         const mappedProducts = sortedProducts.map(p => mapSearchProduct(p, shippingRates));
 
+        // Shuffle products for random order like home page
+        const shuffleArray = (arr) => {
+          const a = [...arr];
+          for (let i = a.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [a[i], a[j]] = [a[j], a[i]];
+          }
+          return a;
+        };
+        const shuffledProducts = shuffleArray(mappedProducts);
+
         // Apply pagination
-        const pagedProducts = mappedProducts.slice(offset, offset + limit);
+        const pagedProducts = shuffledProducts.slice(offset, offset + limit);
         const hasMore = mappedProducts.length > offset + limit;
         const total = mappedProducts.length;
 
