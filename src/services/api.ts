@@ -957,7 +957,7 @@ export interface CategorySuggestion {
   pathEn?: string;
 }
 
-export async function searchProducts(query: string, page = 1, limit = 20, maxPrice?: number, condition?: 'new' | 'used', translatedQ?: string) {
+export async function searchProducts(query: string, page = 1, limit = 20, maxPrice?: number, condition?: 'new' | 'used') {
   const params = new URLSearchParams({
     q: String(query || ''),
     page: String(page),
@@ -968,9 +968,6 @@ export async function searchProducts(query: string, page = 1, limit = 20, maxPri
   }
   if (condition) {
     params.append('condition', condition);
-  }
-  if (translatedQ) {
-    params.append('translatedQ', String(translatedQ));
   }
   const response = await request(`/search?${params.toString()}`, { skipCache: true });
   return {

@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom';
 import { AlertCircle, Search, ArrowRight, Camera, X } from 'lucide-react';
 import { searchProductsByImage, searchProductsByImageCrop, searchProducts } from '../services/api';
-import { expandSearchTerm } from '../services/translationService';
 import { useAuthStore } from '../store/useAuthStore';
 import { normalizeWishlistProductId, useWishlistStore } from '../store/useWishlistStore';
 import ProductCard from '../components/home/ProductCard';
@@ -356,6 +355,7 @@ const SearchResults: React.FC = () => {
     setShowImagePopup(false);
     setIsAnalyzingImage(false);
     setConditionFilter(null);
+    setPriceFilter(null);
     setError(null);
     setLoading(false);
     setLoadingMore(false);
@@ -434,8 +434,7 @@ const SearchResults: React.FC = () => {
 
       try {
         const condition = conditionFilter === 'new' ? 'new' : conditionFilter === 'used' ? 'used' : undefined;
-        const translatedQuery = expandSearchTerm(query);
-        const response = await searchProducts(query, initialPage, LIMIT, undefined, condition, translatedQuery || undefined);
+        const response = await searchProducts(query, initialPage, LIMIT, undefined, condition);
         if (cancelled) return;
         const orderedResults = Array.isArray(response.products) ? response.products : [];
         setResults(orderedResults);
@@ -504,8 +503,7 @@ const SearchResults: React.FC = () => {
     try {
       const cond = conditionFilterRef.current;
       const condition = cond === 'new' ? 'new' : cond === 'used' ? 'used' : undefined;
-      const translatedQuery = expandSearchTerm(query);
-      const response = await searchProducts(query, nextPage, LIMIT, undefined, condition, translatedQuery || undefined);
+      const response = await searchProducts(query, nextPage, LIMIT, undefined, condition);
       if (activeQueryRef.current.trim() !== query) return;
       const incoming = Array.isArray(response.products) ? response.products : [];
       setResults((prev) => {
