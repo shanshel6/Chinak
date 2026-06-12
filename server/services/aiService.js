@@ -20,52 +20,25 @@ if (process.env.USE_AI_PROXY === 'true') {
   console.log('[AI Debug] Connecting to AI services directly (no proxy)');
 }
 
-// Initialize clients lazily
-let hf = null;
-let deepinfra = null;
-let genAI = null;
+// Initialize clients lazily - only SiliconFlow
+let siliconflow = null;
 
 function getClients() {
-  if (!hf) {
-    if (process.env.HUGGINGFACE_API_KEY) {
-      hf = new HfInference(process.env.HUGGINGFACE_API_KEY);
-    } else {
-      hf = null;
-    }
-  }
-  
-  if (!deepinfra) {
-    // Prefer SiliconFlow, fallback to DeepInfra if configured, or use the provided key as default for SiliconFlow
+  if (!siliconflow) {
     const sfKey = process.env.SILICONFLOW_API_KEY;
     if (sfKey) {
-      deepinfra = new OpenAI({
+      siliconflow = new OpenAI({
         baseURL: "https://api.siliconflow.com/v1",
         apiKey: sfKey,
       });
-      deepinfra.baseURL = "https://api.siliconflow.com/v1";
       console.log(`[AI Debug] SiliconFlow initialized (OpenAI-compatible)`);
-    } else if (process.env.DEEPINFRA_API_KEY) {
-      deepinfra = new OpenAI({
-        baseURL: "https://api.deepinfra.com/v1/openai",
-        apiKey: process.env.DEEPINFRA_API_KEY,
-      });
-      deepinfra.baseURL = "https://api.deepinfra.com/v1/openai";
-      console.log(`[AI Debug] DeepInfra initialized (OpenAI-compatible)`);
     } else {
-      deepinfra = null;
-    }
-  }
-
-  if (!genAI) {
-    if (!process.env.GEMINI_API_KEY) {
-      console.warn('[AI Debug] GEMINI_API_KEY is missing. Vision AI will be disabled.');
-    } else {
-      genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-      console.log(`[AI Debug] Gemini AI initialized`);
+      console.warn('[AI Debug] SILICONFLOW_API_KEY is missing!');
+      siliconflow = null;
     }
   }
   
-  return { hf, deepinfra, genAI };
+  return { siliconflow };
 }
 
 /**
@@ -104,49 +77,30 @@ async function generateEmbedding(text) {
     return numeric.concat(new Array(targetDim - numeric.length).fill(0));
   };
 
-  const { hf, deepinfra } = getClients();
+  const { siliconflow } = getClients();
   const maxAttempts = 5;
 
-  const generateWithOpenAI = async () => {
-    if (!deepinfra) return null;
-    
-    let defaultModel = 'google/embeddinggemma-300m';
-    // If using SiliconFlow (inferred by key presence or base URL if we could check), change default
-    if (process.env.SILICONFLOW_API_KEY || !process.env.DEEPINFRA_API_KEY) {
-       defaultModel = 'BAAI/bge-m3';
+  const generateWithSiliconFlow = async () => {
+    if (!siliconflow) {
+      throw new Error('SILICONFLOW_API_KEY is not defined in environment variables');
     }
+    
+    // Use BAAI/bge-m3 for embeddings (default for SiliconFlow)
+    const model = process.env.AI_EMBEDDING_MODEL || 'BAAI/bge-m3';
+    console.log(`[AI Debug] Generating embedding with model: ${model} (Provider: SiliconFlow)`);
 
-    const model = process.env.AI_EMBEDDING_MODEL || process.env.DEEPINFRA_EMBEDDING_MODEL || defaultModel;
-    console.log(`[AI Debug] Generating embedding with model: ${model} (Provider: OpenAI/SiliconFlow)`);
-
-    const rawDimensions = process.env.AI_EMBEDDING_DIMENSIONS || process.env.DEEPINFRA_EMBEDDING_DIMENSIONS;
+    const rawDimensions = process.env.AI_EMBEDDING_DIMENSIONS;
     const dimensions = rawDimensions !== undefined && rawDimensions !== null && rawDimensions !== '' ? Number(rawDimensions) : undefined;
 
     const payload = { model, input: text };
-    // Only send dimensions if the model supports it and it's not the default BAAI/bge-m3 which might not support dynamic dimensions API-wise same way
+    // Only send dimensions if the model supports it
     if (Number.isFinite(dimensions) && dimensions > 0) {
       payload.dimensions = dimensions;
     }
 
-    const response = await deepinfra.embeddings.create(payload);
+    const response = await siliconflow.embeddings.create(payload);
     const embedding = response?.data?.[0]?.embedding;
     return normalizeVector(embedding);
-  };
-
-  const generateWithHuggingFace = async () => {
-    if (!hf) {
-      throw new Error('HUGGINGFACE_API_KEY is not defined in environment variables');
-    }
-    const response = await hf.featureExtraction({
-      model: 'sentence-transformers/distiluse-base-multilingual-cased-v2',
-      inputs: text,
-    });
-
-    let result = response;
-    if (Array.isArray(result) && Array.isArray(result[0])) {
-      result = result[0];
-    }
-    return normalizeVector(result);
   };
 
   const tryGenerate = async (fn) => {
@@ -157,26 +111,12 @@ async function generateEmbedding(text) {
         if (embedding) return embedding;
         return null;
       } catch (error) {
-        lastErr = error;
-        if (!shouldRetry(error) || attempt === maxAttempts) break;
-        const base = Math.min(30000, 1000 * (2 ** (attempt - 1)));
-        const jitter = Math.floor(Math.random() * 250);
-        await sleep(base + jitter);
-      }
+          }
     }
     throw lastErr;
   };
 
-  if (deepinfra) {
-    try {
-      const embedding = await tryGenerate(generateWithOpenAI);
-      if (embedding) return embedding;
-    } catch (err) {
-      if (!hf) throw err;
-    }
-  }
-
-  return tryGenerate(generateWithHuggingFace);
+  return tryGenerate(generateWithSiliconFlow);
 }
 
 const sanitizeSearchTerm = (term) => {
@@ -331,12 +271,12 @@ export async function estimateProductPhysicals(product) {
       }
     }
 
-    // 3. Fallback to Text-based estimation (DeepSeek)
+    // 3. Fallback to Text-based estimation (Qwen3-8B on SiliconFlow)
     console.log(`[AI Debug] Falling back to text-based estimation for ${product.name}...`);
-    const { deepinfra } = getClients();
+    const { siliconflow } = getClients();
     
-    if (!deepinfra) {
-        console.warn('[AI Debug] DeepInfra client not initialized. Skipping text-based estimation.');
+    if (!siliconflow) {
+        console.warn('[AI Debug] SiliconFlow client not initialized. Skipping text-based estimation.');
         return null;
     }
 
@@ -355,8 +295,8 @@ export async function estimateProductPhysicals(product) {
     If you're not sure, provide a reasonable average for that category of product.
     Return ONLY JSON, no markdown.`;
 
-    const response = await withTimeout(deepinfra.chat.completions.create({
-      model: process.env.DEEPINFRA_MODEL || 'google/gemma-3-12b-it',
+    const response = await withTimeout(siliconflow.chat.completions.create({
+      model: 'Qwen/Qwen3-8B',
       messages: [{ role: 'user', content: prompt }],
       response_format: { type: 'json_object' }
     }), 15000);
@@ -378,13 +318,13 @@ export async function estimateProductPhysicals(product) {
 }
 
 /**
- * Auto-Tagging Pipeline using DeepInfra (Free/Low-cost Tier)
+ * Auto-Tagging Pipeline using SiliconFlow with Qwen/Qwen3-8B
  * Triggers when a product is added or updated.
  */
 export async function processProductAI(productId) {
   try {
     console.log(`[AI Debug] Starting processing for product ${productId}`);
-    const { deepinfra } = getClients();
+    const { siliconflow } = getClients();
     const product = await prisma.product.findUnique({
       where: { id: productId },
     });
@@ -395,7 +335,7 @@ export async function processProductAI(productId) {
     }
 
     let aiMetadata = null;
-    if (!product.aiMetadata && deepinfra) {
+    if (!product.aiMetadata && siliconflow) {
       const prompt = `You are an AI specialized in e-commerce product analysis for the Middle Eastern market, specifically Iraq. 
       Analyze the product details and image to extract 'Invisible Tags' and search synonyms.
       
@@ -409,11 +349,11 @@ export async function processProductAI(productId) {
       3. 'category_suggestion': A string suggesting the best category for this product.
   
       Do not include markdown formatting or extra text.`;
-  
-      console.log(`[AI Debug] Calling DeepInfra for product ${productId}...`);
       
-      const response = await deepinfra.chat.completions.create({
-        model: process.env.DEEPINFRA_MODEL || 'google/gemma-3-12b-it',
+      console.log(`[AI Debug] Calling SiliconFlow for product ${productId}...`);
+      
+      const response = await siliconflow.chat.completions.create({
+        model: 'Qwen/Qwen3-8B',
         messages: [
           { role: 'user', content: prompt }
         ],
@@ -421,7 +361,7 @@ export async function processProductAI(productId) {
       });
   
       const responseText = response.choices[0].message.content.trim();
-      console.log(`[AI Debug] DeepInfra response for product ${productId}: ${responseText}`);
+      console.log(`[AI Debug] SiliconFlow response for product ${productId}: ${responseText}`);
       
       try {
         const cleanJson = responseText.replace(/^```json\s*/, '').replace(/\s*```$/, '').trim();
@@ -803,8 +743,8 @@ export function normalizeArabic(text) {
 }
 
 const expandSearchQuery = async (query) => {
-  const { deepinfra } = getClients();
-  if (!deepinfra) return null;
+  const { siliconflow } = getClients();
+  if (!siliconflow) return null;
   const withTimeout = (promise, ms) => Promise.race([
     promise,
     new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), ms))
@@ -818,8 +758,8 @@ Return ONLY a JSON object:
   "expanded_keywords": ["synonym1","synonym2","dialect term","brand","material"]
 }
 Keep keywords short and relevant.`;
-    const response = await withTimeout(deepinfra.chat.completions.create({
-      model: process.env.DEEPINFRA_MODEL || 'google/gemma-3-12b-it',
+    const response = await withTimeout(siliconflow.chat.completions.create({
+      model: 'Qwen/Qwen3-8B',
       messages: [{ role: 'user', content: prompt }],
       response_format: { type: 'json_object' },
       temperature: 0.2,
@@ -840,18 +780,18 @@ Keep keywords short and relevant.`;
 };
 
 /**
- * Translate Arabic text to English using SiliconFlow/DeepInfra for CLIP compatibility
+ * Translate Arabic text to English using SiliconFlow with Qwen/Qwen3-8B for CLIP compatibility
  */
 export async function translateArabicToEnglish(text) {
   try {
-    const { deepinfra } = getClients();
-    if (!deepinfra) {
-      console.warn('[AI Debug] No AI client available for translation');
+    const { siliconflow } = getClients();
+    if (!siliconflow) {
+      console.warn('[AI Debug] No SiliconFlow client available for translation');
       return text;
     }
 
-    const response = await deepinfra.chat.completions.create({
-      model: process.env.DEEPINFRA_MODEL || 'google/gemma-3-12b-it',
+    const response = await siliconflow.chat.completions.create({
+      model: 'Qwen/Qwen3-8B',
       messages: [
         {
           role: 'system',
