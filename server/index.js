@@ -23,7 +23,7 @@ import path from 'path';
 import axios from 'axios';
 import { fileURLToPath } from 'url';
 import prisma from './prismaClient.js';
-import { processProductAI, processProductEmbedding, hybridSearch, estimateProductPhysicals, normalizeArabic } from './services/aiService.js';
+import { processProductAI, processProductEmbedding, hybridSearch, estimateProductPhysicals, normalizeArabic, translateArabicToEnglish } from './services/aiService.js';
 import { embedText } from './services/clipService.js';
 import { buildCategoryIndex } from './services/categoryService.js';
 import { calculateOrderShipping, calculateProductShipping, getAdjustedPrice } from './services/shippingService.js';
@@ -9573,9 +9573,14 @@ app.get('/api/search', async (req, res) => {
     try {
       // Get English equivalents for Arabic query (CLIP is English-only)
       const englishEquivalents = getEnglishEquivalents(q);
-      const clipText = englishEquivalents.length > 0 
+      let clipText = englishEquivalents.length > 0 
         ? englishEquivalents.join(' ') 
-        : q; // Fallback to original if no English equivalents
+        : null;
+      
+      // If no synonyms found, use AI translation
+      if (!clipText) {
+        clipText = await translateArabicToEnglish(q);
+      }
       
       console.log(`[Search] Using CLIP text: "${clipText}" (original: "${q}")`);
       

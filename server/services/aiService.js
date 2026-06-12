@@ -840,6 +840,42 @@ Keep keywords short and relevant.`;
 };
 
 /**
+ * Translate Arabic text to English using SiliconFlow/DeepInfra for CLIP compatibility
+ */
+export async function translateArabicToEnglish(text) {
+  try {
+    const { deepinfra } = getClients();
+    if (!deepinfra) {
+      console.warn('[AI Debug] No AI client available for translation');
+      return text;
+    }
+
+    const response = await deepinfra.chat.completions.create({
+      model: process.env.DEEPINFRA_MODEL || 'google/gemma-3-12b-it',
+      messages: [
+        {
+          role: 'system',
+          content: 'You are a translator. Translate the given Arabic text to English. Return ONLY the translation, no extra text.'
+        },
+        {
+          role: 'user',
+          content: text
+        }
+      ],
+      temperature: 0.1,
+      max_tokens: 100
+    });
+
+    const translation = response?.choices?.[0]?.message?.content?.trim();
+    console.log(`[AI Debug] Translated "${text}" → "${translation}"`);
+    return translation || text;
+  } catch (error) {
+    console.error('[AI Debug] Translation failed:', error.message);
+    return text;
+  }
+}
+
+/**
  * Hybrid Search Engine (Free Tier)
  * Combines Keyword Matching and Semantic Vector Search.
  */
