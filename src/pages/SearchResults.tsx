@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom';
 import { AlertCircle, Search, ArrowRight, Camera, X } from 'lucide-react';
 import { searchProductsByImage, searchProductsByImageCrop, searchProducts } from '../services/api';
-import { expandSearchTerm, hasStaticTranslation } from '../services/translationService';
+import { expandSearchTerm } from '../services/translationService';
 import { useAuthStore } from '../store/useAuthStore';
 import { normalizeWishlistProductId, useWishlistStore } from '../store/useWishlistStore';
 import ProductCard from '../components/home/ProductCard';
@@ -356,7 +356,6 @@ const SearchResults: React.FC = () => {
     setShowImagePopup(false);
     setIsAnalyzingImage(false);
     setConditionFilter(null);
-    setPriceFilter(null);
     setError(null);
     setLoading(false);
     setLoadingMore(false);
