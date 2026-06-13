@@ -5,6 +5,7 @@ import { searchProductsByImage, searchProductsByImageCrop, searchProducts } from
 import { useAuthStore } from '../store/useAuthStore';
 import { normalizeWishlistProductId, useWishlistStore } from '../store/useWishlistStore';
 import { usePageCacheStore } from '../store/usePageCacheStore';
+import { normalizeArabicSearchTerm } from '../data/arabicSearchNormalization';
 import ProductCard from '../components/home/ProductCard';
 import type { Product } from '../types/product';
 import type { ConditionFilter } from '../components/home/FilterBar';
@@ -418,8 +419,9 @@ const SearchResults: React.FC = () => {
 
   useEffect(() => {
     if (imageSearchInput) return;
-    setQueryInput(initialQuery);
-    setActiveQuery(initialQuery);
+    const normalizedInitialQuery = normalizeArabicSearchTerm(initialQuery);
+    setQueryInput(normalizedInitialQuery);
+    setActiveQuery(normalizedInitialQuery);
   }, [initialQuery, imageSearchInput]);
 
   useEffect(() => {
@@ -643,7 +645,8 @@ const SearchResults: React.FC = () => {
     if (imageSearchInput) return;
     const q = queryInput.trim();
     if (!q || q === IMAGE_QUERY_LABEL) return;
-    setActiveQuery(q);
+    const normalizedQuery = normalizeArabicSearchTerm(q);
+    setActiveQuery(normalizedQuery);
     setSearchVersion((v) => v + 1);
     setIsInputFocused(false);
     // Blur the input to dismiss keyboard on mobile
@@ -651,7 +654,7 @@ const SearchResults: React.FC = () => {
       inputRef.current.blur();
     }
     setRecentTerms(readRecentTerms());
-    navigate(`/search?q=${encodeURIComponent(q)}`, { replace: true });
+    navigate(`/search?q=${encodeURIComponent(normalizedQuery)}`, { replace: true });
   };
 
 
@@ -967,12 +970,13 @@ const SearchResults: React.FC = () => {
                   <button
                     key={idx}
                     onClick={() => {
-                      setQueryInput(term);
-                      setActiveQuery(term);
+                      const normalizedTerm = normalizeArabicSearchTerm(term);
+                      setQueryInput(normalizedTerm);
+                      setActiveQuery(normalizedTerm);
                       setSearchVersion((v) => v + 1);
                       setIsInputFocused(false);
                       if (inputRef.current) inputRef.current.blur();
-                      navigate(`/search?q=${encodeURIComponent(term)}`, { replace: true });
+                      navigate(`/search?q=${encodeURIComponent(normalizedTerm)}`, { replace: true });
                     }}
                     className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-xs font-semibold rounded-full"
                   >
