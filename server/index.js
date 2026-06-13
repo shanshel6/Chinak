@@ -787,120 +787,7 @@ const isFeaturedMatchForQuery = (productLike, queryVariants, condition = '') => 
   return false;
 };
 
-const ARABIC_SYNONYM_GROUPS = [
-  ['جوال', 'هاتف', 'موبايل', 'تلفون', 'محمول', 'موبيل', 'خلوي', 'موبايل فون'],
-  ['ايفون', 'آيفون', 'iphone', 'اىفون', 'اي فون'],
-  ['اندرويد', 'أندرويد', 'android'],
-  ['سماعه', 'سماعة', 'سماعات', 'هيدفون', 'هيدفوت', 'earbuds', 'headphones'],
-  ['شاحن', 'شواحن', 'charger'],
-  ['وصله', 'وصلة', 'كيبل', 'كابل', 'سلك شحن', 'usb cable', 'cable'],
-  ['باور بانك', 'بور بانك', 'power bank', 'بنك طاقة', 'بطارية متنقلة'],
-  ['غطاء', 'كفر', 'جراب', 'حافظة', 'case', 'cover'],
-  ['لابتوب', 'لاب توب', 'حاسوب محمول', 'كمبيوتر محمول', 'notebook'],
-  ['كمبيوتر', 'حاسوب', 'pc', 'computer', 'ديسكتوب', 'desktop'],
-  ['كيبورد', 'لوحة مفاتيح', 'keyboard'],
-  ['ماوس', 'فارة', 'فأرة', 'mouse'],
-  ['شاشه', 'شاشة', 'monitor', 'display'],
-  ['طابعه', 'طابعة', 'printer'],
-  ['تابلت', 'جهاز لوحي', 'tablet', 'ipad', 'ايباد'],
-  ['ساعة ذكية', 'سمارت واتش', 'smartwatch', 'ساعه ذكيه'],
-  ['كاميرا', 'camera', 'آلة تصوير', 'اله تصوير'],
-  ['تلفزيون', 'تلفاز', 'tv', 'شاشة تلفاز', 'سمارت تي في', 'smart tv'],
-  ['ثلاجه', 'ثلاجة', 'براد', 'refrigerator', 'fridge'],
-  ['غساله', 'غسالة', 'washing machine', 'ماكنة غسيل'],
-  ['مكيف', 'مكيّف', 'مبرد', 'air conditioner', 'ac'],
-  ['مكنسه', 'مكنسة', 'هوفر', 'vacuum', 'vacuum cleaner'],
-  ['مروحه', 'مروحة', 'fan'],
-  ['دفايه', 'دفاية', 'heater'],
-  ['خلاط', 'blender', 'mixer'],
-  ['فرن', 'oven'],
-  ['ميكرويف', 'مايكرويف', 'microwave'],
-  ['سماعه بلوتوث', 'سماعة بلوتوث', 'bluetooth speaker', 'مكبر صوت'],
-  ['بلايستيشن', 'بليستيشن', 'ps', 'playstation', 'سوني'],
-  ['اكس بوكس', 'xbox', 'اكسبوكس'],
-  ['يد تحكم', 'كنترولر', 'جويستك', 'controller', 'gamepad'],
-  ['لعبة', 'العاب', 'game', 'games'],
-  ['حذاء', 'حذا', 'جزمة', 'شحاطة', 'صندل', 'بوط', 'shoe', 'shoes', 'sneakers'],
-  ['ملابس', 'لبس', 'ثياب', 'clothes', 'apparel'],
-  ['قميص', 'تيشيرت', 'تي شيرت', 'shirt', 't shirt', 't-shirt'],
-  ['بنطلون', 'سروال', 'جينز', 'pants', 'trousers', 'jeans'],
-  ['فستان', 'دريس', 'dress'],
-  ['عباية', 'عبايه', 'abaya'],
-  ['عطر', 'برفيوم', 'perfume', 'fragrance'],
-  ['مكياج', 'مستحضرات تجميل', 'cosmetics', 'makeup'],
-  ['كريم', 'مرطب', 'moisturizer', 'cream'],
-  ['شامبو', 'شامبوو', 'shampoo'],
-  ['صابون', 'soap'],
-  ['شنطه', 'شنطة', 'حقيبة', 'bag', 'handbag'],
-  ['محفظه', 'محفظة', 'wallet'],
-  ['نظاره', 'نظارة', 'glasses', 'eyewear'],
-  ['كرسي', 'كرسيه', 'chair', 'seat'],
-  ['طاوله', 'طاولة', 'table', 'desk', 'مكتب'],
-  ['كنبه', 'كنبة', 'اريكة', 'أريكة', 'sofa', 'couch'],
-  ['كنتور', 'قنتور', 'دولاب', 'خزانة', 'خزانه', 'خزانة ملابس', 'دولاب ملابس', 'wardrobe', 'closet'],
-  ['سرير', 'bed'],
-  ['مرتبه', 'مرتبة', 'mattress'],
-  ['بطانيه', 'بطانية', 'blanket'],
-  ['مخده', 'مخدة', 'وسادة', 'pillow'],
-  ['مطبخ', 'ادوات مطبخ', 'أدوات مطبخ', 'kitchen', 'kitchenware'],
-  ['طفل', 'اطفال', 'أطفال', 'بيبي', 'baby', 'kids'],
-  ['عربيه', 'عربية', 'سياره', 'سيارة', 'car', 'vehicle', 'automobile'],
-  ['اطار', 'إطار', 'كوشوك', 'tire', 'tyre'],
-  ['زيت', 'زيت محرك', 'oil', 'engine oil'],
-  ['دراجه', 'دراجة', 'سيكل', 'bike', 'bicycle'],
-  ['ساعه', 'ساعة', 'watch'],
-  ['خاتم', 'دبله', 'دبلة', 'ring'],
-  ['قلاده', 'قلادة', 'سلسال', 'necklace'],
-  ['اسواره', 'اسوارة', 'إسوارة', 'bracelet'],
-  ['هديه', 'هدية', 'gift', 'present'],
-  ['توصيل', 'شحن', 'delivery', 'shipping'],
-  ['جديد', 'new'],
-  ['مستعمل', 'استخدام خفيف', 'used', 'second hand', 'secondhand']
-];
-
-const buildTextSearchSynonyms = (groups) => {
-  const synonymMap = {};
-  for (const group of groups) {
-    const expanded = new Set();
-    for (const rawTerm of group) {
-      const term = String(rawTerm || '').trim().toLowerCase();
-      if (!term) continue;
-      expanded.add(term);
-      const normalized = normalizeSearchText(term);
-      if (normalized) expanded.add(normalized);
-    }
-    const allTerms = Array.from(expanded).filter(Boolean);
-    for (const term of allTerms) {
-      const alternatives = allTerms.filter((candidate) => candidate !== term);
-      if (alternatives.length > 0) synonymMap[term] = alternatives;
-    }
-  }
-  return synonymMap;
-};
-
-const ARABIC_TEXT_SYNONYMS = buildTextSearchSynonyms(ARABIC_SYNONYM_GROUPS);
-
-function getEnglishEquivalents(text) {
-  const normalizedText = normalizeSearchText(text);
-  const englishTerms = [];
-  
-  // Check each synonym group
-  for (const group of ARABIC_SYNONYM_GROUPS) {
-    const hasMatch = group.some(term => {
-      const normalizedTerm = normalizeSearchText(term);
-      return normalizedText.includes(normalizedTerm) || normalizedTerm.includes(normalizedText);
-    });
-    
-    if (hasMatch) {
-      // Add English terms from this group (terms that have Latin characters)
-      const englishInGroup = group.filter(term => /[a-zA-Z]/.test(term));
-      englishTerms.push(...englishInGroup);
-    }
-  }
-  
-  // Return unique English terms
-  return [...new Set(englishTerms)];
-}
+// Removed static ARABIC_SYNONYM_GROUPS, using only AI caching
 
 const IRAQI_SLANG_NORMALIZATION_MAP = {
   // Tables
@@ -1087,15 +974,6 @@ const expandSearchTermsForIraqiSlang = (query) => {
     const directMapped = IRAQI_SLANG_NORMALIZATION_MAP[key];
     if (Array.isArray(directMapped)) {
       for (const candidate of directMapped) {
-        const cleanCandidate = String(candidate || '').trim();
-        if (!cleanCandidate) continue;
-        terms.add(cleanCandidate);
-        terms.add(normalizeSearchText(cleanCandidate));
-      }
-    }
-    const synonymMapped = ARABIC_TEXT_SYNONYMS[key];
-    if (Array.isArray(synonymMapped)) {
-      for (const candidate of synonymMapped) {
         const cleanCandidate = String(candidate || '').trim();
         if (!cleanCandidate) continue;
         terms.add(cleanCandidate);
@@ -9747,18 +9625,10 @@ app.get('/api/search', async (req, res) => {
 
     // Use CLIP text embedding and image similarity search
     try {
-      // Get English equivalents for Arabic query (CLIP is English-only)
-      const englishEquivalents = getEnglishEquivalents(q);
-      let clipText = englishEquivalents.length > 0 
-        ? englishEquivalents.join(' ') 
-        : null;
+      // Get English text for CLIP (English-only)
+      let clipText = translatedQ;
       
-      // If provided, use translatedQ from frontend
-      if (!clipText && translatedQ) {
-        clipText = translatedQ;
-      }
-      
-      // If still no clipText, use AI translation
+      // If no translatedQ, use AI translation
       if (!clipText) {
         clipText = await translateArabicToEnglish(q);
       }
