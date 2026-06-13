@@ -4,6 +4,7 @@ import { AlertCircle, Search, ArrowRight, Camera, X } from 'lucide-react';
 import { searchProductsByImage, searchProductsByImageCrop, searchProducts } from '../services/api';
 import { useAuthStore } from '../store/useAuthStore';
 import { normalizeWishlistProductId, useWishlistStore } from '../store/useWishlistStore';
+import { usePageCacheStore } from '../store/usePageCacheStore';
 import ProductCard from '../components/home/ProductCard';
 import type { Product } from '../types/product';
 import type { ConditionFilter } from '../components/home/FilterBar';
@@ -14,6 +15,9 @@ const SearchResults: React.FC = () => {
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
   const wishlistItems = useWishlistStore((state) => state.items);
   const toggleWishlist = useWishlistStore((state) => state.toggleWishlist);
+  const { setSearchData, setSearchScrollPos, getSearchData } = usePageCacheStore();
+  const isFirstRender = useRef(true);
+  
   const searchParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
   const initialQuery = searchParams.get('q') || '';
   const IMAGE_QUERY_LABEL = 'بحث بالصورة';
@@ -28,11 +32,21 @@ const SearchResults: React.FC = () => {
   const [selectedObjectBox, setSelectedObjectBox] = useState<number[] | null>(null);
   const [isAnalyzingImage, setIsAnalyzingImage] = useState(false);
   const [conditionFilter, setConditionFilter] = useState<ConditionFilter>(null);
-  const [results, setResults] = useState<Product[]>([]);
-  const [loading, setLoading] = useState(false);
+  
+  // Create cache key based on search query and filters
+  const cacheKey = useMemo(() => {
+    if (imageSearchInput) return '';
+    return `${activeQuery.trim()}:${conditionFilter || 'all'}`;
+  }, [activeQuery, conditionFilter, imageSearchInput]);
+  
+  // Check for cached data on mount
+  const cachedData = useMemo(() => cacheKey ? getSearchData(cacheKey) : undefined, [cacheKey, getSearchData]);
+  
+  const [results, setResults] = useState<Product[]>(cachedData?.results || []);
+  const [loading, setLoading] = useState(!!initialQuery.trim() && !cachedData);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [page, setPage] = useState(1);
-  const [hasMore, setHasMore] = useState(false);
+  const [page, setPage] = useState(cachedData?.page || 1);
+  const [hasMore, setHasMore] = useState(cachedData?.hasMore || false);
   const [error, setError] = useState<string | null>(null);
   const [searchVersion, setSearchVersion] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -49,6 +63,29 @@ const SearchResults: React.FC = () => {
   const RECENT_SEARCH_TERMS_KEY = 'recent_search_terms_v1';
   const [isInputFocused, setIsInputFocused] = useState(false);
   const isImageSearch = Boolean(imageSearchInput && imageSearchPreview);
+  
+  // Save scroll position before leaving
+  useEffect(() => {
+    const saveScrollPos = () => {
+      if (cacheKey) {
+        setSearchScrollPos(cacheKey, window.scrollY);
+      }
+    };
+    window.addEventListener('beforeunload', saveScrollPos);
+    return () => {
+      saveScrollPos();
+      window.removeEventListener('beforeunload', saveScrollPos);
+    };
+  }, [cacheKey, setSearchScrollPos]);
+  
+  // Restore scroll position when cache is available
+  useEffect(() => {
+    if (cachedData && cacheKey) {
+      setTimeout(() => {
+        window.scrollTo(0, cachedData.scrollPos);
+      }, 100);
+    }
+  }, [cachedData, cacheKey]);
 
   // Manual Crop State
   const cropBoxRef = useRef<HTMLDivElement>(null);
@@ -404,6 +441,10 @@ const SearchResults: React.FC = () => {
   useEffect(() => {
     hasMoreRef.current = hasMore;
   }, [hasMore]);
+  
+  useEffect(() => {
+    conditionFilterRef.current = conditionFilter;
+  }, [conditionFilter]);
 
   const filteredRecentTerms = useMemo(() => {
     const q = queryInput.trim().toLowerCase();
@@ -418,6 +459,11 @@ const SearchResults: React.FC = () => {
 
     let cancelled = false;
     const runSearch = async () => {
+      // Only use cache on first render (when user didn't explicitly submit a new search)
+      if (isFirstRender.current && cacheKey && cachedData) {
+        return;
+      }
+      
       setLoading(true);
       setLoadingMore(false);
       setResults([]);
@@ -438,6 +484,17 @@ const SearchResults: React.FC = () => {
         const orderedResults = Array.isArray(response.products) ? response.products : [];
         setResults(orderedResults);
         setHasMore(Boolean(response.hasMore));
+        
+        // Save to cache
+        if (cacheKey) {
+          setSearchData(cacheKey, {
+            results: orderedResults,
+            page: initialPage,
+            hasMore: Boolean(response.hasMore),
+            condition: conditionFilter,
+            price: null
+          });
+        }
       } catch (searchError: any) {
         if (cancelled) return;
         const message = searchError?.message || 'فشل البحث';
@@ -452,7 +509,12 @@ const SearchResults: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [activeQuery, conditionFilter, rememberSearchTerm, searchVersion, imageSearchInput]);
+  }, [activeQuery, conditionFilter, rememberSearchTerm, searchVersion, imageSearchInput, cacheKey, cachedData, setSearchData]);
+
+  // Mark first render as done
+  useEffect(() => {
+    isFirstRender.current = false;
+  }, []);
 
   // New loadMore using embedding search
   const loadMore = useCallback(async () => {
@@ -471,7 +533,7 @@ const SearchResults: React.FC = () => {
           : await searchProductsByImage(imageSearchInput, nextPage, LIMIT);
         if (!activeQueryRef.current.trim()) return;
         const incoming = Array.isArray(response.products) ? response.products : [];
-        setResults((prev) => {
+        const newResults = (prev: Product[]) => {
           const merged = [...prev, ...incoming];
           const seen = new Set<string>();
           return merged.filter((item) => {
@@ -480,7 +542,8 @@ const SearchResults: React.FC = () => {
             seen.add(key);
             return true;
           });
-        });
+        };
+        setResults(newResults);
         setHasMore(Boolean(response.hasMore));
         setPage(nextPage);
         pageRef.current = nextPage;
@@ -505,26 +568,39 @@ const SearchResults: React.FC = () => {
       const response = await searchProducts(query, nextPage, LIMIT, undefined, condition);
       if (activeQueryRef.current.trim() !== query) return;
       const incoming = Array.isArray(response.products) ? response.products : [];
+      let updatedResults: Product[] = [];
       setResults((prev) => {
         const merged = [...prev, ...incoming];
         const seen = new Set<string>();
-        return merged.filter((item) => {
+        updatedResults = merged.filter((item) => {
           const key = item?.id == null ? '' : String(item.id);
           if (!key || seen.has(key)) return false;
           seen.add(key);
           return true;
         });
+        return updatedResults;
       });
       setHasMore(Boolean(response.hasMore));
       setPage(nextPage);
       pageRef.current = nextPage;
+      
+      // Save to cache
+      if (cacheKey) {
+        setSearchData(cacheKey, {
+          results: updatedResults,
+          page: nextPage,
+          hasMore: Boolean(response.hasMore),
+          condition: conditionFilterRef.current,
+          price: null
+        });
+      }
     } catch (searchError: any) {
       setError(searchError?.message || 'فشل تحميل المزيد');
     } finally {
       setLoadingMore(false);
       inFlightMoreRef.current = false;
     }
-  }, [imageSearchInput, selectedObjectBox]);
+  }, [imageSearchInput, selectedObjectBox, cacheKey, setSearchData]);
 
   useEffect(() => {
     const getScrollMetrics = () => {
@@ -570,6 +646,10 @@ const SearchResults: React.FC = () => {
     setActiveQuery(q);
     setSearchVersion((v) => v + 1);
     setIsInputFocused(false);
+    // Blur the input to dismiss keyboard on mobile
+    if (inputRef.current) {
+      inputRef.current.blur();
+    }
     setRecentTerms(readRecentTerms());
     navigate(`/search?q=${encodeURIComponent(q)}`, { replace: true });
   };
@@ -624,7 +704,10 @@ const SearchResults: React.FC = () => {
                 setTimeout(() => setIsInputFocused(false), 200);
               }}
               onKeyDown={(event) => {
-                if (event.key === 'Enter') submitSearch();
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  submitSearch();
+                }
               }}
               placeholder="ابحث عن منتج..."
               readOnly={isImageSearch}
@@ -888,6 +971,7 @@ const SearchResults: React.FC = () => {
                       setActiveQuery(term);
                       setSearchVersion((v) => v + 1);
                       setIsInputFocused(false);
+                      if (inputRef.current) inputRef.current.blur();
                       navigate(`/search?q=${encodeURIComponent(term)}`, { replace: true });
                     }}
                     className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-xs font-semibold rounded-full"
