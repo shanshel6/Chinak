@@ -1,4 +1,4 @@
-import { useEffect, lazy, Suspense, useRef } from 'react';
+import { useEffect, lazy, Suspense, useRef, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, useLocation, useNavigate, Navigate } from 'react-router-dom';
 import { AnimatePresence } from 'framer-motion';
 import { useShallow } from 'zustand/react/shallow';
@@ -317,24 +317,32 @@ function App() {
   const initNotificationSocket = useNotificationStore((state) => state.initSocket);
   const cleanupNotificationSocket = useNotificationStore((state) => state.cleanupSocket);
   const isServerDown = useMaintenanceStore((state) => state.isServerDown);
+  const [isAppInitialized, setIsAppInitialized] = useState(false);
 
   useEffect(() => {
-    const setupNotifications = async () => {
-      if (Capacitor.isNativePlatform()) {
-        try {
-          // Only local notifications are initialized at app startup.
-          await LocalNotifications.requestPermissions();
-        } catch (e) {
-          console.error('Notification permission error:', e);
+    const initializeApp = async () => {
+      try {
+        // Handle permissions first (if native platform)
+        if (Capacitor.isNativePlatform()) {
+          try {
+            await LocalNotifications.requestPermissions();
+          } catch (e) {
+            console.error('Notification permission error:', e);
+          }
         }
+        
+        // Now perform other initialization after permissions are handled
+        performCacheMaintenance();
+        ensureGuestSession();
+        checkAuth();
+        initChatSocket();
+      } catch (error) {
+        console.error('App initialization error:', error);
+      } finally {
+        setIsAppInitialized(true);
       }
     };
-    setupNotifications();
-
-    performCacheMaintenance();
-    ensureGuestSession();
-    checkAuth();
-    initChatSocket();
+    initializeApp();
 
     // Listen for unauthorized errors from API
     const handleUnauthorized = () => {
@@ -384,6 +392,23 @@ function App() {
 
   if (isServerDown) {
     return <MaintenanceScreen />;
+  }
+
+  if (!isAppInitialized) {
+    return (
+      <div className="min-h-screen bg-background-light dark:bg-background-dark flex items-center justify-center">
+        <div className="flex flex-col items-center gap-6">
+          <div className="flex gap-1 mb-2">
+            <div className="size-1.5 rounded-full bg-primary animate-bounce [animation-delay:-0.3s]"></div>
+            <div className="size-1.5 rounded-full bg-primary animate-bounce [animation-delay:-0.15s]"></div>
+            <div className="size-1.5 rounded-full bg-primary animate-bounce"></div>
+          </div>
+          <p className="text-sm font-bold text-slate-500 animate-pulse">
+            جاري تحضير التطبيق...
+          </p>
+        </div>
+      </div>
+    );
   }
 
   return (
