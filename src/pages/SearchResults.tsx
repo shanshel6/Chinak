@@ -462,6 +462,7 @@ const SearchResults: React.FC = () => {
     let cancelled = false;
     const runSearch = async () => {
       // Only use cache on first render (when user didn't explicitly submit a new search)
+      // When searchVersion increments, it means user explicitly searched, so ignore cache
       if (isFirstRender.current && cacheKey && cachedData) {
         return;
       }
@@ -494,7 +495,8 @@ const SearchResults: React.FC = () => {
             page: initialPage,
             hasMore: Boolean(response.hasMore),
             condition: conditionFilter,
-            price: null
+            price: null,
+            scrollPos: 0
           });
         }
       } catch (searchError: any) {
@@ -511,7 +513,7 @@ const SearchResults: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [activeQuery, conditionFilter, rememberSearchTerm, searchVersion, imageSearchInput, cacheKey, cachedData, setSearchData]);
+  }, [activeQuery, conditionFilter, rememberSearchTerm, searchVersion, imageSearchInput, cacheKey, setSearchData]);
 
   // Mark first render as done
   useEffect(() => {
@@ -1037,6 +1039,16 @@ const SearchResults: React.FC = () => {
 
       {loading ? (
         <div className="px-4 py-12">
+          <div className="flex flex-col items-center justify-center gap-4 mb-8">
+            <div className="flex gap-1">
+              <div className="size-3 rounded-full bg-primary animate-bounce [animation-delay:-0.3s]"></div>
+              <div className="size-3 rounded-full bg-primary animate-bounce [animation-delay:-0.15s]"></div>
+              <div className="size-3 rounded-full bg-primary animate-bounce"></div>
+            </div>
+            <p className="text-sm font-bold text-slate-500 animate-pulse">
+              جاري البحث...
+            </p>
+          </div>
           <div className="grid grid-cols-2 gap-4">
             {[1, 2, 3, 4].map((i) => (
               <div key={i} className="bg-white dark:bg-slate-800 rounded-2xl overflow-hidden">
