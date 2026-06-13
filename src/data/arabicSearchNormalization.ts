@@ -12,14 +12,14 @@ const searchMappings: SearchMapping = {
   'ميزات': 'مائدة',
   'دوكة': 'مائدة',
   'دوكات': 'مائدة',
-  
+
   // Chairs
   'كعدي': 'كرسي',
-  
+
   // Beds
   'جربايه': 'سرير',
   'جرباية': 'سرير',
-  
+
   // Sofas
   'كاناب': 'كنبة',
   'كانابات': 'كنبة',
@@ -28,7 +28,7 @@ const searchMappings: SearchMapping = {
   'قنفات': 'كنبة',
   'صوفة': 'كنبة',
   'صوفات': 'كنبة',
-  
+
   // Clothes
   'حلا': 'ملابس',
   'شلغ': 'ملابس',
@@ -38,26 +38,26 @@ const searchMappings: SearchMapping = {
   'دشداشة': 'ملابس',
   'دشداشات': 'ملابس',
   'مكناسه': 'ملابس',
-  
+
   // Pants
   'بنط': 'بنطلون',
-  
+
   // Dresses
-  'دريسة': 'فستان',
+  'دريسه': 'فستان',
   'دريسات': 'فستان',
-  
+
   // Shoes
   'كندرة': 'حذاء',
   'كنادر': 'حذاء',
   'كلاج': 'حذاء',
   'كلاجات': 'حذاء',
-  
+
   // Phones
   'نق': 'هاتف',
-  
+
   // Watches
   'راص': 'ساعة',
-  
+
   // Kitchen
   'طنجرة': 'أواني',
   'طناجر': 'أواني',
@@ -66,23 +66,23 @@ const searchMappings: SearchMapping = {
   'طاسة': 'أواني',
   'طاس': 'أواني',
   'طاسات': 'أواني',
-  
+
   // Electronics
   'ماطور': 'إلكترونيات',
   'مطورات': 'إلكترونيات',
   'مولده': 'إلكترونيات',
   'مولدات': 'إلكترونيات',
   'مولد': 'إلكترونيات',
-  
+
   // Refrigerator
   'ثلاجه': 'ثلاجة',
-  
+
   // Cables
-  'واير': 'سلك',
-  'وايرات': 'سلك',
+  'وائر': 'سلك',
+  'وائرات': 'سلك',
   'تقسيم': 'سلك',
   'تقاسيم': 'سلك',
-  
+
   // Car
   'كرك': 'سيارة',
   'كركات': 'سيارة',
@@ -90,7 +90,7 @@ const searchMappings: SearchMapping = {
   'باصات': 'سيارة',
   'تاكسي': 'سيارة',
   'كوستر': 'سيارة',
-  
+
   // Bicycle
   'بيك': 'دراجة',
   'بيكات': 'دراجة'
@@ -103,12 +103,12 @@ const searchMappings: SearchMapping = {
  */
 export function normalizeArabicSearchTerm(searchTerm: string): string {
   const trimmed = searchTerm.trim().toLowerCase();
-  
+
   // Direct mapping for Iraqi slang only
   if (searchMappings[trimmed]) {
     return searchMappings[trimmed];
   }
-  
+
   // Return original if no mapping found
   return searchTerm;
 }
