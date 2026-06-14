@@ -517,14 +517,24 @@ export async function translateArabicToEnglish(text) {
     const translation = response?.choices?.[0]?.message?.content?.trim();
     console.log(`[AI Debug] Translated "${text}" → "${translation}"`);
 
-    // 3. Save translation to cache
+    // 3. Save translation to cache with upsert to handle race conditions
     if (translation) {
-      await prisma.translationCache.create({
-        data: {
-          arabicQuery: text,
-          englishTranslation: translation
-        }
-      });
+      try {
+        await prisma.translationCache.upsert({
+          where: { arabicQuery: text },
+          update: { 
+            // If entry already exists, just update the translation (should be same)
+            englishTranslation: translation
+          },
+          create: {
+            arabicQuery: text,
+            englishTranslation: translation
+          }
+        });
+      } catch (error) {
+        // Log any error but continue - translation is already done
+        console.log(`[AI Debug] Cache save error for "${text}": ${error.message}`);
+      }
     }
 
     return translation || text;
