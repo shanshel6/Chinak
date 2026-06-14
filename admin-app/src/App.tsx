@@ -28,7 +28,9 @@ import {
   ExternalLink,
   Save,
   Trash2,
-  Share2
+  Share2,
+  FilePlus,
+  Receipt
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Order, User } from './types';
@@ -54,6 +56,10 @@ import { Clipboard } from '@capacitor/clipboard';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
 import Invoice from './components/Invoice';
+import QuotationManager from './components/QuotationManager';
+import InvoicesView from './components/InvoicesView';
+
+type TabKey = 'orders' | 'quotations' | 'invoices';
 
 const App: React.FC = () => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -77,6 +83,7 @@ const App: React.FC = () => {
   const [isArchiving, setIsArchiving] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
+  const [activeTab, setActiveTab] = useState<TabKey>('orders');
   
   const invoiceRef = useRef<HTMLDivElement>(null);
   const quotationRef = useRef<HTMLDivElement>(null);
@@ -672,7 +679,7 @@ https://chinak-production.up.railway.app/shipping-tracking?id=${order.id}`;
               <ShoppingBag className="text-white w-7 h-7" />
             </div>
             <div>
-              <h1 className="text-xl font-black text-slate-900">Admin Orders</h1>
+              <h1 className="text-xl font-black text-slate-900">Admin Dashboard</h1>
               <div className="flex items-center gap-2">
                 <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
                 <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Live Updates On</span>
@@ -684,9 +691,54 @@ https://chinak-production.up.railway.app/shipping-tracking?id=${order.id}`;
             <button onClick={handleLogout} className="p-3 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all"><LogOut size={22} /></button>
           </div>
         </div>
+        {/* Tabs */}
+        <div className="max-w-5xl mx-auto px-4 pb-3">
+          <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide">
+            <button
+              onClick={() => setActiveTab('orders')}
+              className={`flex items-center gap-2 px-5 py-2.5 rounded-2xl font-black text-sm transition-all whitespace-nowrap ${
+                activeTab === 'orders'
+                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-200'
+                  : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+              }`}
+            >
+              <ShoppingBag size={16} />
+              الطلبات
+              <span className={`px-2 py-0.5 rounded-full text-[10px] ${
+                activeTab === 'orders' ? 'bg-white/20' : 'bg-white'
+              }`}>
+                {orders.length}
+              </span>
+            </button>
+            <button
+              onClick={() => setActiveTab('quotations')}
+              className={`flex items-center gap-2 px-5 py-2.5 rounded-2xl font-black text-sm transition-all whitespace-nowrap ${
+                activeTab === 'quotations'
+                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-200'
+                  : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+              }`}
+            >
+              <FilePlus size={16} />
+              عروض الأسعار
+            </button>
+            <button
+              onClick={() => setActiveTab('invoices')}
+              className={`flex items-center gap-2 px-5 py-2.5 rounded-2xl font-black text-sm transition-all whitespace-nowrap ${
+                activeTab === 'invoices'
+                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-200'
+                  : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+              }`}
+            >
+              <Receipt size={16} />
+              الفواتير
+            </button>
+          </div>
+        </div>
       </header>
 
       <main className="max-w-5xl mx-auto px-4 py-8">
+        {activeTab === 'orders' && (
+          <>
         <div className="mb-8 space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-2xl font-black text-slate-800 flex items-center gap-3">
@@ -806,6 +858,33 @@ https://chinak-production.up.railway.app/shipping-tracking?id=${order.id}`;
             </div>
           )}
         </div>
+          </>
+        )}
+
+        {activeTab === 'quotations' && (
+          <QuotationManager settings={settings} apiUrl={apiUrl} />
+        )}
+
+        {activeTab === 'invoices' && (
+          <InvoicesView
+            orders={filteredOrders}
+            getStatusConfig={getStatusConfig}
+            onOpenOrder={async (order) => {
+              setModalLoading(true);
+              setShowOrderModal(true);
+              try {
+                const details = await fetchAdminOrderDetails(order.id);
+                setSelectedOrder(details);
+              } catch (err) {
+                console.error(err);
+              } finally {
+                setModalLoading(false);
+              }
+            }}
+            onSendInvoice={handleSendInvoice}
+            settings={settings}
+          />
+        )}
       </main>
 
       {/* Order Details Modal */}

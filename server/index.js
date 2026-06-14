@@ -12450,6 +12450,156 @@ app.post('/api/messages', authenticateToken, async (req, res) => {
   }
 });
 
+// Quotation API Endpoints
+app.get('/api/admin/quotations', async (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+    const skip = (page - 1) * limit;
+    const [quotations, total] = await Promise.all([
+      prisma.quotation.findMany({
+        include: { items: true },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      prisma.quotation.count(),
+    ]);
+    res.json({ quotations, total, page, totalPages: Math.ceil(total / limit) });
+  } catch (error) {
+    console.error('Get quotations error:', error);
+    res.status(500).json({ error: 'Failed to get quotations' });
+  }
+});
+
+app.get('/api/admin/quotations/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const quotation = await prisma.quotation.findUnique({
+      where: { id: parseInt(id) },
+      include: { items: true },
+    });
+    if (!quotation) return res.status(404).json({ error: 'Quotation not found' });
+    res.json(quotation);
+  } catch (error) {
+    console.error('Get quotation error:', error);
+    res.status(500).json({ error: 'Failed to get quotation' });
+  }
+});
+
+app.post('/api/admin/quotations', async (req, res) => {
+  try {
+    const { customerName, customerPhone, customerEmail, notes, items, status } = req.body;
+    const total = items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+    
+    let quotationNumber;
+    let isUnique = false;
+    while (!isUnique) {
+      const date = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+      quotationNumber = `QTN-${date}-${random}`;
+      const exists = await prisma.quotation.findUnique({ where: { quotationNumber } });
+      if (!exists) isUnique = true;
+    }
+
+    const quotation = await prisma.quotation.create({
+      data: {
+        quotationNumber,
+        customerName,
+        customerPhone,
+        customerEmail,
+        notes,
+        status: status || 'DRAFT',
+        total,
+        items: {
+          create: items.map((item) => ({
+            name: item.name,
+            description: item.description,
+            price: item.price,
+            quantity: item.quantity,
+            imageUrl: item.imageUrl,
+          })),
+        },
+      },
+      include: { items: true },
+    });
+    res.status(201).json(quotation);
+  } catch (error) {
+    console.error('Create quotation error:', error);
+    res.status(500).json({ error: 'Failed to create quotation' });
+  }
+});
+
+app.put('/api/admin/quotations/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { customerName, customerPhone, customerEmail, notes, items, status } = req.body;
+    const total = items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+    
+    // Delete old items first then create new ones
+    const quotation = await prisma.quotation.update({
+      where: { id: parseInt(id) },
+      data: {
+        customerName,
+        customerPhone,
+        customerEmail,
+        notes,
+        status,
+        total,
+        items: {
+          deleteMany: {},
+          create: items.map((item) => ({
+            name: item.name,
+            description: item.description,
+            price: item.price,
+            quantity: item.quantity,
+            imageUrl: item.imageUrl,
+          })),
+        },
+      },
+      include: { items: true },
+    });
+    res.json(quotation);
+  } catch (error) {
+    console.error('Update quotation error:', error);
+    res.status(500).json({ error: 'Failed to update quotation' });
+  }
+});
+
+app.delete('/api/admin/quotations/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    await prisma.quotation.delete({
+      where: { id: parseInt(id) },
+    });
+    res.status(204).send();
+  } catch (error) {
+    console.error('Delete quotation error:', error);
+    res.status(500).json({ error: 'Failed to delete quotation' });
+  }
+});
+
+// Generic image upload endpoint (used for quotation item photos, etc.)
+app.post('/api/upload/image', upload.single('image'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No image file provided' });
+    }
+    const mime = req.file.mimetype || 'image/jpeg';
+    const extMap = { 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' };
+    const ext = extMap[mime] || (mime.split('/')[1] || 'jpg').replace('jpeg', 'jpg');
+    const fileName = `quotation_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+    const filePath = path.join(uploadsPath, fileName);
+    fs.writeFileSync(filePath, req.file.buffer);
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    const url = `${baseUrl}/uploads/${fileName}`;
+    res.json({ url, fileName });
+  } catch (error) {
+    console.error('Upload image error:', error);
+    res.status(500).json({ error: 'Failed to upload image' });
+  }
+});
+
 // Catch-all route for SPA - MUST be after all API routes
 app.get('/', (req, res) => {
   const indexPath = path.join(distPath, 'index.html');
