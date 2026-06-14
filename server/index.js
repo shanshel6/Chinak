@@ -12579,27 +12579,6 @@ app.delete('/api/admin/quotations/:id', async (req, res) => {
   }
 });
 
-// Generic image upload endpoint (used for quotation item photos, etc.)
-app.post('/api/upload/image', upload.single('image'), async (req, res) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ error: 'No image file provided' });
-    }
-    const mime = req.file.mimetype || 'image/jpeg';
-    const extMap = { 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' };
-    const ext = extMap[mime] || (mime.split('/')[1] || 'jpg').replace('jpeg', 'jpg');
-    const fileName = `quotation_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
-    const filePath = path.join(uploadsPath, fileName);
-    fs.writeFileSync(filePath, req.file.buffer);
-    const baseUrl = `${req.protocol}://${req.get('host')}`;
-    const url = `${baseUrl}/uploads/${fileName}`;
-    res.json({ url, fileName });
-  } catch (error) {
-    console.error('Upload image error:', error);
-    res.status(500).json({ error: 'Failed to upload image' });
-  }
-});
-
 // Catch-all route for SPA - MUST be after all API routes
 app.get('/', (req, res) => {
   const indexPath = path.join(distPath, 'index.html');

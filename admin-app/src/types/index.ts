@@ -29,28 +29,3 @@ export interface Order {
   paymentMethod?: string;
   internationalShippingFee?: number;
 }
-
-export interface QuotationItem {
-  id: number;
-  quotationId: number;
-  name: string;
-  description?: string | null;
-  price: number;
-  quantity: number;
-  imageUrl?: string | null;
-  createdAt?: string;
-}
-
-export interface Quotation {
-  id: number;
-  quotationNumber: string;
-  customerName?: string | null;
-  customerPhone?: string | null;
-  customerEmail?: string | null;
-  status: string; // DRAFT, ISSUED, INVOICED, PAID
-  notes?: string | null;
-  total: number;
-  createdAt: string;
-  updatedAt: string;
-  items: QuotationItem[];
-}

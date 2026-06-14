@@ -10,25 +10,38 @@ import {
   FileText,
   Search,
   Eye,
-  Send,
-  MessageCircle,
   Calendar,
   User,
   Phone,
   Mail,
   Package,
-  RefreshCw,
-  AlertCircle
+  AlertCircle,
+  Send
 } from 'lucide-react';
-import {
-  fetchQuotations,
-  createQuotation,
-  updateQuotation,
-  deleteQuotation,
-  uploadImage
-} from '../services/api';
-import { Quotation, QuotationItem } from '../types';
+import { jsPDF } from 'jspdf';
+import html2canvas from 'html2canvas';
+import { Filesystem, Directory } from '@capacitor/filesystem';
+import { Share } from '@capacitor/share';
 import Invoice from './Invoice';
+
+interface LocalQuotation {
+  id: string;
+  quotationNumber: string;
+  customerName: string;
+  customerPhone: string;
+  customerEmail: string;
+  status: string; // DRAFT, ISSUED, INVOICED, PAID
+  notes: string;
+  total: number;
+  createdAt: string;
+  items: Array<{
+    name: string;
+    description: string;
+    price: number;
+    quantity: number;
+    imageUrl: string; // dataURL
+  }>;
+}
 
 interface DraftItem {
   name: string;
@@ -36,7 +49,6 @@ interface DraftItem {
   price: number;
   quantity: number;
   imageUrl: string;
-  imageFile?: File;
 }
 
 const STATUS_LABELS: Record<string, { label: string; class: string }> = {
@@ -46,13 +58,46 @@ const STATUS_LABELS: Record<string, { label: string; class: string }> = {
   PAID: { label: 'مدفوع', class: 'bg-green-100 text-green-700 border-green-200' }
 };
 
-const QuotationManager: React.FC<{ settings: any; apiUrl: string }> = ({ settings, apiUrl }) => {
-  const [quotations, setQuotations] = useState<Quotation[]>([]);
-  const [loading, setLoading] = useState(false);
+const STORAGE_KEY = 'admin_local_quotations';
+
+const loadFromStorage = (): LocalQuotation[] => {
+  try {
+    const raw = sessionStorage.getItem(STORAGE_KEY);
+    if (!raw) return [];
+    return JSON.parse(raw);
+  } catch {
+    return [];
+  }
+};
+
+const saveToStorage = (data: LocalQuotation[]) => {
+  try {
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  } catch (e) {
+    console.warn('Failed to save quotations to session storage:', e);
+  }
+};
+
+const fileToDataURL = (file: File): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+
+const generateQuotationNumber = () => {
+  const date = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+  return `QTN-${date}-${random}`;
+};
+
+const QuotationManager: React.FC<{ settings: any; apiUrl: string }> = ({ settings }) => {
+  const [quotations, setQuotations] = useState<LocalQuotation[]>(loadFromStorage);
   const [searchTerm, setSearchTerm] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [editingQuotation, setEditingQuotation] = useState<Quotation | null>(null);
-  const [viewingQuotation, setViewingQuotation] = useState<Quotation | null>(null);
+  const [editingQuotation, setEditingQuotation] = useState<LocalQuotation | null>(null);
+  const [viewingQuotation, setViewingQuotation] = useState<LocalQuotation | null>(null);
   const [error, setError] = useState('');
 
   // Form state
@@ -62,30 +107,15 @@ const QuotationManager: React.FC<{ settings: any; apiUrl: string }> = ({ setting
   const [notes, setNotes] = useState('');
   const [status, setStatus] = useState('DRAFT');
   const [items, setItems] = useState<DraftItem[]>([]);
-  const [isSubmitting, setIsSubmitting] = useState(false);
   const [uploadingIdx, setUploadingIdx] = useState<number | null>(null);
+  const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
 
   const fileInputRefs = useRef<Record<number, HTMLInputElement | null>>({});
-  const quotationViewRef = useRef<HTMLDivElement>(null);
-
-  const loadQuotations = async () => {
-    try {
-      setLoading(true);
-      const data = await fetchQuotations(1, 100);
-      setQuotations(data.quotations || []);
-    } catch (err: any) {
-      console.error('Failed to fetch quotations:', err);
-      if (err.response?.status !== 401) {
-        setError(err.response?.data?.error || err.message || 'فشل تحميل عروض الأسعار');
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
+  const pdfRenderRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    loadQuotations();
-  }, []);
+    saveToStorage(quotations);
+  }, [quotations]);
 
   const resetForm = () => {
     setCustomerName('');
@@ -103,20 +133,20 @@ const QuotationManager: React.FC<{ settings: any; apiUrl: string }> = ({ setting
     setShowCreateModal(true);
   };
 
-  const openEdit = (q: Quotation) => {
+  const openEdit = (q: LocalQuotation) => {
     setEditingQuotation(q);
-    setCustomerName(q.customerName || '');
-    setCustomerPhone(q.customerPhone || '');
-    setCustomerEmail(q.customerEmail || '');
-    setNotes(q.notes || '');
+    setCustomerName(q.customerName);
+    setCustomerPhone(q.customerPhone);
+    setCustomerEmail(q.customerEmail);
+    setNotes(q.notes);
     setStatus(q.status);
     setItems(
       q.items.map((it) => ({
         name: it.name,
-        description: it.description || '',
+        description: it.description,
         price: it.price,
         quantity: it.quantity,
-        imageUrl: it.imageUrl || ''
+        imageUrl: it.imageUrl
       }))
     );
     setShowCreateModal(true);
@@ -140,21 +170,20 @@ const QuotationManager: React.FC<{ settings: any; apiUrl: string }> = ({ setting
   const handleImageUpload = async (idx: number, file: File) => {
     try {
       setUploadingIdx(idx);
-      const url = await uploadImage(file);
-      updateItem(idx, { imageUrl: url, imageFile: file });
+      const dataUrl = await fileToDataURL(file);
+      updateItem(idx, { imageUrl: dataUrl });
     } catch (err: any) {
-      console.error('Image upload failed:', err);
-      alert(`فشل رفع الصورة: ${err.response?.data?.error || err.message || 'خطأ'}`);
+      console.error('Image read failed:', err);
+      alert('فشل قراءة الصورة');
     } finally {
       setUploadingIdx(null);
     }
   };
 
-  const calculateTotal = () => {
-    return items.reduce((sum, it) => sum + (Number(it.price) || 0) * (Number(it.quantity) || 0), 0);
-  };
+  const calculateTotal = () =>
+    items.reduce((sum, it) => sum + (Number(it.price) || 0) * (Number(it.quantity) || 0), 0);
 
-  const handleSave = async () => {
+  const handleSave = () => {
     if (items.length === 0) {
       alert('الرجاء إضافة منتج واحد على الأقل');
       return;
@@ -164,52 +193,112 @@ const QuotationManager: React.FC<{ settings: any; apiUrl: string }> = ({ setting
       return;
     }
 
-    try {
-      setIsSubmitting(true);
-      const payload = {
-        customerName: customerName || undefined,
-        customerPhone: customerPhone || undefined,
-        customerEmail: customerEmail || undefined,
-        notes: notes || undefined,
+    const total = calculateTotal();
+
+    if (editingQuotation) {
+      // Update existing
+      setQuotations((prev) =>
+        prev.map((q) =>
+          q.id === editingQuotation.id
+            ? {
+                ...q,
+                customerName,
+                customerPhone,
+                customerEmail,
+                notes,
+                status,
+                total,
+                items: items.map((it) => ({ ...it }))
+              }
+            : q
+        )
+      );
+    } else {
+      // Create new local
+      const newQuotation: LocalQuotation = {
+        id: `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        quotationNumber: generateQuotationNumber(),
+        customerName,
+        customerPhone,
+        customerEmail,
+        notes,
         status,
-        items: items.map((it) => ({
-          name: it.name,
-          description: it.description || undefined,
-          price: Number(it.price),
-          quantity: Number(it.quantity),
-          imageUrl: it.imageUrl || undefined
-        }))
+        total,
+        createdAt: new Date().toISOString(),
+        items: items.map((it) => ({ ...it }))
       };
-
-      if (editingQuotation) {
-        await updateQuotation(editingQuotation.id, payload);
-      } else {
-        await createQuotation(payload);
-      }
-
-      setShowCreateModal(false);
-      resetForm();
-      loadQuotations();
-    } catch (err: any) {
-      console.error('Save failed:', err);
-      alert(`فشل الحفظ: ${err.response?.data?.error || err.message || 'خطأ'}`);
-    } finally {
-      setIsSubmitting(false);
+      setQuotations((prev) => [newQuotation, ...prev]);
     }
+
+    setShowCreateModal(false);
+    resetForm();
   };
 
-  const handleDelete = async (id: number) => {
+  const handleDelete = (id: string) => {
     if (!window.confirm('هل أنت متأكد من حذف عرض السعر هذا؟')) return;
+    setQuotations((prev) => prev.filter((q) => q.id !== id));
+    if (viewingQuotation?.id === id) setViewingQuotation(null);
+  };
+
+  // Build a fake order-shape object so the existing Invoice component renders it
+  const buildInvoiceOrder = (q: LocalQuotation) => ({
+    id: q.quotationNumber,
+    createdAt: q.createdAt,
+    user: { name: q.customerName, phone: q.customerPhone, email: q.customerEmail },
+    address: { name: q.customerName, phone: q.customerPhone, city: '', street: '', buildingNo: '' },
+    items: q.items.map((it) => ({
+      product: { name: it.name, image: it.imageUrl },
+      quantity: it.quantity,
+      price: it.price,
+      selectedOptions: it.description || null,
+      notes: null
+    })),
+    internationalShippingFee: 0,
+    discountAmount: 0,
+    total: q.total
+  });
+
+  const generatePDF = async (q: LocalQuotation): Promise<string | null> => {
     try {
-      await deleteQuotation(id);
-      loadQuotations();
-    } catch (err: any) {
-      console.error('Delete failed:', err);
-      alert(`فشل الحذف: ${err.response?.data?.error || err.message || 'خطأ'}`);
+      setIsGeneratingPDF(true);
+      setViewingQuotation(q); // ensure ref has content
+      // Wait for the hidden render to mount/refresh
+      await new Promise((r) => setTimeout(r, 250));
+      if (!pdfRenderRef.current) {
+        console.error('PDF render ref missing');
+        return null;
+      }
+      const canvas = await html2canvas(pdfRenderRef.current, {
+        scale: 1.5,
+        useCORS: true,
+        logging: false,
+        backgroundColor: '#ffffff',
+        windowWidth: 800
+      });
+      const imgData = canvas.toDataURL('image/jpeg', 0.85);
+      const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+      const imgProps = pdf.getImageProperties(imgData);
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+      pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight);
+
+      const pdfBase64 = pdf.output('datauristring').split(',')[1];
+      const fileName = `DFC-Quotation-${q.quotationNumber}.pdf`;
+      const saved = await Filesystem.writeFile({
+        path: fileName,
+        data: pdfBase64,
+        directory: Directory.Cache
+      });
+      return saved.uri;
+    } catch (err) {
+      console.error('PDF generation failed:', err);
+      return null;
+    } finally {
+      setIsGeneratingPDF(false);
     }
   };
 
-  const handleSendWhatsApp = (q: Quotation) => {
+  const handleSendWhatsApp = async (q: LocalQuotation) => {
     if (!q.customerPhone) {
       alert('رقم الهاتف غير متوفر');
       return;
@@ -218,7 +307,9 @@ const QuotationManager: React.FC<{ settings: any; apiUrl: string }> = ({ setting
     const itemsList = q.items
       .map(
         (it) =>
-          `• ${it.name} (${it.quantity} x ${it.price.toLocaleString()} = ${(it.quantity * it.price).toLocaleString()} د.ع)`
+          `• ${it.name} (${it.quantity} x ${it.price.toLocaleString()} = ${(
+            it.quantity * it.price
+          ).toLocaleString()} د.ع)`
       )
       .join('\n');
 
@@ -231,6 +322,20 @@ ${itemsList}
 
 💰 المجموع: ${q.total.toLocaleString()} د.ع`;
 
+    const pdfUri = await generatePDF(q);
+    if (pdfUri) {
+      try {
+        await Share.share({
+          title: `Quotation ${q.quotationNumber}`,
+          text: `رقم العميل: ${phone}\n\n${message}`,
+          url: pdfUri,
+          dialogTitle: 'ارسال عرض السعر عبر واتساب'
+        });
+        return;
+      } catch (e) {
+        // fall through to wa.me
+      }
+    }
     const encoded = encodeURIComponent(message);
     window.open(`https://wa.me/${phone}?text=${encoded}`, '_blank');
   };
@@ -252,24 +357,17 @@ ${itemsList}
               {quotations.length}
             </span>
           </h2>
-          <p className="text-sm text-slate-500 mt-1 font-bold">قم بإنشاء وإدارة عروض الأسعار للعملاء</p>
+          <p className="text-sm text-slate-500 mt-1 font-bold">
+            إنشاء عروض أسعار مخصصة وإرسالها كملف PDF عبر واتساب
+          </p>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={loadQuotations}
-            className="p-3 bg-white border border-slate-200 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all"
-            title="تحديث"
-          >
-            <RefreshCw size={20} className={loading ? 'animate-spin' : ''} />
-          </button>
-          <button
-            onClick={openCreate}
-            className="bg-blue-600 hover:bg-blue-700 text-white font-black py-3 px-5 rounded-2xl transition-all shadow-xl shadow-blue-200 flex items-center gap-2 text-sm"
-          >
-            <Plus size={20} />
-            عرض سعر جديد
-          </button>
-        </div>
+        <button
+          onClick={openCreate}
+          className="bg-blue-600 hover:bg-blue-700 text-white font-black py-3 px-5 rounded-2xl transition-all shadow-xl shadow-blue-200 flex items-center gap-2 text-sm"
+        >
+          <Plus size={20} />
+          عرض سعر جديد
+        </button>
       </div>
 
       <div className="relative">
@@ -291,7 +389,7 @@ ${itemsList}
       )}
 
       <div className="space-y-4">
-        {filtered.length === 0 && !loading ? (
+        {filtered.length === 0 ? (
           <div className="text-center py-32 bg-white rounded-3xl border-2 border-dashed border-slate-100">
             <FileText className="mx-auto text-slate-200 w-20 h-20 mb-6" />
             <h3 className="text-xl font-black text-slate-400">
@@ -395,16 +493,8 @@ ${itemsList}
                       onClick={() => openEdit(q)}
                       className="flex-1 min-w-[120px] bg-blue-50 text-blue-600 hover:bg-blue-100 font-black py-2.5 rounded-xl transition-all flex items-center justify-center gap-2 text-xs"
                     >
-                      <Save size={16} /> تعديل
+                      تعديل
                     </button>
-                    {q.customerPhone && (
-                      <button
-                        onClick={() => handleSendWhatsApp(q)}
-                        className="flex-1 min-w-[120px] bg-green-50 text-green-600 hover:bg-green-100 font-black py-2.5 rounded-xl transition-all flex items-center justify-center gap-2 text-xs"
-                      >
-                        <MessageCircle size={16} /> واتساب
-                      </button>
-                    )}
                     <button
                       onClick={() => handleDelete(q.id)}
                       className="bg-red-50 text-red-600 hover:bg-red-100 font-black py-2.5 px-4 rounded-xl transition-all flex items-center justify-center gap-2 text-xs"
@@ -576,7 +666,9 @@ ${itemsList}
                                     className="w-full h-full object-cover"
                                   />
                                 ) : uploadingIdx === idx ? (
-                                  <RefreshCw className="animate-spin text-blue-600" size={20} />
+                                  <span className="text-xs text-blue-600 font-bold">
+                                    جاري...
+                                  </span>
                                 ) : (
                                   <Upload className="text-slate-400" size={20} />
                                 )}
@@ -681,14 +773,10 @@ ${itemsList}
                   </button>
                   <button
                     onClick={handleSave}
-                    disabled={isSubmitting || items.length === 0}
+                    disabled={items.length === 0}
                     className="bg-blue-600 hover:bg-blue-700 text-white font-black py-2.5 px-5 rounded-xl transition-all shadow-lg flex items-center gap-2 text-sm disabled:opacity-50"
                   >
-                    {isSubmitting ? (
-                      <RefreshCw className="animate-spin" size={18} />
-                    ) : (
-                      <Save size={18} />
-                    )}
+                    <Save size={18} />
                     {editingQuotation ? 'تحديث' : 'حفظ'}
                   </button>
                 </div>
@@ -812,9 +900,16 @@ ${itemsList}
                 {viewingQuotation.customerPhone && (
                   <button
                     onClick={() => handleSendWhatsApp(viewingQuotation)}
-                    className="flex-1 bg-green-500 text-white font-black py-2.5 rounded-xl hover:bg-green-600 transition-all flex items-center justify-center gap-2 text-sm"
+                    disabled={isGeneratingPDF}
+                    className="flex-1 bg-green-500 text-white font-black py-2.5 rounded-xl hover:bg-green-600 transition-all flex items-center justify-center gap-2 text-sm disabled:opacity-50"
                   >
-                    <MessageCircle size={18} /> ارسال عبر واتساب
+                    {isGeneratingPDF ? (
+                      <span className="text-xs">جاري تجهيز الـ PDF...</span>
+                    ) : (
+                      <>
+                        <Send size={18} /> ارسال PDF عبر واتساب
+                      </>
+                    )}
                   </button>
                 )}
                 <button
@@ -824,13 +919,32 @@ ${itemsList}
                   }}
                   className="flex-1 bg-blue-600 text-white font-black py-2.5 rounded-xl hover:bg-blue-700 transition-all flex items-center justify-center gap-2 text-sm"
                 >
-                  <Save size={18} /> تعديل
+                  تعديل
                 </button>
               </div>
             </motion.div>
           </div>
         )}
       </AnimatePresence>
+
+      {/* Hidden PDF render target */}
+      <div className="fixed -left-[2000px] top-0 opacity-0 pointer-events-none overflow-hidden">
+        {viewingQuotation && (
+          <div ref={pdfRenderRef}>
+            <Invoice order={buildInvoiceOrder(viewingQuotation)} settings={settings} mode="quotation" />
+          </div>
+        )}
+      </div>
+
+      {/* Loading overlay while PDF is being generated */}
+      {isGeneratingPDF && (
+        <div className="fixed inset-0 z-[1000] bg-black/50 backdrop-blur-sm flex items-center justify-center">
+          <div className="bg-white p-8 rounded-3xl shadow-2xl flex flex-col items-center gap-4">
+            <div className="w-10 h-10 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin" />
+            <p className="font-black text-slate-800">جاري تجهيز ملف PDF...</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
