@@ -67,6 +67,9 @@ const ProductDetails: React.FC = () => {
   // Notes modal state
   const [isNotesModalOpen, setIsNotesModalOpen] = useState(false);
   const [pendingCartItem, setPendingCartItem] = useState<any>(null);
+  
+  // WhatsApp notification state
+  const [showNotification, setShowNotification] = useState(true);
 
   const [selectedOptions, setSelectedOptions] = useState<Record<string, string>>(() => {
     // Try to get initial options from navigation state or global cache
@@ -115,6 +118,15 @@ const ProductDetails: React.FC = () => {
     // }
     return {};
   });
+
+  // Effect to hide WhatsApp notification after 5 seconds
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setShowNotification(false);
+    }, 5000); // Hide after 5 seconds
+    
+    return () => clearTimeout(timer);
+  }, []);
 
   // Effect to select the cheapest variant by default if no options are selected
   useEffect(() => {
@@ -775,12 +787,23 @@ const ProductDetails: React.FC = () => {
         <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden bg-background-light dark:bg-background-dark pb-32 pb-safe pt-safe" dir="rtl">
         
         <div className="md:grid md:grid-cols-2 md:gap-8 lg:gap-12 md:px-6 md:pt-6">
-          <div className="md:sticky md:top-24 h-fit pt-16 md:pt-0">
+          <div className="md:sticky md:top-24 h-fit pt-16 md:pt-0 relative">
             <ImageGallery 
               images={galleryImages}
               productName={product.name}
               hideIndicators={false}
             />
+            
+            {/* WhatsApp Notification Overlay */}
+            {showNotification && (
+              <div className="absolute bottom-0 left-0 right-0 z-20 bg-gradient-to-t from-black/80 to-transparent p-3">
+                <div className="flex items-center justify-center">
+                  <div className="bg-green-600 text-white px-4 py-2 rounded-full text-xs font-bold animate-pulse">
+                    تواصل معنا على واتساب للمزيد من الصور والتفاصيل
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           <main className="relative -mt-10 md:mt-0 bg-background-light dark:bg-background-dark rounded-t-[2.5rem] md:rounded-none px-5 md:px-0 pt-8 md:pt-0 shadow-[0_-10px_40px_rgba(0,0,0,0.05)] md:shadow-none z-10 min-h-[50vh]">

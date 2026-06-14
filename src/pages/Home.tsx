@@ -1,12 +1,12 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { fetchProducts } from '../services/api';
+import { fetchProducts, fetchSettings } from '../services/api';
 import { useAuthStore } from '../store/useAuthStore';
 import { normalizeWishlistProductId, useWishlistStore } from '../store/useWishlistStore';
 import Skeleton from '../components/Skeleton';
 import { useTranslation } from 'react-i18next';
 import ProductCard from '../components/home/ProductCard';
-import { AlertCircle, Camera, Search, PackageSearch } from 'lucide-react';
+import { AlertCircle, Camera, Search, PackageSearch, MessageCircle } from 'lucide-react';
 import type { Product } from '../types/product';
 
 const Home: React.FC = () => {
@@ -21,6 +21,9 @@ const Home: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [storeSettings, setStoreSettings] = useState<any>({
+    socialLinks: { whatsapp: '' }
+  });
 
   const [hasMore, setHasMore] = useState(true);
   const pageRef = useRef(1);
@@ -94,6 +97,22 @@ const Home: React.FC = () => {
 
   useEffect(() => {
     loadData(1, true);
+    // Fetch store settings to get WhatsApp number
+    const getStoreSettings = async () => {
+      try {
+        const data = await fetchSettings({ skipCache: true });
+        setStoreSettings(prev => ({
+          ...prev,
+          ...data,
+          socialLinks: typeof data?.socialLinks === 'string' 
+            ? JSON.parse(data.socialLinks) 
+            : (data?.socialLinks || prev.socialLinks)
+        }));
+      } catch (err) {
+        console.error('Failed to fetch store settings:', err);
+      }
+    };
+    getStoreSettings();
   }, [loadData]);
 
   const lastProductElementRef = useCallback((node: HTMLDivElement) => {
@@ -324,24 +343,61 @@ const Home: React.FC = () => {
         </div>
       </div>
 
-      <div 
-        onClick={handleSearchByPhotoBannerClick}
-        className="mx-4 mt-4 p-4 bg-gradient-to-r from-primary/10 to-primary/5 dark:from-primary/20 dark:to-primary/10 rounded-2xl border border-primary/20 dark:border-primary/30 cursor-pointer transition-all hover:scale-[1.02] active:scale-[0.98]"
-      >
-        <div className="flex items-center gap-4">
-          <div className="flex-shrink-0 w-12 h-12 rounded-full bg-primary/20 dark:bg-primary/30 flex items-center justify-center">
-            <Camera size={24} className="text-primary" />
-          </div>
-          <div className="flex-1">
-            <p className="text-base font-black text-primary dark:text-primary-light">🎉 الآن يمكنك البحث بالصورة!</p>
-            <p className="text-sm font-medium text-slate-600 dark:text-slate-400">إذا كنت لا تعرف اسم المنتج، فقط ابحث عنه بالصورة أو لقطة الشاشة، جربها الآن!</p>
-          </div>
-          <div className="flex-shrink-0">
-            <div className="w-8 h-8 rounded-full bg-primary text-white flex items-center justify-center">
-              <Search size={16} />
+      <div className="mx-4 mt-4 space-y-4">
+        {/* First Panel - Image Search */}
+        <div 
+          onClick={handleSearchByPhotoBannerClick}
+          className="p-4 bg-gradient-to-r from-primary/10 to-primary/5 dark:from-primary/20 dark:to-primary/10 rounded-2xl border border-primary/20 dark:border-primary/30 cursor-pointer transition-all hover:scale-[1.02] active:scale-[0.98] shadow-sm"
+        >
+          <div className="flex items-center gap-4">
+            <div className="flex-shrink-0 w-12 h-12 rounded-full bg-primary/20 dark:bg-primary/30 flex items-center justify-center">
+              <Camera size={24} className="text-primary" />
+            </div>
+            <div className="flex-1">
+              <p className="text-base font-black text-primary dark:text-primary-light">🎉 الآن يمكنك البحث بالصورة!</p>
+              <p className="text-sm font-medium text-slate-600 dark:text-slate-400">إذا كنت لا تعرف اسم المنتج، فقط ابحث عنه بالصورة أو لقطة الشاشة، جربها الآن!</p>
+            </div>
+            <div className="flex-shrink-0">
+              <div className="w-8 h-8 rounded-full bg-primary text-white flex items-center justify-center">
+                <Search size={16} />
+              </div>
             </div>
           </div>
         </div>
+
+        {/* Second Panel - WhatsApp Contact */}
+        {(() => {
+          // Get WhatsApp number, fall back to a default if not set
+          const whatsappNumber = storeSettings?.socialLinks?.whatsapp || '9647700000000';
+          // Clean the number (remove any non-digit characters)
+          const cleanNumber = whatsappNumber.replace(/\D/g, '');
+          const message = encodeURIComponent('مرحباً، لا أجدة المنتج الذي أبحث عنه، هل يمكنكم مساعدتي؟');
+          const whatsappUrl = `https://wa.me/${cleanNumber}?text=${message}`;
+          
+          return (
+            <a 
+              href={whatsappUrl} 
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="p-4 bg-gradient-to-r from-[#25D366]/15 to-[#25D366]/10 dark:from-[#25D366]/25 dark:to-[#25D366]/15 rounded-2xl border-2 border-[#25D366]/30 dark:border-[#25D366]/40 cursor-pointer transition-all hover:scale-[1.02] active:scale-[0.98] block shadow-sm hover:shadow-md"
+            >
+              <div className="flex items-center gap-4">
+                <div className="flex-shrink-0 w-12 h-12 rounded-full bg-[#25D366]/25 dark:bg-[#25D366]/35 flex items-center justify-center">
+                  <MessageCircle size={24} className="text-[#25D366] dark:text-[#25D366]/90" />
+                </div>
+                <div className="flex-1">
+                  <p className="text-base font-black text-[#25D366] dark:text-[#25D366]/90">🤝 لا تجد المنتج الذي تبحث عنه؟</p>
+                  <p className="text-sm font-medium text-slate-700 dark:text-slate-300">تواصل معنا عبر واتساب وأرسل لنا صورة المنتج وسنساعدك في العثور عليه!</p>
+                </div>
+                <div className="flex-shrink-0">
+                  <div className="w-8 h-8 rounded-full bg-[#25D366] text-white flex items-center justify-center shadow-sm">
+                    <MessageCircle size={16} />
+                  </div>
+                </div>
+              </div>
+            </a>
+          );
+        })()}
       </div>
 
       {error && (
