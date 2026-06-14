@@ -101,7 +101,7 @@ const Home: React.FC = () => {
     const getStoreSettings = async () => {
       try {
         const data = await fetchSettings({ skipCache: true });
-        setStoreSettings(prev => ({
+        setStoreSettings((prev: any) => ({
           ...prev,
           ...data,
           socialLinks: typeof data?.socialLinks === 'string' 
