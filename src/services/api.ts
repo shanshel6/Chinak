@@ -1739,3 +1739,56 @@ export async function sendMessage(orderId: number | string, text: string) {
     body: JSON.stringify({ orderId, text }),
   });
 }
+
+// --- Quotation API ---
+export async function fetchAdminQuotations(page = 1, limit = 20, token?: string | null) {
+  const queryParams = new URLSearchParams({
+    page: page.toString(),
+    limit: limit.toString()
+  });
+  return request(`/admin/quotations?${queryParams.toString()}`, { token, skipCache: true });
+}
+
+export async function fetchQuotationById(id: number | string, token?: string | null) {
+  return request(`/admin/quotations/${encodeURIComponent(id)}`, { token, skipCache: true });
+}
+
+export async function createQuotation(data: {
+  customerName?: string;
+  customerPhone?: string;
+  customerEmail?: string;
+  notes?: string;
+  items: Array<{ name: string; description?: string; price: number; quantity: number; imageUrl?: string }>;
+  status?: string;
+}, token?: string | null) {
+  return request('/admin/quotations', {
+    method: 'POST',
+    body: JSON.stringify(data),
+    token,
+    skipCache: true
+  });
+}
+
+export async function updateQuotation(id: number | string, data: {
+  customerName?: string;
+  customerPhone?: string;
+  customerEmail?: string;
+  notes?: string;
+  items: Array<{ name: string; description?: string; price: number; quantity: number; imageUrl?: string }>;
+  status?: string;
+}, token?: string | null) {
+  return request(`/admin/quotations/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+    token,
+    skipCache: true
+  });
+}
+
+export async function deleteQuotation(id: number | string, token?: string | null) {
+  return request(`/admin/quotations/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    token,
+    skipCache: true
+  });
+}
