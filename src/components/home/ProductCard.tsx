@@ -192,6 +192,16 @@ const ProductCard: React.FC<ProductCardProps> = React.memo(({
   };
 
   const [_currentImageIndex, _setCurrentImageIndex] = React.useState(0);
+  const [showNotification, setShowNotification] = React.useState(true);
+  
+  React.useEffect(() => {
+    const timer = setTimeout(() => {
+      setShowNotification(false);
+    }, 5000); // Hide after 5 seconds
+    
+    return () => clearTimeout(timer);
+  }, []);
+  
   const displayImages = React.useMemo(() => {
     // START WITH MAIN IMAGE (product.image) - This is critical for consistency with search/home
     const images = [];
@@ -407,6 +417,17 @@ const ProductCard: React.FC<ProductCardProps> = React.memo(({
           objectFit="contain"
           className="h-full w-full bg-white transition-transform duration-700 group-hover:scale-110" 
         />
+        
+        {/* WhatsApp Notification Overlay */}
+        {showNotification && (
+          <div className="absolute bottom-0 left-0 right-0 z-20 bg-gradient-to-t from-black/80 to-transparent p-3">
+            <div className="flex items-center justify-center">
+              <div className="bg-green-600 text-white px-4 py-2 rounded-full text-xs font-bold animate-pulse">
+                تواصل معنا على واتساب للمزيد من الصور والتفاصيل
+              </div>
+            </div>
+          </div>
+        )}
         
         {/* Top Badges */}
         <div className="absolute top-3 right-3 left-3 flex justify-between items-start z-10 pointer-events-none">
