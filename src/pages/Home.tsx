@@ -368,7 +368,7 @@ const Home: React.FC = () => {
         {/* Second Panel - WhatsApp Contact */}
         {(() => {
           // Get WhatsApp number, fall back to a default if not set
-          const whatsappNumber = storeSettings?.socialLinks?.whatsapp || '9647700000000';
+          const whatsappNumber = storeSettings?.socialLinks?.whatsapp || '+8613223001309';
           // Clean the number (remove any non-digit characters)
           const cleanNumber = whatsappNumber.replace(/\D/g, '');
           const message = encodeURIComponent('مرحباً، لا أجدة المنتج الذي أبحث عنه، هل يمكنكم مساعدتي؟');

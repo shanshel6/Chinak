@@ -24,7 +24,10 @@ import {
   Truck,
   Share2,
   Sparkles,
-  Globe
+  Globe,
+  FileText,
+  FileCheck,
+  FilePlus
 } from 'lucide-react';
 import { useLocation, Routes, Route, useNavigate as _useNavigate } from 'react-router-dom';
 import { 
@@ -51,7 +54,11 @@ import {
   updateProductPrice,
   fetchSettings,
   updateSettings,
-  estimateDimensions
+  estimateDimensions,
+  fetchAdminQuotations,
+  createQuotation,
+  updateQuotation,
+  deleteQuotation
 } from '../services/api';
 import { localProductService } from '../services/localProductService';
 import { socket } from '../services/socket';
@@ -75,6 +82,16 @@ const AdminDashboard: React.FC = () => {
   const [products, setProducts] = useState<any[]>([]);
   const [orders, setOrders] = useState<any[]>([]);
   const [coupons, setCoupons] = useState<any[]>([]);
+  const [quotations, setQuotations] = useState<any[]>([]);
+  const [showQuotationModal, setShowQuotationModal] = useState(false);
+  const [selectedQuotation, setSelectedQuotation] = useState<any>(null);
+  const [quotationFormData, setQuotationFormData] = useState({
+    customerName: '',
+    customerPhone: '',
+    customerEmail: '',
+    notes: '',
+    items: [{ name: '', description: '', price: '', quantity: 1, imageUrl: '' }]
+  });
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedProducts, setSelectedProducts] = useState<(number | string)[]>([]);
   const [isImporting, setIsImporting] = useState(false);
@@ -104,6 +121,10 @@ const AdminDashboard: React.FC = () => {
   const editingProductId = useState<number | string | null>(null)[0];
   const setEditingProductId = useState<number | string | null>(null)[1];
   const [showOriginalOptions, setShowOriginalOptions] = useState(false);
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [selectedQuotationForPrint, setSelectedQuotationForPrint] = useState<any>(null);
+  const [isPrintInvoice, setIsPrintInvoice] = useState(false);
+  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState('');
   
   const [storeSettings, setStoreSettings] = useState({
     airShippingRate: 15400,
@@ -117,7 +138,7 @@ const AdminDashboard: React.FC = () => {
     socialLinks: {
       facebook: '',
       instagram: '',
-      whatsapp: '',
+      whatsapp: '+8613223001309',
       telegram: ''
     }
   });
@@ -344,6 +365,15 @@ const AdminDashboard: React.FC = () => {
         setCoupons(data || []);
         setTotalPages(1);
         setTotalItems(data.length || 0);
+      } else if (activeTab === 'quotations') {
+        const data = await fetchAdminQuotations(page, limit, token);
+        if (append) {
+          setQuotations(prev => [...prev, ...(data.quotations || [])]);
+        } else {
+          setQuotations(data.quotations || []);
+        }
+        setTotalPages(data.totalPages || 1);
+        setTotalItems(data.total || 0);
       } else if (activeTab === 'settings') {
         const data = await fetchSettings({ skipCache: true });
         console.log('[AdminDashboard] Settings tab: Loaded data:', data);
@@ -1417,6 +1447,385 @@ const AdminDashboard: React.FC = () => {
     </div>
   );
 
+  const openQuotationModal = (quotation: any = null) => {
+    if (quotation) {
+      setSelectedQuotation(quotation);
+      setQuotationFormData({
+        customerName: quotation.customerName || '',
+        customerPhone: quotation.customerPhone || '',
+        customerEmail: quotation.customerEmail || '',
+        notes: quotation.notes || '',
+        items: quotation.items.map((item: any) => ({
+          name: item.name,
+          description: item.description || '',
+          price: item.price.toString(),
+          quantity: item.quantity,
+          imageUrl: item.imageUrl || ''
+        }))
+      });
+    } else {
+      setSelectedQuotation(null);
+      setQuotationFormData({
+        customerName: '',
+        customerPhone: '',
+        customerEmail: '',
+        notes: '',
+        items: [{ name: '', description: '', price: '', quantity: 1, imageUrl: '' }]
+      });
+    }
+    setShowQuotationModal(true);
+  };
+
+  const handleSaveQuotation = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      setModalLoading(true);
+      const token = useAuthStore.getState().token || localStorage.getItem('auth_token');
+      const data = {
+        ...quotationFormData,
+        items: quotationFormData.items.map(item => ({
+          ...item,
+          price: parseFloat(item.price)
+        }))
+      };
+      if (selectedQuotation) {
+        await updateQuotation(selectedQuotation.id, data, token);
+        showToast('تم تحديث العرض السعر بنجاح', 'success');
+      } else {
+        await createQuotation(data, token);
+        showToast('تم إنشاء العرض السعر بنجاح', 'success');
+      }
+      setShowQuotationModal(false);
+      loadData(1, true, false, true);
+    } catch (error) {
+      console.error('Error saving quotation:', error);
+      showToast('فشل حفظ العرض السعر', 'error');
+    } finally {
+      setModalLoading(false);
+    }
+  };
+
+  const handleDeleteQuotation = async (id: number | string) => {
+    if (!window.confirm('هل أنت متأكد من حذف هذا العرض السعر؟')) return;
+    try {
+      const token = useAuthStore.getState().token || localStorage.getItem('auth_token');
+      await deleteQuotation(id, token);
+      showToast('تم حذف العرض السعر بنجاح', 'success');
+      loadData(1, true, false, true);
+    } catch (error) {
+      console.error('Error deleting quotation:', error);
+      showToast('فشل حذف العرض السعر', 'error');
+    }
+  };
+
+  const generateQuotationPDF = (quotation: any, isInvoice: boolean = false) => {
+    if (isInvoice) {
+      setSelectedQuotationForPrint(quotation);
+      setIsPrintInvoice(true);
+      setSelectedPaymentMethod('');
+      setShowPaymentModal(true);
+    } else {
+      setSelectedQuotationForPrint(quotation);
+      setIsPrintInvoice(false);
+      setTimeout(() => window.print(), 100);
+    }
+  };
+
+  const renderQuotations = () => (
+    <div className="space-y-6 animate-in fade-in duration-500">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h2 className="text-2xl font-black text-slate-900 dark:text-white">إدارة العروض السعرية</h2>
+          <p className="text-slate-500 text-sm mt-1">إنشاء وإدارة العروض السعرية والفواتير</p>
+        </div>
+        <button 
+          onClick={() => openQuotationModal()}
+          className="flex items-center justify-center gap-2 px-6 py-3.5 bg-primary text-white rounded-2xl text-sm font-bold shadow-lg shadow-primary/25 hover:scale-105 transition-all w-full sm:w-auto"
+        >
+          <FilePlus size={20} />
+          <span className="whitespace-nowrap">إضافة عرض سعر جديد</span>
+        </button>
+      </div>
+
+      <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-100 dark:border-slate-800 overflow-hidden shadow-sm">
+        <div className="overflow-x-auto scrollbar-thin scrollbar-thumb-slate-200 dark:scrollbar-thumb-slate-800">
+          <table className="w-full text-right min-w-[900px]">
+            <thead className="bg-slate-50 dark:bg-slate-800/50 text-slate-500 text-[10px] font-black uppercase tracking-wider">
+              <tr>
+                <th className="px-6 py-4">رقم العرض</th>
+                <th className="px-6 py-4">اسم العميل</th>
+                <th className="px-6 py-4">هاتف العميل</th>
+                <th className="px-6 py-4">الإجمالي</th>
+                <th className="px-6 py-4">الحالة</th>
+                <th className="px-6 py-4">تاريخ الإنشاء</th>
+                <th className="px-6 py-4">الإجراءات</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-50 dark:divide-slate-800">
+              {quotations.map((quotation) => (
+                <tr key={quotation.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
+                  <td className="px-6 py-4">
+                    <span className="font-black text-slate-900 dark:text-white bg-slate-100 dark:bg-slate-800 px-3 py-1 rounded-lg">
+                      {quotation.quotationNumber}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 text-sm font-bold">
+                    {quotation.customerName || '—'}
+                  </td>
+                  <td className="px-6 py-4 text-sm font-bold">
+                    {quotation.customerPhone || '—'}
+                  </td>
+                  <td className="px-6 py-4 text-sm font-black text-primary">
+                    {quotation.total.toLocaleString()} د.ع
+                  </td>
+                  <td className="px-6 py-4">
+                    <span className={`px-3 py-1 rounded-full text-[10px] font-black ${
+                      quotation.status === 'DRAFT' ? 'bg-slate-100 text-slate-600' :
+                      quotation.status === 'ISSUED' ? 'bg-blue-100 text-blue-600' :
+                      quotation.status === 'INVOICED' ? 'bg-yellow-100 text-yellow-600' :
+                      'bg-emerald-100 text-emerald-600'
+                    }`}>
+                      {quotation.status === 'DRAFT' ? 'مسودة' :
+                       quotation.status === 'ISSUED' ? 'مصدر' :
+                       quotation.status === 'INVOICED' ? 'فاتورة' : 'مدفوع'}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 text-sm font-medium text-slate-500">
+                    {new Date(quotation.createdAt).toLocaleDateString('ar-IQ')}
+                  </td>
+                  <td className="px-6 py-4">
+                    <div className="flex items-center gap-2">
+                      <button 
+                        onClick={() => openQuotationModal(quotation)}
+                        className="p-2 text-slate-400 hover:text-primary hover:bg-primary/10 rounded-xl transition-all"
+                        title="تعديل"
+                      >
+                        <Edit2 size={18} />
+                      </button>
+                      <button 
+                        onClick={() => generateQuotationPDF(quotation, false)}
+                        className="p-2 text-slate-400 hover:text-blue-500 hover:bg-blue-50 rounded-xl transition-all"
+                        title="عرض سعر"
+                      >
+                        <FileText size={18} />
+                      </button>
+                      <button 
+                        onClick={() => generateQuotationPDF(quotation, true)}
+                        className="p-2 text-slate-400 hover:text-emerald-500 hover:bg-emerald-50 rounded-xl transition-all"
+                        title="فاتورة"
+                      >
+                        <FileCheck size={18} />
+                      </button>
+                      <button 
+                        onClick={() => handleDeleteQuotation(quotation.id)}
+                        className="p-2 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all"
+                        title="حذف"
+                      >
+                        <Trash2 size={18} />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {showQuotationModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-2 sm:p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-300">
+          <div className="bg-white dark:bg-slate-900 w-full max-w-5xl max-h-[95vh] rounded-2xl sm:rounded-3xl shadow-2xl border border-slate-100 dark:border-slate-800 overflow-hidden animate-in zoom-in-95 duration-300 flex flex-col pt-safe pb-safe">
+            <div className="p-4 sm:p-6 border-b border-slate-50 dark:border-slate-800 flex items-center justify-between shrink-0">
+              <h3 className="text-lg sm:text-xl font-black text-slate-900 dark:text-white">
+                {selectedQuotation ? 'تعديل عرض السعر' : 'إضافة عرض سعر جديد'}
+              </h3>
+              <button onClick={() => setShowQuotationModal(false)} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl">
+                <X size={20} />
+              </button>
+            </div>
+            <form onSubmit={handleSaveQuotation} className="p-4 sm:p-6 space-y-4 overflow-y-auto">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-[10px] sm:text-xs font-black text-slate-500 mb-2 uppercase">اسم العميل</label>
+                  <input 
+                    type="text"
+                    value={quotationFormData.customerName}
+                    onChange={(e) => setQuotationFormData({...quotationFormData, customerName: e.target.value})}
+                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-primary/20 outline-none"
+                    placeholder="اسم العميل"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] sm:text-xs font-black text-slate-500 mb-2 uppercase">هاتف العميل</label>
+                  <input 
+                    type="text"
+                    value={quotationFormData.customerPhone}
+                    onChange={(e) => setQuotationFormData({...quotationFormData, customerPhone: e.target.value})}
+                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-primary/20 outline-none"
+                    placeholder="رقم الهاتف"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] sm:text-xs font-black text-slate-500 mb-2 uppercase">البريد الإلكتروني</label>
+                  <input 
+                    type="email"
+                    value={quotationFormData.customerEmail}
+                    onChange={(e) => setQuotationFormData({...quotationFormData, customerEmail: e.target.value})}
+                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-primary/20 outline-none"
+                    placeholder="البريد الإلكتروني"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[10px] sm:text-xs font-black text-slate-500 mb-2 uppercase">ملاحظات</label>
+                <textarea 
+                  value={quotationFormData.notes}
+                  onChange={(e) => setQuotationFormData({...quotationFormData, notes: e.target.value})}
+                  rows={2}
+                  className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-primary/20 outline-none resize-none"
+                  placeholder="أي ملاحظات إضافية"
+                />
+              </div>
+
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <label className="text-[10px] sm:text-xs font-black text-slate-500 uppercase">المنتجات</label>
+                  <button 
+                    type="button"
+                    onClick={() => setQuotationFormData({
+                      ...quotationFormData,
+                      items: [...quotationFormData.items, { name: '', description: '', price: '', quantity: 1, imageUrl: '' }]
+                    })}
+                    className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-xl text-xs font-bold hover:bg-slate-200 transition-all"
+                  >
+                    <Plus size={14} />
+                    إضافة منتج
+                  </button>
+                </div>
+                {quotationFormData.items.map((item, index) => (
+                  <div key={index} className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-slate-500">منتج #{index + 1}</span>
+                      {quotationFormData.items.length > 1 && (
+                        <button 
+                          type="button"
+                          onClick={() => setQuotationFormData({
+                            ...quotationFormData,
+                            items: quotationFormData.items.filter((_, i) => i !== index)
+                          })}
+                          className="p-1.5 text-rose-500 hover:bg-rose-100 dark:hover:bg-rose-900/30 rounded-lg transition-all"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-500 mb-1">اسم المنتج</label>
+                        <input 
+                          type="text"
+                          required
+                          value={item.name}
+                          onChange={(e) => {
+                            const newItems = [...quotationFormData.items];
+                            newItems[index].name = e.target.value;
+                            setQuotationFormData({...quotationFormData, items: newItems});
+                          }}
+                          className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2.5 text-sm font-bold focus:ring-2 focus:ring-primary/20 outline-none"
+                          placeholder="اسم المنتج"
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-500 mb-1">السعر</label>
+                          <input 
+                            type="number"
+                            required
+                            value={item.price}
+                            onChange={(e) => {
+                              const newItems = [...quotationFormData.items];
+                              newItems[index].price = e.target.value;
+                              setQuotationFormData({...quotationFormData, items: newItems});
+                            }}
+                            className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2.5 text-sm font-bold focus:ring-2 focus:ring-primary/20 outline-none"
+                            placeholder="السعر"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-500 mb-1">الكمية</label>
+                          <input 
+                            type="number"
+                            required
+                            min={1}
+                            value={item.quantity}
+                            onChange={(e) => {
+                              const newItems = [...quotationFormData.items];
+                              newItems[index].quantity = parseInt(e.target.value) || 1;
+                              setQuotationFormData({...quotationFormData, items: newItems});
+                            }}
+                            className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2.5 text-sm font-bold focus:ring-2 focus:ring-primary/20 outline-none"
+                            placeholder="الكمية"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 mb-1">الوصف</label>
+                      <textarea 
+                        value={item.description}
+                        onChange={(e) => {
+                          const newItems = [...quotationFormData.items];
+                          newItems[index].description = e.target.value;
+                          setQuotationFormData({...quotationFormData, items: newItems});
+                        }}
+                        rows={2}
+                        className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2.5 text-sm font-bold focus:ring-2 focus:ring-primary/20 outline-none resize-none"
+                        placeholder="وصف المنتج"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 mb-1">رابط الصورة</label>
+                      <input 
+                        type="url"
+                        value={item.imageUrl}
+                        onChange={(e) => {
+                          const newItems = [...quotationFormData.items];
+                          newItems[index].imageUrl = e.target.value;
+                          setQuotationFormData({...quotationFormData, items: newItems});
+                        }}
+                        className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2.5 text-sm font-bold focus:ring-2 focus:ring-primary/20 outline-none"
+                        placeholder="https://example.com/image.jpg"
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex gap-3 pt-4">
+                <button 
+                  type="button"
+                  onClick={() => setShowQuotationModal(false)}
+                  className="flex-1 px-6 py-3.5 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-2xl font-bold hover:bg-slate-200 dark:hover:bg-slate-700 transition-all"
+                >
+                  إلغاء
+                </button>
+                <button 
+                  type="submit"
+                  disabled={modalLoading}
+                  className="flex-1 px-6 py-3.5 bg-primary text-white rounded-2xl font-bold shadow-lg shadow-primary/25 hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {modalLoading && <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
+                  {selectedQuotation ? 'حفظ التغييرات' : 'إنشاء عرض السعر'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
   const renderUsers = () => (
     <div className="space-y-6 animate-in fade-in duration-500">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -2120,6 +2529,7 @@ const AdminDashboard: React.FC = () => {
           <Route path="users" element={renderUsers()} />
           <Route path="orders" element={renderOrders()} />
           <Route path="coupons" element={renderCoupons()} />
+          <Route path="quotations" element={renderQuotations()} />
           <Route path="settings" element={
             <div className="space-y-8 animate-in fade-in duration-500">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -2356,6 +2766,174 @@ const AdminDashboard: React.FC = () => {
             loadData(currentPage);
           }}
         />
+      )}
+      
+      {/* Payment Method Modal for Invoice */}
+      {showPaymentModal && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-300">
+          <div className="bg-white dark:bg-slate-900 w-full max-w-md rounded-3xl shadow-2xl border border-slate-100 dark:border-slate-800 overflow-hidden animate-in zoom-in-95 duration-300">
+            <div className="p-6 border-b border-slate-50 dark:border-slate-800">
+              <h3 className="text-lg font-black text-slate-900 dark:text-white">اختر طريقة الدفع</h3>
+            </div>
+            <div className="p-6 space-y-3">
+              {['zain_cash', 'super_key', 'cash', 'bank_transfer'].map((method) => (
+                <button
+                  key={method}
+                  type="button"
+                  onClick={() => {
+                    setSelectedPaymentMethod(method);
+                    setShowPaymentModal(false);
+                    setTimeout(() => window.print(), 100);
+                  }}
+                  className={`w-full flex items-center justify-between p-4 rounded-2xl border-2 transition-all ${
+                    selectedPaymentMethod === method
+                      ? 'border-primary bg-primary/5'
+                      : 'border-slate-200 dark:border-slate-700 hover:border-primary/50'
+                  }`}
+                >
+                  <span className="font-bold text-sm">
+                    {method === 'zain_cash' ? 'زين كاش' :
+                     method === 'super_key' ? 'سوبر كي' :
+                     method === 'cash' ? 'نقدي' : 'تحويل بنكي'}
+                  </span>
+                </button>
+              ))}
+            </div>
+            <div className="p-6 border-t border-slate-50 dark:border-slate-800">
+              <button
+                onClick={() => setShowPaymentModal(false)}
+                className="w-full py-3 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-2xl font-bold hover:bg-slate-200 transition-all"
+              >
+                إلغاء
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* Printable Quotation/Invoice */}
+      {selectedQuotationForPrint && (
+        <div className="hidden print:block print:fixed print:inset-0 print:bg-white print:p-10 print:z-[9999]">
+          <div className="max-w-3xl mx-auto">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b-2 border-slate-800 pb-6 mb-8">
+              <div>
+                <h1 className="text-3xl font-black text-slate-900">
+                  {storeSettings.storeName || 'شيناك'}
+                </h1>
+                {storeSettings.contactPhone && (
+                  <p className="text-slate-600 mt-1">هاتف: {storeSettings.contactPhone}</p>
+                )}
+                {storeSettings.contactEmail && (
+                  <p className="text-slate-600">بريد: {storeSettings.contactEmail}</p>
+                )}
+              </div>
+              <div className="text-right">
+                <h2 className="text-2xl font-black text-primary">
+                  {isPrintInvoice ? 'فاتورة' : 'عرض سعر'}
+                </h2>
+                <p className="text-slate-600 font-bold mt-1">
+                  {selectedQuotationForPrint.quotationNumber}
+                </p>
+                <p className="text-slate-500 text-sm">
+                  {new Date(selectedQuotationForPrint.createdAt).toLocaleDateString('ar-IQ')}
+                </p>
+              </div>
+            </div>
+
+            {/* Customer Info */}
+            <div className="mb-8">
+              <h3 className="text-lg font-black text-slate-900 mb-4">العميل</h3>
+              <div className="grid grid-cols-2 gap-4">
+                {selectedQuotationForPrint.customerName && (
+                  <div>
+                    <span className="text-slate-500 text-sm">الاسم:</span>
+                    <p className="font-bold">{selectedQuotationForPrint.customerName}</p>
+                  </div>
+                )}
+                {selectedQuotationForPrint.customerPhone && (
+                  <div>
+                    <span className="text-slate-500 text-sm">الهاتف:</span>
+                    <p className="font-bold">{selectedQuotationForPrint.customerPhone}</p>
+                  </div>
+                )}
+                {selectedQuotationForPrint.customerEmail && (
+                  <div>
+                    <span className="text-slate-500 text-sm">البريد:</span>
+                    <p className="font-bold">{selectedQuotationForPrint.customerEmail}</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Items */}
+            <div className="mb-8">
+              <h3 className="text-lg font-black text-slate-900 mb-4">المنتجات</h3>
+              <table className="w-full border-collapse">
+                <thead>
+                  <tr className="border-b-2 border-slate-200">
+                    <th className="text-right py-3 px-2 text-sm font-black text-slate-600">المنتج</th>
+                    <th className="text-center py-3 px-2 text-sm font-black text-slate-600">الكمية</th>
+                    <th className="text-right py-3 px-2 text-sm font-black text-slate-600">السعر</th>
+                    <th className="text-right py-3 px-2 text-sm font-black text-slate-600">الإجمالي</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {selectedQuotationForPrint.items.map((item: any) => (
+                    <tr key={item.id} className="border-b border-slate-100">
+                      <td className="py-3 px-2">
+                        <p className="font-bold">{item.name}</p>
+                        {item.description && (
+                          <p className="text-slate-500 text-sm">{item.description}</p>
+                        )}
+                      </td>
+                      <td className="text-center py-3 px-2 font-bold">{item.quantity}</td>
+                      <td className="text-right py-3 px-2 font-bold">{item.price.toLocaleString()} د.ع</td>
+                      <td className="text-right py-3 px-2 font-bold">{(item.price * item.quantity).toLocaleString()} د.ع</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Total */}
+            <div className="flex justify-end border-t-2 border-slate-800 pt-4 mb-8">
+              <div className="text-right">
+                <p className="text-slate-600 text-sm">الإجمالي</p>
+                <p className="text-3xl font-black text-primary">
+                  {selectedQuotationForPrint.total.toLocaleString()} د.ع
+                </p>
+              </div>
+            </div>
+
+            {/* Payment Method for Invoice */}
+            {isPrintInvoice && selectedPaymentMethod && (
+              <div className="mb-8 p-4 bg-slate-50 rounded-xl">
+                <h3 className="text-lg font-black text-slate-900 mb-2">طريقة الدفع</h3>
+                <p className="font-bold text-primary">
+                  {selectedPaymentMethod === 'zain_cash' ? 'زين كاش' :
+                   selectedPaymentMethod === 'super_key' ? 'سوبر كي' :
+                   selectedPaymentMethod === 'cash' ? 'نقدي' : 'تحويل بنكي'}
+                </p>
+              </div>
+            )}
+
+            {/* Notes */}
+            {selectedQuotationForPrint.notes && (
+              <div className="mb-8">
+                <h3 className="text-lg font-black text-slate-900 mb-2">ملاحظات</h3>
+                <p className="text-slate-600">{selectedQuotationForPrint.notes}</p>
+              </div>
+            )}
+
+            {/* Footer */}
+            {storeSettings.footerText && (
+              <div className="border-t border-slate-200 pt-4 text-center text-slate-500">
+                {storeSettings.footerText}
+              </div>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );
