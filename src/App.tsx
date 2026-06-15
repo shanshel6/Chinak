@@ -62,6 +62,28 @@ import { LocalNotifications } from '@capacitor/local-notifications';
 
 const AdminLayout = lazy(() => import('./components/AdminLayout'));
 
+// New Update Prompt Component
+const UpdatePrompt: React.FC<{url: string; onClose: () => void}> = ({url, onClose}) => (
+  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+    <div className="bg-white dark:bg-slate-800 rounded-xl p-6 max-w-sm w-full text-center">
+      <h2 className="text-lg font-bold mb-4">تحديث جديد متوفر</h2>
+      <p className="mb-4">هناك نسخة أحدث من التطبيق متاحة. يرجى التحديث للحصول على أفضل تجربة.</p>
+      <button
+        onClick={() => window.open(url, '_blank')}
+        className="w-full mb-2 py-2 bg-primary text-white rounded-lg font-bold"
+      >
+        تحديث الآن
+      </button>
+      <button
+        onClick={onClose}
+        className="w-full py-2 bg-slate-200 dark:bg-slate-700 rounded-lg"
+      >
+        لاحقاً
+      </button>
+    </div>
+  </div>
+);
+
 // Loading fallback
 const PageLoader = () => (
   <div className="flex-1 flex items-center justify-center bg-background-light dark:bg-background-dark min-h-[60vh]">
@@ -318,6 +340,10 @@ function App() {
   const cleanupNotificationSocket = useNotificationStore((state) => state.cleanupSocket);
   const isServerDown = useMaintenanceStore((state) => state.isServerDown);
   const [isAppInitialized, setIsAppInitialized] = useState(false);
+  // Update check state
+  const [showUpdate, setShowUpdate] = useState(false);
+  const [updateUrl, setUpdateUrl] = useState('');
+  const CURRENT_VERSION = '1.0.69'; // keep in sync with package.json
 
   useEffect(() => {
     const initializeApp = async () => {
@@ -355,6 +381,39 @@ function App() {
       window.removeEventListener('auth-unauthorized', handleUnauthorized);
     };
   }, [checkAuth, ensureGuestSession, initChatSocket]);
+
+  // Check for app updates after initialization
+  useEffect(() => {
+    if (!isAppInitialized) return;
+    const checkForUpdate = async () => {
+      try {
+        const res = await fetch('/version.json', { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = await res.json();
+        const latest = data.version;
+        if (latest && latest !== CURRENT_VERSION) {
+          // Determine store URL based on platform
+          let url = '';
+          if (Capacitor.isNativePlatform()) {
+            const platform = Capacitor.getPlatform();
+            if (platform === 'android') {
+              url = data.androidUrl || 'https://play.google.com/store/apps/details?id=your.app.id';
+            } else if (platform === 'ios') {
+              url = data.iosUrl || 'https://apps.apple.com/app/your-app-id';
+            }
+          } else {
+            // Web fallback
+            url = data.webUrl || window.location.origin;
+          }
+          setUpdateUrl(url);
+          setShowUpdate(true);
+        }
+      } catch (e) {
+        console.error('Failed to check app version', e);
+      }
+    };
+    checkForUpdate();
+  }, [isAppInitialized]);
 
   useEffect(() => {
     // Force light mode always
@@ -408,6 +467,13 @@ function App() {
           </p>
         </div>
       </div>
+    );
+  }
+
+  // Render update prompt if needed
+  if (showUpdate) {
+    return (
+      <UpdatePrompt url={updateUrl} onClose={() => setShowUpdate(false)} />
     );
   }
 
