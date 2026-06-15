@@ -1033,7 +1033,7 @@ export async function searchProductsByCategory(
   };
 }
 
-export async function searchProductsByImage(imageUrl: string, page = 1, limit = 20) {
+export async function searchProductsByImage(imageUrl: string, page = 1, limit = 40) {
   const response = await request('/search/image', {
     method: 'POST',
     body: JSON.stringify({ imageUrl, page, limit }),
@@ -1052,7 +1052,7 @@ export async function analyzeImageObjects() {
   return [];
 }
 
-export async function searchProductsByImageCrop(imageBase64: string, box: number[], page = 1, limit = 30) {
+export async function searchProductsByImageCrop(imageBase64: string, box: number[], page = 1, limit = 60) {
   const cropToJpeg = async () => {
     const img = new Image();
     img.decoding = 'async';
@@ -1069,10 +1069,22 @@ export async function searchProductsByImageCrop(imageBase64: string, box: number
     const sw = Math.max(1, Math.floor(xmax - xmin));
     const sh = Math.max(1, Math.floor(ymax - ymin));
 
-    const maxDim = 512;
-    const scale = Math.min(1, maxDim / Math.max(sw, sh));
-    const dw = Math.max(1, Math.round(sw * scale));
-    const dh = Math.max(1, Math.round(sh * scale));
+    // Don't resize if crop is already reasonably sized (between 224px and 1024px)
+    // CLIP works best with images around 224px, but we want to preserve detail
+    const minDim = 224;
+    const maxDim = 1024;
+    const cropWidth = sw;
+    const cropHeight = sh;
+    
+    let dw = cropWidth;
+    let dh = cropHeight;
+    
+    // Only resize if crop is too small or too large
+    if (cropWidth < minDim || cropHeight < minDim || cropWidth > maxDim || cropHeight > maxDim) {
+      const scale = Math.min(1, maxDim / Math.max(cropWidth, cropHeight));
+      dw = Math.max(minDim, Math.round(cropWidth * scale));
+      dh = Math.max(minDim, Math.round(cropHeight * scale));
+    }
 
     const canvas = document.createElement('canvas');
     canvas.width = dw;
@@ -1080,11 +1092,14 @@ export async function searchProductsByImageCrop(imageBase64: string, box: number
     const ctx = canvas.getContext('2d', { alpha: false });
     if (!ctx) throw new Error('Canvas not supported');
 
+    // Use higher quality settings for better embedding accuracy
+    ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(img, sx, sy, sw, sh, 0, 0, dw, dh);
 
     // On some mobile browsers/webviews (like Capacitor iOS), canvas.toBlob might be slow or fail.
     // Fallback to toDataURL which is generally more reliable across WebViews.
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+    // Use higher quality (0.95) for better embedding accuracy
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.95);
     
     // Convert base64 to Blob manually
     const base64Data = dataUrl.split(',')[1];

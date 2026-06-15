@@ -827,6 +827,9 @@ const SearchResults: React.FC = () => {
               </div>
               <div className="flex flex-col items-center gap-6">
                 <div className="flex flex-col items-center gap-1">
+                  <p className="text-sm font-bold text-slate-700 dark:text-slate-300 text-center mb-2">
+                    هذا قد يستغرق حتى 10 ثوانٍ لذا انتظر بصبر
+                  </p>
                   <div className="flex gap-1 mb-2">
                     <div className="size-1.5 rounded-full bg-primary animate-bounce [animation-delay:-0.3s]"></div>
                     <div className="size-1.5 rounded-full bg-primary animate-bounce [animation-delay:-0.15s]"></div>
@@ -834,9 +837,6 @@ const SearchResults: React.FC = () => {
                   </div>
                   <p className="text-sm font-bold text-slate-500 animate-pulse">
                     جاري تحليل الصورة...
-                  </p>
-                  <p className="text-xs font-semibold text-slate-400 mt-2 text-center max-w-[200px]">
-                    قد يستغرق هذا بضع ثوانٍ، يرجى الانتظار
                   </p>
                 </div>
               </div>
@@ -1040,6 +1040,9 @@ const SearchResults: React.FC = () => {
       {loading ? (
         <div className="px-4 py-12">
           <div className="flex flex-col items-center justify-center gap-4 mb-8">
+            <p className="text-sm font-bold text-slate-700 dark:text-slate-300 text-center mb-2">
+              هذا قد يستغرق حتى 10 ثوانٍ لذا انتظر بصبر
+            </p>
             <div className="flex gap-1">
               <div className="size-3 rounded-full bg-primary animate-bounce [animation-delay:-0.3s]"></div>
               <div className="size-3 rounded-full bg-primary animate-bounce [animation-delay:-0.15s]"></div>

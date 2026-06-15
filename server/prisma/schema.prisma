@@ -377,6 +377,32 @@ model OrderItem {
   shippingMethod  String          @default("air") // 'air' or 'sea'
 }
 
+model Quotation {
+  id              Int               @id @default(autoincrement())
+  quotationNumber String            @unique
+  customerName    String?
+  customerPhone   String?
+  customerEmail   String?
+  status          String            @default("DRAFT") // DRAFT, ISSUED, INVOICED, PAID
+  notes           String?
+  total           Float
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  items           QuotationItem[]
+}
+
+model QuotationItem {
+  id          Int      @id @default(autoincrement())
+  quotationId Int
+  name        String
+  description String?
+  price       Float
+  quantity    Int      @default(1)
+  imageUrl    String?
+  createdAt   DateTime @default(now())
+  quotation   Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+}
+
 model WishlistItem {
   id        Int      @id @default(autoincrement())
   userId    Int

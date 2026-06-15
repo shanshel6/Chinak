@@ -9,7 +9,17 @@ const Invoice = forwardRef<HTMLDivElement, InvoiceProps>(({ order, settings }, r
   if (!order) return null;
 
   return (
-    <div ref={ref} className="p-12 bg-white text-slate-900" dir="rtl">
+    <div
+      ref={ref}
+      className="p-12 bg-white text-slate-900"
+      dir="rtl"
+      style={{
+        direction: 'rtl',
+        unicodeBidi: 'bidi-override',
+        textAlign: 'right',
+        fontFamily: "'Arial', 'Helvetica', 'sans-serif'",
+      }}
+    >
       {/* Header */}
       <div className="flex justify-between items-start border-b-2 border-slate-100 pb-8 mb-8">
         <div>

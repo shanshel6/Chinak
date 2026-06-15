@@ -65,6 +65,24 @@ server/*.html
 !server/tsconfig.json
 server/scripts/pdd_cookies.json
 
+# Temp test files
+.dbg/
+0)
+true
+server/test-db.js
+server/test-simple.js
+server/my-cleanup.cjs
+server/quick-image-cleanup.js
+check-db.js
+quick-image-check.js
+run-delete.ps1
+simple-check-images.bat
+test-image-check.bat
+check-broken-images.bat
+check-example-products.bat
+delete-damaged-products.bat
+fix-broken-images.bat
+
 # Product Queue and Scraper Logs
 product-queue/
 rapid-scraper/

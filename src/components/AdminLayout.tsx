@@ -13,7 +13,8 @@ import {
   User,
   Menu,
   X,
-  Home
+  Home,
+  FileText
 } from 'lucide-react';
 import Logo from './Logo';
 import { useAuthStore } from '../store/useAuthStore';
@@ -33,6 +34,7 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
     { id: 'products', label: 'المنتجات', icon: Package, path: '/admin/products' },
     { id: 'users', label: 'المستخدمين', icon: Users, path: '/admin/users' },
     { id: 'orders', label: 'الطلبات', icon: ShoppingCart, path: '/admin/orders' },
+    { id: 'quotations', label: 'العروض السعرية', icon: FileText, path: '/admin/quotations' },
     { id: 'coupons', label: 'الكوبونات', icon: Ticket, path: '/admin/coupons' },
     { id: 'settings', label: 'الإعدادات', icon: Settings, path: '/admin/settings' },
   ];

@@ -2813,7 +2813,15 @@ const AdminDashboard: React.FC = () => {
       
       {/* Printable Quotation/Invoice */}
       {selectedQuotationForPrint && (
-        <div className="hidden print:block print:fixed print:inset-0 print:bg-white print:p-10 print:z-[9999]">
+        <div
+          className="hidden print:block print:fixed print:inset-0 print:bg-white print:p-10 print:z-[9999]"
+          style={{
+            direction: 'rtl',
+            unicodeBidi: 'bidi-override',
+            textAlign: 'right',
+            fontFamily: "'Arial', 'Helvetica', 'sans-serif'",
+          }}
+        >
           <div className="max-w-3xl mx-auto">
             {/* Header */}
             <div className="flex items-center justify-between border-b-2 border-slate-800 pb-6 mb-8">
