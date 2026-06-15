@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { ShoppingCart, RefreshCw, ShoppingBag } from 'lucide-react';
+import { fetchSettings } from '../../services/api';
 
 interface AddToCartBarProps {
   price: number;
@@ -20,9 +21,30 @@ const AddToCartBar: React.FC<AddToCartBarProps> = ({
   onGoToCart,
   isActive = true,
 }) => {
+  const [storeSettings, setStoreSettings] = useState<any>(null);
+
+  useEffect(() => {
+    const getStoreSettings = async () => {
+      try {
+        const data = await fetchSettings({ skipCache: true });
+        setStoreSettings(data);
+      } catch (err) {
+        console.error('Failed to fetch store settings:', err);
+      }
+    };
+    getStoreSettings();
+  }, []);
+
   const handleWhatsAppClick = () => {
+    // Get WhatsApp number, fall back to a default if not set
+    const socialLinks = typeof storeSettings?.socialLinks === 'string' 
+      ? JSON.parse(storeSettings.socialLinks) 
+      : (storeSettings?.socialLinks || {});
+    const whatsappNumber = socialLinks.whatsapp || '+8613223001309';
+    // Clean the number (remove any non-digit characters)
+    const cleanNumber = whatsappNumber.replace(/\D/g, '');
     const message = encodeURIComponent(`مرحباً، أود الاستفسار عن هذا المنتج: ${productId}`);
-    window.open(`https://wa.me/13223001309?text=${message}`, '_blank');
+    window.open(`https://wa.me/${cleanNumber}?text=${message}`, '_blank');
   };
 
   if (!isActive) {

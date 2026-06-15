@@ -129,6 +129,27 @@ try {
   }
 } catch (_e) {}
 
+// Force light mode - remove dark class and prevent it from being added
+try {
+  // Remove dark class if it exists
+  document.documentElement.classList.remove('dark');
+  
+  // Ensure light class is present
+  document.documentElement.classList.add('light');
+  
+  // Prevent dark mode from being detected by media queries
+  const style = document.createElement('style');
+  style.textContent = `
+    @media (prefers-color-scheme: dark) {
+      /* Override any system dark mode preferences */
+      :root {
+        color-scheme: light !important;
+      }
+    }
+  `;
+  document.head.appendChild(style);
+} catch (_e) {}
+
 // Disable console.log in production
 if (import.meta.env.PROD) {
   console.log = () => {};

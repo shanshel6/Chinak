@@ -415,7 +415,7 @@ function App() {
     <Router>
       <BackButtonHandler />
       <ScrollToTop />
-      <div className="min-h-screen bg-background-light dark:bg-background-dark">
+      <div className="min-h-screen bg-background-light">
         <Toast />
         <ErrorBoundary>
           <Routes>

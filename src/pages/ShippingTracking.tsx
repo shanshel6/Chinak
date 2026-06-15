@@ -745,7 +745,12 @@ const ShippingTracking: React.FC = () => {
                 نسخ رقم الطلب
               </button>
               <button 
-                onClick={() => window.open('https://wa.me/8613223001309', '_blank')}
+                onClick={() => {
+                  const phone = '8613223001309';
+                  const message = `مرحباً، أحتاج للمساعدة في طلبي رقم #${order.id}`;
+                  const url = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+                  window.open(url, '_blank');
+                }}
                 className="flex-1 flex items-center justify-center gap-2 py-3 bg-[#25D366] text-white rounded-xl font-bold shadow-lg shadow-green-500/25 active:scale-95 transition-all"
               >
                 <Headset size={20} />
