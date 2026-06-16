@@ -8,7 +8,6 @@ import { usePageCacheStore } from '../store/usePageCacheStore';
 import { normalizeArabicSearchTerm } from '../data/arabicSearchNormalization';
 import ProductCard from '../components/home/ProductCard';
 import type { Product } from '../types/product';
-import type { ConditionFilter } from '../components/home/FilterBar';
 
 const SearchResults: React.FC = () => {
   const navigate = useNavigate();
@@ -32,13 +31,12 @@ const SearchResults: React.FC = () => {
   const [detectedObjects, setDetectedObjects] = useState<any[]>([]);
   const [selectedObjectBox, setSelectedObjectBox] = useState<number[] | null>(null);
   const [isAnalyzingImage, setIsAnalyzingImage] = useState(false);
-  const [conditionFilter, setConditionFilter] = useState<ConditionFilter>(null);
   
-  // Create cache key based on search query and filters
+  // Create cache key based on search query
   const cacheKey = useMemo(() => {
     if (imageSearchInput) return '';
-    return `${activeQuery.trim()}:${conditionFilter || 'all'}`;
-  }, [activeQuery, conditionFilter, imageSearchInput]);
+    return `${activeQuery.trim()}`;
+  }, [activeQuery, imageSearchInput]);
   
   // Check for cached data on mount
   const cachedData = useMemo(() => cacheKey ? getSearchData(cacheKey) : undefined, [cacheKey, getSearchData]);
@@ -57,7 +55,7 @@ const SearchResults: React.FC = () => {
   const loadingRef = useRef(loading);
   const loadingMoreRef = useRef(loadingMore);
   const hasMoreRef = useRef(hasMore);
-  const conditionFilterRef = useRef<ConditionFilter>(conditionFilter);
+
   const inFlightMoreRef = useRef(false);
   const scrollRatioRef = useRef(0);
   const LIMIT = 30;
@@ -396,7 +394,6 @@ const SearchResults: React.FC = () => {
     setSelectedObjectBox(cachedImageState.selectedObjectBox);
     setShowImagePopup(false);
     setIsAnalyzingImage(false);
-    setConditionFilter(null);
     setError(null);
     setLoading(false);
     setLoadingMore(false);
@@ -459,10 +456,6 @@ const SearchResults: React.FC = () => {
     hasMoreRef.current = hasMore;
   }, [hasMore]);
   
-  useEffect(() => {
-    conditionFilterRef.current = conditionFilter;
-  }, [conditionFilter]);
-
   const filteredRecentTerms = useMemo(() => {
     const q = queryInput.trim().toLowerCase();
     if (!q) return recentTerms;
@@ -496,8 +489,7 @@ const SearchResults: React.FC = () => {
       rememberSearchTerm(query);
 
       try {
-        const condition = conditionFilter === 'new' ? 'new' : conditionFilter === 'used' ? 'used' : undefined;
-        const response = await searchProducts(query, initialPage, LIMIT, undefined, condition);
+        const response = await searchProducts(query, initialPage, LIMIT);
         if (cancelled) return;
         const orderedResults = Array.isArray(response.products) ? response.products : [];
         setResults(orderedResults);
@@ -509,7 +501,7 @@ const SearchResults: React.FC = () => {
             results: orderedResults,
             page: initialPage,
             hasMore: Boolean(response.hasMore),
-            condition: conditionFilter,
+            condition: null,
             price: null,
             scrollPos: 0
           });
@@ -528,7 +520,7 @@ const SearchResults: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [activeQuery, conditionFilter, rememberSearchTerm, searchVersion, imageSearchInput, cacheKey, setSearchData]);
+  }, [activeQuery, rememberSearchTerm, searchVersion, imageSearchInput, cacheKey, setSearchData]);
 
   // Mark first render as done
   useEffect(() => {
@@ -582,9 +574,7 @@ const SearchResults: React.FC = () => {
     setLoadingMore(true);
     const nextPage = pageRef.current + 1;
     try {
-      const cond = conditionFilterRef.current;
-      const condition = cond === 'new' ? 'new' : cond === 'used' ? 'used' : undefined;
-      const response = await searchProducts(query, nextPage, LIMIT, undefined, condition);
+      const response = await searchProducts(query, nextPage, LIMIT);
       if (activeQueryRef.current.trim() !== query) return;
       const incoming = Array.isArray(response.products) ? response.products : [];
       let updatedResults: Product[] = [];
@@ -609,7 +599,7 @@ const SearchResults: React.FC = () => {
           results: updatedResults,
           page: nextPage,
           hasMore: Boolean(response.hasMore),
-          condition: conditionFilterRef.current,
+          condition: null,
           price: null
         });
       }
@@ -1025,51 +1015,7 @@ const SearchResults: React.FC = () => {
         </div>
       )}
 
-      {!isInputFocused && (
-        <div className="px-4 py-3">
-          <div className="h-10 flex items-center gap-3 overflow-x-auto pb-1 -mb-1">
-            <button
-              type="button"
-              onClick={() => {
-                setConditionFilter(null);
-              }}
-              className={`h-9 px-4 rounded-lg text-xs font-bold whitespace-nowrap transition-colors ${
-                conditionFilter === null
-                  ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900'
-                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
-              }`}
-            >
-              الكل
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setConditionFilter(conditionFilter === 'new' ? null : 'new');
-              }}
-              className={`h-9 px-4 rounded-lg text-xs font-bold whitespace-nowrap transition-colors ${
-                conditionFilter === 'new'
-                  ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900'
-                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
-              }`}
-            >
-              جديد
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setConditionFilter(conditionFilter === 'used' ? null : 'used');
-              }}
-              className={`h-9 px-4 rounded-lg text-xs font-bold whitespace-nowrap transition-colors ${
-                conditionFilter === 'used'
-                  ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900'
-                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
-              }`}
-            >
-              مستعمل
-            </button>
-          </div>
-        </div>
-      )}
+
 
       {loading ? (
         <div className="px-4 py-12">

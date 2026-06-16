@@ -796,7 +796,7 @@ const ProductDetails: React.FC = () => {
             
             {/* WhatsApp Notification Overlay - Redesigned */}
             {showNotification && (
-              <div className="absolute top-4 left-4 right-4 z-20">
+              <div className="absolute top-24 left-4 right-4 z-20">
                 <div className="flex items-center justify-center">
                   <div className="bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border border-slate-200/70 dark:border-slate-700/70 rounded-2xl shadow-xl shadow-slate-900/10 dark:shadow-slate-900/30 px-4 py-3 flex items-center gap-3 animate-fade-in-up">
                     <div className="flex-shrink-0">
