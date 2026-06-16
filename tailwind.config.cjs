@@ -9,13 +9,13 @@ module.exports = {
       colors: {
         "primary": "#2b8cee",
         "background-light": "#f6f7f8",
-        "background-dark": "#101922",
+        "background": "#f6f7f8", // Alias for background-light
         "surface-light": "#ffffff",
-        "surface-dark": "#1A2633",
+        "surface": "#ffffff", // Alias for surface-light
         "border-light": "#dbe0e6",
-        "border-dark": "#2a3b4d",
+        "border": "#dbe0e6", // Alias for border-light
         "card-light": "#ffffff",
-        "card-dark": "#1e293b",
+        "card": "#ffffff", // Alias for card-light
       },
       fontFamily: {
         "display": ["Cairo", "Inter", "sans-serif"]

@@ -12,12 +12,14 @@ export const useThemeStore = create<ThemeState>()(
     (_set) => ({
       isDarkMode: false,
       toggleTheme: () => {
-        // Dark mode disabled
+        // Dark mode disabled - always force light mode
         document.documentElement.classList.remove('dark');
+        document.documentElement.classList.add('light');
       },
       setTheme: (_isDark) => {
         // Always force light mode
         document.documentElement.classList.remove('dark');
+        document.documentElement.classList.add('light');
       },
     }),
     {

@@ -140,14 +140,51 @@ try {
   // Prevent dark mode from being detected by media queries
   const style = document.createElement('style');
   style.textContent = `
+    /* Completely disable dark mode */
     @media (prefers-color-scheme: dark) {
       /* Override any system dark mode preferences */
       :root {
         color-scheme: light !important;
+        background-color: #ffffff !important;
+        color: #213547 !important;
       }
+      
+      body {
+        background-color: #ffffff !important;
+        color: #213547 !important;
+      }
+    }
+    
+    /* Override any dark mode classes */
+    .dark, [class*="dark:"], [class*="dark\\:"] {
+      color-scheme: light !important;
+    }
+    
+    /* Ensure body has white background */
+    body {
+      background-color: #ffffff !important;
+      color: #213547 !important;
     }
   `;
   document.head.appendChild(style);
+  
+  // Also add a MutationObserver to prevent dark class from being added
+  const observer = new MutationObserver((mutations) => {
+    mutations.forEach((mutation) => {
+      if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
+        const htmlElement = document.documentElement;
+        if (htmlElement.classList.contains('dark')) {
+          htmlElement.classList.remove('dark');
+          htmlElement.classList.add('light');
+        }
+      }
+    });
+  });
+  
+  observer.observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ['class']
+  });
 } catch (_e) {}
 
 // Disable console.log in production

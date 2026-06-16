@@ -10,6 +10,7 @@ const AddAddress: React.FC = () => {
   const showToast = useToastStore((state) => state.showToast);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   
   const from = location.state?.from || '/addresses';
   const fromCheckout = location.state?.fromCheckout;
@@ -146,14 +147,36 @@ const AddAddress: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     console.log('handleSubmit called with formData:', formData);
-    if (!formData.name || !formData.phone || !formData.city || !formData.street) {
-      console.log('Validation failed: missing required fields');
-      setError('يرجى ملء جميع الحقول المطلوبة');
+    
+    // Clear previous errors
+    setError(null);
+    const newFieldErrors: Record<string, string> = {};
+    
+    // Validate each field
+    if (!formData.name.trim()) {
+      newFieldErrors.name = 'يرجى إدخال الاسم الكامل';
+    }
+    if (!formData.phone.trim()) {
+      newFieldErrors.phone = 'يرجى إدخال رقم الواتساب';
+    }
+    if (!formData.city.trim()) {
+      newFieldErrors.city = 'يرجى اختيار المحافظة';
+    }
+    if (!formData.street.trim()) {
+      newFieldErrors.street = 'يرجى إدخال العنوان بالتفصيل';
+    }
+    
+    // If there are field errors, show them and return
+    if (Object.keys(newFieldErrors).length > 0) {
+      setFieldErrors(newFieldErrors);
+      setError('يرجى ملء جميع الحقول المطلوبة بشكل صحيح');
       return;
     }
+    
+    // Clear field errors if validation passes
+    setFieldErrors({});
 
     setLoading(true);
-    setError(null);
     try {
       const finalPhone = `${formData.countryCode}${formData.phone.replace(/^0+/, '')}`;
       console.log('Final phone number:', finalPhone);
@@ -172,6 +195,8 @@ const AddAddress: React.FC = () => {
       console.error('Add address error:', err);
       setError(err.message || 'فشل في إضافة العنوان');
       showToast(err.message || 'فشل في إضافة العنوان', 'error');
+      // Clear field errors on API error
+      setFieldErrors({});
     } finally {
       setLoading(false);
     }
@@ -208,8 +233,20 @@ const AddAddress: React.FC = () => {
       <main className="flex-1 w-full p-4 space-y-6">
         <form onSubmit={handleSubmit} className="bg-surface-light dark:bg-surface-dark rounded-2xl p-5 shadow-soft border border-border-light dark:border-border-dark space-y-5 animate-[fadeIn_0.5s_ease-out]">
           {error && (
-            <div className="p-3 bg-red-100 text-red-700 rounded-xl text-sm text-center">
-              {error}
+            <div className="p-4 bg-red-50 border-l-4 border-red-500 rounded-r-xl shadow-sm animate-pulse">
+              <div className="flex items-start">
+                <div className="flex-shrink-0">
+                  <svg className="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                  </svg>
+                </div>
+                <div className="ml-3">
+                  <h3 className="text-sm font-bold text-red-800">خطأ في الإدخال</h3>
+                  <div className="mt-1 text-sm text-red-700">
+                    <p>{error}</p>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
 
@@ -252,13 +289,27 @@ const AddAddress: React.FC = () => {
                 <div className="relative flex items-center">
                   <User size={20} className="absolute right-3 text-slate-400" />
                   <input 
-                    className="w-full h-12 pr-10 pl-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all placeholder:text-slate-400 text-sm" 
+                    className={`w-full h-12 pr-10 pl-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border ${fieldErrors.name ? 'border-red-500 focus:border-red-500 focus:ring-1 focus:ring-red-500' : 'border-slate-200 dark:border-slate-700 focus:border-primary focus:ring-1 focus:ring-primary'} outline-none transition-all placeholder:text-slate-400 text-sm`} 
                     placeholder="مثال: أحمد محمد" 
                     type="text" 
                     value={formData.name}
-                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                    onChange={(e) => {
+                      setFormData({ ...formData, name: e.target.value });
+                      // Clear field error when user starts typing
+                      if (fieldErrors.name) {
+                        setFieldErrors(prev => ({ ...prev, name: '' }));
+                      }
+                    }}
                   />
                 </div>
+                {fieldErrors.name && (
+                  <div className="flex items-center text-red-600 text-xs mt-1">
+                    <svg className="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                    </svg>
+                    {fieldErrors.name}
+                  </div>
+                )}
               </div>
 
               {/* Phone Number */}
@@ -288,7 +339,7 @@ const AddAddress: React.FC = () => {
                     </div>
                   </div>
                   <input 
-                    className="w-full h-12 pr-[110px] pl-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all placeholder:text-slate-400 text-sm text-left font-bold" 
+                    className={`w-full h-12 pr-[110px] pl-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border ${fieldErrors.phone ? 'border-red-500 focus:border-red-500 focus:ring-1 focus:ring-red-500' : 'border-slate-200 dark:border-slate-700 focus:border-primary focus:ring-1 focus:ring-primary'} outline-none transition-all placeholder:text-slate-400 text-sm text-left font-bold`} 
                     placeholder="7XX XXX XXXX" 
                     style={{ direction: 'ltr' }} 
                     type="tel" 
@@ -296,9 +347,21 @@ const AddAddress: React.FC = () => {
                     onChange={(e) => {
                       const val = convertToEnglishNumerals(e.target.value).replace(/\D/g, '');
                       setFormData({ ...formData, phone: val });
+                      // Clear field error when user starts typing
+                      if (fieldErrors.phone) {
+                        setFieldErrors(prev => ({ ...prev, phone: '' }));
+                      }
                     }}
                   />
                 </div>
+                {fieldErrors.phone && (
+                  <div className="flex items-center text-red-600 text-xs mt-1">
+                    <svg className="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                    </svg>
+                    {fieldErrors.phone}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -308,9 +371,15 @@ const AddAddress: React.FC = () => {
                 <label className="text-sm font-bold text-text-secondary-light dark:text-text-secondary-dark px-1">المحافظة</label>
                 <div className="relative">
                   <select 
-                    className="w-full h-12 pr-4 pl-10 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 focus:border-primary focus:ring-1 focus:ring-primary outline-none appearance-none text-sm cursor-pointer"
+                    className={`w-full h-12 pr-4 pl-10 rounded-xl bg-slate-50 dark:bg-slate-800/50 border ${fieldErrors.city ? 'border-red-500 focus:border-red-500 focus:ring-1 focus:ring-red-500' : 'border-slate-200 dark:border-slate-700 focus:border-primary focus:ring-1 focus:ring-primary'} outline-none appearance-none text-sm cursor-pointer`}
                     value={formData.city}
-                    onChange={(e) => setFormData({ ...formData, city: e.target.value })}
+                    onChange={(e) => {
+                      setFormData({ ...formData, city: e.target.value });
+                      // Clear field error when user makes a selection
+                      if (fieldErrors.city) {
+                        setFieldErrors(prev => ({ ...prev, city: '' }));
+                      }
+                    }}
                   >
                     <option value="">اختر المحافظة</option>
                     <option value="بغداد">بغداد</option>
@@ -335,17 +404,39 @@ const AddAddress: React.FC = () => {
                   </select>
                   <ChevronDown size={20} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
                 </div>
+                {fieldErrors.city && (
+                  <div className="flex items-center text-red-600 text-xs mt-1">
+                    <svg className="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                    </svg>
+                    {fieldErrors.city}
+                  </div>
+                )}
               </div>
 
               {/* Detailed Address */}
               <div className="space-y-1.5">
                 <label className="text-sm font-bold text-text-secondary-light dark:text-text-secondary-dark px-1">العنوان بالتفصيل</label>
                 <textarea 
-                  className="w-full p-3 h-24 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 focus:border-primary focus:ring-1 focus:ring-primary outline-none resize-none text-sm placeholder:text-slate-400" 
+                  className={`w-full p-3 h-24 rounded-xl bg-slate-50 dark:bg-slate-800/50 border ${fieldErrors.street ? 'border-red-500 focus:border-red-500 focus:ring-1 focus:ring-red-500' : 'border-slate-200 dark:border-slate-700 focus:border-primary focus:ring-1 focus:ring-primary'} outline-none resize-none text-sm placeholder:text-slate-400`} 
                   placeholder="المنطقة، الشارع، رقم المنزل، أقرب نقطة دالة..."
                   value={formData.street}
-                  onChange={(e) => setFormData({ ...formData, street: e.target.value })}
+                  onChange={(e) => {
+                    setFormData({ ...formData, street: e.target.value });
+                    // Clear field error when user starts typing
+                    if (fieldErrors.street) {
+                      setFieldErrors(prev => ({ ...prev, street: '' }));
+                    }
+                  }}
                 ></textarea>
+                {fieldErrors.street && (
+                  <div className="flex items-center text-red-600 text-xs mt-1">
+                    <svg className="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                    </svg>
+                    {fieldErrors.street}
+                  </div>
+                )}
               </div>
 
               {/* Default Address Toggle */}

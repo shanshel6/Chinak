@@ -7,8 +7,9 @@
     color-scheme: light;
   }
 
+  /* Dark mode disabled */
   .dark {
-    color-scheme: dark;
+    color-scheme: light;
   }
 
   body {
@@ -17,6 +18,23 @@
     -webkit-touch-callout: none;
     user-select: none;
     overflow-x: hidden;
+    width: 100%;
+    max-width: 100vw;
+    position: relative;
+  }
+
+  /* Prevent horizontal overflow for all elements */
+  * {
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+
+  /* Ensure root container doesn't overflow */
+  #root {
+    width: 100%;
+    max-width: 100vw;
+    overflow-x: hidden;
+    position: relative;
   }
 
   /* Allow text selection in inputs and textareas */
@@ -90,9 +108,10 @@
     border-color: #2b8cee;
     background-color: #f0f7ff;
   }
+  /* Dark mode disabled - use same styles */
   .dark .peer:checked ~ .custom-radio-border {
     border-color: #2b8cee;
-    background-color: rgba(43, 140, 238, 0.1);
+    background-color: #f0f7ff;
   }
 
   .peer:checked ~ .custom-radio-border .radio-indicator {

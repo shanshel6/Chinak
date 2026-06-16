@@ -369,6 +369,10 @@ const SearchResults: React.FC = () => {
     setActiveQuery('');
     clearImageSearchStateCache();
     
+    // Reset file input to ensure it works for photo search again
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
     
     navigate('/search', { replace: true });
     setTimeout(() => {
@@ -712,8 +716,17 @@ const SearchResults: React.FC = () => {
           <div 
             className="flex-1 flex items-center gap-2 bg-slate-100 dark:bg-slate-800 rounded-xl px-3 py-2.5 cursor-text"
             onClick={() => {
-              if (inputRef.current && !isImageSearch) {
-                inputRef.current.focus();
+              if (inputRef.current) {
+                // If we're in image search mode and user clicks, clear it first
+                if (isImageSearch) {
+                  clearImageSearch();
+                  // Focus after a brief delay to ensure state is cleared
+                  setTimeout(() => {
+                    if (inputRef.current) inputRef.current.focus();
+                  }, 10);
+                } else {
+                  inputRef.current.focus();
+                }
               }
             }}
           >
@@ -722,7 +735,13 @@ const SearchResults: React.FC = () => {
               ref={inputRef}
               value={queryInput}
               onChange={(event) => setQueryInput(event.target.value)}
-              onFocus={() => setIsInputFocused(true)}
+              onFocus={() => {
+                setIsInputFocused(true);
+                // If we're in image search mode and user focuses, clear it
+                if (isImageSearch) {
+                  clearImageSearch();
+                }
+              }}
               onBlur={() => setIsInputFocused(false)}
               onKeyDown={(event) => {
                 if (event.key === 'Enter') {
