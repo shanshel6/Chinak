@@ -9,7 +9,7 @@ import { useAuthStore } from './store/useAuthStore';
 import { useCartStore } from './store/useCartStore';
 import { useWishlistStore } from './store/useWishlistStore';
 import { useNotificationStore } from './store/useNotificationStore';
-// import { useThemeStore } from './store/useThemeStore'; // unused import removed
+import { useThemeStore } from './store/useThemeStore';
 import { useChatStore } from './store/useChatStore';
 import { useMaintenanceStore } from './store/useMaintenanceStore';
 import { useToastStore } from './store/useToastStore';
@@ -415,9 +415,19 @@ function App() {
     checkForUpdate();
   }, [isAppInitialized]);
 
+  // Theme initialization
   useEffect(() => {
-    // Force light mode always
-    document.documentElement.classList.remove('dark');
+    const themeStore = useThemeStore.getState();
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    
+    // Initialize theme based on stored preference or system preference
+    if (themeStore.isDarkMode === undefined) {
+      // First time - use system preference
+      themeStore.setTheme(prefersDark);
+    } else {
+      // Use stored preference
+      themeStore.setTheme(themeStore.isDarkMode);
+    }
   }, []);
 
   useEffect(() => {

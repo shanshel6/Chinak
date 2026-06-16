@@ -187,7 +187,7 @@ const Profile: React.FC = () => {
                   <h3 className="text-sm font-bold text-slate-900 dark:text-white">{t('profile.orders')}</h3>
                   <button 
                     onClick={() => navigate('/orders')}
-                    className="text-xs font-bold text-slate-400 flex items-center gap-1 active:opacity-70"
+                    className="text-xs font-bold text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 flex items-center gap-1 active:opacity-70"
                   >
                     عرض الكل <ChevronLeft size={14} />
                   </button>
@@ -198,7 +198,7 @@ const Profile: React.FC = () => {
                     onClick={() => navigate('/orders?status=PENDING')}
                     className="flex flex-col items-center gap-2 cursor-pointer group"
                   >
-                    <div className="relative size-12 rounded-2xl bg-slate-50 dark:bg-slate-700/50 flex items-center justify-center text-slate-600 dark:text-slate-400 group-active:scale-95 transition-all">
+                    <div className="relative size-12 rounded-2xl bg-slate-50 dark:bg-slate-700/50 flex items-center justify-center text-slate-600 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 group-active:scale-95 transition-all">
                       <ShoppingBag size={22} strokeWidth={1.5} />
                       {orderCount > 0 && (
                         <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full ring-2 ring-white dark:ring-slate-800">
@@ -206,24 +206,24 @@ const Profile: React.FC = () => {
                         </span>
                       )}
                     </div>
-                    <span className="text-[11px] font-medium text-slate-600 dark:text-slate-400">قيد الانتظار</span>
+                    <span className="text-[11px] font-medium text-slate-600 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400">قيد الانتظار</span>
                   </div>
 
                   <div 
                     onClick={() => navigate('/orders?status=SHIPPED')}
                     className="flex flex-col items-center gap-2 cursor-pointer group"
                   >
-                    <div className="relative size-12 rounded-2xl bg-slate-50 dark:bg-slate-700/50 flex items-center justify-center text-slate-600 dark:text-slate-400 group-active:scale-95 transition-all">
+                    <div className="relative size-12 rounded-2xl bg-slate-50 dark:bg-slate-700/50 flex items-center justify-center text-slate-600 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 group-active:scale-95 transition-all">
                       <Truck size={22} strokeWidth={1.5} />
                     </div>
-                    <span className="text-[11px] font-medium text-slate-600 dark:text-slate-400">جاري الشحن</span>
+                    <span className="text-[11px] font-medium text-slate-600 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400">جاري الشحن</span>
                   </div>
 
                   <div 
                     onClick={() => setIsDiscountPopupOpen(true)}
                     className="flex flex-col items-center gap-2 cursor-pointer group"
                   >
-                    <div className="relative size-12 rounded-2xl bg-slate-50 dark:bg-slate-700/50 flex items-center justify-center text-slate-600 dark:text-slate-400 group-active:scale-95 transition-all">
+                    <div className="relative size-12 rounded-2xl bg-slate-50 dark:bg-slate-700/50 flex items-center justify-center text-slate-600 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 group-active:scale-95 transition-all">
                       <Ticket size={22} strokeWidth={1.5} />
                       {couponCount > 0 && (
                         <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full ring-2 ring-white dark:ring-slate-800">
@@ -231,24 +231,24 @@ const Profile: React.FC = () => {
                         </span>
                       )}
                     </div>
-                    <span className="text-[11px] font-medium text-slate-600 dark:text-slate-400">الكوبونات</span>
+                    <span className="text-[11px] font-medium text-slate-600 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400">الكوبونات</span>
                   </div>
 
                   <div 
                     onClick={() => navigate('/favorites')}
                     className="flex flex-col items-center gap-2 cursor-pointer group"
                   >
-                    <div className="relative size-12 rounded-2xl bg-slate-50 dark:bg-slate-700/50 flex items-center justify-center text-slate-600 dark:text-slate-400 group-active:scale-95 transition-all">
+                    <div className="relative size-12 rounded-2xl bg-slate-50 dark:bg-slate-700/50 flex items-center justify-center text-slate-600 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 group-active:scale-95 transition-all">
                       <Heart size={22} strokeWidth={1.5} />
                     </div>
-                    <span className="text-[11px] font-medium text-slate-600 dark:text-slate-400">المفضلة</span>
+                    <span className="text-[11px] font-medium text-slate-600 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400">المفضلة</span>
                   </div>
                 </div>
               </div>
 
               {/* Account Settings */}
               <div>
-                <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.1em] px-2 mb-3">{t('profile.account_settings')}</h3>
+                <h3 className="text-[10px] font-black text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 uppercase tracking-[0.1em] px-2 mb-3">{t('profile.account_settings')}</h3>
                 <div className="bg-white dark:bg-slate-800 rounded-3xl overflow-hidden shadow-sm border border-slate-100 dark:border-slate-700/50">
                   <button 
                     onClick={() => navigate('/addresses')}
@@ -260,7 +260,7 @@ const Profile: React.FC = () => {
                       </div>
                       <div className="text-right">
                         <p className="text-sm font-bold text-slate-900 dark:text-white">{t('profile.address_book')}</p>
-                        <p className="text-[10px] text-slate-500">{t('profile.saved_addresses', { count: addressCount })}</p>
+                        <p className="text-[10px] text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400">{t('profile.saved_addresses', { count: addressCount })}</p>
                       </div>
                     </div>
                     <ChevronLeft size={20} className="text-slate-300 dark:text-slate-600" />
@@ -276,7 +276,7 @@ const Profile: React.FC = () => {
                       </div>
                       <div className="text-right">
                         <p className="text-sm font-bold text-slate-900 dark:text-white">{t('profile.favorites')}</p>
-                        <p className="text-[10px] text-slate-500">{t('profile.interested_products')}</p>
+                        <p className="text-[10px] text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400">{t('profile.interested_products')}</p>
                       </div>
                     </div>
                     <ChevronLeft size={20} className="text-slate-300 dark:text-slate-600" />
@@ -286,7 +286,7 @@ const Profile: React.FC = () => {
 
               {/* Application Settings */}
               <div>
-                <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.1em] px-2 mb-3">{t('profile.app_settings')}</h3>
+                <h3 className="text-[10px] font-black text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 uppercase tracking-[0.1em] px-2 mb-3">{t('profile.app_settings')}</h3>
                 <div className="bg-white dark:bg-slate-800 rounded-3xl overflow-hidden shadow-sm border border-slate-100 dark:border-slate-700/50">
                   <div className="w-full flex items-center justify-between p-4 border-b border-slate-50 dark:border-slate-700/50">
                     <div className="flex items-center gap-4">
@@ -295,7 +295,7 @@ const Profile: React.FC = () => {
                       </div>
                       <div className="text-right">
                         <p className="text-sm font-bold text-slate-900 dark:text-white">{t('profile.notifications')}</p>
-                        <p className="text-[10px] text-slate-500">{t('profile.notifications_desc')}</p>
+                        <p className="text-[10px] text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400">{t('profile.notifications_desc')}</p>
                       </div>
                     </div>
                     <label className="relative inline-flex items-center cursor-pointer">
@@ -339,7 +339,7 @@ const Profile: React.FC = () => {
 
               {/* Support & About */}
               <div>
-                <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.1em] px-2 mb-3">{t('profile.support_section')}</h3>
+                <h3 className="text-[10px] font-black text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 uppercase tracking-[0.1em] px-2 mb-3">{t('profile.support_section')}</h3>
                 <div className="bg-white dark:bg-slate-800 rounded-3xl overflow-hidden shadow-sm border border-slate-100 dark:border-slate-700/50">
                   <button 
                     onClick={() => navigate('/contact-us')}
@@ -351,7 +351,7 @@ const Profile: React.FC = () => {
                       </div>
                       <div className="text-right">
                         <p className="text-sm font-bold text-slate-900 dark:text-white">اتصل بنا</p>
-                        <p className="text-[10px] text-slate-500">تواصل مع الدعم الفني مباشرة</p>
+                        <p className="text-[10px] text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400">تواصل مع الدعم الفني مباشرة</p>
                       </div>
                     </div>
                     <ChevronLeft size={20} className="text-slate-300 dark:text-slate-600" />
@@ -388,7 +388,7 @@ const Profile: React.FC = () => {
                     className="w-full flex items-center justify-between p-4 border-b border-slate-50 dark:border-slate-700/50 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors group"
                   >
                     <div className="flex items-center gap-4">
-                      <div className="flex size-10 items-center justify-center rounded-xl bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-400 group-hover:scale-110 transition-transform">
+                      <div className="flex size-10 items-center justify-center rounded-xl bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 group-hover:scale-110 transition-transform">
                         <FileText size={20} />
                       </div>
                       <p className="text-sm font-bold text-slate-900 dark:text-white">شروط الخدمة</p>
@@ -401,7 +401,7 @@ const Profile: React.FC = () => {
                     className="w-full flex items-center justify-between p-4 border-b border-slate-50 dark:border-slate-700/50 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors group"
                   >
                     <div className="flex items-center gap-4">
-                      <div className="flex size-10 items-center justify-center rounded-xl bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-400 group-hover:scale-110 transition-transform">
+                      <div className="flex size-10 items-center justify-center rounded-xl bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 group-hover:scale-110 transition-transform">
                         <Info size={20} />
                       </div>
                       <p className="text-sm font-bold text-slate-900 dark:text-white">{t('profile.about_app')}</p>
@@ -435,7 +435,7 @@ const Profile: React.FC = () => {
                   <LogOut size={20} />
                   {t('profile.logout')}
                 </button>
-                <p className="text-center text-[10px] text-slate-400 mt-6 font-medium">Chinak v1.0.6</p>
+                <p className="text-center text-[10px] text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 mt-6 font-medium">Chinak v1.0.6</p>
               </div>
             </div>
           </div>

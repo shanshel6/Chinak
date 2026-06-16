@@ -514,7 +514,7 @@ const Login: React.FC = () => {
           </h1>
           {/* Subtitle */}
           <div className="flex flex-col items-center gap-2">
-            <p className="text-slate-500 dark:text-slate-400 text-base font-normal text-center max-w-[80%]">
+            <p className="text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 text-base font-normal text-center max-w-[80%]">
               {step === 'phone' ? 'أدخل رقم الهاتف الخاص بك للمتابعة' : 
                step === 'phone-password' ? 'أدخل كلمة المرور الخاصة بحسابك' :
                step === 'phone-signup-details' ? 'يرجى إدخال اسمك وكلمة مرور جديدة لإكمال عملية التسجيل' :
@@ -564,7 +564,7 @@ const Login: React.FC = () => {
                           </option>
                         ))}
                       </select>
-                      <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none text-slate-400">
+                      <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400">
                         <Phone size={16} />
                       </div>
                     </div>
@@ -581,7 +581,7 @@ const Login: React.FC = () => {
                       />
                     </div>
                   </div>
-                  <p className="text-[10px] text-slate-400 text-right mt-1 px-1">
+                  <p className="text-[10px] text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 text-right mt-1 px-1">
                     * سيتم إرسال كود التحقق إلى هذا الرقم
                   </p>
                 </div>
@@ -603,7 +603,7 @@ const Login: React.FC = () => {
                       كلمة المرور
                     </label>
                     <div className="flex w-full items-stretch rounded-xl shadow-sm transition-all focus-within:ring-2 focus-within:ring-primary focus-within:ring-opacity-50">
-                      <div className="flex items-center justify-center px-4 bg-surface-light dark:bg-surface-dark border border-slate-200 dark:border-slate-700 border-l-0 rounded-r-xl text-slate-400">
+                      <div className="flex items-center justify-center px-4 bg-surface-light dark:bg-surface-dark border border-slate-200 dark:border-slate-700 border-l-0 rounded-r-xl text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400">
                         <Lock size={22} />
                       </div>
                       <input 
@@ -645,7 +645,7 @@ const Login: React.FC = () => {
                       الاسم الكامل
                     </label>
                     <div className="flex w-full items-stretch rounded-xl shadow-sm transition-all focus-within:ring-2 focus-within:ring-primary focus-within:ring-opacity-50">
-                      <div className="flex items-center justify-center px-4 bg-surface-light dark:bg-surface-dark border border-slate-200 dark:border-slate-700 border-l-0 rounded-r-xl text-slate-400">
+                      <div className="flex items-center justify-center px-4 bg-surface-light dark:bg-surface-dark border border-slate-200 dark:border-slate-700 border-l-0 rounded-r-xl text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400">
                         <UserIcon size={22} />
                       </div>
                       <input 
@@ -663,7 +663,7 @@ const Login: React.FC = () => {
                       كلمة المرور
                     </label>
                     <div className="flex w-full items-stretch rounded-xl shadow-sm transition-all focus-within:ring-2 focus-within:ring-primary focus-within:ring-opacity-50">
-                      <div className="flex items-center justify-center px-4 bg-surface-light dark:bg-surface-dark border border-slate-200 dark:border-slate-700 border-l-0 rounded-r-xl text-slate-400">
+                      <div className="flex items-center justify-center px-4 bg-surface-light dark:bg-surface-dark border border-slate-200 dark:border-slate-700 border-l-0 rounded-r-xl text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400">
                         <Lock size={22} />
                       </div>
                       <input 
@@ -720,7 +720,7 @@ const Login: React.FC = () => {
                       كلمة المرور الجديدة
                     </label>
                     <div className="flex w-full items-stretch rounded-xl shadow-sm transition-all focus-within:ring-2 focus-within:ring-primary focus-within:ring-opacity-50">
-                      <div className="flex items-center justify-center px-4 bg-surface-light dark:bg-surface-dark border border-slate-200 dark:border-slate-700 border-l-0 rounded-r-xl text-slate-400">
+                      <div className="flex items-center justify-center px-4 bg-surface-light dark:bg-surface-dark border border-slate-200 dark:border-slate-700 border-l-0 rounded-r-xl text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400">
                         <KeyRound size={22} />
                       </div>
                       <input 
@@ -746,7 +746,7 @@ const Login: React.FC = () => {
                       البريد الإلكتروني
                     </label>
                     <div className="flex w-full items-stretch rounded-xl shadow-sm transition-all focus-within:ring-2 focus-within:ring-primary focus-within:ring-opacity-50">
-                      <div className="flex items-center justify-center px-4 bg-surface-light dark:bg-surface-dark border border-slate-200 dark:border-slate-700 border-l-0 rounded-r-xl text-slate-400">
+                      <div className="flex items-center justify-center px-4 bg-surface-light dark:bg-surface-dark border border-slate-200 dark:border-slate-700 border-l-0 rounded-r-xl text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400">
                         <Mail size={22} />
                       </div>
                       <input 
@@ -783,7 +783,7 @@ const Login: React.FC = () => {
                       كلمة المرور
                     </label>
                     <div className="flex w-full items-stretch rounded-xl shadow-sm transition-all focus-within:ring-2 focus-within:ring-primary focus-within:ring-opacity-50">
-                      <div className="flex items-center justify-center px-4 bg-surface-light dark:bg-surface-dark border border-slate-200 dark:border-slate-700 border-l-0 rounded-r-xl text-slate-400">
+                      <div className="flex items-center justify-center px-4 bg-surface-light dark:bg-surface-dark border border-slate-200 dark:border-slate-700 border-l-0 rounded-r-xl text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400">
                         <Lock size={22} />
                       </div>
                       <input 
@@ -828,7 +828,7 @@ const Login: React.FC = () => {
                       البريد الإلكتروني
                     </label>
                     <div className="flex w-full items-stretch rounded-xl shadow-sm transition-all focus-within:ring-2 focus-within:ring-primary focus-within:ring-opacity-50">
-                      <div className="flex items-center justify-center px-4 bg-surface-light dark:bg-surface-dark border border-slate-200 dark:border-slate-700 border-l-0 rounded-r-xl text-slate-400">
+                      <div className="flex items-center justify-center px-4 bg-surface-light dark:bg-surface-dark border border-slate-200 dark:border-slate-700 border-l-0 rounded-r-xl text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400">
                         <Mail size={22} />
                       </div>
                       <input 
@@ -879,7 +879,7 @@ const Login: React.FC = () => {
                       كلمة المرور الجديدة
                     </label>
                     <div className="flex w-full items-stretch rounded-xl shadow-sm transition-all focus-within:ring-2 focus-within:ring-primary focus-within:ring-opacity-50">
-                      <div className="flex items-center justify-center px-4 bg-surface-light dark:bg-surface-dark border border-slate-200 dark:border-slate-700 border-l-0 rounded-r-xl text-slate-400">
+                      <div className="flex items-center justify-center px-4 bg-surface-light dark:bg-surface-dark border border-slate-200 dark:border-slate-700 border-l-0 rounded-r-xl text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400">
                         <KeyRound size={22} />
                       </div>
                       <input 
@@ -911,7 +911,7 @@ const Login: React.FC = () => {
                       <ArrowLeft size={12} />
                       الرجوع
                     </button>
-                    <span className="text-xs text-slate-500">حساب جديد</span>
+                    <span className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400">حساب جديد</span>
                   </div>
                   
                   <div className="flex flex-col gap-2">
@@ -919,7 +919,7 @@ const Login: React.FC = () => {
                       الاسم الكامل
                     </label>
                     <div className="flex w-full items-stretch rounded-xl shadow-sm">
-                      <div className="flex items-center justify-center px-4 bg-surface-light dark:bg-surface-dark border border-slate-200 dark:border-slate-700 border-l-0 rounded-r-xl text-slate-400">
+                      <div className="flex items-center justify-center px-4 bg-surface-light dark:bg-surface-dark border border-slate-200 dark:border-slate-700 border-l-0 rounded-r-xl text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400">
                         <UserIcon size={22} />
                       </div>
                       <input 
@@ -937,7 +937,7 @@ const Login: React.FC = () => {
                       كلمة المرور
                     </label>
                     <div className="flex w-full items-stretch rounded-xl shadow-sm transition-all focus-within:ring-2 focus-within:ring-primary focus-within:ring-opacity-50">
-                      <div className="flex items-center justify-center px-4 bg-surface-light dark:bg-surface-dark border border-slate-200 dark:border-slate-700 border-l-0 rounded-r-xl text-slate-400">
+                      <div className="flex items-center justify-center px-4 bg-surface-light dark:bg-surface-dark border border-slate-200 dark:border-slate-700 border-l-0 rounded-r-xl text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400">
                         <Lock size={22} />
                       </div>
                       <input 
@@ -999,7 +999,7 @@ const Login: React.FC = () => {
 
           {/* Primary Action */}
           <div className="mt-6 flex flex-col gap-4">
-            <p className="text-[11px] text-slate-500 dark:text-slate-400 text-center px-4 leading-relaxed">
+            <p className="text-[11px] text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 text-center px-4 leading-relaxed">
               بمتابعتك، أنت توافق على{' '}
               <Link to="/terms-of-service" className="text-primary hover:underline font-medium">شروط الخدمة</Link>
               {' '}و{' '}
@@ -1078,7 +1078,7 @@ const Login: React.FC = () => {
 
             {/* Version Indicator for Debugging */}
             <div className="text-center mt-6 p-2 bg-slate-100 dark:bg-slate-800/50 rounded-lg">
-              <p className="text-xs text-slate-500 mb-1">الإصدار الحالي</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 mb-1">الإصدار الحالي</p>
               <span className="text-sm font-bold text-primary font-mono tracking-wider">
                 v{packageJson.version}
               </span>

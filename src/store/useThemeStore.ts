@@ -9,17 +9,30 @@ interface ThemeState {
 
 export const useThemeStore = create<ThemeState>()(
   persist(
-    (_set) => ({
+    (set) => ({
       isDarkMode: false,
       toggleTheme: () => {
-        // Dark mode disabled - always force light mode
-        document.documentElement.classList.remove('dark');
-        document.documentElement.classList.add('light');
+        set((state) => {
+          const newDarkMode = !state.isDarkMode;
+          if (newDarkMode) {
+            document.documentElement.classList.add('dark');
+            document.documentElement.classList.remove('light');
+          } else {
+            document.documentElement.classList.remove('dark');
+            document.documentElement.classList.add('light');
+          }
+          return { isDarkMode: newDarkMode };
+        });
       },
-      setTheme: (_isDark) => {
-        // Always force light mode
-        document.documentElement.classList.remove('dark');
-        document.documentElement.classList.add('light');
+      setTheme: (isDark) => {
+        set({ isDarkMode: isDark });
+        if (isDark) {
+          document.documentElement.classList.add('dark');
+          document.documentElement.classList.remove('light');
+        } else {
+          document.documentElement.classList.remove('dark');
+          document.documentElement.classList.add('light');
+        }
       },
     }),
     {

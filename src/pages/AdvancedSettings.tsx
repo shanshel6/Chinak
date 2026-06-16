@@ -162,7 +162,7 @@ const AdvancedSettings: React.FC = () => {
                   </div>
                   <span className="text-base font-medium">إدارة أذونات البيانات</span>
                 </div>
-                <ChevronLeft size={20} className="text-gray-400" />
+                <ChevronLeft size={20} className="text-gray-400 dark:text-gray-500" />
               </button>
             </div>
           </section>
@@ -208,7 +208,7 @@ const AdvancedSettings: React.FC = () => {
                     </span>
                   </div>
                 </div>
-                <ChevronLeft size={20} className="text-gray-400" />
+                <ChevronLeft size={20} className="text-gray-400 dark:text-gray-500" />
               </button>
             </div>
             

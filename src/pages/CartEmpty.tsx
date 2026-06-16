@@ -110,7 +110,7 @@ const CartEmpty: React.FC = () => {
                         image: item.image
                       });
                     }}
-                    className={`absolute top-2 left-2 size-8 bg-white/90 dark:bg-black/60 backdrop-blur rounded-full flex items-center justify-center shadow-sm transition-colors ${isProductInWishlist(item.id) ? 'text-red-500' : 'text-gray-500 hover:text-red-500'}`}
+                    className={`absolute top-2 left-2 size-8 bg-white/90 dark:bg-black/60 backdrop-blur rounded-full flex items-center justify-center shadow-sm transition-colors ${isProductInWishlist(item.id) ? 'text-red-500' : 'text-gray-500 dark:text-gray-400 hover:text-red-500'}`}
                   > 
                     <Heart 
                       size={18} 

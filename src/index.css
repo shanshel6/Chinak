@@ -4,12 +4,12 @@
 
 @layer base {
   :root {
-    color-scheme: light;
+    color-scheme: light dark;
   }
 
-  /* Dark mode disabled */
+  /* Dark mode enabled */
   .dark {
-    color-scheme: light;
+    color-scheme: dark;
   }
 
   body {

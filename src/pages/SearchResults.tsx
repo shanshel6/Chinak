@@ -720,7 +720,7 @@ const SearchResults: React.FC = () => {
               }
             }}
           >
-            {isImageSearch ? <Camera size={16} className="text-slate-500" /> : <Search size={16} className="text-slate-500" />}
+            {isImageSearch ? <Camera size={16} className="text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400" /> : <Search size={16} className="text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400" />}
             <input
               ref={inputRef}
               value={queryInput}
@@ -740,7 +740,7 @@ const SearchResults: React.FC = () => {
                 }
               }}
               placeholder="ابحث عن منتج..."
-              className="flex-1 bg-transparent outline-none text-sm font-semibold text-slate-900 dark:text-white placeholder:text-slate-400"
+              className="flex-1 bg-transparent outline-none text-sm font-semibold text-slate-900 dark:text-white placeholder:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400"
             />
             {queryInput && (
               <button
@@ -753,13 +753,13 @@ const SearchResults: React.FC = () => {
                   setQueryInput('');
                   if (inputRef.current) inputRef.current.focus();
                 }}
-                className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                className="p-1 text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
               >
                 <X size={14} />
               </button>
             )}
             <div className="w-px h-4 bg-slate-200 dark:bg-slate-700 mx-1"></div>
-            <label className="p-1 cursor-pointer text-slate-500 hover:text-primary transition-colors">
+            <label className="p-1 cursor-pointer text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 hover:text-primary transition-colors">
               <input
                 ref={fileInputRef}
                 type="file"
@@ -844,7 +844,7 @@ const SearchResults: React.FC = () => {
                     setShowImagePopup(false);
                     clearImageSearch();
                   }} 
-                  className="text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white p-2 rounded-full bg-slate-100 dark:bg-slate-800"
+                  className="text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:hover:text-white p-2 rounded-full bg-slate-100 dark:bg-slate-800"
                 >
                   <X size={24} />
                 </button>
@@ -859,7 +859,7 @@ const SearchResults: React.FC = () => {
                     <div className="size-1.5 rounded-full bg-primary animate-bounce [animation-delay:-0.15s]"></div>
                     <div className="size-1.5 rounded-full bg-primary animate-bounce"></div>
                   </div>
-                  <p className="text-sm font-bold text-slate-500 animate-pulse">
+                  <p className="text-sm font-bold text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 animate-pulse">
                     جاري تحليل الصورة...
                   </p>
                 </div>
@@ -880,7 +880,7 @@ const SearchResults: React.FC = () => {
                        handleObjectSelection(null);
                     }
                   }} 
-                  className="text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white p-2 rounded-full bg-slate-100 dark:bg-slate-800"
+                  className="text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:hover:text-white p-2 rounded-full bg-slate-100 dark:bg-slate-800"
                 >
                   <X size={24} />
                 </button>
@@ -990,7 +990,7 @@ const SearchResults: React.FC = () => {
         <div className="bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800 max-h-[40vh] overflow-y-auto">
           {filteredRecentTerms.length > 0 && (
             <div className="px-4 pt-4 pb-2">
-              <h3 className="text-xs font-bold text-slate-400 mb-2">بحث حديث</h3>
+              <h3 className="text-xs font-bold text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 mb-2">بحث حديث</h3>
               <div className="flex flex-wrap gap-2">
                 {filteredRecentTerms.map((term, idx) => (
                   <button
@@ -1028,7 +1028,7 @@ const SearchResults: React.FC = () => {
               <div className="size-3 rounded-full bg-primary animate-bounce [animation-delay:-0.15s]"></div>
               <div className="size-3 rounded-full bg-primary animate-bounce"></div>
             </div>
-            <p className="text-sm font-bold text-slate-500 animate-pulse">
+            <p className="text-sm font-bold text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 animate-pulse">
               جاري البحث...
             </p>
           </div>
@@ -1053,7 +1053,7 @@ const SearchResults: React.FC = () => {
             </div>
             <div>
               <p className="text-sm font-bold text-slate-900 dark:text-white mb-1">حصل خطأ</p>
-              <p className="text-xs text-slate-500 dark:text-slate-400">{error}</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400">{error}</p>
             </div>
             <button
               type="button"
@@ -1067,7 +1067,7 @@ const SearchResults: React.FC = () => {
       ) : results.length > 0 ? (
         <>
           <div className="px-4 pb-4">
-            <p className="text-xs text-slate-500 font-medium mt-1 mb-3">
+            <p className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 font-medium mt-1 mb-3">
               {hasMore ? `+${results.length} منتجات` : `${results.length} منتجات`}
             </p>
           </div>
@@ -1105,24 +1105,24 @@ const SearchResults: React.FC = () => {
         !activeQuery.trim() && !isImageSearch ? (
           <div className="px-4 py-12">
             <div className="flex flex-col items-center justify-center gap-3 text-center">
-              <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-400">
+              <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400">
                 <Search size={24} />
               </div>
               <div>
                 <p className="text-sm font-bold text-slate-900 dark:text-white mb-1">ابحث عن منتجات</p>
-                <p className="text-xs text-slate-500 dark:text-slate-400">اكتب ما تبحث عنه أو اختر صورة للبحث</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400">اكتب ما تبحث عنه أو اختر صورة للبحث</p>
               </div>
             </div>
           </div>
         ) : (
           <div className="px-4 py-12">
             <div className="flex flex-col items-center justify-center gap-3 text-center">
-              <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-400">
+              <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400">
                 <Search size={24} />
               </div>
               <div>
                 <p className="text-sm font-bold text-slate-900 dark:text-white mb-1">لم نجد نتائج</p>
-                <p className="text-xs text-slate-500 dark:text-slate-400">حاول استخدام كلمات بحث أخرى</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400">حاول استخدام كلمات بحث أخرى</p>
               </div>
             </div>
           </div>
