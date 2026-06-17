@@ -43,7 +43,7 @@ public class MLKitTranslate: CAPPlugin {
     @objc func isModelDownloaded(_ call: CAPPluginCall) {
         let translator = getTranslator()
         let conditions = ModelDownloadConditions(
-            allowsCellularAccess: false,
+            allowsCellularAccess: true,
             allowsBackgroundDownloading: true
         )
         
@@ -59,7 +59,7 @@ public class MLKitTranslate: CAPPlugin {
     @objc func downloadModel(_ call: CAPPluginCall) {
         let translator = getTranslator()
         let conditions = ModelDownloadConditions(
-            allowsCellularAccess: false,
+            allowsCellularAccess: true,
             allowsBackgroundDownloading: true
         )
         

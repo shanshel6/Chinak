@@ -47,11 +47,15 @@ export async function translateArabicToEnglish(text: string): Promise<string> {
   }
 
   try {
+    // Ensure model is downloaded before trying to translate
+    await ensureTranslationModelDownloaded();
+    
     const { translatedText } = await MLKitTranslate.translateArabicToEnglish({ text });
-    console.log('[Translation Service] Translated:', translatedText);
-    return translatedText;
+    const safeTranslatedText = translatedText && translatedText.trim() ? translatedText : text;
+    console.log('[Translation Service] Translated:', safeTranslatedText);
+    return safeTranslatedText;
   } catch (error) {
-    console.error('[Translation Service] Translation failed:', error);
+    console.error('[Translation Service] Translation failed, using original text:', error);
     return text; // Fallback to original text if translation fails
   }
 }

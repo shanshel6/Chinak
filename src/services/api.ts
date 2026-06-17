@@ -961,38 +961,43 @@ export interface CategorySuggestion {
 }
 
 export async function searchProducts(query: string, page = 1, limit = 20, maxPrice?: number, condition?: 'new' | 'used') {
-  // Step 1: Normalize Arabic query (handle Iraqi slang)
-  const normalizedArabicQuery = normalizeArabicSearchTerm(query);
-  console.log('[API Search] Normalized Arabic:', normalizedArabicQuery);
-  
-  // Step 2: Translate to English (on-device via Google ML Kit in production)
-  const englishQuery = await translateArabicToEnglish(normalizedArabicQuery);
-  console.log('[API Search] Translated to English:', englishQuery);
-  
-  // Step 3: Generate CLIP text embedding (on-device)
-  const embedding = await embedText(englishQuery);
-  console.log('[API Search] Generated embedding:', embedding.slice(0, 5), '...');
-  
-  // Step 4: Send ONLY the embedding to backend
-  const response = await request('/search', {
-    method: 'POST',
-    body: JSON.stringify({ 
-      q: query, // Keep original query for reference
-      vector: embedding,
-      page, 
-      limit, 
-      maxPrice, 
-      condition 
-    }),
-    skipCache: true
-  });
-  
-  return {
-    products: Array.isArray(response?.products) ? response.products : [],
-    total: Number(response?.total || 0),
-    hasMore: Boolean(response?.hasMore),
-    engine: response?.engine || 'clip-hybrid'
-  };
+  try {
+    // Step 1: Normalize Arabic query (handle Iraqi slang)
+    const normalizedArabicQuery = normalizeArabicSearchTerm(query);
+    console.log('[API Search] Normalized Arabic:', normalizedArabicQuery);
+    
+    // Step 2: Translate to English (on-device via Google ML Kit in production)
+    const englishQuery = await translateArabicToEnglish(normalizedArabicQuery);
+    console.log('[API Search] Translated to English:', englishQuery);
+    
+    // Step 3: Generate CLIP text embedding (on-device)
+    const embedding = await embedText(englishQuery);
+    console.log('[API Search] Generated embedding:', embedding.slice(0, 5), '...');
+    
+    // Step 4: Send ONLY the embedding to backend
+    const response = await request('/search', {
+      method: 'POST',
+      body: JSON.stringify({ 
+        q: query, // Keep original query for reference
+        vector: embedding,
+        page, 
+        limit, 
+        maxPrice, 
+        condition 
+      }),
+      skipCache: true
+    });
+    
+    return {
+      products: Array.isArray(response?.products) ? response.products : [],
+      total: Number(response?.total || 0),
+      hasMore: Boolean(response?.hasMore),
+      engine: response?.engine || 'clip-hybrid'
+    };
+  } catch (error: any) {
+    console.error('[API Search] Search failed:', error);
+    throw error; // Re-throw to let the caller handle it
+  }
 }
 
 export async function searchCategorySuggestions(query: string, limit = 20) {
