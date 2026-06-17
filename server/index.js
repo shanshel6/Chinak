@@ -9669,9 +9669,10 @@ app.all('/api/search', async (req, res) => {
       throw new Error('Invalid or missing 512-dimensional vector');
     }
 
-    // Search products using hybrid search (text + image embeddings)
-    const vectorMatches = await searchProductsByHybridVector(prisma, textEmbedding, null, 500, 0);
-    perf.log('vector_search_done', { matches: vectorMatches.length });
+    try {
+      // Search products using hybrid search (text + image embeddings)
+      const vectorMatches = await searchProductsByHybridVector(prisma, textEmbedding, null, 500, 0);
+      perf.log('vector_search_done', { matches: vectorMatches.length });
 
       if (vectorMatches.length > 0) {
         const offset = (page - 1) * limit;
