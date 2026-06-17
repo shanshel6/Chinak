@@ -46,183 +46,90 @@ export async function ensureProductImageEmbeddings({
   runDb = defaultRunDb,
   logger = console,
 }) {
-  const selectedLimit = Math.max(1, maxImages || MAX_PRODUCT_IMAGE_EMBEDDINGS);
-  let productImages = await loadTopProductImages(prisma, productId, selectedLimit, runDb);
-
-  if (productImages.length === 0) {
+  // Just get one image (the first one)
+  const productImages = await loadTopProductImages(prisma, productId, 1, runDb);
+  
+  let imageUrl = null;
+  
+  if (productImages.length > 0) {
+    imageUrl = sanitizeProductImageUrl(productImages[0].url);
+  }
+  
+  // If no ProductImage, try fallback
+  if (!imageUrl) {
     const fallbackUrl = sanitizeProductImageUrl(fallbackImageUrl);
     if (fallbackUrl) {
-      await runDb(
-        () => prisma.productImage.create({
-          data: {
-            productId,
-            url: fallbackUrl,
-            order: 0,
-            type: 'GALLERY'
-          }
-        }),
-        `create fallback product image ${productId}`
-      );
-      productImages = await loadTopProductImages(prisma, productId, selectedLimit, runDb);
+      imageUrl = fallbackUrl;
     }
   }
 
-  if (productImages.length === 0) {
+  if (!imageUrl) {
     return { embeddedCount: 0, embeddedImageIds: [], mainVector: null };
   }
 
-  let mainVector = null;
-  const embeddedImageIds = [];
-  const allEmbeddings = [];
-
-  for (const image of productImages) {
-    const imageUrl = sanitizeProductImageUrl(image.url);
-    if (!imageUrl) continue;
-
-    try {
-      const embedding = await embedImage(imageUrl, productName || null);
-      if (!Array.isArray(embedding) || embedding.length === 0 || embedding.every((value) => value === 0)) {
-        logger.warn?.(`[Image Embedding] Empty/zero embedding for Product ${productId}, image ${image.id}`);
-        continue;
-      }
-
-      allEmbeddings.push(embedding);
-      const vectorLiteral = vectorToSqlLiteral(embedding);
-      await runDb(
-        () => prisma.$executeRawUnsafe(
-          `UPDATE "ProductImage" SET "url" = $1, "imageEmbedding" = $2::vector WHERE "id" = $3`,
-          imageUrl,
-          vectorLiteral,
-          image.id
-        ),
-        `update product image embedding ${image.id}`
-      );
-
-      if (!mainVector) {
-        mainVector = vectorLiteral;
-      }
-      embeddedImageIds.push(image.id);
-    } catch (error) {
-      logger.warn?.(`[Image Embedding] Failed for Product ${productId}, image ${image.id}: ${error?.message || error}`);
+  try {
+    const embedding = await embedImage(imageUrl, productName || null);
+    if (!Array.isArray(embedding) || embedding.length === 0 || embedding.every((value) => value === 0)) {
+      logger.warn?.(`[Image Embedding] Empty/zero embedding for Product ${productId}`);
+      return { embeddedCount: 0, embeddedImageIds: [], mainVector: null };
     }
-  }
 
-  // Ensure we use the correct logger from ensureProductImageEmbeddings if available
-  const activeLogger = logger || console;
+    // Ensure embedding is 512 dimensions
+    let finalEmbedding = embedding;
+    if (embedding.length !== 512) {
+      finalEmbedding = [...embedding];
+      while (finalEmbedding.length < 512) finalEmbedding.push(0);
+      finalEmbedding = finalEmbedding.slice(0, 512);
+    }
 
-  await runDb(
-    () => prisma.$executeRawUnsafe(
-      `
-        UPDATE "ProductImage"
-        SET "imageEmbedding" = NULL
-        WHERE "productId" = $1
-          AND "id" NOT IN (
-            SELECT id
-            FROM "ProductImage"
-            WHERE "productId" = $1
-            ORDER BY "order" ASC, "id" ASC
-            LIMIT $2
-          )
-      `,
-      productId,
-      selectedLimit
-    ),
-    `clear extra product image embeddings ${productId}`
-  ).catch(err => {
-    activeLogger.warn?.(`[Image Embedding] Non-critical error clearing extra embeddings for Product ${productId}: ${err.message}`);
-    // We don't throw here to prevent freezing the entire pipeline for a non-critical cleanup task
-  });
-
-  if (mainVector) {
+    const vectorLiteral = vectorToSqlLiteral(finalEmbedding);
     await runDb(
       () => prisma.$executeRawUnsafe(
         `UPDATE "Product" SET "imageEmbedding" = $1::vector WHERE "id" = $2`,
-        mainVector,
+        vectorLiteral,
         productId
       ),
-      `update legacy image embedding ${productId}`
+      `update product image embedding ${productId}`
     );
-  }
 
-  // Compute averaged embedding from all images for better category matching
-  let averagedVector = null;
-  if (allEmbeddings.length > 0) {
-    const dim = allEmbeddings[0].length;
-    const avg = new Array(dim).fill(0);
-    for (const emb of allEmbeddings) {
-      for (let i = 0; i < dim; i++) avg[i] += emb[i];
-    }
-    for (let i = 0; i < dim; i++) avg[i] /= allEmbeddings.length;
-    averagedVector = avg;
+    return {
+      embeddedCount: 1,
+      embeddedImageIds: productImages.length > 0 ? [productImages[0].id] : [],
+      mainVector: vectorLiteral,
+      averagedVector: finalEmbedding
+    };
+  } catch (error) {
+    logger.warn?.(`[Image Embedding] Failed for Product ${productId}: ${error?.message || error}`);
+    return { embeddedCount: 0, embeddedImageIds: [], mainVector: null };
   }
-
-  return {
-    embeddedCount: embeddedImageIds.length,
-    embeddedImageIds,
-    mainVector,
-    averagedVector
-  };
 }
 
 export async function searchProductsByImageVector(prisma, vector, limit = 20, offset = 0) {
   const safeLimit = Math.min(100, Math.max(1, Number.parseInt(String(limit || '20'), 10) || 20));
   const safeOffset = Math.max(0, Number.parseInt(String(offset || '0'), 10) || 0);
-  const vectorLiteral = vectorToSqlLiteral(vector);
+  
+  // Ensure vector is 512 dimensions
+  let finalVector = vector;
+  if (vector.length !== 512) {
+    finalVector = [...vector];
+    while (finalVector.length < 512) finalVector.push(0);
+    finalVector = finalVector.slice(0, 512);
+  }
+
+  const vectorLiteral = vectorToSqlLiteral(finalVector);
   const rows = await prisma.$queryRawUnsafe(
     `
-      WITH image_matches AS (
-        SELECT
-          pi."productId" AS id,
-          pi.id AS "matchedImageId",
-          pi.url AS "matchedImageUrl",
-          pi."order" AS "matchedImageOrder",
-          (pi."imageEmbedding" <=> $1::vector) AS distance
-        FROM "ProductImage" pi
-        INNER JOIN "Product" p ON p.id = pi."productId"
-        WHERE pi."imageEmbedding" IS NOT NULL
-          AND p."status" = 'PUBLISHED'
-          AND p."isActive" = true
-      ),
-      legacy_matches AS (
-        SELECT
-          p.id AS id,
-          NULL::int AS "matchedImageId",
-          p.image AS "matchedImageUrl",
-          0 AS "matchedImageOrder",
-          (p."imageEmbedding" <=> $1::vector) AS distance
-        FROM "Product" p
-        WHERE p."imageEmbedding" IS NOT NULL
-          AND p."status" = 'PUBLISHED'
-          AND p."isActive" = true
-      ),
-      combined_matches AS (
-        SELECT * FROM image_matches
-        UNION ALL
-        SELECT * FROM legacy_matches
-      ),
-      ranked_matches AS (
-        SELECT
-          id,
-          "matchedImageId",
-          "matchedImageUrl",
-          "matchedImageOrder",
-          distance,
-          1 - distance AS similarity,
-          ROW_NUMBER() OVER (
-            PARTITION BY id
-            ORDER BY distance ASC, "matchedImageOrder" ASC, COALESCE("matchedImageId", 0) ASC
-          ) AS rn
-        FROM combined_matches
-      )
       SELECT
-        id,
-        "matchedImageId",
-        "matchedImageUrl",
-        "matchedImageOrder",
-        distance,
-        similarity
-      FROM ranked_matches
-      WHERE rn = 1
+        p.id,
+        NULL::int AS "matchedImageId",
+        p.image AS "matchedImageUrl",
+        0 AS "matchedImageOrder",
+        (p."imageEmbedding" <=> $1::vector) AS distance,
+        1 - (p."imageEmbedding" <=> $1::vector) AS similarity
+      FROM "Product" p
+      WHERE p."imageEmbedding" IS NOT NULL
+        AND p."status" = 'PUBLISHED'
+        AND p."isActive" = true
       ORDER BY distance ASC, id ASC
       LIMIT $2
       OFFSET $3
@@ -240,6 +147,123 @@ export async function searchProductsByImageVector(prisma, vector, limit = 20, of
         matchedImageOrder: row.matchedImageOrder == null ? null : Number(row.matchedImageOrder),
         distance: Number(row.distance),
         similarity: Number(row.similarity),
+      }))
+    : [];
+}
+
+/**
+ * Search products by text embedding (CLIP, 512 dimensions)
+ */
+export async function searchProductsByTextVector(prisma, vector, limit = 20, offset = 0) {
+  const safeLimit = Math.min(100, Math.max(1, Number.parseInt(String(limit || '20'), 10) || 20));
+  const safeOffset = Math.max(0, Number.parseInt(String(offset || '0'), 10) || 0);
+  
+  // Ensure vector is 512 dimensions
+  let finalVector = vector;
+  if (vector.length !== 512) {
+    finalVector = [...vector];
+    while (finalVector.length < 512) finalVector.push(0);
+    finalVector = finalVector.slice(0, 512);
+  }
+  
+  const vectorLiteral = vectorToSqlLiteral(finalVector);
+  const rows = await prisma.$queryRawUnsafe(
+    `
+      SELECT
+        p.id,
+        NULL::int AS "matchedImageId",
+        p.image AS "matchedImageUrl",
+        0 AS "matchedImageOrder",
+        (p."textEmbedding" <=> $1::vector) AS distance,
+        1 - (p."textEmbedding" <=> $1::vector) AS similarity
+      FROM "Product" p
+      WHERE p."textEmbedding" IS NOT NULL
+        AND p."status" = 'PUBLISHED'
+        AND p."isActive" = true
+      ORDER BY distance ASC, id ASC
+      LIMIT $2
+      OFFSET $3
+    `,
+    vectorLiteral,
+    safeLimit,
+    safeOffset
+  );
+
+  return Array.isArray(rows)
+    ? rows.map((row) => ({
+        id: Number(row.id),
+        matchedImageId: row.matchedImageId == null ? null : Number(row.matchedImageId),
+        matchedImageUrl: row.matchedImageUrl || null,
+        matchedImageOrder: row.matchedImageOrder == null ? null : Number(row.matchedImageOrder),
+        distance: Number(row.distance),
+        similarity: Number(row.similarity),
+      }))
+    : [];
+}
+
+/**
+ * Hybrid search: combines text embedding similarity with image embedding similarity
+ */
+export async function searchProductsByHybridVector(prisma, textVector, imageVector = null, limit = 20, offset = 0) {
+  const safeLimit = Math.min(100, Math.max(1, Number.parseInt(String(limit || '20'), 10) || 20));
+  const safeOffset = Math.max(0, Number.parseInt(String(offset || '0'), 10) || 0);
+  
+  // Ensure vectors are 512 dimensions
+  let finalTextVector = textVector;
+  if (textVector.length !== 512) {
+    finalTextVector = [...textVector];
+    while (finalTextVector.length < 512) finalTextVector.push(0);
+    finalTextVector = finalTextVector.slice(0, 512);
+  }
+  
+  let finalImageVector = imageVector || finalTextVector;
+  if (finalImageVector.length !== 512) {
+    finalImageVector = [...finalImageVector];
+    while (finalImageVector.length < 512) finalImageVector.push(0);
+    finalImageVector = finalImageVector.slice(0, 512);
+  }
+  
+  const textVectorLiteral = vectorToSqlLiteral(finalTextVector);
+  const imageVectorLiteral = vectorToSqlLiteral(finalImageVector);
+  
+  const rows = await prisma.$queryRawUnsafe(
+    `
+      SELECT
+        p.id,
+        NULL::int AS "matchedImageId",
+        p.image AS "matchedImageUrl",
+        0 AS "matchedImageOrder",
+        -- Hybrid distance: average of text and image distances
+        ((p."textEmbedding" <=> $1::vector) + (p."imageEmbedding" <=> $2::vector)) / 2 AS distance,
+        -- Hybrid similarity: average of text and image similarities
+        ((1 - (p."textEmbedding" <=> $1::vector)) + (1 - (p."imageEmbedding" <=> $2::vector))) / 2 AS similarity,
+        -- Individual similarities for debugging
+        1 - (p."textEmbedding" <=> $1::vector) AS text_similarity,
+        1 - (p."imageEmbedding" <=> $2::vector) AS image_similarity
+      FROM "Product" p
+      WHERE (p."textEmbedding" IS NOT NULL OR p."imageEmbedding" IS NOT NULL)
+        AND p."status" = 'PUBLISHED'
+        AND p."isActive" = true
+      ORDER BY distance ASC, id ASC
+      LIMIT $3
+      OFFSET $4
+    `,
+    textVectorLiteral,
+    imageVectorLiteral,
+    safeLimit,
+    safeOffset
+  );
+
+  return Array.isArray(rows)
+    ? rows.map((row) => ({
+        id: Number(row.id),
+        matchedImageId: row.matchedImageId == null ? null : Number(row.matchedImageId),
+        matchedImageUrl: row.matchedImageUrl || null,
+        matchedImageOrder: row.matchedImageOrder == null ? null : Number(row.matchedImageOrder),
+        distance: Number(row.distance),
+        similarity: Number(row.similarity),
+        textSimilarity: Number(row.text_similarity),
+        imageSimilarity: Number(row.image_similarity),
       }))
     : [];
 }

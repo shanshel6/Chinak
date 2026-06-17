@@ -14,8 +14,8 @@ android {
         applicationId "com.chinak.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 83
-        versionName "1.0.69"
+        versionCode 84
+        versionName "1.0.70"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -70,6 +70,9 @@ dependencies {
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     implementation project(':capacitor-cordova-android-plugins')
+    
+    // ML Kit Translation
+    implementation 'com.google.mlkit:translate:17.0.2'
 }
 
 apply from: 'capacitor.build.gradle'

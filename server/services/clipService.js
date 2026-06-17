@@ -5,6 +5,11 @@ import dns from 'node:dns';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Force IPv4 first to avoid IPv6 timeouts with AliCDN
 dns.setDefaultResultOrder('ipv4first');
@@ -876,95 +881,62 @@ export async function embedImageRaw(input) {
   }
 }
 
-/**
- * Generate CLIP embedding for an image
- * @param {string|Buffer} input - Image URL, Base64 string, or Buffer
- * @param {string} [productName] - Optional product name for context-aware cropping (Smart Storage)
- * @returns {Promise<number[]>} - 512-dim embedding vector
- */
-export async function embedImage(input, productName = null) {
-  try {
-    const processor = await getProcessor();
-    const model = await getVisionModel();
 
-    // If it's a URL, use fromURL. If it's base64 or buffer, use read.
-    const isUrl = typeof input === 'string' && input.startsWith('http');
-    let image;
+
+/**
+ * Helper to call Python script for embedding
+ */
+async function callPythonScript(scriptName, args = []) {
+  return new Promise((resolve, reject) => {
+    const scriptPath = path.join(__dirname, '..', scriptName);
+    const python = process.env.PYTHON_PATH || 'python3';
     
-    if (isUrl) {
-      // Clean URL: remove _.webp suffix if present to get original JPEG/PNG
-      // This helps avoiding WebP format which Jimp doesn't support, and Sharp is broken on Windows/Node24
-      let cleanInput = sanitizeImageUrl(input);
-      if (cleanInput.endsWith('_.webp')) {
-        cleanInput = cleanInput.slice(0, -6);
+    const child = spawn(python, [scriptPath, ...args], {
+      cwd: path.join(__dirname, '..'),
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    child.stdout.on('data', (data) => {
+      stdout += data.toString();
+    });
+
+    child.stderr.on('data', (data) => {
+      stderr += data.toString();
+    });
+
+    child.on('close', (code) => {
+      if (code !== 0) {
+        console.error('[CLIP Service] Python script failed:', stderr);
+        reject(new Error(`Python script exited with code ${code}`));
+        return;
       }
-      
-      // Manual fetch with User-Agent
-      const response = await fetchWithRetry(cleanInput, {
-        dispatcher: directAgent, // Use direct connection for AliCDN (bypass proxy)
-        method: 'GET', // Explicitly set method
-        headers: {
-          // Use a simple User-Agent and NO Referer, as this proved most reliable in testing (10-15ms vs 100ms+)
-          // and consistently returned the full image size.
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Accept': 'image/jpeg,image/png,image/*;q=0.8', 
-          'Connection': 'keep-alive' // Explicitly keep connection alive
-        }
-      });
-      
-      const arrayBuffer = await response.arrayBuffer();
-      const buffer = Buffer.from(arrayBuffer);
-      
-      image = await readRawImageFromBuffer(buffer);
-    } else {
-      // Input is likely a Buffer (from base64 upload) or a local file path
+
       try {
-        if (Buffer.isBuffer(input)) {
-            image = await readRawImageFromBuffer(input);
+        const result = JSON.parse(stdout.trim());
+        if (result.error) {
+          reject(new Error(result.error));
         } else {
-            image = await RawImage.read(input);
+          resolve(result.embedding);
         }
       } catch (err) {
-          console.error('[CLIP Service] Failed to process local image/buffer:', err.message);
-          throw new Error(`Local image processing failed: ${err.message}`);
+        console.error('[CLIP Service] Failed to parse Python output:', stdout);
+        reject(err);
       }
-    }
-
-    // Auto-Crop Object (Smart Image Search)
-    // Pass productName only if provided (for storage/indexing context)
-    const croppedImage = await detectAndCropObject(image, productName);
-    const normalizedImage = normalizeImageForProcessor(croppedImage);
-    const { pixel_values } = await processor(normalizedImage);
-    const output = await model({ pixel_values });
-    const imageEmbeds = output?.image_embeds;
-    if (!imageEmbeds) throw new Error('CLIP model did not return image_embeds');
-
-    const embedding = toNumberArray(imageEmbeds);
-    if (!embedding || embedding.length !== 512) {
-      throw new Error(`Unexpected CLIP embedding length ${embedding?.length} (expected 512)`);
-    }
-    return normalizeL2(embedding);
-  } catch (error) {
-    // We actually want to see ALL errors during manual testing so we know what's wrong
-    console.error('[CLIP Service] Error generating embedding:', error?.message || error);
-    
-    // If it's a Buffer, we don't want to return 0s because it's a live user search
-    if (Buffer.isBuffer(input) || (typeof input === 'string' && input.startsWith('data:'))) {
-        throw error; // Let the API endpoint catch and return 500
-    }
-    
-    // Return empty vector for ANY error so the batch script doesn't crash or hang
-    return new Array(512).fill(0);
-  }
+    });
+  });
 }
 
 /**
- * Generate CLIP embedding for text
- * @param {string} text - Text to embed
- * @returns {Promise<number[]>} - 512-dim embedding vector
+ * Generate AraCLIP embedding for text (768 dimensions, Arabic-native)
+ * @param {string} text - Text to embed (Arabic supported!)
+ * @returns {Promise<number[]>} - 768-dim embedding vector
  */
 export async function embedText(text) {
   try {
+    console.log(`[CLIP Service] Generating text embedding for: "${text}"`);
     const tokenizer = await getTokenizer();
     const model = await getTextModel();
 
@@ -985,6 +957,85 @@ export async function embedText(text) {
     return normalizeL2(embedding);
   } catch (error) {
     console.error('[CLIP Service] Error generating text embedding:', error?.message || error);
+    return new Array(512).fill(0);
+  }
+}
+
+/**
+ * Generate CLIP embedding for image (512 dimensions)
+ * @param {string|Buffer} input - Image URL, Base64 string, or Buffer
+ * @param {string} [productName] - Optional product name for context-aware cropping
+ * @returns {Promise<number[]>} - 512-dim embedding vector
+ */
+export async function embedImage(input, productName = null) {
+  try {
+    const processor = await getProcessor();
+    const model = await getVisionModel();
+
+    // If it's a URL, use fromURL. If it's base64 or buffer, use read.
+    const isUrl = typeof input === 'string' && input.startsWith('http');
+    let img;
+
+    if (isUrl) {
+      // Clean URL: remove _.webp suffix if present to get original JPEG/PNG
+      let cleanInput = sanitizeImageUrl(input);
+      if (cleanInput.endsWith('_.webp')) {
+        cleanInput = cleanInput.slice(0, -6);
+      }
+
+      // Manual fetch with User-Agent
+      const response = await fetchWithRetry(cleanInput, {
+        dispatcher: directAgent, // Use direct connection for AliCDN (bypass proxy)
+        method: 'GET', // Explicitly set method
+        headers: {
+          // Use a simple User-Agent and NO Referer, as this proved most reliable in testing (10-15ms vs 100ms+)
+          // and consistently returned the full image size.
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'image/jpeg,image/png,image/*;q=0.8', 
+          'Connection': 'keep-alive' // Explicitly keep connection alive
+        }
+      });
+
+      const arrayBuffer = await response.arrayBuffer();
+      img = await readRawImageFromBuffer(Buffer.from(arrayBuffer));
+    } else {
+      // Input is likely a Buffer (from base64 upload) or a local file path
+      try {
+        if (Buffer.isBuffer(input)) {
+            img = await readRawImageFromBuffer(input);
+        } else {
+            img = await RawImage.read(input);
+        }
+      } catch (err) {
+          console.error('[CLIP Service] Failed to process local image/buffer:', err.message);
+          throw new Error(`Local image processing failed: ${err.message}`);
+      }
+    }
+
+    // Auto-Crop Object (Smart Image Search)
+    // Pass productName only if provided (for storage/indexing context)
+    const croppedImage = await detectAndCropObject(img, productName);
+    const normalizedImage = normalizeImageForProcessor(croppedImage);
+    const { pixel_values } = await processor(normalizedImage);
+    const output = await model({ pixel_values });
+    const imageEmbeds = output?.image_embeds;
+    if (!imageEmbeds) throw new Error('CLIP model did not return image_embeds');
+
+    const embedding = toNumberArray(imageEmbeds);
+    if (!embedding || embedding.length !== 512) {
+      throw new Error(`Unexpected CLIP embedding length ${embedding?.length} (expected 512)`);
+    }
+    return normalizeL2(embedding);
+  } catch (error) {
+    // We actually want to see ALL errors during manual testing so we know what's wrong
+    console.error('[CLIP Service] Error generating embedding:', error?.message || error);
+
+    // If it's a Buffer, we don't want to return 0s because it's a live user search
+    if (Buffer.isBuffer(input) || (typeof input === 'string' && input.startsWith('data:'))) {
+        throw error; // Let the API endpoint catch and return 500
+    }
+
+    // Return empty vector for ANY error so the batch script doesn't crash or hang
     return new Array(512).fill(0);
   }
 }

@@ -1,5 +1,8 @@
 import { useMaintenanceStore } from '../store/useMaintenanceStore';
 import { localProductService } from './localProductService';
+import { embedImage, embedImageCrop, embedText, warmupClipService, isClipReady } from './clipService';
+import { normalizeArabicSearchTerm } from '../data/arabicSearchNormalization';
+import { translateArabicToEnglish } from './translationService';
 
 export const getBaseDomain = () => {
   const hostname = window.location.hostname;
@@ -958,23 +961,37 @@ export interface CategorySuggestion {
 }
 
 export async function searchProducts(query: string, page = 1, limit = 20, maxPrice?: number, condition?: 'new' | 'used') {
-  const params = new URLSearchParams({
-    q: String(query || ''),
-    page: String(page),
-    limit: String(limit)
+  // Step 1: Normalize Arabic query (handle Iraqi slang)
+  const normalizedArabicQuery = normalizeArabicSearchTerm(query);
+  console.log('[API Search] Normalized Arabic:', normalizedArabicQuery);
+  
+  // Step 2: Translate to English (on-device via Google ML Kit in production)
+  const englishQuery = await translateArabicToEnglish(normalizedArabicQuery);
+  console.log('[API Search] Translated to English:', englishQuery);
+  
+  // Step 3: Generate CLIP text embedding (on-device)
+  const embedding = await embedText(englishQuery);
+  console.log('[API Search] Generated embedding:', embedding.slice(0, 5), '...');
+  
+  // Step 4: Send ONLY the embedding to backend
+  const response = await request('/search', {
+    method: 'POST',
+    body: JSON.stringify({ 
+      q: query, // Keep original query for reference
+      vector: embedding,
+      page, 
+      limit, 
+      maxPrice, 
+      condition 
+    }),
+    skipCache: true
   });
-  if (typeof maxPrice === 'number' && Number.isFinite(maxPrice) && maxPrice > 0) {
-    params.append('maxPrice', String(maxPrice));
-  }
-  if (condition) {
-    params.append('condition', condition);
-  }
-  const response = await request(`/search?${params.toString()}`, { skipCache: true });
+  
   return {
     products: Array.isArray(response?.products) ? response.products : [],
     total: Number(response?.total || 0),
     hasMore: Boolean(response?.hasMore),
-    engine: response?.engine || 'db'
+    engine: response?.engine || 'clip-hybrid'
   };
 }
 
@@ -1033,7 +1050,49 @@ export async function searchProductsByCategory(
   };
 }
 
-export async function searchProductsByImage(imageUrl: string, page = 1, limit = 40) {
+export async function searchProductsByImage(imageBase64: string, page = 1, limit = 40) {
+  // Generate embedding client-side first
+  const embedding = await embedImage(imageBase64);
+  
+  // Send embedding to backend for search
+  const response = await request('/search/embedding', {
+    method: 'POST',
+    body: JSON.stringify({ embedding, page, limit }),
+    skipCache: true
+  });
+  return {
+    products: Array.isArray(response?.products) ? response.products : [],
+    total: Number(response?.total || 0),
+    hasMore: Boolean(response?.hasMore),
+    engine: 'clip-client'
+  };
+}
+
+export async function analyzeImageObjects() {
+  // Deprecated: We now use manual user cropping instead of AI detection
+  return [];
+}
+
+export async function searchProductsByImageCrop(imageBase64: string, box: number[], page = 1, limit = 60) {
+  // Generate embedding client-side from crop
+  const embedding = await embedImageCrop(imageBase64, box);
+  
+  // Send embedding to backend for search
+  const response = await request('/search/embedding', {
+    method: 'POST',
+    body: JSON.stringify({ embedding, page, limit }),
+    skipCache: true
+  });
+  return {
+    products: Array.isArray(response?.products) ? response.products : [],
+    total: Number(response?.total || 0),
+    hasMore: Boolean(response?.hasMore || false),
+    engine: 'clip-client-crop'
+  };
+}
+
+// Keep old functions as fallbacks
+export async function searchProductsByImageLegacy(imageUrl: string, page = 1, limit = 40) {
   const response = await request('/search/image', {
     method: 'POST',
     body: JSON.stringify({ imageUrl, page, limit }),
@@ -1045,109 +1104,6 @@ export async function searchProductsByImage(imageUrl: string, page = 1, limit = 
     hasMore: Boolean(response?.hasMore),
     engine: response?.engine || 'clip'
   };
-}
-
-export async function analyzeImageObjects() {
-  // Deprecated: We now use manual user cropping instead of AI detection
-  return [];
-}
-
-export async function searchProductsByImageCrop(imageBase64: string, box: number[], page = 1, limit = 60) {
-  const cropToJpeg = async () => {
-    const img = new Image();
-    img.decoding = 'async';
-    img.src = imageBase64;
-    await new Promise<void>((resolve, reject) => {
-      if (img.complete && img.naturalWidth > 0) return resolve();
-      img.onload = () => resolve();
-      img.onerror = () => reject(new Error('Failed to load image'));
-    });
-
-    const [xmin, ymin, xmax, ymax] = box;
-    const sx = Math.max(0, Math.floor(xmin));
-    const sy = Math.max(0, Math.floor(ymin));
-    const sw = Math.max(1, Math.floor(xmax - xmin));
-    const sh = Math.max(1, Math.floor(ymax - ymin));
-
-    // Don't resize if crop is already reasonably sized (between 224px and 1024px)
-    // CLIP works best with images around 224px, but we want to preserve detail
-    const minDim = 224;
-    const maxDim = 1024;
-    const cropWidth = sw;
-    const cropHeight = sh;
-    
-    let dw = cropWidth;
-    let dh = cropHeight;
-    
-    // Only resize if crop is too small or too large
-    if (cropWidth < minDim || cropHeight < minDim || cropWidth > maxDim || cropHeight > maxDim) {
-      const scale = Math.min(1, maxDim / Math.max(cropWidth, cropHeight));
-      dw = Math.max(minDim, Math.round(cropWidth * scale));
-      dh = Math.max(minDim, Math.round(cropHeight * scale));
-    }
-
-    const canvas = document.createElement('canvas');
-    canvas.width = dw;
-    canvas.height = dh;
-    const ctx = canvas.getContext('2d', { alpha: false });
-    if (!ctx) throw new Error('Canvas not supported');
-
-    // Use higher quality settings for better embedding accuracy
-    ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, dw, dh);
-
-    // On some mobile browsers/webviews (like Capacitor iOS), canvas.toBlob might be slow or fail.
-    // Fallback to toDataURL which is generally more reliable across WebViews.
-    // Use higher quality (0.95) for better embedding accuracy
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.95);
-    
-    // Convert base64 to Blob manually
-    const base64Data = dataUrl.split(',')[1];
-    const byteCharacters = atob(base64Data);
-    const byteNumbers = new Array(byteCharacters.length);
-    for (let i = 0; i < byteCharacters.length; i++) {
-      byteNumbers[i] = byteCharacters.charCodeAt(i);
-    }
-    const byteArray = new Uint8Array(byteNumbers);
-    return new Blob([byteArray], { type: 'image/jpeg' });
-  };
-
-  try {
-    const cropBlob = await cropToJpeg();
-    const formData = new FormData();
-    formData.append('image', cropBlob, 'crop.jpg');
-    formData.append('page', String(page));
-    formData.append('limit', String(limit));
-    // Only send the raw cropped image blob via FormData. Do not append the original Base64.
-    
-    const response = await request('/search/image-crop', {
-      method: 'POST',
-      body: formData,
-      skipCache: true,
-      timeout: 45000
-    });
-
-    return {
-      products: Array.isArray(response?.products) ? response.products : [],
-      total: Number(response?.total || 0),
-      hasMore: Boolean(response?.hasMore || false),
-      engine: 'clip-crop-fast'
-    };
-  } catch (_err) {
-    console.warn('[Image Crop] Frontend fast crop failed, falling back to backend crop:', _err);
-    // If the local crop fails for whatever reason, fall back to sending the Base64 to the backend
-    const response = await request('/search/image-crop', {
-      method: 'POST',
-      body: JSON.stringify({ imageBase64, box, page, limit }),
-      skipCache: true
-    });
-    return {
-      products: Array.isArray(response?.products) ? response.products : [],
-      total: Number(response?.total || 0),
-      hasMore: Boolean(response?.hasMore || false),
-      engine: 'clip-crop'
-    };
-  }
 }
 
 export async function convertItemIdStr(itemIdStr: string) {

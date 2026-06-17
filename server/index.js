@@ -29,7 +29,7 @@ import { buildCategoryIndex } from './services/categoryService.js';
 import { calculateOrderShipping, calculateProductShipping, getAdjustedPrice } from './services/shippingService.js';
 import { setupLinkCheckerCron, checkAllProductLinks } from './services/linkCheckerService.js';
 import { embedImage, analyzeImageObjects, embedImageCrop, embedImageRaw, warmupClipService } from './services/clipService.js';
-import { ensureProductImageEmbeddings, searchProductsByImageVector, sanitizeProductImageUrl } from './services/productImageVectorService.js';
+import { ensureProductImageEmbeddings, searchProductsByImageVector, searchProductsByHybridVector, sanitizeProductImageUrl } from './services/productImageVectorService.js';
 import { scrapeGoofishProductImages } from './services/goofishScrapeService.js';
 import { loadCategoryVectors, searchByEmbedding, hasCachedVectors, syncDBVectorsToCache, searchByEmbeddingDB } from './services/categoryEmbeddingService.js';
 import multer from 'multer';
@@ -5225,6 +5225,110 @@ app.post('/api/tools/rapid/search-image', async (req, res) => {
   }
 });
 
+app.post('/api/search/embedding', async (req, res) => {
+  try {
+    const limit = Math.min(60, Math.max(1, parseInt(String(req.body?.limit || req.body?.pageSize || '20'), 10) || 20));
+    const page = Math.max(1, parseInt(String(req.body?.page || '1'), 10) || 1);
+    const offset = (page - 1) * limit;
+    let embedding = req.body?.embedding;
+    
+    if (!embedding || !Array.isArray(embedding)) {
+      return res.status(400).json({ error: 'Missing or invalid embedding array' });
+    }
+
+    console.log(`[CLIP Client] Received pre-generated vector. Querying similar products...`);
+    
+    const matches = await searchProductsByImageVector(prisma, embedding, limit + 1, offset);
+    const visibleMatches = matches.slice(0, limit);
+    const hasMore = matches.length > limit;
+    const ids = visibleMatches.map((match) => match.id).filter((id) => Number.isFinite(id));
+
+    if (ids.length === 0) {
+      return res.json({ products: [], total: 0, hasMore: false, engine: 'clip-client' });
+    }
+
+    const shippingRates = {
+      airShippingRate: 15400,
+      seaShippingRate: 182000,
+      airShippingMinFloor: 0
+    };
+    try {
+      const storeSettings = await prisma.storeSettings.findUnique({ where: { id: 1 } });
+      if (storeSettings) {
+        shippingRates.airShippingRate = storeSettings.airShippingRate;
+        shippingRates.seaShippingRate = storeSettings.seaShippingRate;
+        shippingRates.airShippingMinFloor = storeSettings.airShippingMinFloor;
+      }
+    } catch (e) {
+      console.warn('Failed to fetch store settings in embedding search, using defaults');
+    }
+
+    const productSelect = {
+      id: true,
+      name: true,
+      price: true,
+      basePriceIQD: true,
+      image: true,
+      aiMetadata: true,
+      neworold: true,
+      isFeatured: true,
+      featuredSearchSentences: true,
+      domesticShippingFee: true,
+      deliveryTime: true,
+      variants: {
+        select: {
+          id: true,
+          combination: true,
+          price: true,
+          basePriceIQD: true,
+          image: true
+        }
+      }
+    };
+
+    const productsFromDb = await prisma.product.findMany({
+      where: {
+        id: { in: ids },
+        status: 'PUBLISHED',
+        isActive: true
+      },
+      select: productSelect
+    });
+
+    const byId = new Map(productsFromDb.map((p) => [p.id, p]));
+    const matchById = new Map(visibleMatches.map((match) => [match.id, match]));
+    const ranked = ids
+      .map((id) => {
+        const product = byId.get(id);
+        const match = matchById.get(id);
+        if (!product || !match) return null;
+        const aiMetadata = parseAiMetadata(product.aiMetadata);
+        const processed = applyDynamicPricingToProduct(product, shippingRates);
+        const isRealBrand = typeof aiMetadata?.isRealBrand === 'boolean' ? aiMetadata.isRealBrand : null;
+        const neworold = (product.neworold !== null && product.neworold !== undefined)
+          ? product.neworold
+          : extractNewOrOld(aiMetadata);
+        return {
+          ...processed,
+          aiMetadata,
+          isRealBrand,
+          neworold,
+          imageSimilarity: match.similarity,
+          matchedImageId: match.matchedImageId,
+          matchedImageUrl: match.matchedImageUrl,
+          matchedImageOrder: match.matchedImageOrder,
+        };
+      })
+      .filter(Boolean);
+
+    return res.json({ products: ranked, total: ranked.length, hasMore, engine: 'clip-client' });
+  } catch (error) {
+    console.error('[CLIP client embedding search] error details:', error);
+    console.error(error.stack);
+    return res.status(500).json({ error: 'Embedding search failed' });
+  }
+});
+
 app.post('/api/search/image', async (req, res) => {
   try {
     const limit = Math.min(60, Math.max(1, parseInt(String(req.body?.limit || req.body?.pageSize || '20'), 10) || 20));
@@ -9520,47 +9624,54 @@ app.get('/api/search/category-products', async (req, res) => {
   }
 });
 
-app.get('/api/search', async (req, res) => {
+app.all('/api/search', async (req, res) => {
   const forcePerf = String(req.query.perf || req.headers['x-perf-log'] || '').trim() === '1';
   const perf = createPerfLog('search', ENABLE_SEARCH_PERF_LOGS || forcePerf);
   perf.log('start', { query: req.query });
 
   try {
-    const q = String(req.query.q || '').trim();
-    const translatedQ = String(req.query.translatedQ || '').trim();
-    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
-    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
-    const maxPrice = req.query.maxPrice ? Number.parseFloat(String(req.query.maxPrice)) : null;
-    const condition = String(req.query.condition || '').trim();
+    const q = String(req.query.q || req.body.q || '').trim();
+    const vectorParam = req.query.vector || req.body.vector;
+    const page = Math.max(1, parseInt(req.query.page || req.body.page || '1', 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit || req.body.limit || '20', 10) || 20));
+    const maxPrice = (req.query.maxPrice || req.body.maxPrice) ? Number.parseFloat(String(req.query.maxPrice || req.body.maxPrice)) : null;
+    const condition = String(req.query.condition || req.body.condition || '').trim();
 
-    if (!q) {
-      perf.log('empty_query');
-      return res.json({ products: [], total: 0, page, totalPages: 0, hasMore: false, engine: 'db' });
+    let textEmbedding = null;
+
+    // Use the provided vector if it's available (from on-device ML Kit + TinyCLIP)
+    if (vectorParam) {
+      try {
+        // Parse the vector parameter (should be a comma-separated string OR array of 512 numbers)
+        textEmbedding = Array.isArray(vectorParam) 
+          ? vectorParam.map(Number) 
+          : vectorParam.split(',').map(Number);
+        
+        if (!Array.isArray(textEmbedding) || textEmbedding.length !== 512 || textEmbedding.some(v => !Number.isFinite(v))) {
+          throw new Error('Invalid vector');
+        }
+        console.log(`[Search] Using provided 512-dimensional vector`);
+      } catch (err) {
+        console.warn(`[Search] Failed to parse vector: ${err.message}`);
+      }
     }
 
-    // Use CLIP text embedding and image similarity search
-    try {
-      // Get English text for CLIP (English-only)
-      let clipText = translatedQ;
-      
-      // If no translatedQ, use AI translation
-      if (!clipText) {
-        clipText = await translateArabicToEnglish(q);
-      }
-      
-      console.log(`[Search] Using CLIP text: "${clipText}" (original: "${q}")`);
-      
-      const textEmbedding = await embedText(clipText);
+    // Fallback to server-side translation + embedding if no vector provided
+    if (!textEmbedding && q) {
+      console.log(`[Search] No vector provided, using server-side translation/embedding for "${q}"`);
+      const englishQuery = await translateArabicToEnglish(q);
+      console.log(`[Search] Translated query: "${englishQuery}"`);
+      textEmbedding = await embedText(englishQuery);
       perf.log('clip_embedding_done');
-      
-      // Check if we got a valid embedding
-      if (!textEmbedding || textEmbedding.length !== 512 || textEmbedding.every(v => v === 0)) {
-        throw new Error('Invalid CLIP embedding');
-      }
+    }
 
-      // Search products by image vector
-      const vectorMatches = await searchProductsByImageVector(prisma, textEmbedding, 500, 0);
-      perf.log('vector_search_done', { matches: vectorMatches.length });
+    if (!textEmbedding || textEmbedding.length !== 512 || textEmbedding.every(v => v === 0)) {
+      throw new Error('Invalid or missing 512-dimensional vector');
+    }
+
+    // Search products using hybrid search (text + image embeddings)
+    const vectorMatches = await searchProductsByHybridVector(prisma, textEmbedding, null, 500, 0);
+    perf.log('vector_search_done', { matches: vectorMatches.length });
 
       if (vectorMatches.length > 0) {
         const offset = (page - 1) * limit;
@@ -9656,10 +9767,10 @@ app.get('/api/search', async (req, res) => {
           page,
           totalPages: Math.ceil(total / limit),
           hasMore,
-          engine: 'clip-image'
+          engine: 'clip-hybrid'
         };
 
-        perf.log('response_sent', { engine: 'clip-image', returned: pagedProducts.length, total });
+        perf.log('response_sent', { engine: 'clip-hybrid', returned: pagedProducts.length, total });
         return res.json(result);
       }
     } catch (clipError) {

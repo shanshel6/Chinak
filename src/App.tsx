@@ -54,6 +54,8 @@ const PrivacyPolicy = lazy(() => import('./pages/PrivacyPolicy'));
 const TermsOfService = lazy(() => import('./pages/TermsOfService'));
 
 import { performCacheMaintenance } from './services/api';
+import { ensureTranslationModelDownloaded } from './services/translationService';
+import { warmupClipService } from './services/clipService';
 
 import { App as CapApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
@@ -355,6 +357,9 @@ function App() {
           } catch (e) {
             console.error('Notification permission error:', e);
           }
+          
+          // Download ML Kit translation model
+          await ensureTranslationModelDownloaded();
         }
         
         // Now perform other initialization after permissions are handled
@@ -362,6 +367,9 @@ function App() {
         ensureGuestSession();
         checkAuth();
         initChatSocket();
+        
+        // Warm up CLIP models for faster search
+        await warmupClipService();
       } catch (error) {
         console.error('App initialization error:', error);
       } finally {
