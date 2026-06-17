@@ -1,6 +1,6 @@
 import { useMaintenanceStore } from '../store/useMaintenanceStore';
 import { localProductService } from './localProductService';
-import { embedImage, embedImageCrop, embedText, warmupClipService, isClipReady } from './clipService';
+import { embedImage, embedImageCrop, embedText } from './clipService';
 import { normalizeArabicSearchTerm } from '../data/arabicSearchNormalization';
 import { translateArabicToEnglish } from './translationService';
 

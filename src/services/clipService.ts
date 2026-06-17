@@ -123,7 +123,7 @@ export async function embedImage(base64: string): Promise<number[]> {
     const rawImage = await base64ToRawImage(base64);
     const inputs = await processor(rawImage);
     const outputs = await visionModel(inputs);
-    const embedding = Array.from(outputs.image_embeds.data);
+    const embedding = Array.from(outputs.image_embeds.data) as number[];
     const normalized = normalizeVector(embedding);
 
     console.log(`[CLIP Frontend] Image embedding generated in ${Date.now() - start}ms`);
@@ -146,7 +146,7 @@ export async function embedText(text: string): Promise<number[]> {
   try {
     const inputs = await tokenizer(text, { padding: true, truncation: true });
     const outputs = await textModel(inputs);
-    const embedding = Array.from(outputs.text_embeds.data);
+    const embedding = Array.from(outputs.text_embeds.data) as number[];
     const normalized = normalizeVector(embedding);
 
     console.log(`[CLIP Frontend] Text embedding generated in ${Date.now() - start}ms`);
@@ -200,7 +200,7 @@ export async function embedImageCrop(base64: string, box: number[]): Promise<num
     const croppedImage = new RawImage(croppedData, safeWidth, safeHeight, 3);
     const inputs = await processor(croppedImage);
     const outputs = await visionModel(inputs);
-    const embedding = Array.from(outputs.image_embeds.data);
+    const embedding = Array.from(outputs.image_embeds.data) as number[];
     const normalized = normalizeVector(embedding);
 
     console.log(`[CLIP Frontend] Crop embedding generated in ${Date.now() - start}ms`);
