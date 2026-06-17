@@ -1,4 +1,4 @@
-import { embedImage } from './clipService.js';
+import { embedImage, embedText } from './clipService.js';
 
 export const MAX_PRODUCT_IMAGE_EMBEDDINGS = Math.max(
   1,

@@ -1,0 +1,7 @@
+
+araclip @ git+https://github.com/Arabic-Clip/Araclip.git
+Pillow
+psycopg2-binary
+python-dotenv
+numpy
+requests

@@ -1079,7 +1079,7 @@ const GOOFISH_SKIP_ON_TRANSLATION_FAILURE = String(process.env.GOOFISH_SKIP_ON_T
 const GOOFISH_DB_SAVE_BACKOFF_MS = Math.max(200, parseInt(process.env.GOOFISH_DB_SAVE_BACKOFF_MS || '500', 10) || 500);
 const GOOFISH_RESET_TERMS_ON_START = String(process.env.GOOFISH_RESET_TERMS_ON_START || '').toLowerCase() === 'true';
 const GOOFISH_EMBED_USE_PRODUCT_NAME = String(process.env.GOOFISH_EMBED_USE_PRODUCT_NAME || 'true').toLowerCase() !== 'false';
-const GOOFISH_DISABLE_IMAGE_EMBEDDINGS = String(process.env.GOOFISH_DISABLE_IMAGE_EMBEDDINGS || 'true').toLowerCase() === 'true';
+const GOOFISH_DISABLE_IMAGE_EMBEDDINGS = String(process.env.GOOFISH_DISABLE_IMAGE_EMBEDDINGS || 'false').toLowerCase() === 'true';
 const GOOFISH_ACCUMULATE_PER_PRODUCT = String(process.env.GOOFISH_ACCUMULATE_PER_PRODUCT || '').toLowerCase() === 'true';
 console.log(`[Config] GOOFISH_ACCUMULATE_PER_PRODUCT = ${GOOFISH_ACCUMULATE_PER_PRODUCT}`);
 const GOOFISH_SKIP_DETAILS_AFTER_TERM = String(process.env.GOOFISH_SKIP_DETAILS_AFTER_TERM || '').toLowerCase() === 'true';

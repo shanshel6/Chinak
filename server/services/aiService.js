@@ -20,8 +20,99 @@ if (process.env.USE_AI_PROXY === 'true') {
   console.log('[AI Debug] Connecting to AI services directly (no proxy)');
 }
 
-// Initialize clients lazily - only SiliconFlow
+// Initialize clients lazily - SiliconFlow + Ollama
 let siliconflow = null;
+let ollamaAvailable = null; // null = not checked yet
+
+/**
+ * Check if Ollama is running and the BGE-M3 model is available
+ */
+async function checkOllamaAvailability() {
+  if (ollamaAvailable !== null) return ollamaAvailable;
+  try {
+    const ollamaUrl = process.env.OLLAMA_URL || 'http://127.0.0.1:11434';
+    const model = process.env.OLLAMA_EMBEDDING_MODEL || 'bge-m3';
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000);
+    const res = await fetch(`${ollamaUrl}/api/embeddings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, prompt: 'test' }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    ollamaAvailable = res.ok;
+    if (ollamaAvailable) {
+      console.log(`[AI Debug] Ollama is available at ${ollamaUrl} with model ${model}`);
+    } else {
+      console.log(`[AI Debug] Ollama responded with status ${res.status}`);
+    }
+  } catch (err) {
+    ollamaAvailable = false;
+    console.log(`[AI Debug] Ollama not available: ${err.message}`);
+  }
+  return ollamaAvailable;
+}
+
+/**
+ * Generate embedding using local Ollama (BGE-M3)
+ * Fastest option: no network latency, runs on local GPU/CPU
+ */
+async function generateEmbeddingWithOllama(text) {
+  const ollamaUrl = process.env.OLLAMA_URL || 'http://127.0.0.1:11434';
+  const model = process.env.OLLAMA_EMBEDDING_MODEL || 'bge-m3';
+  const targetDim = 1024;
+
+  const normalizeVector = (vector) => {
+    if (!Array.isArray(vector)) {
+      throw new Error('Invalid embedding vector from Ollama');
+    }
+    const numeric = vector.map((n) => Number(n));
+    if (numeric.some((n) => !Number.isFinite(n))) {
+      throw new Error('Embedding vector contains non-numeric values');
+    }
+    if (numeric.length === targetDim) return numeric;
+    if (numeric.length > targetDim) return numeric.slice(0, targetDim);
+    return numeric.concat(new Array(targetDim - numeric.length).fill(0));
+  };
+
+  const maxAttempts = 3;
+  const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+  let lastErr = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      console.log(`[AI Debug] Ollama embedding attempt ${attempt}/${maxAttempts} (model: ${model})`);
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 30000);
+      const res = await fetch(`${ollamaUrl}/api/embeddings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model, prompt: text }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        throw new Error(`Ollama API error ${res.status}: ${body}`);
+      }
+
+      const data = await res.json();
+      const embedding = data?.embedding;
+      if (!embedding) {
+        throw new Error('Ollama returned no embedding');
+      }
+      return normalizeVector(embedding);
+    } catch (err) {
+      lastErr = err;
+      console.warn(`[AI Debug] Ollama attempt ${attempt} failed: ${err.message}`);
+      if (attempt < maxAttempts) await sleep(1000 * attempt);
+    }
+  }
+
+  throw lastErr;
+}
 
 function getClients() {
   if (!siliconflow) {
@@ -42,12 +133,12 @@ function getClients() {
 }
 
 /**
- * Generate Embeddings using Hugging Face (Free Tier)
- * Model: sentence-transformers/distiluse-base-multilingual-cased-v2 (512 dimensions)
- * This model is optimized for 50+ languages including Arabic.
+ * Generate Embeddings using BGE-M3 (Best for Arabic)
+ * Model: BAAI/bge-m3 (1024 dimensions)
+ * This model is optimized for 100+ languages including excellent Arabic support.
  */
 async function generateEmbedding(text) {
-  const targetDim = 512;
+  const targetDim = 1024;
   const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
   const getStatusCode = (err) => {
     if (!err) return null;
@@ -79,6 +170,26 @@ async function generateEmbedding(text) {
 
   const { siliconflow } = getClients();
   const maxAttempts = 5;
+  const provider = process.env.EMBEDDING_PROVIDER || 'auto'; // 'ollama', 'siliconflow', 'auto'
+
+  // Try Ollama first if provider is 'ollama' or 'auto'
+  if (provider === 'ollama' || provider === 'auto') {
+    const ollamaReady = await checkOllamaAvailability();
+    if (ollamaReady) {
+      try {
+        const embedding = await generateEmbeddingWithOllama(text);
+        if (embedding) {
+          console.log('[AI Debug] Embedding generated via Ollama (local)');
+          return embedding;
+        }
+      } catch (ollamaErr) {
+        console.warn(`[AI Debug] Ollama embedding failed, ${provider === 'auto' ? 'falling back to SiliconFlow' : 'retrying'}: ${ollamaErr.message}`);
+        if (provider === 'ollama') throw ollamaErr; // If Ollama is explicitly required, don't fallback
+      }
+    } else if (provider === 'ollama') {
+      throw new Error('Ollama is not available but EMBEDDING_PROVIDER is set to "ollama"');
+    }
+  }
 
   const generateWithSiliconFlow = async () => {
     if (!siliconflow) {
@@ -372,7 +483,7 @@ export async function processProductAI(productId) {
       }
     }
 
-    // 2. Generate Embedding (512 dimensions) using Hugging Face
+    // 2. Generate Embedding (1024 dimensions) using BGE-M3 via SiliconFlow
     console.log(`[AI Debug] Generating embedding for product ${productId}...`);
     const embeddingContent = buildEmbeddingContent({
       ...product,
@@ -566,7 +677,7 @@ export async function hybridSearch(query, limit = 50, skip = 0, maxPrice = null,
     baseWords.forEach(w => extraWordsSet.delete(w));
     const extraWords = Array.from(extraWordsSet).filter(w => w.length > 1);
     
-    // 1. Generate query embedding (512 dimensions)
+    // 1. Generate query embedding (1024 dimensions) using BGE-M3
     const embeddingInputParts = [
       query,
       rewrittenQuery,

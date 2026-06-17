@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom';
 import { AlertCircle, Search, ArrowRight, Camera, X } from 'lucide-react';
 import { searchProductsByImage, searchProductsByImageCrop, searchProducts } from '../services/api';
+import { warmupClipService, isClipReady } from '../services/clipService';
 import { useAuthStore } from '../store/useAuthStore';
 import { normalizeWishlistProductId, useWishlistStore } from '../store/useWishlistStore';
 import { usePageCacheStore } from '../store/usePageCacheStore';
@@ -17,6 +18,15 @@ const SearchResults: React.FC = () => {
   const toggleWishlist = useWishlistStore((state) => state.toggleWishlist);
   const { setSearchData, setSearchScrollPos, getSearchData } = usePageCacheStore();
   const isFirstRender = useRef(true);
+  
+  // Preload CLIP models on component mount
+  useEffect(() => {
+    if (!isClipReady()) {
+      warmupClipService().catch(err => {
+        console.warn('[SearchResults] CLIP warmup failed:', err);
+      });
+    }
+  }, []);
   
   const searchParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
   const initialQuery = searchParams.get('q') || '';

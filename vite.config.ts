@@ -46,6 +46,6 @@ export default defineConfig({
     },
   },
   optimizeDeps: {
-    include: ['react', 'react-dom', 'lucide-react', 'framer-motion', 'socket.io-client', 'zustand', 'react-router-dom', 'react-icons'],
+    include: ['react', 'react-dom', 'lucide-react', 'framer-motion', 'socket.io-client', 'zustand', 'react-router-dom', 'react-icons', '@xenova/transformers'],
   }
 })
