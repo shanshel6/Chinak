@@ -218,7 +218,19 @@ async function processOne(queued, attempt = 1) {
   // 7. Generate embedding using the NEW (current production) service.
   //    This uses services/clipService.js (Xenova/clip-vit-base-patch32).
   //    The service itself writes the 512-dim vector to Product.imageEmbedding.
+  //    Only updates if no existing embedding OR new valid embedding is generated.
   try {
+    // Check if product already has a valid embedding - preserve it if so
+    const existingProduct = await prisma.product.findUnique({
+      where: { id: productId },
+      select: { imageEmbedding: true }
+    });
+
+    if (existingProduct?.imageEmbedding) {
+      log(`  → Product ${productId} already has an image embedding, preserving it`);
+      return productId;
+    }
+
     const embedResult = await ensureProductImageEmbeddings({
       prisma,
       productId,
@@ -231,7 +243,17 @@ async function processOne(queued, attempt = 1) {
       warn(`  ⚠ No embedding produced for product ${productId} (image: ${mainImage.slice(0, 60)}...)`);
     }
   } catch (e) {
-    warn(`  ⚠ Embedding failed for product ${productId}: ${e.message}`);
+    const msg = String(e && e.message || e);
+    if (/column\s+"?imageEmbedding"?\s+does not exist/i.test(msg)) {
+      warn('');
+      warn('  ! Product.imageEmbedding column is MISSING in the database.');
+      warn('    The product was inserted, but its embedding could not be saved.');
+      warn('    Run this on your Railway DB to fix it:');
+      warn('      server/prisma/fix_image_embedding_column.sql');
+      warn('');
+    } else {
+      warn(`  ⚠ Embedding failed for product ${productId}: ${msg}`);
+    }
   }
 
   return productId;

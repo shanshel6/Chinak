@@ -9,11 +9,35 @@ const { AutoProcessor, CLIPVisionModelWithProjection, CLIPTextModelWithProjectio
 
 console.log('Starting TinyCLIP (Xenova) embedding of all products...');
 const MODEL_ID = 'Xenova/clip-vit-base-patch32';
+const PROGRESS_FILE = path.join(__dirname, 'tinyclip_progress.json');
 
 let processorPromise = null;
 let visionModelPromise = null;
 let textModelPromise = null;
 let tokenizerPromise = null;
+
+// Progress tracking functions
+async function saveProgress(lastProductId) {
+  try {
+    await fs.writeFile(PROGRESS_FILE, JSON.stringify({ lastProcessedId: lastProductId }));
+  } catch (err) {
+    console.error('⚠️ Failed to save progress:', err.message);
+  }
+}
+
+async function loadProgress() {
+  try {
+    const data = await fs.readFile(PROGRESS_FILE, 'utf8');
+    const progress = JSON.parse(data);
+    return progress.lastProcessedId || null;
+  } catch (err) {
+    if (err.code === 'ENOENT') {
+      return null; // File doesn't exist yet, start fresh
+    }
+    console.error('⚠️ Failed to load progress:', err.message);
+    return null;
+  }
+}
 
 const getProcessor = async () => {
   if (!processorPromise) {
@@ -132,19 +156,16 @@ async function embedProduct(product) {
   try {
     console.log(`\nProcessing product ${product.id}: ${product.name}`);
 
-    let imageEmbedding = null;
-    if (product.image) {
-      imageEmbedding = await generateImageEmbedding(product.image);
-    }
-
-    let textEmbedding = null;
-      let combinedText = '';
-      if (product.name) combinedText += product.name;
-      combinedText = combinedText.trim();
-
-    if (combinedText) {
-      textEmbedding = await generateTextEmbedding(combinedText);
-    }
+    // Generate image and text embeddings in PARALLEL for speed
+    const [imageEmbedding, textEmbedding] = await Promise.all([
+      product.image ? generateImageEmbedding(product.image) : Promise.resolve(null),
+      (async () => {
+        let combinedText = '';
+        if (product.name) combinedText += product.name;
+        combinedText = combinedText.trim();
+        return combinedText ? generateTextEmbedding(combinedText) : null;
+      })()
+    ]);
 
     if (imageEmbedding || textEmbedding) {
       const imageVectorStr = imageEmbedding ? `[${imageEmbedding.join(',')}]` : null;
@@ -155,20 +176,23 @@ async function embedProduct(product) {
       const params = [];
       let paramIndex = 1;
 
+      // Only update fields that have new values - never overwrite existing with NULL
       if (imageVectorStr) {
         updates.push(`"imageEmbedding" = $${paramIndex}::vector`);
         params.push(imageVectorStr);
         paramIndex++;
-      } else {
-        updates.push(`"imageEmbedding" = NULL`);
       }
 
       if (textVectorStr) {
         updates.push(`"textEmbedding" = $${paramIndex}::vector`);
         params.push(textVectorStr);
         paramIndex++;
-      } else {
-        updates.push(`"textEmbedding" = NULL`);
+      }
+
+      // Skip update entirely if no new embeddings were generated
+      if (updates.length === 0) {
+        console.log('  → No new embeddings generated, preserving existing values');
+        return true; // Not a failure - existing data is intact
       }
 
       params.push(product.id);
@@ -200,19 +224,31 @@ async function main() {
     await getTokenizer();
     console.log('✅ Models loaded!');
 
-    const totalProducts = await prisma.product.count();
-    console.log(`Total products in database: ${totalProducts}`);
+    // Load progress
+    const lastProcessedId = await loadProgress();
+    if (lastProcessedId !== null) {
+      console.log(`📂 Resuming from product ID: ${lastProcessedId}`);
+    } else {
+      console.log('📂 Starting fresh (no saved progress found)');
+    }
 
-    const batchSize = 10;
-    let processed = 0;
+    const totalProducts = await prisma.product.count();
+    const processedSoFar = lastProcessedId 
+      ? await prisma.product.count({ where: { id: { lte: lastProcessedId } } }) 
+      : 0;
+    console.log(`Total products in database: ${totalProducts}`);
+    console.log(`Already processed: ${processedSoFar}`);
+
+    const batchSize = 50;
+    let processed = processedSoFar;
     let successful = 0;
     let failed = 0;
+    let lastId = lastProcessedId;
 
-    for (let skip = 0; skip < totalProducts; skip += batchSize) {
-      console.log(`\n=== Processing batch ${Math.floor(skip / batchSize) + 1}/${Math.ceil(totalProducts / batchSize)} ===`);
-
+    while (true) {
+      // Get next batch of products, starting after last processed ID
       const products = await prisma.product.findMany({
-        skip,
+        where: lastId ? { id: { gt: lastId } } : {},
         take: batchSize,
         select: {
           id: true,
@@ -224,6 +260,14 @@ async function main() {
         orderBy: { id: 'asc' }
       });
 
+      if (products.length === 0) {
+        break; // No more products to process
+      }
+
+      const currentBatchNum = Math.floor(processed / batchSize) + 1;
+      const totalBatches = Math.ceil(totalProducts / batchSize);
+      console.log(`\n=== Processing batch ${currentBatchNum}/${totalBatches} ===`);
+
       for (const product of products) {
         processed++;
         const success = await embedProduct(product);
@@ -232,14 +276,17 @@ async function main() {
         } else {
           failed++;
         }
-      }
+        
+        lastId = product.id;
+        await saveProgress(lastId); // Save progress after each product
 
-      console.log(`Progress: ${processed}/${totalProducts} (${Math.round(processed / totalProducts * 100)}%)`);
+        console.log(`Progress: ${processed}/${totalProducts} (${Math.round(processed / totalProducts * 100)}%)`);
+      }
     }
 
     console.log('\n✅ All products processed!');
     console.log('Summary:');
-    console.log(`  Total processed: ${processed}`);
+    console.log(`  Total processed in this run: ${processed - processedSoFar}`);
     console.log(`  Successful: ${successful}`);
     console.log(`  Failed: ${failed}`);
 

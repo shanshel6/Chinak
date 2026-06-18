@@ -46,6 +46,25 @@ export async function ensureProductImageEmbeddings({
   runDb = defaultRunDb,
   logger = console,
 }) {
+  // Check if product already has a valid embedding - preserve it if so
+  const existingProduct = await runDb(
+    () => prisma.product.findUnique({
+      where: { id: productId },
+      select: { imageEmbedding: true }
+    }),
+    `check existing image embedding for product ${productId}`
+  );
+
+  if (existingProduct?.imageEmbedding) {
+    logger.info?.(`[Image Embedding] Product ${productId} already has an embedding, preserving it`);
+    return {
+      embeddedCount: 0,
+      embeddedImageIds: [],
+      mainVector: null,
+      preserved: true
+    };
+  }
+
   // Just get one image (the first one)
   const productImages = await loadTopProductImages(prisma, productId, 1, runDb);
   
