@@ -498,10 +498,10 @@ const SearchResults: React.FC = () => {
         const response = await searchProducts(query, initialPage, LIMIT);
         if (cancelled) return;
 
-        // Show the translated query + which method was used as a toast!
-        const methodLabel = translationMethodLabel(response.translationMethod);
-        const methodText = methodLabel ? ` [${methodLabel}]` : '';
-        showToast(`تم الترجمة إلى: ${response.translatedQuery}${methodText}`, 'info', 5000);
+        // Translation toast removed - no longer needed
+        // const methodLabel = translationMethodLabel(response.translationMethod);
+        // const methodText = methodLabel ? ` [${methodLabel}]` : '';
+        // showToast(`تم الترجمة إلى: ${response.translatedQuery}${methodText}`, 'info', 5000);
         
         const orderedResults = Array.isArray(response.products) ? response.products : [];
         setResults(orderedResults);
