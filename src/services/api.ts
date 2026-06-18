@@ -961,6 +961,7 @@ export interface CategorySuggestion {
 }
 
 export async function searchProducts(query: string, page = 1, limit = 20, maxPrice?: number, condition?: 'new' | 'used') {
+  // iOS search: uses server-side fallback if client CLIP fails (WebAssembly issues)
   // Step 1: Normalize Arabic query (handle Iraqi slang)
   const normalizedArabicQuery = normalizeArabicSearchTerm(query);
   console.log('[API Search] Normalized Arabic:', normalizedArabicQuery);
