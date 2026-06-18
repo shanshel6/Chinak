@@ -358,8 +358,15 @@ function App() {
             console.error('Notification permission error:', e);
           }
           
-          // Download ML Kit translation model
-          await ensureTranslationModelDownloaded();
+          // Download ML Kit translation model (with timeout)
+          try {
+            await Promise.race([
+              ensureTranslationModelDownloaded(),
+              new Promise((_, reject) => setTimeout(() => reject(new Error('ML Kit download timeout')), 15000))
+            ]);
+          } catch (e) {
+            console.warn('[App Init] ML Kit model download timeout or error:', e?.message);
+          }
         }
         
         // Now perform other initialization after permissions are handled
@@ -368,8 +375,10 @@ function App() {
         checkAuth();
         initChatSocket();
         
-        // Warm up CLIP models for faster search
-        await warmupClipService();
+        // Warm up CLIP models for faster search (non-blocking with timeout)
+        warmupClipService().catch(err => {
+          console.warn('[App Init] CLIP warmup failed:', err?.message);
+        });
       } catch (error) {
         console.error('App initialization error:', error);
       } finally {
