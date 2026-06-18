@@ -30,6 +30,7 @@ import { calculateOrderShipping, calculateProductShipping, getAdjustedPrice } fr
 import { setupLinkCheckerCron, checkAllProductLinks } from './services/linkCheckerService.js';
 import { embedImage, analyzeImageObjects, embedImageCrop, embedImageRaw, warmupClipService } from './services/clipService.js';
 import { ensureProductImageEmbeddings, searchProductsByImageVector, searchProductsByHybridVector, sanitizeProductImageUrl } from './services/productImageVectorService.js';
+import { pickStratifiedPage } from './services/searchBucketingService.js';
 import { scrapeGoofishProductImages } from './services/goofishScrapeService.js';
 import { loadCategoryVectors, searchByEmbedding, hasCachedVectors, syncDBVectorsToCache, searchByEmbeddingDB } from './services/categoryEmbeddingService.js';
 import multer from 'multer';
@@ -5639,6 +5640,32 @@ app.get('/api/products/:id/similar', async (req, res) => {
   }
 });
 
+// Simple translation endpoint for client-side fallback
+app.post('/api/translate/arabic-to-english', async (req, res) => {
+  try {
+    const { text } = req.body;
+    if (!text || typeof text !== 'string') {
+      return res.status(400).json({ error: 'Missing or invalid text' });
+    }
+    
+    console.log(`[Translation API] Translating: "${text}"`);
+    const translatedText = await translateArabicToEnglish(text);
+    console.log(`[Translation API] Translated to: "${translatedText}"`);
+    
+    return res.json({ 
+      original: text, 
+      translated: translatedText,
+      success: true 
+    });
+  } catch (error) {
+    console.error('[Translation API] error:', error);
+    return res.status(500).json({ 
+      error: 'Translation failed',
+      success: false 
+    });
+  }
+});
+
 app.post('/api/search/analyze-image', upload.single('image'), async (req, res) => {
   try {
     let input;
@@ -9675,8 +9702,6 @@ app.all('/api/search', async (req, res) => {
       perf.log('vector_search_done', { matches: vectorMatches.length });
 
       if (vectorMatches.length > 0) {
-        const offset = (page - 1) * limit;
-        
         // Get product details and attach similarity scores
         const productMap = new Map();
         for (const match of vectorMatches) {
@@ -9711,56 +9736,29 @@ app.all('/api/search', async (req, res) => {
             ...product,
             similarity: match ? match.similarity : 0
           };
-        }).sort((a, b) => b.similarity - a.similarity); // Keep sorted by similarity first
-        
+        });
+
         const shippingRates = await getSearchShippingRates();
         const mappedProducts = productsWithScores.map(p => mapSearchProduct(p, shippingRates));
-        
-        // Function to shuffle with a consistent seed based on query
-        const seededShuffle = (arr, seedStr) => {
-          // Create a simple hash from the seed string
-          let hash = 0;
-          for (let i = 0; i < seedStr.length; i++) {
-            const char = seedStr.charCodeAt(i);
-            hash = ((hash << 5) - hash) + char;
-            hash = hash & hash; // Convert to 32bit integer
-          }
-          
-          // Simple seeded random generator
-          const seededRandom = (() => {
-            let s = Math.abs(hash);
-            return () => {
-              s = (s * 9301 + 49297) % 233280;
-              return s / 233280;
-            };
-          })();
-          
-          // Shuffle array using seeded random
-          const a = [...arr];
-          for (let i = a.length - 1; i > 0; i--) {
-            const j = Math.floor(seededRandom() * (i + 1));
-            [a[i], a[j]] = [a[j], a[i]];
-          }
-          return a;
-        };
-        
-        // Split into similarity tiers
-        const tierSize = Math.ceil(mappedProducts.length / 5); // Split into 5 tiers
-        const tiers = [];
-        for (let i = 0; i < mappedProducts.length; i += tierSize) {
-          tiers.push(mappedProducts.slice(i, i + tierSize));
-        }
-        
-        // Shuffle each tier with consistent seed
-        const shuffledTiers = tiers.map(tier => seededShuffle(tier, q));
-        
-        // Flatten tiers back together (keep tier order: best first)
-        const shuffledProducts = shuffledTiers.flat();
-        
-        // Apply pagination
-        const pagedProducts = shuffledProducts.slice(offset, offset + limit);
-        const hasMore = shuffledProducts.length > offset + limit;
-        const total = shuffledProducts.length;
+
+        // Price-bucketed stratified sampling.
+        //
+        // For each page of results we want a mix of:
+        //   - ~50% from the CHEAPEST half of all matches
+        //   - ~25% from the MIDDLE 25% of all matches
+        //   - ~25% from the MOST EXPENSIVE 25% of all matches
+        //
+        // We use a deterministic seed = query + page so:
+        //   - the same (query, page) always returns the same products (cacheable),
+        //   - different pages return different products by construction,
+        //   - no server memory is needed.
+        const pagePool = pickStratifiedPage(mappedProducts, mappedProducts.length, q || 'image', 0);
+        const total = pagePool.length;
+
+        // Paginate the bucketed+ordered pool.
+        const offset = (page - 1) * limit;
+        const pagedProducts = pagePool.slice(offset, offset + limit);
+        const hasMore = total > offset + limit;
 
         const result = {
           products: pagedProducts,

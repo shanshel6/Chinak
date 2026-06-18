@@ -17,7 +17,7 @@ const SearchResults: React.FC = () => {
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
   const wishlistItems = useWishlistStore((state) => state.items);
   const toggleWishlist = useWishlistStore((state) => state.toggleWishlist);
-  const { setSearchData, setSearchScrollPos, getSearchData } = usePageCacheStore();
+  const { setSearchData, getSearchData } = usePageCacheStore();
   const { showToast } = useToastStore();
   const isFirstRender = useRef(true);
 
@@ -80,33 +80,17 @@ const SearchResults: React.FC = () => {
 
   const inFlightMoreRef = useRef(false);
   const scrollRatioRef = useRef(0);
-  const LIMIT = 30;
+  // MUST match the server's default page size (server/index.js -> /api/search/embedding).
+  // If these don't match, "load more" will skip or duplicate items.
+  const LIMIT = 20;
   const RECENT_SEARCH_TERMS_KEY = 'recent_search_terms_v1';
   const [isInputFocused, setIsInputFocused] = useState(false);
   const isImageSearch = Boolean(imageSearchInput && imageSearchPreview);
-  
-  // Save scroll position before leaving
-  useEffect(() => {
-    const saveScrollPos = () => {
-      if (cacheKey) {
-        setSearchScrollPos(cacheKey, window.scrollY);
-      }
-    };
-    window.addEventListener('beforeunload', saveScrollPos);
-    return () => {
-      saveScrollPos();
-      window.removeEventListener('beforeunload', saveScrollPos);
-    };
-  }, [cacheKey, setSearchScrollPos]);
-  
-  // Restore scroll position when cache is available
-  useEffect(() => {
-    if (cachedData && cacheKey) {
-      setTimeout(() => {
-        window.scrollTo(0, cachedData.scrollPos);
-      }, 100);
-    }
-  }, [cachedData, cacheKey]);
+
+  // NOTE: Scroll position save/restore is now handled globally by
+  // <ScrollToTop /> in App.tsx, which saves on every scroll (debounced
+  // via rAF) and restores on POP navigation. No page-level logic
+  // is needed here anymore.
 
   // Manual Crop State
   const cropBoxRef = useRef<HTMLDivElement>(null);
