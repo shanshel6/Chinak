@@ -961,22 +961,58 @@ export interface CategorySuggestion {
 }
 
 export async function searchProducts(query: string, page = 1, limit = 20, maxPrice?: number, condition?: 'new' | 'used') {
+  // Step 1: Normalize Arabic query (handle Iraqi slang)
+  const normalizedArabicQuery = normalizeArabicSearchTerm(query);
+  console.log('[API Search] Normalized Arabic:', normalizedArabicQuery);
+
+  // Step 2: Translate to English (Google online → ML Kit offline)
+  const translation = await translateArabicToEnglish(normalizedArabicQuery);
+  const englishQuery = translation.text;
+  const translationMethod = translation.method;
+  console.log('[API Search] Translated to English:', englishQuery, '(method:', translationMethod + ')');
+
+  // Step 3: Try to generate CLIP text embedding (on-device)
+  // Fall back to server-side embedding if client-side fails (e.g., on iOS Safari with WebAssembly issues)
+  let embedding: number[] | null = null;
+  let useServerFallback = false;
+
   try {
-    // Step 1: Normalize Arabic query (handle Iraqi slang)
-    const normalizedArabicQuery = normalizeArabicSearchTerm(query);
-    console.log('[API Search] Normalized Arabic:', normalizedArabicQuery);
-
-    // Step 2: Translate to English (Google online → ML Kit offline)
-    const translation = await translateArabicToEnglish(normalizedArabicQuery);
-    const englishQuery = translation.text;
-    const translationMethod = translation.method;
-    console.log('[API Search] Translated to English:', englishQuery, '(method:', translationMethod + ')');
-
-    // Step 3: Generate CLIP text embedding (on-device)
-    const embedding = await embedText(englishQuery);
+    embedding = await embedText(englishQuery);
     console.log('[API Search] Generated embedding:', embedding.slice(0, 5), '...');
+  } catch (embedError: any) {
+    console.warn('[API Search] Client-side embedding failed, falling back to server:', embedError?.message || embedError);
+    useServerFallback = true;
+  }
 
-    // Step 4: Send ONLY the embedding to backend
+  if (useServerFallback || !embedding) {
+    // Fallback: use server-side endpoint that generates embedding
+    console.log('[API Search] Using server-side embedding fallback for query:', englishQuery);
+    try {
+      const params = new URLSearchParams({
+        search: englishQuery,
+        page: String(page),
+        limit: String(limit)
+      });
+      const response = await request(`/products/search-by-photo?${params.toString()}`, { skipCache: true });
+
+      return {
+        products: Array.isArray(response?.products) ? response.products : [],
+        total: Number(response?.total || 0),
+        hasMore: Boolean(response?.hasMore),
+        engine: response?.engine || 'clip-server-fallback',
+        translatedQuery: englishQuery,
+        normalizedQuery: normalizedArabicQuery,
+        translationMethod,
+        serverFallback: true
+      };
+    } catch (fallbackError: any) {
+      console.error('[API Search] Server fallback also failed:', fallbackError);
+      throw new Error(fallbackError?.message || 'فشل البحث');
+    }
+  }
+
+  // Step 4: Send embedding to backend
+  try {
     const response = await request('/search/embedding', {
       method: 'POST',
       body: JSON.stringify({
