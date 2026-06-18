@@ -6,6 +6,7 @@ import { warmupClipService, isClipReady } from '../services/clipService';
 import { useAuthStore } from '../store/useAuthStore';
 import { normalizeWishlistProductId, useWishlistStore } from '../store/useWishlistStore';
 import { usePageCacheStore } from '../store/usePageCacheStore';
+import { useToastStore } from '../store/useToastStore';
 import { normalizeArabicSearchTerm } from '../data/arabicSearchNormalization';
 import ProductCard from '../components/home/ProductCard';
 import type { Product } from '../types/product';
@@ -17,8 +18,19 @@ const SearchResults: React.FC = () => {
   const wishlistItems = useWishlistStore((state) => state.items);
   const toggleWishlist = useWishlistStore((state) => state.toggleWishlist);
   const { setSearchData, setSearchScrollPos, getSearchData } = usePageCacheStore();
+  const { showToast } = useToastStore();
   const isFirstRender = useRef(true);
-  
+
+  // Maps a translation method to a short user-facing label
+  const translationMethodLabel = (method?: string): string => {
+    switch (method) {
+      case 'google':  return 'Google (online)';
+      case 'mlkit':   return 'ML Kit (offline)';
+      case 'fallback':return 'fallback';
+      default:        return '';
+    }
+  };
+
   // Preload CLIP models on component mount
   useEffect(() => {
     if (!isClipReady()) {
@@ -501,6 +513,12 @@ const SearchResults: React.FC = () => {
       try {
         const response = await searchProducts(query, initialPage, LIMIT);
         if (cancelled) return;
+
+        // Show the translated query + which method was used as a toast!
+        const methodLabel = translationMethodLabel(response.translationMethod);
+        const methodText = methodLabel ? ` [${methodLabel}]` : '';
+        showToast(`تم الترجمة إلى: ${response.translatedQuery}${methodText}`, 'info', 5000);
+        
         const orderedResults = Array.isArray(response.products) ? response.products : [];
         setResults(orderedResults);
         setHasMore(Boolean(response.hasMore));
@@ -530,7 +548,7 @@ const SearchResults: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [activeQuery, rememberSearchTerm, searchVersion, imageSearchInput, cacheKey, setSearchData]);
+  }, [activeQuery, rememberSearchTerm, searchVersion, imageSearchInput, cacheKey, setSearchData, showToast]);
 
   // Mark first render as done
   useEffect(() => {

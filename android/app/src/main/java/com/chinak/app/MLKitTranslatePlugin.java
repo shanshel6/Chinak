@@ -37,21 +37,42 @@ public class MLKitTranslatePlugin extends Plugin {
             return;
         }
 
+        android.util.Log.d("MLKitTranslate", "translateArabicToEnglish called with: " + text);
+
         Translator translator = getTranslator();
-        translator.translate(text)
-                .addOnSuccessListener(translatedText -> {
-                    JSObject ret = new JSObject();
-                    ret.put("translatedText", translatedText);
-                    call.resolve(ret);
+        // Ensure model is available - downloads if needed
+        // No WiFi requirement to allow downloads on emulators and mobile data
+        DownloadConditions conditions = new DownloadConditions.Builder()
+                .build();
+
+        android.util.Log.d("MLKitTranslate", "Downloading model if needed...");
+        translator.downloadModelIfNeeded(conditions)
+                .addOnSuccessListener(aVoid -> {
+                    android.util.Log.d("MLKitTranslate", "Model ready, translating text...");
+                    // Model is ready, now translate
+                    translator.translate(text)
+                            .addOnSuccessListener(translatedText -> {
+                                android.util.Log.d("MLKitTranslate", "Translation SUCCESS: " + translatedText);
+                                JSObject ret = new JSObject();
+                                ret.put("translatedText", translatedText);
+                                call.resolve(ret);
+                            })
+                            .addOnFailureListener(e -> {
+                                android.util.Log.e("MLKitTranslate", "Translation FAILED: " + e.getMessage());
+                                call.reject("Translation failed: " + e.getMessage());
+                            });
                 })
                 .addOnFailureListener(e -> {
-                    call.reject("Translation failed: " + e.getMessage());
+                    android.util.Log.e("MLKitTranslate", "Model download FAILED: " + e.getMessage());
+                    call.reject("Model download failed: " + e.getMessage());
                 });
     }
 
     @PluginMethod
     public void isModelDownloaded(PluginCall call) {
         Translator translator = getTranslator();
+        // ML Kit's Translator doesn't have a direct isModelDownloaded() method.
+        // We use downloadModelIfNeeded() which succeeds if the model is already downloaded.
         translator.downloadModelIfNeeded()
                 .addOnSuccessListener(aVoid -> {
                     JSObject ret = new JSObject();

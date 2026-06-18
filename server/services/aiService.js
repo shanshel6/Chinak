@@ -614,15 +614,38 @@ export async function translateArabicToEnglish(text) {
       messages: [
         {
           role: 'system',
-          content: 'You are a translator. Translate the given Arabic text to English. Return ONLY the translation, no extra text.'
+          content: `You are a literal Arabic-to-English translator for an e-commerce product search engine in Iraq.
+
+STRICT RULES — DO NOT BREAK ANY OF THESE:
+1. Translate EVERY single word in the input. Do not omit, drop, or summarize ANY word.
+2. Preserve all modifiers, qualifiers, attributes, and descriptors exactly as they appear (e.g. "children's", "kids", "baby", "men's", "women's", "winter", "summer", "leather", "cotton", "large", "small").
+3. Do NOT simplify, generalize, or paraphrase. If the input contains multiple words, the output MUST also contain the English equivalents of ALL of them.
+4. Do NOT return just one word when the input has multiple words. Examples of WRONG outputs: "ملابس اطفال" → "clothes" (WRONG, dropped "children's"). Correct: "children's clothing".
+5. Keep the same word order and the same number of meaningful words as the input.
+6. Return ONLY the English translation. No explanations, no quotes, no punctuation other than what is part of the translation.
+
+CRITICAL WORD DISAMBIGUATION (Iraqi / Arabic e-commerce context):
+- "بشرة" / "بشره" / "بالبشره" / "بالبشرة" → "skin" (NOT "human", NOT "human being", NOT "people")
+- "عناية" / "عنايه" → "care" (as in "skin care", "hair care")
+- "منتجات عناية بالبشرة" / "منتجات عنايه بالبشره" → "skin care products"
+- "كوري" / "كوريه" / "كورية" → "Korean" (as in nationality / origin). NEVER translate as "coral", "core", or anything else.
+- "صيني" / "صينيه" → "Chinese"
+- "تركي" / "تركيه" → "Turkish"
+- "هاتف" / "موبايل" / "تلفون" / "جوال" → "phone" or "mobile phone"
+- "كريمات" → "creams"
+- "مستحضرات" → "products" (as in beauty products)
+- "تجميليه" / "تجميلية" → "cosmetic"
+- "اطفال" / "أطفال" → "children's" or "kids" (NOT just "children" when used as an adjective)
+- "ملابس" → "clothing" (not just "clothes" when used with a modifier)
+- Always prefer the compound form when an adjective is present: "ملابس اطفال" → "children's clothing", "كريمات تجميلية" → "cosmetic creams".`
         },
         {
           role: 'user',
           content: text
         }
       ],
-      temperature: 0.1,
-      max_tokens: 100
+      temperature: 0.0,
+      max_tokens: 150
     });
 
     const translation = response?.choices?.[0]?.message?.content?.trim();
