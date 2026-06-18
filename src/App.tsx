@@ -364,8 +364,8 @@ function App() {
               ensureTranslationModelDownloaded(),
               new Promise((_, reject) => setTimeout(() => reject(new Error('ML Kit download timeout')), 15000))
             ]);
-          } catch (e) {
-            console.warn('[App Init] ML Kit model download timeout or error:', e?.message);
+          } catch (e: unknown) {
+            console.warn('[App Init] ML Kit model download timeout or error:', (e as Error)?.message);
           }
         }
         
