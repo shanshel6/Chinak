@@ -668,6 +668,20 @@ const SearchResults: React.FC = () => {
     navigate(`/search?q=${encodeURIComponent(normalizedQuery)}`, { replace: true });
   };
 
+  // Helper to trigger search from recent terms (doesn't navigate away)
+  const submitSearchWithTerm = (term: string) => {
+    if (imageSearchInput) return;
+    const normalizedQuery = normalizeArabicSearchTerm(term);
+    setActiveQuery(normalizedQuery);
+    setSearchVersion((v) => v + 1);
+    setIsInputFocused(false);
+    // Blur the input to dismiss keyboard on mobile
+    if (inputRef.current) {
+      inputRef.current.blur();
+    }
+    setRecentTerms(readRecentTerms());
+  };
+
 
   const onAddToWishlist = (e: React.MouseEvent, product: Product) => {
     e.stopPropagation();
@@ -1002,11 +1016,8 @@ const SearchResults: React.FC = () => {
                     onClick={() => {
                       const normalizedTerm = normalizeArabicSearchTerm(term);
                       setQueryInput(normalizedTerm);
-                      setActiveQuery(normalizedTerm);
-                      setSearchVersion((v) => v + 1);
-                      setIsInputFocused(false);
-                      if (inputRef.current) inputRef.current.blur();
-                      navigate(`/search?q=${encodeURIComponent(normalizedTerm)}`, { replace: true });
+                      // Trigger search by calling submitSearch
+                      submitSearchWithTerm(normalizedTerm);
                     }}
                     className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-xs font-semibold rounded-full"
                   >
