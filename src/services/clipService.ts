@@ -105,7 +105,7 @@ async function loadVisionModelInBackground(): Promise<void> {
 
   isVisionModelLoading = true;
   
-  visionModelLoadPromise = new Promise<void>(async (resolve, reject) => {
+  visionModelLoadPromise = new Promise<void>(async (resolve) => {
     console.log('[CLIP] Loading VISION model in background... ⏳');
     console.log('[CLIP] You can search while vision model downloads!');
     const start = Date.now();

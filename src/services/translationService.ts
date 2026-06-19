@@ -349,3 +349,13 @@ export async function translateText(text: string): Promise<string> {
   const r = await translateArabicToEnglish(text);
   return r.text;
 }
+
+/**
+ * Stub for ML Kit translation model download.
+ * Translation service uses Google Translate online only, no offline model needed.
+ * This exists for API compatibility but is a no-op.
+ */
+export async function ensureTranslationModelDownloaded(): Promise<void> {
+  // No-op: we use Google Translate online, not offline models
+  return Promise.resolve();
+}
