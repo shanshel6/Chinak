@@ -55,6 +55,7 @@ const TermsOfService = lazy(() => import('./pages/TermsOfService'));
 
 import { performCacheMaintenance } from './services/api';
 import { ensureTranslationModelDownloaded } from './services/translationService';
+import { isClipReady } from './services/clipService';
 
 import { App as CapApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
@@ -378,14 +379,14 @@ function App() {
         // CLIP model is bundled with the app - no download needed
         console.log('[App Init] CLIP model bundled with app - no download required');
         
-        // Check CLIP files after 5 seconds and show popup
+        // Check CLIP model status after 5 seconds and show popup
         setTimeout(async () => {
           setClipStatusPopup({ exists: false, checking: true });
           try {
-            // Try to fetch a model config file to check if bundled files exist
-            const resp = await fetch('/models/clip/config.json', { method: 'HEAD' });
-            const exists = resp.ok;
-            setClipStatusPopup({ exists, checking: false });
+            // Wait a bit more for model to finish loading, then check status
+            await new Promise(r => setTimeout(r, 2000));
+            const ready = isClipReady();
+            setClipStatusPopup({ exists: ready, checking: false });
           } catch {
             setClipStatusPopup({ exists: false, checking: false });
           }
