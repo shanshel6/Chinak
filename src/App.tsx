@@ -423,7 +423,9 @@ function App() {
         initChatSocket();
         
         // Warm up CLIP models for faster search (non-blocking with timeout)
-        warmupClipService().catch(err => {
+        warmupClipService().then(() => {
+          console.log('[App Init] CLIP warmup completed successfully');
+        }).catch(err => {
           console.warn('[App Init] CLIP warmup failed:', err?.message);
         });
       } catch (error) {

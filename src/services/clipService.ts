@@ -62,8 +62,9 @@ async function loadTextModel(): Promise<void> {
   console.log('[CLIP] Loading TEXT model from local bundle at:', LOCAL_TEXT_PATH);
   const start = Date.now();
 
-  // Try loading from local bundle first without local_files_only strict mode
+  // Try loading from local bundle first
   try {
+    console.log('[CLIP] Attempting to load from local bundle...');
     [processor, tokenizer, textModel] = await Promise.all([
       AutoProcessor.from_pretrained(LOCAL_TEXT_PATH, { quantized: true }),
       AutoTokenizer.from_pretrained(LOCAL_TEXT_PATH, { quantized: true }),
@@ -74,16 +75,18 @@ async function loadTextModel(): Promise<void> {
     console.log(`[CLIP] TEXT model loaded from bundle in ${Date.now() - start}ms ✅`);
   } catch (error) {
     console.error('[CLIP] Failed to load TEXT model from bundle:', error);
-    // Try downloading from HuggingFace as fallback (first install scenario)
-    console.log('[CLIP] Trying to download TEXT model from HuggingFace...');
+    console.log('[CLIP] Bundle load failed, trying to download from HuggingFace...');
+    
+    // Try downloading from HuggingFace as fallback
     try {
+      console.log('[CLIP] Downloading TEXT model from HuggingFace...');
       [processor, tokenizer, textModel] = await Promise.all([
         AutoProcessor.from_pretrained(MODEL_ID, { quantized: true }),
         AutoTokenizer.from_pretrained(MODEL_ID, { quantized: true }),
         CLIPTextModelWithProjection.from_pretrained(MODEL_ID, { quantized: true })
       ]);
       isTextModelLoaded = true;
-      console.log('[CLIP] TEXT model downloaded from HuggingFace ✅');
+      console.log(`[CLIP] TEXT model downloaded from HuggingFace in ${Date.now() - start}ms ✅`);
     } catch (fallbackError) {
       console.error('[CLIP] Failed to load TEXT model:', fallbackError);
       throw fallbackError;
@@ -149,14 +152,19 @@ async function loadVisionModelInBackground(): Promise<void> {
 export async function initializeClipService(): Promise<void> {
   console.log('[CLIP] Initializing CLIP service...');
   
-  // Step 1: Load TEXT model immediately (it's bundled!)
-  await loadTextModel();
-  
-  // Step 2: Load VISION model in background (non-blocking)
-  // User can search immediately while vision model downloads!
-  loadVisionModelInBackground(); // Don't await - let it download in background
-  
-  console.log('[CLIP] Service ready for TEXT search! (Vision model downloading in background...)');
+  try {
+    // Step 1: Load TEXT model immediately (it's bundled!)
+    await loadTextModel();
+    
+    // Step 2: Load VISION model in background (non-blocking)
+    // User can search immediately while vision model downloads!
+    loadVisionModelInBackground(); // Don't await - let it download in background
+    
+    console.log('[CLIP] Service ready for TEXT search! (Vision model downloading in background...)');
+  } catch (error) {
+    console.error('[CLIP] Initialization failed:', error);
+    throw error;
+  }
 }
 
 /**
