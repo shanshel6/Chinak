@@ -21,15 +21,7 @@ const SearchResults: React.FC = () => {
   const { showToast } = useToastStore();
   const isFirstRender = useRef(true);
 
-  // Maps a translation method to a short user-facing label
-  const translationMethodLabel = (method?: string): string => {
-    switch (method) {
-      case 'google':  return 'Google (online)';
-      case 'mlkit':   return 'ML Kit (offline)';
-      case 'fallback':return 'fallback';
-      default:        return '';
-    }
-  };
+
 
   // Preload CLIP models on component mount
   useEffect(() => {
