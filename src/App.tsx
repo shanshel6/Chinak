@@ -52,7 +52,7 @@ const DeleteAccountConfirm = lazy(() => import('./pages/DeleteAccountConfirm'));
 const ContactUs = lazy(() => import('./pages/ContactUs'));
 const PrivacyPolicy = lazy(() => import('./pages/PrivacyPolicy'));
 const TermsOfService = lazy(() => import('./pages/TermsOfService'));
-const WelcomeDownloadPage = lazy(() => import('./pages/WelcomeDownloadPage'));
+import DownloadOverlay from './pages/WelcomeDownloadPage';
 
 import { performCacheMaintenance } from './services/api';
 import { ensureTranslationModelDownloaded } from './services/translationService';
@@ -218,8 +218,7 @@ function AnimatedRoutes() {
     <AnimatePresence mode="wait">
       <Suspense fallback={<PageLoader />}>
         <Routes location={location} key={location.pathname}>
-        <Route path="/" element={<PageTransition><WelcomeDownloadPage /></PageTransition>} />
-        <Route path="/home" element={<PageTransition><Home /></PageTransition>} />
+        <Route path="/" element={<PageTransition><Home /></PageTransition>} />
         <Route path="/onboarding" element={<PageTransition><Onboarding /></PageTransition>} />
         <Route path="/cart" element={
           <ProtectedRoute>
@@ -344,6 +343,7 @@ function App() {
   const cleanupNotificationSocket = useNotificationStore((state) => state.cleanupSocket);
   const isServerDown = useMaintenanceStore((state) => state.isServerDown);
   const [isAppInitialized, setIsAppInitialized] = useState(false);
+  const [showDownloadOverlay, setShowDownloadOverlay] = useState(false);
   // Update check state
   const [showUpdate, setShowUpdate] = useState(false);
   const [updateUrl, setUpdateUrl] = useState('');
@@ -377,12 +377,12 @@ function App() {
         checkAuth();
         initChatSocket();
         
-        // Only CLIP warmup if model is already cached (quick), otherwise let WelcomeDownloadPage handle it
-        if (isClipReady()) {
-          console.log('[App Init] CLIP model already ready, skipping warmup');
+        // Show download overlay if model isn't ready yet
+        if (!isClipReady()) {
+          console.log('[App Init] CLIP not ready, showing download overlay');
+          setShowDownloadOverlay(true);
         } else {
-          // Don't start warmup - let WelcomeDownloadPage handle the full download with progress
-          console.log('[App Init] CLIP not ready, WelcomeDownloadPage will handle download');
+          console.log('[App Init] CLIP model already ready');
         }
       } catch (error) {
         console.error('App initialization error:', error);
@@ -513,6 +513,9 @@ function App() {
     <Router>
       <BackButtonHandler />
       <ScrollToTop />
+      {showDownloadOverlay && (
+        <DownloadOverlay onComplete={() => setShowDownloadOverlay(false)} />
+      )}
       <div className="min-h-screen bg-background-light">
         <Toast />
         <ErrorBoundary>
