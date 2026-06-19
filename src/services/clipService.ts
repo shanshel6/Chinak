@@ -119,11 +119,12 @@ async function loadTextModel(): Promise<void> {
       return; // Success!
     } catch (error) {
       console.error(`[CLIP] Failed to load TEXT model from ${path}:`, error);
+      const errorMsg = error instanceof Error ? error.message : String(error);
       await debugLog('text_model_local_failure', { 
         path, 
-        error: error.message
+        error: errorMsg
       });
-      lastError = error;
+      lastError = error instanceof Error ? error : new Error(String(error));
       // Continue to try next path
     }
   }
@@ -149,12 +150,14 @@ async function loadTextModel(): Promise<void> {
     });
   } catch (fallbackError) {
     console.error('[CLIP] Failed to load TEXT model:', fallbackError);
+    const errorMsg = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+    const errorStack = fallbackError instanceof Error ? fallbackError.stack : undefined;
     await debugLog('text_model_load_failure', { 
       modelId: MODEL_ID, 
-      error: fallbackError.message,
-      stack: fallbackError.stack
+      error: errorMsg,
+      stack: errorStack
     });
-    throw lastError || fallbackError;
+    throw lastError || (fallbackError instanceof Error ? fallbackError : new Error(String(fallbackError)));
   }
 }
 
@@ -242,11 +245,13 @@ export async function initializeClipService(): Promise<void> {
     await debugLog('clip_service_init_success');
   } catch (error) {
     console.error('[CLIP] Initialization failed:', error);
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    const errorStack = error instanceof Error ? error.stack : undefined;
     await debugLog('clip_service_init_failure', { 
-      error: error.message,
-      stack: error.stack
+      error: errorMsg,
+      stack: errorStack
     });
-    throw error;
+    throw error instanceof Error ? error : new Error(String(error));
   }
 }
 
