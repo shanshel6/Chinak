@@ -39,7 +39,8 @@ env.useBrowserCache = false;
 
 // Model configuration
 const MODEL_ID = 'Xenova/clip-vit-base-patch32';
-const LOCAL_TEXT_PATH = '/models/clip';
+// Use relative path - works better with Capacitor iOS bundle
+const LOCAL_TEXT_PATH = 'models/clip';
 
 /**
  * Normalize vector (L2 normalization)
@@ -58,40 +59,31 @@ async function loadTextModel(): Promise<void> {
     return Promise.resolve();
   }
 
-  console.log('[CLIP] Loading TEXT model from local bundle...');
+  console.log('[CLIP] Loading TEXT model from local bundle at:', LOCAL_TEXT_PATH);
   const start = Date.now();
 
+  // Try loading from local bundle first without local_files_only strict mode
   try {
-    // Try loading from local bundle first
-    // Use quantized: true for smaller/faster model on mobile
     [processor, tokenizer, textModel] = await Promise.all([
-      AutoProcessor.from_pretrained(LOCAL_TEXT_PATH, { 
-        local_files_only: true,
-        quantized: true 
-      }),
-      AutoTokenizer.from_pretrained(LOCAL_TEXT_PATH, { 
-        local_files_only: true 
-      }),
-      CLIPTextModelWithProjection.from_pretrained(LOCAL_TEXT_PATH, { 
-        local_files_only: true,
-        quantized: true 
-      })
+      AutoProcessor.from_pretrained(LOCAL_TEXT_PATH, { quantized: true }),
+      AutoTokenizer.from_pretrained(LOCAL_TEXT_PATH, { quantized: true }),
+      CLIPTextModelWithProjection.from_pretrained(LOCAL_TEXT_PATH, { quantized: true })
     ]);
     
     isTextModelLoaded = true;
     console.log(`[CLIP] TEXT model loaded from bundle in ${Date.now() - start}ms ✅`);
   } catch (error) {
     console.error('[CLIP] Failed to load TEXT model from bundle:', error);
-    // If local only fails, try with remote allowed (for development/first install)
-    console.log('[CLIP] Bundle load failed, trying with remote allowed...');
+    // Try downloading from HuggingFace as fallback (first install scenario)
+    console.log('[CLIP] Trying to download TEXT model from HuggingFace...');
     try {
       [processor, tokenizer, textModel] = await Promise.all([
-        AutoProcessor.from_pretrained(LOCAL_TEXT_PATH, { quantized: true }),
-        AutoTokenizer.from_pretrained(LOCAL_TEXT_PATH, { quantized: true }),
-        CLIPTextModelWithProjection.from_pretrained(LOCAL_TEXT_PATH, { quantized: true })
+        AutoProcessor.from_pretrained(MODEL_ID, { quantized: true }),
+        AutoTokenizer.from_pretrained(MODEL_ID, { quantized: true }),
+        CLIPTextModelWithProjection.from_pretrained(MODEL_ID, { quantized: true })
       ]);
       isTextModelLoaded = true;
-      console.log(`[CLIP] TEXT model loaded (with remote fallback) in ${Date.now() - start}ms ✅`);
+      console.log('[CLIP] TEXT model downloaded from HuggingFace ✅');
     } catch (fallbackError) {
       console.error('[CLIP] Failed to load TEXT model:', fallbackError);
       throw fallbackError;
