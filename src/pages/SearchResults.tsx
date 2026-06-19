@@ -26,8 +26,6 @@ const SearchResults: React.FC = () => {
     switch (method) {
       case 'google':
         return 'Google';
-      case 'mlkit':
-        return 'Offline (ML Kit)';
       case 'fallback':
         return 'Fallback';
       default:
@@ -1116,8 +1114,6 @@ const SearchResults: React.FC = () => {
                   <span className={`ml-2 px-2 py-0.5 rounded text-[10px] font-bold ${
                     translationMethod === 'google' 
                       ? 'bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-300'
-                      : translationMethod === 'mlkit'
-                      ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/50 dark:text-purple-300'
                       : 'bg-gray-100 text-gray-700 dark:bg-gray-900/50 dark:text-gray-300'
                   }`}>
                     {translationMethodLabel(translationMethod)}

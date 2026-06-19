@@ -7,11 +7,9 @@ const os = require('os');
 const path = require('path');
 const { AutoProcessor, CLIPVisionModelWithProjection, CLIPTextModelWithProjection, RawImage, AutoTokenizer } = require('@xenova/transformers');
 
-console.log('Starting TinyCLIP (Xenova) embedding of all products...');
-// Use TinyCLIP model - matches client-side model for consistent embeddings
-// TinyCLIP-ViT-8M-16-Text-3M-YFCC15M produces 512-dim embeddings (same as full CLIP)
-// Much smaller (~50MB vs ~150MB) and faster
-const MODEL_ID = 'wkcn/TinyCLIP-ViT-8M-16-Text-3M-YFCC15M';
+console.log('Starting CLIP embedding of all products...');
+// Using Xenova/clip-vit-base-patch32 - has ONNX support for @xenova/transformers
+const MODEL_ID = 'Xenova/clip-vit-base-patch32';
 const PROGRESS_FILE = path.join(__dirname, 'tinyclip_progress.json');
 
 let processorPromise = null;

@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enhanced ML Kit Translation Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        
+        .test-section {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .test-case {
+            margin: 10px 0;
+            padding: 10px;
+            border-left: 4px solid #4CAF50;
+            background-color: #f9f9f9;
+        }
+        
+        .test-case.failed {
+            border-left-color: #f44336;
+        }
+        
+        .test-case.pending {
+            border-left-color: #ff9800;
+        }
+        
+        .input-group {
+            margin-bottom: 15px;
+        }
+        
+        input[type="text"] {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 16px;
+        }
+        
+        button {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        
+        button:hover {
+            background-color: #45a049;
+        }
+        
+        .result {
+            margin-top: 10px;
+            padding: 10px;
+            background-color: #e8f5e8;
+            border-radius: 4px;
+        }
+        
+        .result.error {
+            background-color: #ffebee;
+            color: #c62828;
+        }
+        
+        .status {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: bold;
+            margin-left: 10px;
+        }
+        
+        .status.success {
+            background-color: #4CAF50;
+            color: white;
+        }
+        
+        .status.failed {
+            background-color: #f44336;
+            color: white;
+        }
+        
+        .status.pending {
+            background-color: #ff9800;
+            color: white;
+        }
+        
+        #console {
+            background-color: #333;
+            color: #fff;
+            padding: 15px;
+            border-radius: 4px;
+            font-family: monospace;
+            height: 200px;
+            overflow-y: auto;
+            margin-top: 20px;
+        }
+        
+        .console-line {
+            margin: 2px 0;
+        }
+        
+        .console-line.info {
+            color: #4CAF50;
+        }
+        
+        .console-line.error {
+            color: #f44336;
+        }
+        
+        .console-line.warning {
+            color: #ff9800;
+        }
+    </style>
+</head>
+<body>
+    <h1>Enhanced ML Kit Translation Test</h1>
+    
+    <div class="test-section">
+        <h2>Manual Test</h2>
+        <div class="input-group">
+            <label for="arabicText">Enter Arabic Text:</label>
+            <input type="text" id="arabicText" placeholder="مثال: ملابس, حذاء, هاتف" value="ملابس">
+        </div>
+        <button onclick="manualTest()">Test Translation</button>
+        <div id="manualResult" class="result"></div>
+    </div>
+    
+    <div class="test-section">
+        <h2>Automated Tests</h2>
+        <button onclick="runAllTests()">Run All Tests</button>
+        <div id="testResults"></div>
+    </div>
+    
+    <div class="test-section">
+        <h2>Environment Detection</h2>
+        <div id="environmentInfo"></div>
+    </div>
+    
+    <div class="test-section">
+        <h2>Console Output</h2>
+        <div id="console"></div>
+    </div>
+    
+    <script>
+        // Mock Capacitor for testing
+        const mockCapacitor = {
+            isNativePlatform: () => {
+                // Check if we're in a Capacitor environment
+                return typeof Capacitor !== 'undefined' && Capacitor.isNativePlatform ? Capacitor.isNativePlatform() : false;
+            }
+        };
+        
+        // Mock MLKitTranslate plugin
+        const mockMLKitTranslate = {
+            isModelDownloaded: async () => {
+                log('Checking if model is downloaded...', 'info');
+                return { isDownloaded: true };
+            },
+            
+            downloadModel: async () => {
+                log('Downloading model...', 'info');
+                return { success: true };
+            },
+            
+            translateArabicToEnglish: async ({ text }) => {
+                log(`ML Kit translating: "${text}"`, 'info');
+                
+                // Simple mock translations
+                const mockTranslations = {
+                    "ملابس": "clothes",
+                    "حذاء": "shoes",
+                    "هاتف": "phone",
+                    "كمبيوتر": "computer",
+                    "كتاب": "book",
+                    "ملابس رجالية": "men's clothes",
+                    "حذاء نسائي": "women's shoes"
+                };
+                
+                const translatedText = mockTranslations[text] || text;
+                return { translatedText };
+            }
+        };
+        
+        // Log function
+        function log(message, type = 'info') {
+            const consoleDiv = document.getElementById('console');
+            const line = document.createElement('div');
+            line.className = `console-line ${type}`;
+            line.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            consoleDiv.appendChild(line);
+            consoleDiv.scrollTop = consoleDiv.scrollHeight;
+            
+            // Also log to browser console
+            if (type === 'error') {
+                console.error(message);
+            } else if (type === 'warning') {
+                console.warn(message);
+            } else {
+                console.log(message);
+            }
+        }
+        
+        // Check environment
+        function checkEnvironment() {
+            const envDiv = document.getElementById('environmentInfo');
+            const isNative = mockCapacitor.isNativePlatform();
+            
+            let html = `
+                <p><strong>Platform:</strong> ${navigator.platform}</p>
+                <p><strong>User Agent:</strong> ${navigator.userAgent}</p>
+                <p><strong>Capacitor Available:</strong> ${typeof Capacitor !== 'undefined' ? 'Yes' : 'No'}</p>
+                <p><strong>Native Environment:</strong> ${isNative ? 'Yes' : 'No'}</p>
+                <p><strong>ML Kit Plugin Available:</strong> ${typeof MLKitTranslate !== 'undefined' ? 'Yes' : 'No'}</p>
+            `;
+            
+            envDiv.innerHTML = html;
+            log(`Environment check: Native=${isNative}, Capacitor=${typeof Capacitor !== 'undefined'}, MLKit=${typeof MLKitTranslate !== 'undefined'}`, 'info');
+        }
+        
+        // Manual test function
+        async function manualTest() {
+            const arabicText = document.getElementById('arabicText').value.trim();
+            const resultDiv = document.getElementById('manualResult');
+            
+            if (!arabicText) {
+                resultDiv.innerHTML = '<div class="error">Please enter Arabic text to translate</div>';
+                return;
+            }
+            
+            resultDiv.innerHTML = '<div class="pending">Translating...</div>';
+            log(`Manual test started for: "${arabicText}"`, 'info');
+            
+            try {
+                // Use actual ML Kit if available, otherwise use mock
+                const translator = typeof MLKitTranslate !== 'undefined' ? MLKitTranslate : mockMLKitTranslate;
+                
+                const { translatedText } = await translator.translateArabicToEnglish({ text: arabicText });
+                
+                const success = translatedText !== arabicText && translatedText.trim() !== '';
+                
+                resultDiv.innerHTML = `
+                    <div class="${success ? '' : 'error'}">
+                        <strong>Original:</strong> ${arabicText}<br>
+                        <strong>Translated:</strong> ${translatedText}<br>
+                        <span class="status ${success ? 'success' : 'failed'}">
+                            ${success ? 'SUCCESS' : 'FAILED'}
+                        </span>
+                    </div>
+                `;
+                
+                log(`Manual test result: "${arabicText}" → "${translatedText}" (${success ? 'Success' : 'Failed'})`, 
+                    success ? 'info' : 'warning');
+                    
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="error">Error: ${error.message}</div>`;
+                log(`Manual test error: ${error.message}`, 'error');
+            }
+        }
+        
+        // Run all automated tests
+        async function runAllTests() {
+            const testResultsDiv = document.getElementById('testResults');
+            testResultsDiv.innerHTML = '<div class="pending">Running tests...</div>';
+            
+            const testCases = [
+                { arabic: "ملابس", expected: "clothes", description: "Basic clothing term" },
+                { arabic: "حذاء", expected: "shoes", description: "Basic shoes term" },
+                { arabic: "ملابس رجالية", expected: "men's clothes", description: "Compound clothing term" },
+                { arabic: "كلمة غير معروفة", expected: null, description: "Unknown word (should return original)" },
+                { arabic: "هاتف", expected: "phone", description: "Basic phone term" }
+            ];
+            
+            let passed = 0;
+            let failed = 0;
+            let html = '';
+            
+            for (const testCase of testCases) {
+                const testDiv = document.createElement('div');
+                testDiv.className = 'test-case pending';
+                testDiv.innerHTML = `
+                    <strong>${testCase.description}</strong><br>
+                    <em>Arabic:</em> "${testCase.arabic}"<br>
+                    <em>Expected:</em> ${testCase.expected ? `"${testCase.expected}"` : 'Original text'}<br>
+                    <span class="status pending">PENDING</span>
+                `;
+                testResultsDiv.appendChild(testDiv);
+                
+                try {
+                    // Use actual ML Kit if available, otherwise use mock
+                    const translator = typeof MLKitTranslate !== 'undefined' ? MLKitTranslate : mockMLKitTranslate;
+                    
+                    const { translatedText } = await translator.translateArabicToEnglish({ text: testCase.arabic });
+                    
+                    let success = false;
+                    if (testCase.expected === null) {
+                        // For unknown words, we expect the original text back
+                        success = translatedText === testCase.arabic;
+                    } else {
+                        success = translatedText === testCase.expected;
+                    }
+                    
+                    if (success) {
+                        passed++;
+                        testDiv.className = 'test-case';
+                        testDiv.querySelector('.status').className = 'status success';
+                        testDiv.querySelector('.status').textContent = 'PASS';
+                        log(`Test passed: "${testCase.arabic}" → "${translatedText}"`, 'info');
+                    } else {
+                        failed++;
+                        testDiv.className = 'test-case failed';
+                        testDiv.querySelector('.status').className = 'status failed';
+                        testDiv.querySelector('.status').textContent = 'FAIL';
+                        log(`Test failed: "${testCase.arabic}" → "${translatedText}" (expected: ${testCase.expected || 'original'})`, 'warning');
+                    }
+                    
+                    testDiv.innerHTML += `<br><em>Actual:</em> "${translatedText}"`;
+                    
+                } catch (error) {
+                    failed++;
+                    testDiv.className = 'test-case failed';
+                    testDiv.querySelector('.status').className = 'status failed';
+                    testDiv.querySelector('.status').textContent = 'ERROR';
+                    testDiv.innerHTML += `<br><em>Error:</em> ${error.message}`;
+                    log(`Test error: ${testCase.arabic} - ${error.message}`, 'error');
+                }
+            }
+            
+            // Summary
+            const summaryDiv = document.createElement('div');
+            summaryDiv.className = 'test-case';
+            summaryDiv.innerHTML = `
+                <strong>Test Summary</strong><br>
+                <em>Total Tests:</em> ${testCases.length}<br>
+                <em>Passed:</em> ${passed} <span class="status success">${passed}</span><br>
+                <em>Failed:</em> ${failed} <span class="status failed">${failed}</span><br>
+                <em>Success Rate:</em> ${Math.round((passed / testCases.length) * 100)}%
+            `;
+            testResultsDiv.appendChild(summaryDiv);
+            
+            log(`All tests completed: ${passed} passed, ${failed} failed`, 
+                failed === 0 ? 'info' : 'warning');
+        }
+        
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            checkEnvironment();
+            log('Test page loaded successfully', 'info');
+        });
+    </script>
+</body>
+</html>

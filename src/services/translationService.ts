@@ -1,27 +1,20 @@
 /**
  * Translation service for Arabic → English translation
  *
- * Flow (in order of priority):
- *   1. Apply Iraqi Arabic normalization
- *   2. Try Google Translate ONLINE (uses customer's internet, highest quality)
- *   3. Fall back to ML Kit OFFLINE (bundled on-device model, no internet)
- *   4. Return the preprocessed text as a last resort
+ * Uses ONLY Google Translate ONLINE - no offline fallback
  *
- * Each successful translation returns the method used so the UI can
- * display a badge (e.g. "Google" vs "Offline / ML Kit").
+ * This is the same endpoint the Google Translate web app uses. It does
+ * not require an API key and is paid for by the user's own device /
+ * internet. We do not proxy it through our server.
  */
 
-import MLKitTranslate from '../plugins/mlkit-translate';
 import { Capacitor } from '@capacitor/core';
 import { CapacitorHttp } from '@capacitor/core';
-
-/** Method used to produce the translation. */
-export type TranslationMethod = 'google' | 'mlkit' | 'fallback';
 
 /** Result of a translation attempt. */
 export interface TranslationResult {
   text: string;
-  method: TranslationMethod;
+  method: 'google' | 'fallback';
 }
 
 /**
@@ -34,7 +27,6 @@ const translationCache = new Map<string, TranslationResult>();
 function cacheGet(key: string): TranslationResult | undefined {
   const v = translationCache.get(key);
   if (v) {
-    // Refresh insertion order (LRU)
     translationCache.delete(key);
     translationCache.set(key, v);
   }
@@ -59,7 +51,6 @@ function normalizeIraqiArabic(text: string): string {
 
   // Common Iraqi dialect → Standard Arabic mappings
   const iraqiReplacements: Record<string, string> = {
-    // Skin care / beauty
     'عنايه': 'عناية',
     'بالبشره': 'بالبشرة',
     'بشره': 'بشرة',
@@ -69,31 +60,23 @@ function normalizeIraqiArabic(text: string): string {
     'كريمات': 'كريمات',
     'مستحضرات': 'مستحضرات',
     'تجميليه': 'تجميليه',
-
-    // Clothing
     'ملابس': 'ملابس',
     'فستان': 'فستان',
     'فساتين': 'فساتين',
     'بنطلون': 'بنطلون',
     'بناطيل': 'بناطيل',
     'قماش': 'قماش',
-
-    // Electronics
     'موبايل': 'هاتف',
     'تلفون': 'هاتف',
     'تلفزيون': 'تلفزيون',
     'تلفاز': 'تلفزيون',
     'كومبيوتر': 'كمبيوتر',
     'لابتوب': 'كمبيوتر محمول',
-
-    // Home
     'بيت': 'منزل',
     'بيتي': 'منزلي',
     'اكل': 'طعام',
     'مو': 'ماء',
     'مي': 'ماء',
-
-    // Common words
     'كويس': 'جيد',
     'زين': 'جيد',
     'هواي': 'كثير',
@@ -113,7 +96,6 @@ function normalizeIraqiArabic(text: string): string {
     'اشتريت': 'اشتريت',
   };
 
-  // Apply replacements (case-insensitive)
   const lowerText = normalized.toLowerCase();
   for (const [iraqi, standard] of Object.entries(iraqiReplacements)) {
     if (lowerText.includes(iraqi.toLowerCase())) {
@@ -142,35 +124,25 @@ function normalizeIraqiArabic(text: string): string {
 }
 
 /**
- * Pre-process Arabic text before sending to any translation backend.
- *
- * This is NOT a dictionary. It is a small set of word-level substitutions
- * for Arabic words that translation models consistently mistranslate. We
- * swap them for a clearer Arabic synonym so the model produces the
- * intended English word.
+ * Pre-process Arabic text before sending to translation backend.
  */
 function preprocessArabicForTranslation(text: string): string {
   let result = text;
 
   // "بشرة" / "بشره" is consistently mistranslated as "human being(s)".
-  // "جلد" unambiguously means "skin" (body part) in Arabic and translates
-  // correctly in every model. Swap it whenever the word appears.
   result = result.replace(/بشره|بشرة/g, 'جلد');
 
-  // "كوريه" / "كورية" can be misread as "coral" by ML Kit.
-  // "كوري" alone (without the taa marbouta) is unambiguous and translates
-  // correctly to "Korean". Swap to the bare form before translating.
+  // "كوريه" / "كورية" can be misread as "coral" by translation models.
   result = result.replace(/الكوريه|كوريه|كورية/g, (m) => {
     return m.startsWith('ال') ? 'الكوري' : 'كوري';
   });
 
   // "صينيه" / "صينية" can be misread as "plate/dish".
-  // "صيني" alone translates cleanly to "Chinese".
   result = result.replace(/الصينيه|صينيه|صينية/g, (m) => {
     return m.startsWith('ال') ? 'الصيني' : 'صيني';
   });
 
-  // "تركيه" / "تركية" can be misread as "Turkish bath" or similar.
+  // "تركيه" / "تركية" can be misread as "Turkish bath"
   result = result.replace(/التركيه|تركيه|تركية/g, (m) => {
     return m.startsWith('ال') ? 'التركي' : 'تركي';
   });
@@ -183,15 +155,6 @@ function preprocessArabicForTranslation(text: string): string {
 
 /**
  * Post-process the English translation.
- *
- * Even with a good prompt and pre-processing, the translation backend
- * may still return the wrong English word. This function does a final
- * safety pass to fix the most common known-wrong outputs, regardless of
- * where the word appears in the sentence.
- *
- * Each fix is conditional on the ORIGINAL ARABIC input having contained
- * the corresponding Arabic keyword, so we never wrongly replace an
- * English word the user actually wanted.
  */
 function postprocessEnglishTranslation(
   english: string,
@@ -200,38 +163,31 @@ function postprocessEnglishTranslation(
   let result = english;
   const lower = originalArabic;
 
-  // --- 1. Fix "بشرة" → skin (not "human being(s)") ---
+  // Fix "بشرة" → skin
   if (/بشره|بشرة/.test(lower)) {
     result = result.replace(/\bhuman being(s)?\b/gi, 'skin');
     result = result.replace(/\bhumans\b/gi, 'skin');
     result = result.replace(/\bhuman\b/gi, 'skin');
   }
 
-  // --- 2. Fix "كوري" / "كورية" → Korean (not "coral") ---
+  // Fix "كوري" → Korean
   if (/كوري|كوريه|كورية|الكوريه/.test(lower)) {
     result = result.replace(/\bcoral\b/gi, 'Korean');
-    result = result.replace(/\bkorean\b/g, (match, _p1, offset) => {
-      const prev = result[offset - 1];
-      if (!prev || prev === ' ' || prev === '.' || prev === ',' || prev === '!' || prev === '?') {
-        return 'Korean';
-      }
-      return match;
-    });
   }
 
-  // --- 3. Fix "صيني" → Chinese (not "plate/dish") ---
+  // Fix "صيني" → Chinese
   if (/صيني|صينيه|صينية|الصينيه/.test(lower)) {
     result = result.replace(/\bplate\b/gi, 'Chinese');
     result = result.replace(/\bplates\b/gi, 'Chinese');
     result = result.replace(/\bdish(es)?\b/gi, 'Chinese');
   }
 
-  // --- 4. Fix "تركي" → Turkish (not "bath") ---
+  // Fix "تركي" → Turkish
   if (/تركي|تركيه|تركية|التركيه/.test(lower)) {
     result = result.replace(/\bbath(s)?\b/gi, 'Turkish');
   }
 
-  // --- 5. Capitalize first letter (cosmetic) ---
+  // Capitalize first letter
   result = result.trim();
   if (result.length > 0) {
     result = result[0].toUpperCase() + result.slice(1);
@@ -242,30 +198,7 @@ function postprocessEnglishTranslation(
 }
 
 /**
- * Checks if we're running in a native Capacitor environment
- */
-function isNativeEnvironment(): boolean {
-  return Capacitor.isNativePlatform();
-}
-
-/**
- * Returns true if the device is likely online.
- * We do a quick `navigator.onLine` check; the actual fetch will
- * confirm by trying.
- */
-function isLikelyOnline(): boolean {
-  if (typeof navigator !== 'undefined' && 'onLine' in navigator) {
-    return (navigator as any).onLine !== false;
-  }
-  return true;
-}
-
-/**
- * Call Google's public (unofficial) Translate endpoint.
- *
- * This is the same endpoint the Google Translate web app uses. It does
- * not require an API key and is paid for by the user's own device /
- * internet. We do not proxy it through our server.
+ * Call Google's public Translate endpoint.
  *
  * @param text Arabic text to translate
  * @returns the English translation, or null on failure
@@ -280,7 +213,9 @@ async function googleTranslateOnline(text: string): Promise<string | null> {
     url.searchParams.set('dt', 't');
     url.searchParams.set('q', text);
 
-    console.log('[Translation Service] Making Google Translate request to:', url.toString().substring(0, 100) + '...');
+    console.log('[Translation Service] Google Translate URL:', url.toString().substring(0, 100) + '...');
+
+    let translated: string;
 
     // On native (iOS/Android), use CapacitorHttp to bypass WKWebView CORS restrictions
     if (Capacitor.isNativePlatform()) {
@@ -295,10 +230,10 @@ async function googleTranslateOnline(text: string): Promise<string | null> {
         },
       });
 
-      console.log('[Translation Service] CapacitorHttp response status:', nativeResponse.status);
+      console.log('[Translation Service] CapacitorHttp status:', nativeResponse.status);
 
       if (nativeResponse.status !== 200) {
-        console.warn('[Translation Service] Google Translate HTTP error (native):', nativeResponse.status);
+        console.warn('[Translation Service] Google Translate HTTP error:', nativeResponse.status);
         return null;
       }
 
@@ -308,82 +243,54 @@ async function googleTranslateOnline(text: string): Promise<string | null> {
         return null;
       }
 
-      const translated: string = data[0]
+      translated = data[0]
         .map((chunk: any) => (Array.isArray(chunk) && typeof chunk[0] === 'string' ? chunk[0] : ''))
         .join('')
         .trim();
+    } else {
+      // Web fallback
+      const response = await fetch(url.toString(), {
+        method: 'GET',
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+          'Accept': 'application/json, text/plain, */*',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Referer': 'https://translate.google.com/',
+        },
+      });
 
-      console.log('[Translation Service] Google Translate (native) result:', translated);
+      console.log('[Translation Service] Google Translate status:', response.status);
 
-      if (!translated) return null;
-      return translated;
+      if (!response.ok) {
+        console.warn('[Translation Service] Google Translate HTTP error:', response.status);
+        return null;
+      }
+
+      const data = await response.json();
+      if (!Array.isArray(data) || !Array.isArray(data[0])) {
+        console.warn('[Translation Service] Google Translate unexpected shape');
+        return null;
+      }
+
+      translated = data[0]
+        .map((chunk: any) => (Array.isArray(chunk) && typeof chunk[0] === 'string' ? chunk[0] : ''))
+        .join('')
+        .trim();
     }
 
-    // Web fallback
-    const response = await fetch(url.toString(), {
-      method: 'GET',
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
-        'Accept': 'application/json, text/plain, */*',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Referer': 'https://translate.google.com/',
-      },
-    });
-
-    console.log('[Translation Service] Google Translate response status:', response.status);
-
-    if (!response.ok) {
-      console.warn('[Translation Service] Google Translate HTTP error:', response.status, response.statusText);
-      return null;
-    }
-
-    const responseText = await response.text();
-    const data = JSON.parse(responseText);
-    if (!Array.isArray(data) || !Array.isArray(data[0])) {
-      console.warn('[Translation Service] Google Translate unexpected shape');
-      return null;
-    }
-
-    const translated: string = data[0]
-      .map((chunk: any) => (Array.isArray(chunk) && typeof chunk[0] === 'string' ? chunk[0] : ''))
-      .join('')
-      .trim();
-
-    console.log('[Translation Service] Google Translate parsed result:', translated);
+    console.log('[Translation Service] Google Translate result:', translated);
 
     if (!translated) return null;
     return translated;
   } catch (error: any) {
-    console.error('[Translation Service] Google Translate request failed:', error?.message || error);
-    console.error('[Translation Service] Error type:', error?.constructor?.name);
+    console.error('[Translation Service] Google Translate failed:', error?.message || error);
     return null;
   }
 }
 
 /**
- * Downloads the ML Kit translation model if not already downloaded
- */
-export async function ensureTranslationModelDownloaded(): Promise<void> {
-  if (!isNativeEnvironment()) return;
-
-  try {
-    await MLKitTranslate.downloadModel();
-    console.log('[Translation Service] ML Kit model ready');
-  } catch (error) {
-    console.error('[Translation Service] Failed to ensure ML Kit model:', error);
-  }
-}
-
-/**
- * Translates Arabic text to English.
- *
- * Priority:
- *   1. Google Translate ONLINE (uses customer's internet, best quality)
- *   2. ML Kit OFFLINE (on-device, no internet)
- *   3. Fallback: return the preprocessed Arabic text
- *
- * Returns BOTH the translated text and the method that produced it.
- * The UI can use `result.method` to display a "Google" / "Offline" badge.
+ * Translates Arabic text to English using Google Translate ONLY.
+ * No offline fallback - requires internet connection.
  */
 export async function translateArabicToEnglish(text: string): Promise<TranslationResult> {
   console.log('[Translation Service] ====== Starting Translation ======');
@@ -393,7 +300,7 @@ export async function translateArabicToEnglish(text: string): Promise<Translatio
   const normalizedText = normalizeIraqiArabic(text);
   console.log('[Translation Service] After normalization:', normalizedText);
 
-  // Step 1b: Pre-process Arabic to avoid known mistranslations
+  // Step 2: Pre-process Arabic to avoid known mistranslations
   const preprocessedText = preprocessArabicForTranslation(normalizedText);
   console.log('[Translation Service] After pre-processing:', preprocessedText);
 
@@ -412,62 +319,31 @@ export async function translateArabicToEnglish(text: string): Promise<Translatio
     return fixed;
   };
 
-  // Step 2: Try Google Translate ONLINE (PRIMARY when online)
-  if (isLikelyOnline()) {
-    console.log('[Translation Service] → Trying Google Translate ONLINE (PRIMARY)...');
-    try {
-      const googleResult = await googleTranslateOnline(preprocessedText);
-      if (googleResult && googleResult !== preprocessedText) {
-        const fixed = tryPostProcess(googleResult);
-        const result: TranslationResult = { text: fixed, method: 'google' };
-        console.log('[Translation Service] ✓ Google translation SUCCESS:', result);
-        cachePut(preprocessedText, result);
-        return result;
-      } else {
-        console.log('[Translation Service] ✗ Google returned empty or same text');
-      }
-    } catch (error: any) {
-      console.warn('[Translation Service] ✗ Google translation FAILED:', error?.message || error);
+  // Step 3: Try Google Translate ONLINE
+  console.log('[Translation Service] → Trying Google Translate ONLINE...');
+  try {
+    const googleResult = await googleTranslateOnline(preprocessedText);
+    if (googleResult && googleResult !== preprocessedText) {
+      const fixed = tryPostProcess(googleResult);
+      const result: TranslationResult = { text: fixed, method: 'google' };
+      console.log('[Translation Service] ✓ Google translation SUCCESS:', result);
+      cachePut(preprocessedText, result);
+      return result;
+    } else {
+      console.log('[Translation Service] ✗ Google returned empty or same text');
     }
-  } else {
-    console.log('[Translation Service] Device appears offline, skipping Google');
-  }
-
-  // Step 3: Try ML Kit OFFLINE (FALLBACK)
-  if (isNativeEnvironment()) {
-    console.log('[Translation Service] → Trying ML Kit OFFLINE (FALLBACK)...');
-    try {
-      await ensureTranslationModelDownloaded();
-      const { translatedText } = await MLKitTranslate.translateArabicToEnglish({ text: preprocessedText });
-      console.log('[Translation Service] ML Kit raw response:', translatedText);
-
-      const safe = translatedText && translatedText.trim() ? translatedText : '';
-      if (safe && safe !== preprocessedText) {
-        const fixed = tryPostProcess(safe);
-        const result: TranslationResult = { text: fixed, method: 'mlkit' };
-        console.log('[Translation Service] ✓ ML Kit translation SUCCESS:', result);
-        cachePut(preprocessedText, result);
-        return result;
-      } else {
-        console.log('[Translation Service] ✗ ML Kit returned empty or same text');
-      }
-    } catch (error: any) {
-      console.error('[Translation Service] ✗ ML Kit translation FAILED:', error);
-    }
-  } else {
-    console.log('[Translation Service] Not a native environment, skipping ML Kit');
+  } catch (error: any) {
+    console.warn('[Translation Service] ✗ Google translation FAILED:', error?.message || error);
   }
 
   // Step 4: All methods failed, return the preprocessed Arabic text
-  console.log('[Translation Service] ✗ All translation methods failed, returning preprocessed text');
+  console.log('[Translation Service] ✗ Translation failed, returning preprocessed text');
   const fallback: TranslationResult = { text: preprocessedText, method: 'fallback' };
   return fallback;
 }
 
 /**
  * Convenience wrapper that returns just the translated string.
- * Kept for backwards compatibility with any callers that don't
- * need the method.
  */
 export async function translateText(text: string): Promise<string> {
   const r = await translateArabicToEnglish(text);

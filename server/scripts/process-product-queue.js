@@ -209,7 +209,7 @@ function vectorToSqlLiteral(vector) {
 }
 
 // Update image embeddings from JSON file (no CLIP service needed)
-async function updateImageEmbeddingsFromJson(productId, imageEmbeddings) {
+async function updateImageEmbeddingsFromJson(productId, imageEmbeddings, textEmbedding = null) {
   const EMBEDDING_RETRIES = 5;
   const EMBEDDING_TIMEOUT_MS = 30000; // 30 second timeout per update
   let retryCount = 0;
@@ -226,75 +226,56 @@ async function updateImageEmbeddingsFromJson(productId, imageEmbeddings) {
         const imageOrder = imgEmbed.order != null ? imgEmbed.order : imageEmbeddings.indexOf(imgEmbed);
         console.log(`[Queue] Embedding URL: ${imgEmbed.url}  order=${imageOrder}  vector_len=${imgEmbed.embedding.length}`);
 
-        // Match by productId + order (index) instead of URL to avoid URL mismatch issues
-        let result = await Promise.race([
-          prisma.$executeRawUnsafe(
-            `UPDATE "ProductImage" SET "imageEmbedding" = $1::vector WHERE "productId" = $2 AND "order" = $3 AND "imageEmbedding" IS NULL`,
-            vectorLiteral,
-            productId,
-            imageOrder
-          ),
-          new Promise((_, reject) =>
-            setTimeout(() => reject(new Error('Image embedding update timeout')), EMBEDDING_TIMEOUT_MS)
-          )
-        ]);
-        console.log(`[Queue] UPDATE result: ${result} rows`);
-
-        if (result === 0) {
-          // Fallback: try matching by URL
-          const cleanEmbedUrl = sanitizeImageUrlForDb(imgEmbed.url);
-          result = await Promise.race([
-            prisma.$executeRawUnsafe(
-              `UPDATE "ProductImage" SET "imageEmbedding" = $1::vector WHERE "productId" = $2 AND "url" = $3 AND "imageEmbedding" IS NULL`,
-              vectorLiteral,
-              productId,
-              cleanEmbedUrl
-            ),
-            new Promise((_, reject) =>
-              setTimeout(() => reject(new Error('Image embedding update timeout')), EMBEDDING_TIMEOUT_MS)
-            )
-          ]);
-          console.log(`[Queue] URL fallback UPDATE result: ${result} rows`);
-        }
-
-        // Verify the embedding was actually written
-        const verifyRows = await prisma.$queryRawUnsafe(
-          `SELECT id, ("imageEmbedding" IS NOT NULL) as has_emb FROM "ProductImage" WHERE "productId" = $1 AND "order" = $2`,
-          productId,
-          imageOrder
-        );
-        if (verifyRows.length > 0) {
-          console.log(`[Queue] VERIFY image id=${verifyRows[0].id}: has_embedding=${verifyRows[0].has_emb}`);
-        }
+        // SKIP: ProductImage.imageEmbedding update - column doesn't exist and not needed for search
+        console.log(`[Queue] Skipping ProductImage update for order ${imageOrder} - not needed`);
       }
+
+      // Prepare update data for both image and text embeddings
+      const updates = [];
+      const params = [];
+      let paramIndex = 1;
 
       // Update product's main image embedding
       if (imageEmbeddings.length > 0 && imageEmbeddings[0].embedding) {
         const mainVector = vectorToSqlLiteral(imageEmbeddings[0].embedding);
-
-        await Promise.race([
-          prisma.$executeRawUnsafe(
-            `UPDATE "Product" SET "imageEmbedding" = $1::vector WHERE "id" = $2`,
-            mainVector,
-            productId
-          ),
-          new Promise((_, reject) =>
-            setTimeout(() => reject(new Error('Main image embedding update timeout')), EMBEDDING_TIMEOUT_MS)
-          )
-        ]);
-        console.log(`[Queue] Updated main image embedding for product ${productId}`);
-
-        // Verify main embedding
-        const verifyMain = await prisma.$queryRawUnsafe(
-          `SELECT ("imageEmbedding" IS NOT NULL) as has_emb FROM "Product" WHERE "id" = $1`,
-          productId
-        );
-        if (verifyMain.length > 0) {
-          console.log(`[Queue] VERIFY main embedding: has_embedding=${verifyMain[0].has_emb}`);
-        }
+        updates.push(`"imageEmbedding" = $${paramIndex}::vector`);
+        params.push(mainVector);
+        paramIndex++;
       }
 
-      console.log(`[Queue] Successfully updated ${imageEmbeddings.length} image embeddings`);
+      // Update text embedding if available
+      if (textEmbedding && Array.isArray(textEmbedding) && textEmbedding.length > 0 && !textEmbedding.every(v => v === 0)) {
+        const textVector = vectorToSqlLiteral(textEmbedding);
+        updates.push(`"textEmbedding" = $${paramIndex}::vector`);
+        params.push(textVector);
+        paramIndex++;
+        console.log(`[Queue] Will update text embedding (${textEmbedding.length} dimensions) for product ${productId}`);
+      }
+
+      // Execute update if there are any embeddings to update
+      if (updates.length > 0) {
+        const updateQuery = `UPDATE "Product" SET ${updates.join(', ')} WHERE "id" = $${paramIndex}`;
+        params.push(productId);
+
+        await Promise.race([
+          prisma.$executeRawUnsafe(updateQuery, ...params),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Embedding update timeout')), EMBEDDING_TIMEOUT_MS)
+          )
+        ]);
+        console.log(`[Queue] Updated embeddings for product ${productId}: ${updates.map(u => u.split('=')[0].trim().replace(/"/g, '')).join(', ')}`);
+
+        // Verify embeddings
+        const verifyQuery = `SELECT ("imageEmbedding" IS NOT NULL) as has_image_emb, ("textEmbedding" IS NOT NULL) as has_text_emb FROM "Product" WHERE "id" = $1`;
+        const verifyResult = await prisma.$queryRawUnsafe(verifyQuery, productId);
+        if (verifyResult.length > 0) {
+          console.log(`[Queue] VERIFY embeddings: has_image_embedding=${verifyResult[0].has_image_emb}, has_text_embedding=${verifyResult[0].has_text_emb}`);
+        }
+      } else {
+        console.log(`[Queue] No embeddings to update for product ${productId}`);
+      }
+
+      console.log(`[Queue] Successfully processed embeddings for product ${productId}`);
       return;
     } catch (err) {
       retryCount++;
@@ -645,7 +626,11 @@ async function processProductFile(filePath, goofishMappings, categories, process
         // Update image embeddings from JSON file (no CLIP service needed)
         if (productData.imageEmbeddings && productData.imageEmbeddings.length > 0) {
           console.log(`[Queue] Updating ${productData.imageEmbeddings.length} image embeddings from JSON file...`);
-          await updateImageEmbeddingsFromJson(createdProduct.id, productData.imageEmbeddings);
+          await updateImageEmbeddingsFromJson(createdProduct.id, productData.imageEmbeddings, productData.textEmbedding);
+        } else if (productData.textEmbedding) {
+          // If only text embedding exists, update it
+          console.log(`[Queue] Updating text embedding only...`);
+          await updateImageEmbeddingsFromJson(createdProduct.id, [], productData.textEmbedding);
         }
         
         // Move to processed

@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test ML Kit Translation</title>
+    <script type="module">
+        import { translateArabicToEnglish } from './src/services/translationService.js';
+        
+        async function testTranslation() {
+            console.log('Testing translation service...');
+            
+            const testCases = [
+                'ملابس',
+                'حذاء',
+                'هاتف',
+                'ملابس رجالية',
+                'something not in dictionary'
+            ];
+            
+            for (const text of testCases) {
+                try {
+                    console.log(`\nTesting: "${text}"`);
+                    const result = await translateArabicToEnglish(text);
+                    console.log(`Result: "${result}"`);
+                    console.log(`Success: ${result !== text ? 'Translated' : 'Original (no translation)'}`);
+                    
+                    // Add to results display
+                    const div = document.createElement('div');
+                    div.innerHTML = `<strong>${text}</strong> → <em>${result}</em>`;
+                    document.getElementById('results').appendChild(div);
+                } catch (error) {
+                    console.error(`Error translating "${text}":`, error);
+                }
+            }
+        }
+        
+        // Run test when page loads
+        document.addEventListener('DOMContentLoaded', testTranslation);
+    </script>
+</head>
+<body>
+    <h1>ML Kit Translation Test</h1>
+    <div id="results">
+        <p>Testing translation service...</p>
+    </div>
+</body>
+</html>

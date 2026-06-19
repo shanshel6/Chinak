@@ -13,7 +13,7 @@ import axios from 'axios';
 import http from 'http';
 import https from 'https';
 import { ensureProductImageEmbeddings } from '../services/productImageVectorService.js';
-import { embedImage } from '../services/clipService.js';
+import { embedImage, embedText } from '../services/clipService.js';
 import { sanitizeProductImageUrl } from '../services/productImageVectorService.js';
 
 const QUEUE_DIR = join(dirname(fileURLToPath(import.meta.url)), '../../' + (process.env.GOOFISH_QUEUE_DIR || 'product-queue'));
@@ -46,6 +46,7 @@ async function saveToQueue(accumulatedData) {
       specs: accumulatedData.specs,
       images: accumulatedData.images,
       imageEmbeddings: accumulatedData.imageEmbeddings || [],
+      textEmbedding: accumulatedData.textEmbedding || null,
       categoryId: accumulatedData.categoryId,
       soldCount: accumulatedData.soldCount,
       isActive: accumulatedData.isActive,
@@ -4611,6 +4612,7 @@ async function processProductDetailsAccumulate(page, product, detailProgress = n
     specs: null,
     images: [],
     imageEmbeddings: [], // Store embeddings locally
+    textEmbedding: null, // Store text embedding
     categoryId: null,
     isActive: true
   };
@@ -4844,6 +4846,22 @@ async function processProductDetailsAccumulate(page, product, detailProgress = n
         const urlMatch = product.url.match(/categoryId=(\d+)/);
         if (urlMatch) {
           accumulatedData.categoryId = urlMatch[1];
+        }
+
+        // Generate text embedding for product name
+        if (accumulatedData.name) {
+          try {
+            console.log(`[Text Embedding] Generating text embedding for: "${accumulatedData.name.substring(0, 50)}..."`);
+            const textEmbedding = await embedText(accumulatedData.name);
+            if (Array.isArray(textEmbedding) && textEmbedding.length > 0 && !textEmbedding.every(v => v === 0)) {
+              accumulatedData.textEmbedding = textEmbedding;
+              console.log(`[Text Embedding] Successfully generated text embedding (${textEmbedding.length} dimensions)`);
+            } else {
+              console.warn(`[Text Embedding] Generated empty or zero vector`);
+            }
+          } catch (embedErr) {
+            console.warn(`[Text Embedding] Failed to generate text embedding: ${embedErr.message}`);
+          }
         }
 
         // Extract specs
@@ -6642,7 +6660,8 @@ async function run() {
       url: resolvedUrl,
       specs: translatedSpecs || item.conditionText || '',
       categoryId: extractCategoryId(resolvedUrl) || null,
-      imageEmbeddings: [] // New field for queue mode
+      imageEmbeddings: [], // New field for queue mode
+      textEmbedding: null // Text embedding field
     };
 
     // Generate image embeddings for the item before saving to queue/DB
@@ -6666,6 +6685,23 @@ async function run() {
       }
     }
 
+    // Generate text embedding for product title
+    const textToEmbed = titleEn || item.title || '';
+    if (textToEmbed) {
+      try {
+        console.log(`[Text Embedding] Generating text embedding for itemId=${goofishItemId || 'n/a'}: "${textToEmbed.substring(0, 50)}..."`);
+        const textEmbedding = await embedText(textToEmbed);
+        if (Array.isArray(textEmbedding) && textEmbedding.length > 0 && !textEmbedding.every(v => v === 0)) {
+          itemData.textEmbedding = textEmbedding;
+          console.log(`[Text Embedding] Successfully generated text embedding (${textEmbedding.length} dimensions) for itemId=${goofishItemId || 'n/a'}`);
+        } else {
+          console.warn(`[Text Embedding] Generated empty or zero vector for itemId=${goofishItemId || 'n/a'}`);
+        }
+      } catch (embedErr) {
+        console.warn(`[Text Embedding] Failed to generate text embedding for itemId=${goofishItemId || 'n/a'}:`, embedErr.message);
+      }
+    }
+
     if (OUTPUT_JSON) allItems.push(itemData);
     
     // Skip DB insert if batch insert mode or accumulate per product mode is enabled
@@ -6682,6 +6718,7 @@ async function run() {
           specs: translatedSpecs || item.conditionText,
           images: [item.image].filter(Boolean),
           imageEmbeddings: itemData.imageEmbeddings,
+          textEmbedding: itemData.textEmbedding,
           categoryId: itemData.categoryId,
           isActive: true
         });

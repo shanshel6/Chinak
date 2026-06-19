@@ -1,0 +1,12 @@
+# Run this from a terminal on YOUR machine (not via the IDE's sandboxed shell).
+# It pipes the SQL into psql. If psql isn't installed, use the PowerShell version below.
+
+psql "postgresql://postgres:wpAxoWsjxiQfxCSnAnPdotRRMuDpOIdu@viaduct.proxy.rlwy.net:34644/railway" -f "d:\mynewproject2\server\prisma\fix_image_embedding_column.sql"
+
+# --- PowerShell alternative (uses the .NET PostgreSQL client, no psql needed) ---
+# This reads the SQL file and executes it via npgsql if installed,
+# OR just paste the SQL into Railway's web Query tab.
+
+# Easiest: open the SQL file and paste it into the Railway dashboard's Query tab:
+#   https://railway.app -> your project -> Postgres -> Query tab
+# File: d:\mynewproject2\server\prisma\fix_image_embedding_column.sql
