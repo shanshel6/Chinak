@@ -56,10 +56,19 @@ let textModelDownloadPromise: Promise<void> | null = null;
 // Model configuration
 const MODEL_ID = 'Xenova/clip-vit-base-patch32';
 
-// Progress callback for model downloads
-function onDownloadProgress(progress: number) {
-  textModelDownloadProgress = Math.round(progress);
-  console.log(`[CLIP] Text model download: ${textModelDownloadProgress}%`);
+/**
+ * Track progress from transformers.js model downloads
+ * The callback receives objects like { status: 'download', progress: 0.5 } or { status: 'initiate' }
+ */
+function onDownloadProgress(progressInfo: any, basePercent: number, scale: number) {
+  if (progressInfo.status === 'download' && progressInfo.progress !== undefined) {
+    const percent = basePercent + Math.round(progressInfo.progress * scale);
+    textModelDownloadProgress = Math.min(percent, basePercent + scale);
+    console.log(`[CLIP] Text model download: ${textModelDownloadProgress}%`);
+  } else if (progressInfo.status === 'done') {
+    textModelDownloadProgress = basePercent + scale;
+    console.log(`[CLIP] Text model download: ${textModelDownloadProgress}%`);
+  }
 }
 
 /**
@@ -97,11 +106,11 @@ async function loadTextModel(): Promise<void> {
       [tokenizer, textModel] = await Promise.all([
         AutoTokenizer.from_pretrained(MODEL_ID, { 
           quantized: true,
-          progress_callback: (p: number) => onDownloadProgress(p / 2) // tokenizer = first half
+          progress_callback: (p: any) => onDownloadProgress(p, 0, 50) // tokenizer = 0-50%
         }),
         CLIPTextModelWithProjection.from_pretrained(MODEL_ID, { 
           quantized: true,
-          progress_callback: (p: number) => onDownloadProgress(50 + p / 2) // model = second half
+          progress_callback: (p: any) => onDownloadProgress(p, 50, 50) // model = 50-100%
         })
       ]);
       

@@ -56,7 +56,7 @@ const WelcomeDownloadPage = lazy(() => import('./pages/WelcomeDownloadPage'));
 
 import { performCacheMaintenance } from './services/api';
 import { ensureTranslationModelDownloaded } from './services/translationService';
-import { warmupClipService } from './services/clipService';
+import { isClipReady } from './services/clipService';
 
 import { App as CapApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
@@ -377,12 +377,13 @@ function App() {
         checkAuth();
         initChatSocket();
         
-        // Warm up CLIP models for faster search (non-blocking with timeout)
-        warmupClipService().then(() => {
-          console.log('[App Init] CLIP warmup completed successfully');
-        }).catch(err => {
-          console.warn('[App Init] CLIP warmup failed:', err?.message);
-        });
+        // Only CLIP warmup if model is already cached (quick), otherwise let WelcomeDownloadPage handle it
+        if (isClipReady()) {
+          console.log('[App Init] CLIP model already ready, skipping warmup');
+        } else {
+          // Don't start warmup - let WelcomeDownloadPage handle the full download with progress
+          console.log('[App Init] CLIP not ready, WelcomeDownloadPage will handle download');
+        }
       } catch (error) {
         console.error('App initialization error:', error);
       } finally {
