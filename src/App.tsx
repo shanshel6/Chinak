@@ -55,7 +55,6 @@ const TermsOfService = lazy(() => import('./pages/TermsOfService'));
 
 import { performCacheMaintenance } from './services/api';
 import { ensureTranslationModelDownloaded } from './services/translationService';
-import { isClipReady } from './services/clipService';
 
 import { App as CapApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';

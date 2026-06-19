@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { AlertCircle, Search, ArrowRight, Camera, X, Loader2 } from 'lucide-react';
+import { AlertCircle, Search, ArrowRight, Camera, X } from 'lucide-react';
 import { searchProductsByImage, searchProductsByImageCrop, searchProducts } from '../services/api';
 import { initializeClipService, isClipReady } from '../services/clipService';
 import { useAuthStore } from '../store/useAuthStore';
