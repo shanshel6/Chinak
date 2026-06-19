@@ -8,7 +8,7 @@
  * User sees welcome page while text model downloads!
  */
 
-import { AutoProcessor, CLIPVisionModelWithProjection, AutoTokenizer, CLIPTextModelWithProjection, RawImage, env } from '@xenova/transformers';
+import { AutoTokenizer, CLIPTextModelWithProjection, env } from '@xenova/transformers';
 
 // Debug instrumentation
 const DEBUG_SERVER_URL = 'http://localhost:3000';
@@ -43,15 +43,13 @@ env.backends.onnx.wasm.numThreads = 1;
 env.useBrowserCache = true; // Cache downloaded models
 
 // Singleton instances (lazy loaded)
-let processor: any = null;
-let visionModel: any = null;
 let tokenizer: any = null;
 let textModel: any = null;
 
 // Loading states
 let isTextModelLoaded = false;
 let isVisionModelLoaded = false;
-let isTextModelDownloading = false;
+let textModelDownloading = false;
 let textModelDownloadProgress = 0;
 let textModelDownloadPromise: Promise<void> | null = null;
 
@@ -83,12 +81,12 @@ async function loadTextModel(): Promise<void> {
     return Promise.resolve();
   }
 
-  if (isTextModelDownloading && textModelDownloadPromise) {
+  if (textModelDownloading && textModelDownloadPromise) {
     // Already downloading, return existing promise
     return textModelDownloadPromise;
   }
 
-  isTextModelDownloading = true;
+  textModelDownloading = true;
   const start = Date.now();
   
   console.log('[CLIP] Starting TEXT model download from HuggingFace...');
@@ -98,14 +96,13 @@ async function loadTextModel(): Promise<void> {
     try {
       console.log('[CLIP] Downloading TEXT model...');
       
-      [processor, tokenizer, textModel] = await Promise.all([
-        AutoProcessor.from_pretrained(MODEL_ID, { quantized: true }),
+      [tokenizer, textModel] = await Promise.all([
         AutoTokenizer.from_pretrained(MODEL_ID, { quantized: true }),
         CLIPTextModelWithProjection.from_pretrained(MODEL_ID, { quantized: true })
       ]);
       
       isTextModelLoaded = true;
-      isTextModelDownloading = false;
+      textModelDownloading = false;
       const loadTime = Date.now() - start;
       console.log(`[CLIP] TEXT model downloaded in ${loadTime}ms ✅`);
       await debugLog('text_model_download_success', { 
@@ -115,7 +112,7 @@ async function loadTextModel(): Promise<void> {
       });
       resolve();
     } catch (error) {
-      isTextModelDownloading = false;
+      textModelDownloading = false;
       console.error('[CLIP] Failed to download TEXT model:', error);
       const errorMsg = error instanceof Error ? error.message : String(error);
       const errorStack = error instanceof Error ? error.stack : undefined;
@@ -176,47 +173,10 @@ export async function initializeClipService(): Promise<void> {
 }
 
 /**
- * Convert base64 image to RawImage
- */
-const base64ToRawImage = async (base64: string): Promise<any> => {
-  const img = new Image();
-  img.src = base64;
-  await new Promise<void>((resolve, reject) => {
-    img.onload = () => resolve();
-    img.onerror = () => reject(new Error('Failed to load image'));
-  });
-
-  const canvas = document.createElement('canvas');
-  canvas.width = img.width;
-  canvas.height = img.height;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) {
-    throw new Error('Canvas context not available');
-  }
-  ctx.drawImage(img, 0, 0);
-
-  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  const { data, width, height } = imageData;
-
-  const rgbData = new Uint8ClampedArray(width * height * 3);
-  for (let i = 0; i < height; i++) {
-    for (let j = 0; j < width; j++) {
-      const idx = (i * width + j) * 4;
-      const rgbIdx = (i * width + j) * 3;
-      rgbData[rgbIdx] = data[idx];
-      rgbData[rgbIdx + 1] = data[idx + 1];
-      rgbData[rgbIdx + 2] = data[idx + 2];
-    }
-  }
-
-  return new RawImage(rgbData, width, height, 3);
-};
-
-/**
  * Generate IMAGE embedding from base64 image
  * NOTE: Vision model is SKIPPED for now - customer will handle later
  */
-export async function embedImage(base64: string): Promise<number[]> {
+export async function embedImage(_base64: string): Promise<number[]> {
   // Ensure text model is loaded first
   await loadTextModel();
 
@@ -256,7 +216,7 @@ export async function embedText(text: string): Promise<number[]> {
  * Crop image from bounding box and generate embedding
  * NOTE: Vision model is SKIPPED for now - customer will handle later
  */
-export async function embedImageCrop(base64: string, box: number[]): Promise<number[]> {
+export async function embedImageCrop(_base64: string, _box: number[]): Promise<number[]> {
   await loadTextModel();
   
   console.log('[CLIP] Vision model is SKIPPED - cannot generate crop embeddings');
@@ -299,7 +259,7 @@ export function getClipStatus(): { textReady: boolean; visionReady: boolean; isD
   return {
     textReady: isTextModelLoaded,
     visionReady: isVisionModelLoaded,
-    isDownloading: isTextModelDownloading,
+    isDownloading: textModelDownloading,
     downloadProgress: textModelDownloadProgress
   };
 }
@@ -315,5 +275,5 @@ export function getTextModelProgress(): number {
  * Check if text model is still downloading
  */
 export function isTextModelDownloading(): boolean {
-  return isTextModelDownloading && !isTextModelLoaded;
+  return textModelDownloading && !isTextModelLoaded;
 }

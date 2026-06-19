@@ -8,7 +8,6 @@ const WelcomeDownloadPage: React.FC = () => {
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [isDownloading, setIsDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [isInitialized, setIsInitialized] = useState(false);
 
   // Initialize download on component mount
   useEffect(() => {
@@ -20,7 +19,6 @@ const WelcomeDownloadPage: React.FC = () => {
         // Start the download process
         await initializeClipService();
         
-        setIsInitialized(true);
         console.log('[Welcome] Model download initialized');
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : 'Unknown error';
