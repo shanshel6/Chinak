@@ -30,7 +30,7 @@ let visionModelDownloadProgress = 0;
 
 // Subscribe to model download progress
 env.useBrowserCache = false;
-env.onModelDownloaded = (progress: any) => {
+(env as any).onModelDownloaded = (progress: any) => {
   if (progress.progress !== undefined) {
     visionModelDownloadProgress = Math.round(progress.progress);
     console.log(`[CLIP] Vision model download: ${visionModelDownloadProgress}%`);

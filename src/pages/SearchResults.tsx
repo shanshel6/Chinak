@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom';
 import { AlertCircle, Search, ArrowRight, Camera, X, Loader2 } from 'lucide-react';
 import { searchProductsByImage, searchProductsByImageCrop, searchProducts } from '../services/api';
-import { initializeClipService, isClipReady, getVisionModelProgress, isVisionModelDownloading } from '../services/clipService';
+import { initializeClipService, isClipReady, getVisionModelProgress, isVisionModelDownloading, isVisionModelReady } from '../services/clipService';
 import { useAuthStore } from '../store/useAuthStore';
 import { normalizeWishlistProductId, useWishlistStore } from '../store/useWishlistStore';
 import { usePageCacheStore } from '../store/usePageCacheStore';
@@ -43,21 +43,6 @@ const SearchResults: React.FC = () => {
     }
   }, []);
   
-  // Track vision model download progress
-  useEffect(() => {
-    const interval = setInterval(() => {
-      const progress = getVisionModelProgress();
-      setVisionModelDownloadProgress(progress);
-      
-      // Close modal when vision model is ready
-      if (isVisionModelReady() && showVisionDownloadModal) {
-        setShowVisionDownloadModal(false);
-      }
-    }, 500);
-    
-    return () => clearInterval(interval);
-  }, [showVisionDownloadModal]);
-  
   const searchParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
   const initialQuery = searchParams.get('q') || '';
   const IMAGE_QUERY_LABEL = 'بحث بالصورة';
@@ -92,6 +77,22 @@ const SearchResults: React.FC = () => {
   const [translationMethod, setTranslationMethod] = useState<string>('');
   const [visionModelDownloadProgress, setVisionModelDownloadProgress] = useState<number>(0);
   const [showVisionDownloadModal, setShowVisionDownloadModal] = useState<boolean>(false);
+  
+  // Track vision model download progress
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const progress = getVisionModelProgress();
+      setVisionModelDownloadProgress(progress);
+      
+      // Close modal when vision model is ready
+      if (isVisionModelReady() && showVisionDownloadModal) {
+        setShowVisionDownloadModal(false);
+      }
+    }, 500);
+    
+    return () => clearInterval(interval);
+  }, [showVisionDownloadModal]);
+  
   const inputRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const activeQueryRef = useRef(activeQuery);
