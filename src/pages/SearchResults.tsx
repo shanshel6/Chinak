@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom';
 import { AlertCircle, Search, ArrowRight, Camera, X } from 'lucide-react';
 import { searchProductsByImage, searchProductsByImageCrop, searchProducts } from '../services/api';
-import { warmupClipService, isClipReady } from '../services/clipService';
+import { initializeClipService, isClipReady } from '../services/clipService';
 import { useAuthStore } from '../store/useAuthStore';
 import { normalizeWishlistProductId, useWishlistStore } from '../store/useWishlistStore';
 import { usePageCacheStore } from '../store/usePageCacheStore';
@@ -33,11 +33,12 @@ const SearchResults: React.FC = () => {
     }
   };
 
-  // Preload CLIP models on component mount
+  // Initialize CLIP service on component mount
+  // Text model loads immediately, vision model downloads in background
   useEffect(() => {
     if (!isClipReady()) {
-      warmupClipService().catch(err => {
-        console.warn('[SearchResults] CLIP warmup failed:', err);
+      initializeClipService().catch(err => {
+        console.warn('[SearchResults] CLIP initialization failed:', err);
       });
     }
   }, []);

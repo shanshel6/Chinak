@@ -1,11 +1,16 @@
 /**
  * Client-side CLIP service for generating embeddings on the user's device
- * Uses @xenova/transformers to run CLIP locally
+ * 
+ * Strategy:
+ * - TEXT model: BUNDLED with app (instant, ~61MB)
+ * - VISION model: DOWNLOADS in background when app opens (non-blocking)
+ * 
+ * User can search immediately using text model while vision model downloads!
  */
 
 import { AutoProcessor, CLIPVisionModelWithProjection, AutoTokenizer, CLIPTextModelWithProjection, RawImage, env } from '@xenova/transformers';
 
-// Configure environment to use WebAssembly backend
+// Configure environment
 env.allowLocalModels = true;
 env.allowRemoteModels = true;
 env.backends.onnx.wasm.numThreads = 1;
@@ -15,13 +20,16 @@ let processor: any = null;
 let visionModel: any = null;
 let tokenizer: any = null;
 let textModel: any = null;
-let isLoading = false;
-let loadPromise: Promise<void> | null = null;
 
-// Model configuration - CLIP for production
-// Using Xenova/clip-vit-base-patch32 which has ONNX support for @xenova/transformers
-// Falls back to server-side if model download fails (China issue)
+// Loading states
+let isTextModelLoaded = false;
+let isVisionModelLoaded = false;
+let isVisionModelLoading = false;
+let visionModelLoadPromise: Promise<void> | null = null;
+
+// Model configuration
 const MODEL_ID = 'Xenova/clip-vit-base-patch32';
+const LOCAL_TEXT_PATH = '/models/clip';
 
 /**
  * Normalize vector (L2 normalization)
@@ -33,68 +41,116 @@ const normalizeVector = (vector: number[]): number[] => {
 };
 
 /**
- * Load CLIP models (called once)
- * Uses local models from /models/clip/ for bundling with the app
+ * Load TEXT model from local bundle (BUNDLED with app - instant)
  */
-const loadModels = async (): Promise<void> => {
-  if (processor && visionModel && tokenizer && textModel) {
+async function loadTextModel(): Promise<void> {
+  if (isTextModelLoaded && tokenizer && textModel) {
     return Promise.resolve();
   }
 
-  if (isLoading && loadPromise) {
-    return loadPromise;
+  console.log('[CLIP] Loading TEXT model from local bundle...');
+  const start = Date.now();
+
+  try {
+    [processor, tokenizer, textModel] = await Promise.all([
+      AutoProcessor.from_pretrained(LOCAL_TEXT_PATH),
+      AutoTokenizer.from_pretrained(LOCAL_TEXT_PATH),
+      CLIPTextModelWithProjection.from_pretrained(LOCAL_TEXT_PATH, { quantized: true })
+    ]);
+    
+    isTextModelLoaded = true;
+    console.log(`[CLIP] TEXT model loaded in ${Date.now() - start}ms ✅`);
+  } catch (error) {
+    console.error('[CLIP] Failed to load TEXT model from bundle:', error);
+    // Try downloading from HuggingFace as fallback
+    console.log('[CLIP] Trying to download TEXT model from HuggingFace...');
+    try {
+      [processor, tokenizer, textModel] = await Promise.all([
+        AutoProcessor.from_pretrained(MODEL_ID),
+        AutoTokenizer.from_pretrained(MODEL_ID),
+        CLIPTextModelWithProjection.from_pretrained(MODEL_ID, { quantized: true })
+      ]);
+      isTextModelLoaded = true;
+      console.log('[CLIP] TEXT model downloaded from HuggingFace ✅');
+    } catch (fallbackError) {
+      console.error('[CLIP] Failed to load TEXT model:', fallbackError);
+      throw fallbackError;
+    }
+  }
+}
+
+/**
+ * Load VISION model in BACKGROUND (downloads while user uses app)
+ * This is non-blocking - user can search immediately!
+ */
+async function loadVisionModelInBackground(): Promise<void> {
+  if (isVisionModelLoaded) {
+    return Promise.resolve();
   }
 
-  isLoading = true;
-  loadPromise = new Promise<void>(async (resolve, reject) => {
+  if (isVisionModelLoading && visionModelLoadPromise) {
+    // Already loading, return existing promise
+    return visionModelLoadPromise;
+  }
+
+  isVisionModelLoading = true;
+  
+  visionModelLoadPromise = new Promise<void>(async (resolve, reject) => {
+    console.log('[CLIP] Loading VISION model in background... ⏳');
+    console.log('[CLIP] You can search while vision model downloads!');
+    const start = Date.now();
+
     try {
-      console.log('[CLIP Frontend] Loading models from local bundle...');
-      const start = Date.now();
+      // Try local bundle first (though we don't bundle vision model currently)
+      try {
+        visionModel = await CLIPVisionModelWithProjection.from_pretrained(LOCAL_TEXT_PATH, { quantized: true });
+        isVisionModelLoaded = true;
+        console.log(`[CLIP] VISION model loaded from bundle in ${Date.now() - start}ms ✅`);
+        resolve();
+        return;
+      } catch (localError) {
+        console.log('[CLIP] No local vision model, downloading from HuggingFace...');
+      }
 
-      // Use local models path - bundled with the app
-      const localPath = '/models/clip';
-
-      // Load models from local files
-      [processor, visionModel, tokenizer, textModel] = await Promise.all([
-        AutoProcessor.from_pretrained(localPath),
-        CLIPVisionModelWithProjection.from_pretrained(localPath, { quantized: true }),
-        AutoTokenizer.from_pretrained(localPath),
-        CLIPTextModelWithProjection.from_pretrained(localPath, { quantized: true })
-      ]);
-
-      console.log(`[CLIP Frontend] Models loaded in ${Date.now() - start}ms`);
+      // Download from HuggingFace
+      visionModel = await CLIPVisionModelWithProjection.from_pretrained(MODEL_ID, { quantized: true });
+      isVisionModelLoaded = true;
+      console.log(`[CLIP] VISION model downloaded in ${Date.now() - start}ms ✅`);
       resolve();
     } catch (error) {
-      console.error('[CLIP Frontend] Failed to load local models:', error);
-      console.log('[CLIP Frontend] Falling back to HuggingFace download...');
-      
-      // Fallback to downloading from HuggingFace
-      try {
-        [processor, visionModel, tokenizer, textModel] = await Promise.all([
-          AutoProcessor.from_pretrained(MODEL_ID),
-          CLIPVisionModelWithProjection.from_pretrained(MODEL_ID, { quantized: true }),
-          AutoTokenizer.from_pretrained(MODEL_ID),
-          CLIPTextModelWithProjection.from_pretrained(MODEL_ID, { quantized: true })
-        ]);
-        console.log(`[CLIP Frontend] Models loaded from HuggingFace in ${Date.now() - start}ms`);
-        resolve();
-      } catch (fallbackError) {
-        console.error('[CLIP Frontend] All model loading failed:', fallbackError);
-        reject(fallbackError);
-      }
+      console.error('[CLIP] Failed to load VISION model:', error);
+      // Don't reject - text model still works!
+      console.warn('[CLIP] VISION model failed but TEXT search still works!');
+      resolve(); // Don't block, text model is ready
     } finally {
-      isLoading = false;
+      isVisionModelLoading = false;
     }
   });
 
-  return loadPromise;
-};
+  return visionModelLoadPromise;
+}
+
+/**
+ * Initialize CLIP service
+ * Call this when app starts - loads text model immediately, vision model in background
+ */
+export async function initializeClipService(): Promise<void> {
+  console.log('[CLIP] Initializing CLIP service...');
+  
+  // Step 1: Load TEXT model immediately (it's bundled!)
+  await loadTextModel();
+  
+  // Step 2: Load VISION model in background (non-blocking)
+  // User can search immediately while vision model downloads!
+  loadVisionModelInBackground(); // Don't await - let it download in background
+  
+  console.log('[CLIP] Service ready for TEXT search! (Vision model downloading in background...)');
+}
 
 /**
  * Convert base64 image to RawImage
  */
 const base64ToRawImage = async (base64: string): Promise<any> => {
-  // Create an Image element
   const img = new Image();
   img.src = base64;
   await new Promise<void>((resolve, reject) => {
@@ -102,7 +158,6 @@ const base64ToRawImage = async (base64: string): Promise<any> => {
     img.onerror = () => reject(new Error('Failed to load image'));
   });
 
-  // Create canvas and draw image
   const canvas = document.createElement('canvas');
   canvas.width = img.width;
   canvas.height = img.height;
@@ -112,11 +167,9 @@ const base64ToRawImage = async (base64: string): Promise<any> => {
   }
   ctx.drawImage(img, 0, 0);
 
-  // Get image data
   const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
   const { data, width, height } = imageData;
 
-  // Convert to RGB (remove alpha)
   const rgbData = new Uint8ClampedArray(width * height * 3);
   for (let i = 0; i < height; i++) {
     for (let j = 0; j < width; j++) {
@@ -132,12 +185,20 @@ const base64ToRawImage = async (base64: string): Promise<any> => {
 };
 
 /**
- * Generate image embedding from base64 image
+ * Generate IMAGE embedding from base64 image
+ * Will wait for vision model to load if still downloading
  */
 export async function embedImage(base64: string): Promise<number[]> {
-  await loadModels();
+  // Ensure text model is loaded first
+  await loadTextModel();
 
-  console.log('[CLIP Frontend] Generating image embedding...');
+  // Wait for vision model if still downloading
+  if (!isVisionModelLoaded) {
+    console.log('[CLIP] Waiting for vision model to load...');
+    await visionModelLoadPromise;
+  }
+
+  console.log('[CLIP] Generating image embedding...');
   const start = Date.now();
 
   try {
@@ -147,21 +208,23 @@ export async function embedImage(base64: string): Promise<number[]> {
     const embedding = Array.from(outputs.image_embeds.data) as number[];
     const normalized = normalizeVector(embedding);
 
-    console.log(`[CLIP Frontend] Image embedding generated in ${Date.now() - start}ms`);
+    console.log(`[CLIP] Image embedding generated in ${Date.now() - start}ms`);
     return normalized;
   } catch (error) {
-    console.error('[CLIP Frontend] Failed to generate image embedding:', error);
+    console.error('[CLIP] Failed to generate image embedding:', error);
     throw error;
   }
 }
 
 /**
- * Generate text embedding from English text
+ * Generate TEXT embedding from English text
+ * Uses BUNDLED text model - works immediately!
  */
 export async function embedText(text: string): Promise<number[]> {
-  await loadModels();
+  // Ensure text model is loaded
+  await loadTextModel();
 
-  console.log('[CLIP Frontend] Generating text embedding for:', text);
+  console.log('[CLIP] Generating text embedding for:', text);
   const start = Date.now();
 
   try {
@@ -170,10 +233,10 @@ export async function embedText(text: string): Promise<number[]> {
     const embedding = Array.from(outputs.text_embeds.data) as number[];
     const normalized = normalizeVector(embedding);
 
-    console.log(`[CLIP Frontend] Text embedding generated in ${Date.now() - start}ms`);
+    console.log(`[CLIP] Text embedding generated in ${Date.now() - start}ms`);
     return normalized;
   } catch (error) {
-    console.error('[CLIP Frontend] Failed to generate text embedding:', error);
+    console.error('[CLIP] Failed to generate text embedding:', error);
     throw error;
   }
 }
@@ -182,23 +245,25 @@ export async function embedText(text: string): Promise<number[]> {
  * Crop image from bounding box and generate embedding
  */
 export async function embedImageCrop(base64: string, box: number[]): Promise<number[]> {
-  await loadModels();
+  await loadTextModel();
+  
+  if (!isVisionModelLoaded) {
+    console.log('[CLIP] Waiting for vision model to load...');
+    await visionModelLoadPromise;
+  }
 
   const [xmin, ymin, xmax, ymax] = box;
-
-  console.log('[CLIP Frontend] Generating crop embedding...');
+  console.log('[CLIP] Generating crop embedding...');
   const start = Date.now();
 
   try {
     const rawImage = await base64ToRawImage(base64);
 
-    // Calculate crop dimensions
     const cropWidth = Math.max(1, Math.floor(xmax - xmin));
     const cropHeight = Math.max(1, Math.floor(ymax - ymin));
     const cropX = Math.max(0, Math.floor(xmin));
     const cropY = Math.max(0, Math.floor(ymin));
 
-    // Ensure crop is within image bounds
     const safeWidth = Math.min(cropWidth, rawImage.width - cropX);
     const safeHeight = Math.min(cropHeight, rawImage.height - cropY);
 
@@ -206,7 +271,6 @@ export async function embedImageCrop(base64: string, box: number[]): Promise<num
       throw new Error('Invalid crop dimensions');
     }
 
-    // Crop manually
     const croppedData = new Uint8ClampedArray(safeWidth * safeHeight * 3);
     for (let y = 0; y < safeHeight; y++) {
       for (let x = 0; x < safeWidth; x++) {
@@ -224,28 +288,47 @@ export async function embedImageCrop(base64: string, box: number[]): Promise<num
     const embedding = Array.from(outputs.image_embeds.data) as number[];
     const normalized = normalizeVector(embedding);
 
-    console.log(`[CLIP Frontend] Crop embedding generated in ${Date.now() - start}ms`);
+    console.log(`[CLIP] Crop embedding generated in ${Date.now() - start}ms`);
     return normalized;
   } catch (error) {
-    console.error('[CLIP Frontend] Failed to generate crop embedding:', error);
+    console.error('[CLIP] Failed to generate crop embedding:', error);
     throw error;
   }
 }
 
 /**
  * Preload models (call early in app lifecycle)
+ * This is the main entry point - call this when app starts!
  */
 export async function warmupClipService(): Promise<void> {
   try {
-    await loadModels();
+    await initializeClipService();
   } catch (error) {
-    console.warn('[CLIP Frontend] Warmup failed:', error);
+    console.warn('[CLIP] Warmup failed:', error);
   }
 }
 
 /**
- * Check if models are loaded
+ * Check if CLIP service is ready for text search (immediate)
  */
 export function isClipReady(): boolean {
-  return processor !== null && visionModel !== null;
+  return isTextModelLoaded;
+}
+
+/**
+ * Check if CLIP service is ready for image search (may need to wait)
+ */
+export function isVisionModelReady(): boolean {
+  return isVisionModelLoaded;
+}
+
+/**
+ * Get loading status for UI display
+ */
+export function getClipStatus(): { textReady: boolean; visionReady: boolean; isDownloading: boolean } {
+  return {
+    textReady: isTextModelLoaded,
+    visionReady: isVisionModelLoaded,
+    isDownloading: isVisionModelLoading
+  };
 }
