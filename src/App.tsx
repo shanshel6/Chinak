@@ -56,7 +56,7 @@ const WelcomeDownloadPage = lazy(() => import('./pages/WelcomeDownloadPage'));
 
 import { performCacheMaintenance } from './services/api';
 import { ensureTranslationModelDownloaded } from './services/translationService';
-import { warmupClipService, getClipStatus } from './services/clipService';
+import { warmupClipService } from './services/clipService';
 
 import { App as CapApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
@@ -86,43 +86,6 @@ const UpdatePrompt: React.FC<{url: string; onClose: () => void}> = ({url, onClos
     </div>
   </div>
 );
-
-// DEBUG: Temporary CLIP status popup
-const CLIPDebugPopup: React.FC<{onClose: () => void}> = ({onClose}) => {
-  const clipStatus = getClipStatus();
-  
-  return (
-    <div className="fixed top-4 left-4 right-4 z-[100] bg-black/90 text-white rounded-xl p-4 max-w-md mx-auto shadow-2xl">
-      <div className="flex justify-between items-start mb-3">
-        <h3 className="font-bold text-yellow-400">🔧 CLIP Debug Info</h3>
-        <button onClick={onClose} className="text-white/70 hover:text-white text-sm">✕</button>
-      </div>
-      <div className="space-y-2 text-sm">
-        <div className="flex justify-between">
-          <span>Text Model:</span>
-          <span className={clipStatus.textReady ? 'text-green-400' : 'text-red-400'}>
-            {clipStatus.textReady ? '✅ Loaded' : '❌ Not Loaded'}
-          </span>
-        </div>
-        <div className="flex justify-between">
-          <span>Vision Model:</span>
-          <span className={clipStatus.visionReady ? 'text-green-400' : 'text-red-400'}>
-            {clipStatus.visionReady ? '✅ Loaded' : '❌ Not Loaded'}
-          </span>
-        </div>
-        <div className="flex justify-between">
-          <span>Vision Downloading:</span>
-          <span className={clipStatus.isDownloading ? 'text-yellow-400' : 'text-white/70'}>
-            {clipStatus.isDownloading ? '⏳ Yes (' + clipStatus.downloadProgress + '%)' : 'No'}
-          </span>
-        </div>
-        <div className="text-xs text-white/50 mt-3 pt-2 border-t border-white/20">
-          Will auto-close in 30 seconds
-        </div>
-      </div>
-    </div>
-  );
-};
 
 // Loading fallback
 const PageLoader = () => (
@@ -386,16 +349,6 @@ function App() {
   const [updateUrl, setUpdateUrl] = useState('');
   const CURRENT_VERSION = '1.0.69'; // keep in sync with package.json
 
-  // DEBUG: Show CLIP status popup for 30 seconds on app start
-  const [showClipDebug, setShowClipDebug] = useState(true);
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setShowClipDebug(false);
-    }, 30000); // 30 seconds
-    return () => clearTimeout(timer);
-  }, []);
-
   useEffect(() => {
     const initializeApp = async () => {
       try {
@@ -559,7 +512,6 @@ function App() {
     <Router>
       <BackButtonHandler />
       <ScrollToTop />
-      {showClipDebug && <CLIPDebugPopup onClose={() => setShowClipDebug(false)} />}
       <div className="min-h-screen bg-background-light">
         <Toast />
         <ErrorBoundary>

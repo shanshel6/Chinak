@@ -53,16 +53,14 @@ let textModelDownloading = false;
 let textModelDownloadProgress = 0;
 let textModelDownloadPromise: Promise<void> | null = null;
 
-// Subscribe to model download progress
-(env as any).onModelDownloaded = (progress: any) => {
-  if (progress.progress !== undefined) {
-    textModelDownloadProgress = Math.round(progress.progress);
-    console.log(`[CLIP] Text model download: ${textModelDownloadProgress}%`);
-  }
-};
-
 // Model configuration
 const MODEL_ID = 'Xenova/clip-vit-base-patch32';
+
+// Progress callback for model downloads
+function onDownloadProgress(progress: number) {
+  textModelDownloadProgress = Math.round(progress);
+  console.log(`[CLIP] Text model download: ${textModelDownloadProgress}%`);
+}
 
 /**
  * Normalize vector (L2 normalization)
@@ -97,8 +95,14 @@ async function loadTextModel(): Promise<void> {
       console.log('[CLIP] Downloading TEXT model...');
       
       [tokenizer, textModel] = await Promise.all([
-        AutoTokenizer.from_pretrained(MODEL_ID, { quantized: true }),
-        CLIPTextModelWithProjection.from_pretrained(MODEL_ID, { quantized: true })
+        AutoTokenizer.from_pretrained(MODEL_ID, { 
+          quantized: true,
+          progress_callback: (p: number) => onDownloadProgress(p / 2) // tokenizer = first half
+        }),
+        CLIPTextModelWithProjection.from_pretrained(MODEL_ID, { 
+          quantized: true,
+          progress_callback: (p: number) => onDownloadProgress(50 + p / 2) // model = second half
+        })
       ]);
       
       isTextModelLoaded = true;
