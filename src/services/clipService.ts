@@ -81,7 +81,13 @@ const normalizeVector = (vector: number[]): number[] => {
 };
 
 /**
+ * Sleep helper
+ */
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+/**
  * Load TEXT model from HuggingFace (always downloads on first app open)
+ * Automatically retries up to 3 times with exponential backoff
  */
 async function loadTextModel(): Promise<void> {
   if (isTextModelLoaded && tokenizer && textModel) {
@@ -99,42 +105,64 @@ async function loadTextModel(): Promise<void> {
   console.log('[CLIP] Starting TEXT model download from HuggingFace...');
   await debugLog('text_model_download_start', { modelId: MODEL_ID });
 
+  const maxRetries = 3;
+  
   textModelDownloadPromise = new Promise<void>(async (resolve, reject) => {
-    try {
-      console.log('[CLIP] Downloading TEXT model...');
-      
-      [tokenizer, textModel] = await Promise.all([
-        AutoTokenizer.from_pretrained(MODEL_ID, { 
-          quantized: true,
-          progress_callback: (p: any) => onDownloadProgress(p, 0, 50) // tokenizer = 0-50%
-        }),
-        CLIPTextModelWithProjection.from_pretrained(MODEL_ID, { 
-          quantized: true,
-          progress_callback: (p: any) => onDownloadProgress(p, 50, 50) // model = 50-100%
-        })
-      ]);
-      
-      isTextModelLoaded = true;
-      textModelDownloading = false;
-      const loadTime = Date.now() - start;
-      console.log(`[CLIP] TEXT model downloaded in ${loadTime}ms ✅`);
-      await debugLog('text_model_download_success', { 
-        modelId: MODEL_ID, 
-        loadTime,
-        progress: 100
-      });
-      resolve();
-    } catch (error) {
-      textModelDownloading = false;
-      console.error('[CLIP] Failed to download TEXT model:', error);
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      const errorStack = error instanceof Error ? error.stack : undefined;
-      await debugLog('text_model_download_failure', { 
-        modelId: MODEL_ID, 
-        error: errorMsg,
-        stack: errorStack
-      });
-      reject(error instanceof Error ? error : new Error(String(error)));
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        console.log(`[CLIP] Downloading TEXT model... (attempt ${attempt}/${maxRetries})`);
+        
+        [tokenizer, textModel] = await Promise.all([
+          AutoTokenizer.from_pretrained(MODEL_ID, { 
+            quantized: true,
+            progress_callback: (p: any) => onDownloadProgress(p, 0, 50) // tokenizer = 0-50%
+          }),
+          CLIPTextModelWithProjection.from_pretrained(MODEL_ID, { 
+            quantized: true,
+            progress_callback: (p: any) => onDownloadProgress(p, 50, 50) // model = 50-100%
+          })
+        ]);
+        
+        isTextModelLoaded = true;
+        textModelDownloading = false;
+        const loadTime = Date.now() - start;
+        console.log(`[CLIP] TEXT model downloaded in ${loadTime}ms ✅`);
+        await debugLog('text_model_download_success', { 
+          modelId: MODEL_ID, 
+          loadTime,
+          progress: 100
+        });
+        resolve();
+        return; // Success - exit function
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        console.error(`[CLIP] Failed to download TEXT model (attempt ${attempt}/${maxRetries}):`, errorMsg);
+        
+        if (attempt < maxRetries) {
+          // Exponential backoff: 1s, 2s, 4s
+          const delayMs = 1000 * Math.pow(2, attempt - 1);
+          console.log(`[CLIP] Retrying in ${delayMs}ms...`);
+          await debugLog('text_model_download_retry', { 
+            attempt, 
+            maxRetries, 
+            delayMs,
+            error: errorMsg
+          });
+          await sleep(delayMs);
+        } else {
+          // All retries exhausted - reject
+          textModelDownloading = false;
+          console.error(`[CLIP] All ${maxRetries} attempts failed for TEXT model:`, error);
+          const errorStack = error instanceof Error ? error.stack : undefined;
+          await debugLog('text_model_download_failure', { 
+            modelId: MODEL_ID, 
+            error: errorMsg,
+            stack: errorStack,
+            attempts: maxRetries
+          });
+          reject(error instanceof Error ? error : new Error(String(error)));
+        }
+      }
     }
   });
 
