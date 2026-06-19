@@ -62,26 +62,36 @@ async function loadTextModel(): Promise<void> {
   const start = Date.now();
 
   try {
+    // Try loading from local bundle first
+    // Use quantized: true for smaller/faster model on mobile
     [processor, tokenizer, textModel] = await Promise.all([
-      AutoProcessor.from_pretrained(LOCAL_TEXT_PATH),
-      AutoTokenizer.from_pretrained(LOCAL_TEXT_PATH),
-      CLIPTextModelWithProjection.from_pretrained(LOCAL_TEXT_PATH, { quantized: true })
+      AutoProcessor.from_pretrained(LOCAL_TEXT_PATH, { 
+        local_files_only: true,
+        quantized: true 
+      }),
+      AutoTokenizer.from_pretrained(LOCAL_TEXT_PATH, { 
+        local_files_only: true 
+      }),
+      CLIPTextModelWithProjection.from_pretrained(LOCAL_TEXT_PATH, { 
+        local_files_only: true,
+        quantized: true 
+      })
     ]);
     
     isTextModelLoaded = true;
-    console.log(`[CLIP] TEXT model loaded in ${Date.now() - start}ms ✅`);
+    console.log(`[CLIP] TEXT model loaded from bundle in ${Date.now() - start}ms ✅`);
   } catch (error) {
     console.error('[CLIP] Failed to load TEXT model from bundle:', error);
-    // Try downloading from HuggingFace as fallback
-    console.log('[CLIP] Trying to download TEXT model from HuggingFace...');
+    // If local only fails, try with remote allowed (for development/first install)
+    console.log('[CLIP] Bundle load failed, trying with remote allowed...');
     try {
       [processor, tokenizer, textModel] = await Promise.all([
-        AutoProcessor.from_pretrained(MODEL_ID),
-        AutoTokenizer.from_pretrained(MODEL_ID),
-        CLIPTextModelWithProjection.from_pretrained(MODEL_ID, { quantized: true })
+        AutoProcessor.from_pretrained(LOCAL_TEXT_PATH, { quantized: true }),
+        AutoTokenizer.from_pretrained(LOCAL_TEXT_PATH, { quantized: true }),
+        CLIPTextModelWithProjection.from_pretrained(LOCAL_TEXT_PATH, { quantized: true })
       ]);
       isTextModelLoaded = true;
-      console.log('[CLIP] TEXT model downloaded from HuggingFace ✅');
+      console.log(`[CLIP] TEXT model loaded (with remote fallback) in ${Date.now() - start}ms ✅`);
     } catch (fallbackError) {
       console.error('[CLIP] Failed to load TEXT model:', fallbackError);
       throw fallbackError;
