@@ -13,6 +13,7 @@
 
 import MLKitTranslate from '../plugins/mlkit-translate';
 import { Capacitor } from '@capacitor/core';
+import { CapacitorHttp } from '@capacitor/core';
 
 /** Method used to produce the translation. */
 export type TranslationMethod = 'google' | 'mlkit' | 'fallback';
@@ -281,13 +282,48 @@ async function googleTranslateOnline(text: string): Promise<string | null> {
 
     console.log('[Translation Service] Making Google Translate request to:', url.toString().substring(0, 100) + '...');
 
+    // On native (iOS/Android), use CapacitorHttp to bypass WKWebView CORS restrictions
+    if (Capacitor.isNativePlatform()) {
+      console.log('[Translation Service] Using CapacitorHttp for native platform');
+      const nativeResponse = await CapacitorHttp.get({
+        url: url.toString(),
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+          'Accept': 'application/json, text/plain, */*',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Referer': 'https://translate.google.com/',
+        },
+      });
+
+      console.log('[Translation Service] CapacitorHttp response status:', nativeResponse.status);
+
+      if (nativeResponse.status !== 200) {
+        console.warn('[Translation Service] Google Translate HTTP error (native):', nativeResponse.status);
+        return null;
+      }
+
+      const data = typeof nativeResponse.data === 'string' ? JSON.parse(nativeResponse.data) : nativeResponse.data;
+      if (!Array.isArray(data) || !Array.isArray(data[0])) {
+        console.warn('[Translation Service] Google Translate unexpected shape');
+        return null;
+      }
+
+      const translated: string = data[0]
+        .map((chunk: any) => (Array.isArray(chunk) && typeof chunk[0] === 'string' ? chunk[0] : ''))
+        .join('')
+        .trim();
+
+      console.log('[Translation Service] Google Translate (native) result:', translated);
+
+      if (!translated) return null;
+      return translated;
+    }
+
+    // Web fallback
     const response = await fetch(url.toString(), {
       method: 'GET',
       headers: {
-        // Mimic a real browser request — Google's endpoint rejects
-        // most non-browser user agents.
-        'User-Agent':
-          'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
         'Accept': 'application/json, text/plain, */*',
         'Accept-Language': 'en-US,en;q=0.9',
         'Referer': 'https://translate.google.com/',
@@ -302,9 +338,6 @@ async function googleTranslateOnline(text: string): Promise<string | null> {
     }
 
     const responseText = await response.text();
-    console.log('[Translation Service] Google Translate raw response (first 200 chars):', responseText.substring(0, 200));
-
-    // Response shape: [[["translated", "original", null, null, 1]], null, "ar", null, null, ...]
     const data = JSON.parse(responseText);
     if (!Array.isArray(data) || !Array.isArray(data[0])) {
       console.warn('[Translation Service] Google Translate unexpected shape');
@@ -323,9 +356,6 @@ async function googleTranslateOnline(text: string): Promise<string | null> {
   } catch (error: any) {
     console.error('[Translation Service] Google Translate request failed:', error?.message || error);
     console.error('[Translation Service] Error type:', error?.constructor?.name);
-    if (error.response) {
-      console.error('[Translation Service] Response status:', error.response.status);
-    }
     return null;
   }
 }

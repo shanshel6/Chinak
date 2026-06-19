@@ -53,5 +53,12 @@
     <string>Used to select photos for searching products.</string>
     <key>NSPhotoLibraryAddUsageDescription</key>
     <string>Used to save photos.</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
 </dict>
 </plist>
