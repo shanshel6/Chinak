@@ -26,6 +26,16 @@ let isTextModelLoaded = false;
 let isVisionModelLoaded = false;
 let isVisionModelLoading = false;
 let visionModelLoadPromise: Promise<void> | null = null;
+let visionModelDownloadProgress = 0;
+
+// Subscribe to model download progress
+env.useBrowserCache = false;
+env.onModelDownloaded = (progress: any) => {
+  if (progress.progress !== undefined) {
+    visionModelDownloadProgress = Math.round(progress.progress);
+    console.log(`[CLIP] Vision model download: ${visionModelDownloadProgress}%`);
+  }
+};
 
 // Model configuration
 const MODEL_ID = 'Xenova/clip-vit-base-patch32';
@@ -325,10 +335,25 @@ export function isVisionModelReady(): boolean {
 /**
  * Get loading status for UI display
  */
-export function getClipStatus(): { textReady: boolean; visionReady: boolean; isDownloading: boolean } {
+export function getClipStatus(): { textReady: boolean; visionReady: boolean; isDownloading: boolean; downloadProgress: number } {
   return {
     textReady: isTextModelLoaded,
     visionReady: isVisionModelLoaded,
-    isDownloading: isVisionModelLoading
+    isDownloading: isVisionModelLoading,
+    downloadProgress: visionModelDownloadProgress
   };
+}
+
+/**
+ * Get vision model download progress (0-100)
+ */
+export function getVisionModelProgress(): number {
+  return visionModelDownloadProgress;
+}
+
+/**
+ * Check if vision model is still downloading
+ */
+export function isVisionModelDownloading(): boolean {
+  return isVisionModelLoading && !isVisionModelLoaded;
 }
