@@ -38,28 +38,94 @@ const DownloadOverlay: React.FC<Props> = ({ onComplete }) => {
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 backdrop-blur-md">
       <div className="flex flex-col items-center gap-8 animate-in fade-in zoom-in duration-500">
-        {/* Loading Animation */}
-        <div className="relative flex items-center justify-center">
-          {/* Outer pulsing ring */}
-          <div className="absolute w-48 h-48 rounded-full border-4 border-blue-500/20 animate-ping" />
+        {/* Loading Animation - SVG based for reliable circular spinning */}
+        <div className="relative flex items-center justify-center w-52 h-52">
+          {/* Outer ring - slow spin */}
+          <svg className="absolute w-48 h-48 animate-spin" style={{ animationDuration: '3s' }} viewBox="0 0 100 100">
+            <circle
+              cx="50" cy="50" r="42"
+              fill="none"
+              stroke="rgba(99,102,241,0.15)"
+              strokeWidth="3"
+            />
+            <circle
+              cx="50" cy="50" r="42"
+              fill="none"
+              stroke="url(#blueGrad)"
+              strokeWidth="3"
+              strokeLinecap="round"
+              strokeDasharray="66 198"
+              strokeDashoffset="0"
+            />
+          </svg>
           
-          {/* Middle spinning ring */}
-          <div className="absolute w-44 h-44 rounded-full border-4 border-transparent border-t-indigo-500 border-r-blue-500 animate-spin" />
+          {/* Middle ring - fast spin (opposite) */}
+          <svg className="absolute w-40 h-40 animate-spin" style={{ animationDuration: '1.8s', animationDirection: 'reverse' }} viewBox="0 0 100 100">
+            <circle
+              cx="50" cy="50" r="35"
+              fill="none"
+              stroke="rgba(129,140,248,0.15)"
+              strokeWidth="3"
+            />
+            <circle
+              cx="50" cy="50" r="35"
+              fill="none"
+              stroke="url(#indigoGrad)"
+              strokeWidth="3"
+              strokeLinecap="round"
+              strokeDasharray="55 165"
+              strokeDashoffset="0"
+            />
+          </svg>
           
-          {/* Inner spinning ring (opposite direction) */}
-          <div className="absolute w-36 h-36 rounded-full border-4 border-transparent border-b-indigo-400 border-l-blue-400 animate-spin" style={{ animationDirection: 'reverse', animationDuration: '1.5s' }} />
+          {/* Inner ring - medium spin */}
+          <svg className="absolute w-32 h-32 animate-spin" style={{ animationDuration: '2.4s' }} viewBox="0 0 100 100">
+            <circle
+              cx="50" cy="50" r="27"
+              fill="none"
+              stroke="rgba(167,139,250,0.15)"
+              strokeWidth="3"
+            />
+            <circle
+              cx="50" cy="50" r="27"
+              fill="none"
+              stroke="url(#purpleGrad)"
+              strokeWidth="3"
+              strokeLinecap="round"
+              strokeDasharray="42 128"
+              strokeDashoffset="0"
+            />
+          </svg>
           
           {/* Center icon */}
-          <div className="w-28 h-28 rounded-full bg-gradient-to-br from-blue-500/20 to-indigo-600/20 flex items-center justify-center backdrop-blur-sm">
+          <div className="w-24 h-24 rounded-full bg-gradient-to-br from-blue-500/15 to-indigo-600/15 flex items-center justify-center backdrop-blur-sm border border-white/5">
             {isDone ? (
-              <CheckCircle className="w-16 h-16 text-green-400 animate-in fade-in zoom-in duration-300" />
+              <CheckCircle className="w-14 h-14 text-green-400 animate-in fade-in zoom-in duration-300" />
             ) : error ? (
-              <AlertCircle className="w-16 h-16 text-red-400" />
+              <AlertCircle className="w-14 h-14 text-red-400" />
             ) : (
-              <Loader2 className="w-14 h-14 text-blue-400 animate-spin" />
+              <Loader2 className="w-12 h-12 text-blue-400 animate-spin" style={{ animationDuration: '1s' }} />
             )}
           </div>
         </div>
+        
+        {/* SVG definitions */}
+        <svg className="absolute w-0 h-0">
+          <defs>
+            <linearGradient id="blueGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stopColor="#3b82f6" />
+              <stop offset="100%" stopColor="#6366f1" />
+            </linearGradient>
+            <linearGradient id="indigoGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stopColor="#818cf8" />
+              <stop offset="100%" stopColor="#6366f1" />
+            </linearGradient>
+            <linearGradient id="purpleGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stopColor="#a78bfa" />
+              <stop offset="100%" stopColor="#8b5cf6" />
+            </linearGradient>
+          </defs>
+        </svg>
 
         {/* Title */}
         <h2 className="text-2xl font-bold text-white text-center leading-tight">
