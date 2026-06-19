@@ -279,24 +279,33 @@ async function googleTranslateOnline(text: string): Promise<string | null> {
     url.searchParams.set('dt', 't');
     url.searchParams.set('q', text);
 
+    console.log('[Translation Service] Making Google Translate request to:', url.toString().substring(0, 100) + '...');
+
     const response = await fetch(url.toString(), {
       method: 'GET',
       headers: {
         // Mimic a real browser request — Google's endpoint rejects
         // most non-browser user agents.
         'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
         'Accept': 'application/json, text/plain, */*',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Referer': 'https://translate.google.com/',
       },
     });
 
+    console.log('[Translation Service] Google Translate response status:', response.status);
+
     if (!response.ok) {
-      console.warn('[Translation Service] Google Translate HTTP error:', response.status);
+      console.warn('[Translation Service] Google Translate HTTP error:', response.status, response.statusText);
       return null;
     }
 
+    const responseText = await response.text();
+    console.log('[Translation Service] Google Translate raw response (first 200 chars):', responseText.substring(0, 200));
+
     // Response shape: [[["translated", "original", null, null, 1]], null, "ar", null, null, ...]
-    const data = await response.json();
+    const data = JSON.parse(responseText);
     if (!Array.isArray(data) || !Array.isArray(data[0])) {
       console.warn('[Translation Service] Google Translate unexpected shape');
       return null;
@@ -307,10 +316,16 @@ async function googleTranslateOnline(text: string): Promise<string | null> {
       .join('')
       .trim();
 
+    console.log('[Translation Service] Google Translate parsed result:', translated);
+
     if (!translated) return null;
     return translated;
-  } catch (error) {
-    console.warn('[Translation Service] Google Translate request failed:', error);
+  } catch (error: any) {
+    console.error('[Translation Service] Google Translate request failed:', error?.message || error);
+    console.error('[Translation Service] Error type:', error?.constructor?.name);
+    if (error.response) {
+      console.error('[Translation Service] Response status:', error.response.status);
+    }
     return null;
   }
 }
