@@ -707,7 +707,7 @@ const SearchResults: React.FC = () => {
     navigate(`/search?q=${encodeURIComponent(normalizedQuery)}`, { replace: true });
   };
 
-  // Helper to trigger search from recent terms (doesn't navigate away)
+  // Helper to trigger search from recent terms
   const submitSearchWithTerm = (term: string) => {
     if (imageSearchInput) return;
     const normalizedQuery = normalizeArabicSearchTerm(term);
@@ -719,6 +719,8 @@ const SearchResults: React.FC = () => {
       inputRef.current.blur();
     }
     setRecentTerms(readRecentTerms());
+    // Update URL so the search term is reflected in the address bar
+    navigate(`/search?q=${encodeURIComponent(normalizedQuery)}`, { replace: true });
   };
 
 
