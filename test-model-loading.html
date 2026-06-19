@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test CLIP Model Loading</title>
+    <script src="https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2"></script>
+</head>
+<body>
+    <h1>Testing CLIP Model Loading</h1>
+    <div id="status">Loading...</div>
+    
+    <script>
+        const { AutoProcessor, AutoTokenizer, CLIPTextModelWithProjection, env } = transformers;
+        
+        // Configure environment
+        env.allowLocalModels = true;
+        env.allowRemoteModels = true;
+        env.backends.onnx.wasm.numThreads = 1;
+        
+        const MODEL_ID = 'Xenova/clip-vit-base-patch32';
+        const LOCAL_PATH = 'models/clip';
+        
+        async function testModelLoading() {
+            const status = document.getElementById('status');
+            
+            try {
+                status.innerHTML = 'Step 1: Trying to load from local bundle...';
+                console.log('Trying to load from:', LOCAL_PATH);
+                
+                // Try loading from local bundle
+                const processor = await AutoProcessor.from_pretrained(LOCAL_PATH, { quantized: true });
+                status.innerHTML = '✅ Processor loaded from local bundle!';
+                console.log('Processor loaded');
+                
+                const tokenizer = await AutoTokenizer.from_pretrained(LOCAL_PATH, { quantized: true });
+                status.innerHTML = '✅ Tokenizer loaded from local bundle!';
+                console.log('Tokenizer loaded');
+                
+                const textModel = await CLIPTextModelWithProjection.from_pretrained(LOCAL_PATH, { quantized: true });
+                status.innerHTML = '✅ Text model loaded from local bundle!';
+                console.log('Text model loaded');
+                
+                status.innerHTML = '🎉 All models loaded successfully from local bundle!';
+                
+            } catch (error) {
+                console.error('Failed to load from local bundle:', error);
+                status.innerHTML = `❌ Failed to load from local bundle: ${error.message}<br>`;
+                
+                try {
+                    status.innerHTML += 'Trying to download from HuggingFace...';
+                    console.log('Trying to download from HuggingFace...');
+                    
+                    const processor = await AutoProcessor.from_pretrained(MODEL_ID, { quantized: true });
+                    status.innerHTML += '✅ Processor downloaded!<br>';
+                    
+                    const tokenizer = await AutoTokenizer.from_pretrained(MODEL_ID, { quantized: true });
+                    status.innerHTML += '✅ Tokenizer downloaded!<br>';
+                    
+                    const textModel = await CLIPTextModelWithProjection.from_pretrained(MODEL_ID, { quantized: true });
+                    status.innerHTML += '✅ Text model downloaded!<br>';
+                    
+                    status.innerHTML += '🎉 All models downloaded successfully!';
+                    
+                } catch (fallbackError) {
+                    console.error('Failed to download from HuggingFace:', fallbackError);
+                    status.innerHTML += `❌ Failed to download from HuggingFace: ${fallbackError.message}`;
+                }
+            }
+        }
+        
+        testModelLoading();
+    </script>
+</body>
+</html>

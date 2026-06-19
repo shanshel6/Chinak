@@ -1,17 +1,14 @@
-import React, { useEffect, useState, useRef } from 'react';
-import { CheckCircle, AlertCircle } from 'lucide-react';
-import { initializeClipService, getTextModelProgress, isTextModelDownloading, isClipReady } from '../services/clipService';
+import React, { useEffect, useState } from 'react';
+import { CheckCircle, AlertCircle, Loader2 } from 'lucide-react';
+import { initializeClipService, isClipReady } from '../services/clipService';
 
 interface Props {
   onComplete: () => void;
 }
 
 const DownloadOverlay: React.FC<Props> = ({ onComplete }) => {
-  const [displayProgress, setDisplayProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [isDone, setIsDone] = useState(false);
-  const realProgressRef = useRef(0);
-  const animFrameRef = useRef<number>(0);
 
   // Initialize download on component mount
   useEffect(() => {
@@ -38,187 +35,56 @@ const DownloadOverlay: React.FC<Props> = ({ onComplete }) => {
     initDownload();
   }, [onComplete]);
 
-  // Smooth animation loop: interpolate displayProgress towards realProgress
-  useEffect(() => {
-    const poll = setInterval(() => {
-      const real = getTextModelProgress();
-      realProgressRef.current = real;
-      if (!isTextModelDownloading() && real >= 100) {
-        setIsDone(true);
-      }
-    }, 200);
-
-    const animate = () => {
-      setDisplayProgress(prev => {
-        const target = realProgressRef.current;
-        // Smooth interpolation: move faster at the start, slower near target
-        const diff = target - prev;
-        if (Math.abs(diff) < 0.3) return target;
-        // Ease-in-out: move at ~15% of remaining distance per frame (60fps)
-        return prev + diff * 0.12;
-      });
-      animFrameRef.current = requestAnimationFrame(animate);
-    };
-    animFrameRef.current = requestAnimationFrame(animate);
-
-    return () => {
-      clearInterval(poll);
-      cancelAnimationFrame(animFrameRef.current);
-    };
-  }, []);
-
-  // Circular progress SVG dimensions
-  const radius = 90;
-  const strokeWidth = 10;
-  const circumference = 2 * Math.PI * radius;
-  const progressOffset = circumference - (displayProgress / 100) * circumference;
-
-  // Generate particles around the circle
-  const particles = Array.from({ length: 12 }, (_, i) => {
-    const angle = (i / 12) * 360 + displayProgress * 3.6; // Rotate with progress
-    const rad = (angle * Math.PI) / 180;
-    const particleRadius = radius + strokeWidth + 14;
-    const x = Math.cos(rad) * particleRadius;
-    const y = Math.sin(rad) * particleRadius;
-    return { x, y, delay: i * 0.15 };
-  });
-
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 backdrop-blur-md">
-      <div className="flex flex-col items-center gap-6 animate-in fade-in zoom-in duration-500">
-        {/* Circular Progress */}
+      <div className="flex flex-col items-center gap-8 animate-in fade-in zoom-in duration-500">
+        {/* Loading Animation */}
         <div className="relative flex items-center justify-center">
-          <svg 
-            width={(radius + strokeWidth + 28) * 2} 
-            height={(radius + strokeWidth + 28) * 2}
-            className="transform -rotate-90"
-          >
-            <defs>
-              <linearGradient id="gradient" x1="0%" y1="0%" x2="100%" y2="0%">
-                <stop offset="0%" stopColor="#3b82f6" />
-                <stop offset="100%" stopColor="#6366f1" />
-              </linearGradient>
-              <filter id="glow">
-                <feGaussianBlur stdDeviation="4" result="coloredBlur"/>
-                <feMerge>
-                  <feMergeNode in="coloredBlur"/>
-                  <feMergeNode in="SourceGraphic"/>
-                </feMerge>
-              </filter>
-              {/* Ring shimmer gradient */}
-              <linearGradient id="shimmer" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" stopColor="#60a5fa" stopOpacity="0.8">
-                  <animate attributeName="stopOpacity" values="0.4;0.9;0.4" dur="2s" repeatCount="indefinite" />
-                </stop>
-                <stop offset="100%" stopColor="#818cf8" stopOpacity="0.8">
-                  <animate attributeName="stopOpacity" values="0.9;0.4;0.9" dur="2s" repeatCount="indefinite" />
-                </stop>
-              </linearGradient>
-            </defs>
-
-            {/* Background circle */}
-            <circle
-              cx={radius + strokeWidth + 28}
-              cy={radius + strokeWidth + 28}
-              r={radius}
-              fill="none"
-              stroke="rgba(255,255,255,0.08)"
-              strokeWidth={strokeWidth}
-            />
-
-            {/* Progress circle with glow */}
-            {displayProgress > 1 && (
-              <>
-                {/* Outer glow ring */}
-                <circle
-                  cx={radius + strokeWidth + 28}
-                  cy={radius + strokeWidth + 28}
-                  r={radius}
-                  fill="none"
-                  stroke="rgba(99,102,241,0.3)"
-                  strokeWidth={strokeWidth + 6}
-                  strokeLinecap="round"
-                  strokeDasharray={circumference}
-                  strokeDashoffset={progressOffset}
-                  className="transition-all duration-100 ease-linear"
-                  filter="url(#glow)"
-                  style={{ opacity: isDone ? 0 : 0.6 }}
-                />
-                {/* Main progress ring */}
-                <circle
-                  cx={radius + strokeWidth + 28}
-                  cy={radius + strokeWidth + 28}
-                  r={radius}
-                  fill="none"
-                  stroke={isDone ? "rgba(34,197,94,0.9)" : "url(#shimmer)"}
-                  strokeWidth={strokeWidth}
-                  strokeLinecap="round"
-                  strokeDasharray={circumference}
-                  strokeDashoffset={progressOffset}
-                  className="transition-all duration-150 ease-linear"
-                  filter={isDone ? undefined : "url(#glow)"}
-                />
-              </>
-            )}
-
-            {/* Orbiting particles */}
-            {!isDone && !error && displayProgress > 0 && (
-              <>
-                {particles.map((p, i) => (
-                  <circle
-                    key={i}
-                    cx={radius + strokeWidth + 28 + p.x}
-                    cy={radius + strokeWidth + 28 + p.y}
-                    r={2.5}
-                    fill={i % 3 === 0 ? "#60a5fa" : i % 3 === 1 ? "#818cf8" : "#a78bfa"}
-                    opacity={0.7}
-                  >
-                    <animate
-                      attributeName="opacity"
-                      values="0.2;0.9;0.2"
-                      dur={`${1.5 + p.delay}s`}
-                      repeatCount="indefinite"
-                    />
-                  </circle>
-                ))}
-              </>
-            )}
-          </svg>
+          {/* Outer pulsing ring */}
+          <div className="absolute w-48 h-48 rounded-full border-4 border-blue-500/20 animate-ping" />
           
-          {/* Center content */}
-          <div className="absolute inset-0 flex flex-col items-center justify-center">
+          {/* Middle spinning ring */}
+          <div className="absolute w-44 h-44 rounded-full border-4 border-transparent border-t-indigo-500 border-r-blue-500 animate-spin" />
+          
+          {/* Inner spinning ring (opposite direction) */}
+          <div className="absolute w-36 h-36 rounded-full border-4 border-transparent border-b-indigo-400 border-l-blue-400 animate-spin" style={{ animationDirection: 'reverse', animationDuration: '1.5s' }} />
+          
+          {/* Center icon */}
+          <div className="w-28 h-28 rounded-full bg-gradient-to-br from-blue-500/20 to-indigo-600/20 flex items-center justify-center backdrop-blur-sm">
             {isDone ? (
-              <div className="animate-in fade-in zoom-in duration-300 flex flex-col items-center">
-                <CheckCircle className="w-20 h-20 text-green-400" />
-                <span className="text-lg font-bold text-green-300 mt-2">اكتمل!</span>
-              </div>
+              <CheckCircle className="w-16 h-16 text-green-400 animate-in fade-in zoom-in duration-300" />
             ) : error ? (
-              <AlertCircle className="w-20 h-20 text-red-400" />
+              <AlertCircle className="w-16 h-16 text-red-400" />
             ) : (
-              <>
-                <span className="text-6xl font-extrabold text-white tabular-nums tracking-tight">
-                  {Math.round(displayProgress)}
-                </span>
-                <span className="text-sm font-medium text-white/50 mt-1">%</span>
-              </>
+              <Loader2 className="w-14 h-14 text-blue-400 animate-spin" />
             )}
           </div>
         </div>
 
-        {/* Title - bigger */}
+        {/* Title */}
         <h2 className="text-2xl font-bold text-white text-center leading-tight">
           {isDone ? 'تم التحميل بنجاح!' 
            : error ? 'فشل التحميل' 
-           : 'يتم تحميل نموذج البحث'}
+           : 'جاري تحميل نموذج البحث'}
         </h2>
 
-        <p className="text-base text-white/50 text-center max-w-xs leading-relaxed">
+        {/* Description */}
+        <p className="text-base text-white/50 text-center max-w-sm leading-relaxed">
           {isDone 
             ? 'نموذج البحث جاهز، يمكنك البدء الآن'
             : error 
               ? 'حدث خطأ أثناء تحميل نموذج البحث'
-              : 'هذه العملية تتم مرة واحدة فقط'}
+              : 'يرجى الانتظار، قد يستغرق التحميل دقيقة واحدة'}
         </p>
+
+        {/* Loading dots animation */}
+        {!isDone && !error && (
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '0s' }} />
+            <span className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce" style={{ animationDelay: '0.15s' }} />
+            <span className="w-2 h-2 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '0.3s' }} />
+          </div>
+        )}
 
         {/* Retry Button for Errors */}
         {error && (

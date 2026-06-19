@@ -1,0 +1,7 @@
+feat: Implement CLIP model download on app start
+
+- Removed bundled CLIP model files.
+- Configured CLIP service to download text embedding model from HuggingFace on first app open.
+- Implemented WelcomeDownloadPage with progress bar and status messages for model download.
+- Updated app routing to display WelcomeDownloadPage at root.
+- Skipped vision model loading as per user request.
