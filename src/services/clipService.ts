@@ -18,10 +18,10 @@ let textModel: any = null;
 let isLoading = false;
 let loadPromise: Promise<void> | null = null;
 
-// Model configuration - use TinyCLIP for smaller size and faster mobile inference
-// TinyCLIP-ViT-8M-16-Text-3M-YFCC15M is only ~50MB (vs ~150MB for full CLIP)
-// Same architecture as CLIP, just distilled to be smaller and faster
-const MODEL_ID = 'wkcn/TinyCLIP-ViT-8M-16-Text-3M-YFCC15M';
+// Model configuration - CLIP for production
+// Using Xenova/clip-vit-base-patch32 which has ONNX support for @xenova/transformers
+// Falls back to server-side if model download fails (China issue)
+const MODEL_ID = 'Xenova/clip-vit-base-patch32';
 
 /**
  * Normalize vector (L2 normalization)
@@ -34,6 +34,7 @@ const normalizeVector = (vector: number[]): number[] => {
 
 /**
  * Load CLIP models (called once)
+ * Uses local models from /models/clip/ for bundling with the app
  */
 const loadModels = async (): Promise<void> => {
   if (processor && visionModel && tokenizer && textModel) {
@@ -47,22 +48,40 @@ const loadModels = async (): Promise<void> => {
   isLoading = true;
   loadPromise = new Promise<void>(async (resolve, reject) => {
     try {
-      console.log('[CLIP Frontend] Loading models...');
+      console.log('[CLIP Frontend] Loading models from local bundle...');
       const start = Date.now();
 
-      // Load all models in parallel
+      // Use local models path - bundled with the app
+      const localPath = '/models/clip';
+
+      // Load models from local files
       [processor, visionModel, tokenizer, textModel] = await Promise.all([
-        AutoProcessor.from_pretrained(MODEL_ID),
-        CLIPVisionModelWithProjection.from_pretrained(MODEL_ID, { quantized: true }),
-        AutoTokenizer.from_pretrained(MODEL_ID),
-        CLIPTextModelWithProjection.from_pretrained(MODEL_ID, { quantized: true })
+        AutoProcessor.from_pretrained(localPath),
+        CLIPVisionModelWithProjection.from_pretrained(localPath, { quantized: true }),
+        AutoTokenizer.from_pretrained(localPath),
+        CLIPTextModelWithProjection.from_pretrained(localPath, { quantized: true })
       ]);
 
       console.log(`[CLIP Frontend] Models loaded in ${Date.now() - start}ms`);
       resolve();
     } catch (error) {
-      console.error('[CLIP Frontend] Failed to load models:', error);
-      reject(error);
+      console.error('[CLIP Frontend] Failed to load local models:', error);
+      console.log('[CLIP Frontend] Falling back to HuggingFace download...');
+      
+      // Fallback to downloading from HuggingFace
+      try {
+        [processor, visionModel, tokenizer, textModel] = await Promise.all([
+          AutoProcessor.from_pretrained(MODEL_ID),
+          CLIPVisionModelWithProjection.from_pretrained(MODEL_ID, { quantized: true }),
+          AutoTokenizer.from_pretrained(MODEL_ID),
+          CLIPTextModelWithProjection.from_pretrained(MODEL_ID, { quantized: true })
+        ]);
+        console.log(`[CLIP Frontend] Models loaded from HuggingFace in ${Date.now() - start}ms`);
+        resolve();
+      } catch (fallbackError) {
+        console.error('[CLIP Frontend] All model loading failed:', fallbackError);
+        reject(fallbackError);
+      }
     } finally {
       isLoading = false;
     }
