@@ -2,10 +2,10 @@
  * Client-side CLIP service for generating embeddings on the user's device
  * 
  * Strategy:
- * - TEXT model: BUNDLED with app (instant, ~61MB)
- * - VISION model: DOWNLOADS in background when app opens (non-blocking)
+ * - TEXT model: DOWNLOADS on first app open (shows welcome page with progress)
+ * - VISION model: SKIPPED for now (customer will handle later)
  * 
- * User can search immediately using text model while vision model downloads!
+ * User sees welcome page while text model downloads!
  */
 
 import { AutoProcessor, CLIPVisionModelWithProjection, AutoTokenizer, CLIPTextModelWithProjection, RawImage, env } from '@xenova/transformers';
@@ -37,9 +37,10 @@ async function debugLog(event: string, data: any = {}) {
 }
 
 // Configure environment
-env.allowLocalModels = true;
-env.allowRemoteModels = true;
+env.allowLocalModels = false; // Don't look for local models
+env.allowRemoteModels = true; // Always download from HuggingFace
 env.backends.onnx.wasm.numThreads = 1;
+env.useBrowserCache = true; // Cache downloaded models
 
 // Singleton instances (lazy loaded)
 let processor: any = null;
@@ -50,27 +51,20 @@ let textModel: any = null;
 // Loading states
 let isTextModelLoaded = false;
 let isVisionModelLoaded = false;
-let isVisionModelLoading = false;
-let visionModelLoadPromise: Promise<void> | null = null;
-let visionModelDownloadProgress = 0;
+let isTextModelDownloading = false;
+let textModelDownloadProgress = 0;
+let textModelDownloadPromise: Promise<void> | null = null;
 
 // Subscribe to model download progress
-env.useBrowserCache = false;
 (env as any).onModelDownloaded = (progress: any) => {
   if (progress.progress !== undefined) {
-    visionModelDownloadProgress = Math.round(progress.progress);
-    console.log(`[CLIP] Vision model download: ${visionModelDownloadProgress}%`);
+    textModelDownloadProgress = Math.round(progress.progress);
+    console.log(`[CLIP] Text model download: ${textModelDownloadProgress}%`);
   }
 };
 
 // Model configuration
 const MODEL_ID = 'Xenova/clip-vit-base-patch32';
-// Try multiple path formats for iOS compatibility
-const LOCAL_TEXT_PATHS = [
-  '/models/clip',      // Absolute path (works if served from root)
-  './models/clip',     // Relative to current directory
-  'models/clip',       // Original relative path
-];
 
 /**
  * Normalize vector (L2 normalization)
@@ -82,143 +76,69 @@ const normalizeVector = (vector: number[]): number[] => {
 };
 
 /**
- * Load TEXT model from local bundle (BUNDLED with app - instant)
+ * Load TEXT model from HuggingFace (always downloads on first app open)
  */
 async function loadTextModel(): Promise<void> {
   if (isTextModelLoaded && tokenizer && textModel) {
     return Promise.resolve();
   }
 
+  if (isTextModelDownloading && textModelDownloadPromise) {
+    // Already downloading, return existing promise
+    return textModelDownloadPromise;
+  }
+
+  isTextModelDownloading = true;
   const start = Date.now();
   
-  // Debug: Start model loading
-  await debugLog('text_model_load_start', { paths: LOCAL_TEXT_PATHS });
+  console.log('[CLIP] Starting TEXT model download from HuggingFace...');
+  await debugLog('text_model_download_start', { modelId: MODEL_ID });
 
-  // Try loading from local bundle with multiple path formats
-  let lastError: Error | null = null;
-  
-  for (const path of LOCAL_TEXT_PATHS) {
-    console.log('[CLIP] Attempting to load TEXT model from:', path);
-    await debugLog('text_model_local_attempt', { path });
-    
+  textModelDownloadPromise = new Promise<void>(async (resolve, reject) => {
     try {
+      console.log('[CLIP] Downloading TEXT model...');
+      
       [processor, tokenizer, textModel] = await Promise.all([
-        AutoProcessor.from_pretrained(path, { quantized: true }),
-        AutoTokenizer.from_pretrained(path, { quantized: true }),
-        CLIPTextModelWithProjection.from_pretrained(path, { quantized: true })
+        AutoProcessor.from_pretrained(MODEL_ID, { quantized: true }),
+        AutoTokenizer.from_pretrained(MODEL_ID, { quantized: true }),
+        CLIPTextModelWithProjection.from_pretrained(MODEL_ID, { quantized: true })
       ]);
       
       isTextModelLoaded = true;
+      isTextModelDownloading = false;
       const loadTime = Date.now() - start;
-      console.log(`[CLIP] TEXT model loaded from ${path} in ${loadTime}ms ✅`);
-      await debugLog('text_model_load_success', { 
-        path, 
+      console.log(`[CLIP] TEXT model downloaded in ${loadTime}ms ✅`);
+      await debugLog('text_model_download_success', { 
+        modelId: MODEL_ID, 
         loadTime,
-        source: 'local_bundle'
+        progress: 100
       });
-      return; // Success!
-    } catch (error) {
-      console.error(`[CLIP] Failed to load TEXT model from ${path}:`, error);
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      await debugLog('text_model_local_failure', { 
-        path, 
-        error: errorMsg
-      });
-      lastError = error instanceof Error ? error : new Error(String(error));
-      // Continue to try next path
-    }
-  }
-  
-  // All local paths failed, try downloading from HuggingFace as fallback
-  console.log('[CLIP] All local paths failed, trying to download from HuggingFace...');
-  await debugLog('text_model_fallback_attempt', { modelId: MODEL_ID });
-  
-  try {
-    console.log('[CLIP] Downloading TEXT model from HuggingFace...');
-    [processor, tokenizer, textModel] = await Promise.all([
-      AutoProcessor.from_pretrained(MODEL_ID, { quantized: true }),
-      AutoTokenizer.from_pretrained(MODEL_ID, { quantized: true }),
-      CLIPTextModelWithProjection.from_pretrained(MODEL_ID, { quantized: true })
-    ]);
-    isTextModelLoaded = true;
-    const loadTime = Date.now() - start;
-    console.log(`[CLIP] TEXT model downloaded from HuggingFace in ${loadTime}ms ✅`);
-    await debugLog('text_model_load_success', { 
-      modelId: MODEL_ID, 
-      loadTime,
-      source: 'huggingface'
-    });
-  } catch (fallbackError) {
-    console.error('[CLIP] Failed to load TEXT model:', fallbackError);
-    const errorMsg = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
-    const errorStack = fallbackError instanceof Error ? fallbackError.stack : undefined;
-    await debugLog('text_model_load_failure', { 
-      modelId: MODEL_ID, 
-      error: errorMsg,
-      stack: errorStack
-    });
-    throw lastError || (fallbackError instanceof Error ? fallbackError : new Error(String(fallbackError)));
-  }
-}
-
-/**
- * Load VISION model in BACKGROUND (downloads while user uses app)
- * This is non-blocking - user can search immediately!
- */
-async function loadVisionModelInBackground(): Promise<void> {
-  if (isVisionModelLoaded) {
-    return Promise.resolve();
-  }
-
-  if (isVisionModelLoading && visionModelLoadPromise) {
-    // Already loading, return existing promise
-    return visionModelLoadPromise;
-  }
-
-  isVisionModelLoading = true;
-  
-  visionModelLoadPromise = new Promise<void>(async (resolve) => {
-    console.log('[CLIP] Loading VISION model in background... ⏳');
-    console.log('[CLIP] You can search while vision model downloads!');
-    const start = Date.now();
-
-    try {
-      // Try local bundle first (though we don't bundle vision model currently)
-      // Try each path format
-      let localLoadSuccess = false;
-      for (const path of LOCAL_TEXT_PATHS) {
-        try {
-          visionModel = await CLIPVisionModelWithProjection.from_pretrained(path, { quantized: true });
-          isVisionModelLoaded = true;
-          console.log(`[CLIP] VISION model loaded from ${path} in ${Date.now() - start}ms ✅`);
-          resolve();
-          localLoadSuccess = true;
-          return;
-        } catch (localError) {
-          // Try next path
-        }
-      }
-      
-      if (!localLoadSuccess) {
-        console.log('[CLIP] No local vision model, downloading from HuggingFace...');
-      }
-
-      // Download from HuggingFace
-      visionModel = await CLIPVisionModelWithProjection.from_pretrained(MODEL_ID, { quantized: true });
-      isVisionModelLoaded = true;
-      console.log(`[CLIP] VISION model downloaded in ${Date.now() - start}ms ✅`);
       resolve();
     } catch (error) {
-      console.error('[CLIP] Failed to load VISION model:', error);
-      // Don't reject - text model still works!
-      console.warn('[CLIP] VISION model failed but TEXT search still works!');
-      resolve(); // Don't block, text model is ready
-    } finally {
-      isVisionModelLoading = false;
+      isTextModelDownloading = false;
+      console.error('[CLIP] Failed to download TEXT model:', error);
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      const errorStack = error instanceof Error ? error.stack : undefined;
+      await debugLog('text_model_download_failure', { 
+        modelId: MODEL_ID, 
+        error: errorMsg,
+        stack: errorStack
+      });
+      reject(error instanceof Error ? error : new Error(String(error)));
     }
   });
 
-  return visionModelLoadPromise;
+  return textModelDownloadPromise;
+}
+
+/**
+ * Load VISION model in BACKGROUND (SKIPPED for now - customer will handle later)
+ */
+async function loadVisionModelInBackground(): Promise<void> {
+  // Vision model loading is skipped for now
+  console.log('[CLIP] Vision model loading SKIPPED (customer will handle later)');
+  isVisionModelLoaded = true; // Mark as loaded since we're skipping it
+  return Promise.resolve();
 }
 
 /**
@@ -294,34 +214,17 @@ const base64ToRawImage = async (base64: string): Promise<any> => {
 
 /**
  * Generate IMAGE embedding from base64 image
- * Will wait for vision model to load if still downloading
+ * NOTE: Vision model is SKIPPED for now - customer will handle later
  */
 export async function embedImage(base64: string): Promise<number[]> {
   // Ensure text model is loaded first
   await loadTextModel();
 
-  // Wait for vision model if still downloading
-  if (!isVisionModelLoaded) {
-    console.log('[CLIP] Waiting for vision model to load...');
-    await visionModelLoadPromise;
-  }
-
-  console.log('[CLIP] Generating image embedding...');
-  const start = Date.now();
-
-  try {
-    const rawImage = await base64ToRawImage(base64);
-    const inputs = await processor(rawImage);
-    const outputs = await visionModel(inputs);
-    const embedding = Array.from(outputs.image_embeds.data) as number[];
-    const normalized = normalizeVector(embedding);
-
-    console.log(`[CLIP] Image embedding generated in ${Date.now() - start}ms`);
-    return normalized;
-  } catch (error) {
-    console.error('[CLIP] Failed to generate image embedding:', error);
-    throw error;
-  }
+  console.log('[CLIP] Vision model is SKIPPED - cannot generate image embeddings');
+  console.log('[CLIP] Customer will implement image embedding later');
+  
+  // Return a placeholder/error since vision model isn't available
+  throw new Error('Image embedding is not available yet. Vision model loading is skipped - customer will handle implementation later.');
 }
 
 /**
@@ -351,57 +254,16 @@ export async function embedText(text: string): Promise<number[]> {
 
 /**
  * Crop image from bounding box and generate embedding
+ * NOTE: Vision model is SKIPPED for now - customer will handle later
  */
 export async function embedImageCrop(base64: string, box: number[]): Promise<number[]> {
   await loadTextModel();
   
-  if (!isVisionModelLoaded) {
-    console.log('[CLIP] Waiting for vision model to load...');
-    await visionModelLoadPromise;
-  }
-
-  const [xmin, ymin, xmax, ymax] = box;
-  console.log('[CLIP] Generating crop embedding...');
-  const start = Date.now();
-
-  try {
-    const rawImage = await base64ToRawImage(base64);
-
-    const cropWidth = Math.max(1, Math.floor(xmax - xmin));
-    const cropHeight = Math.max(1, Math.floor(ymax - ymin));
-    const cropX = Math.max(0, Math.floor(xmin));
-    const cropY = Math.max(0, Math.floor(ymin));
-
-    const safeWidth = Math.min(cropWidth, rawImage.width - cropX);
-    const safeHeight = Math.min(cropHeight, rawImage.height - cropY);
-
-    if (safeWidth <= 0 || safeHeight <= 0) {
-      throw new Error('Invalid crop dimensions');
-    }
-
-    const croppedData = new Uint8ClampedArray(safeWidth * safeHeight * 3);
-    for (let y = 0; y < safeHeight; y++) {
-      for (let x = 0; x < safeWidth; x++) {
-        const srcIdx = ((cropY + y) * rawImage.width + (cropX + x)) * 3;
-        const destIdx = (y * safeWidth + x) * 3;
-        croppedData[destIdx] = rawImage.data[srcIdx];
-        croppedData[destIdx + 1] = rawImage.data[srcIdx + 1];
-        croppedData[destIdx + 2] = rawImage.data[srcIdx + 2];
-      }
-    }
-
-    const croppedImage = new RawImage(croppedData, safeWidth, safeHeight, 3);
-    const inputs = await processor(croppedImage);
-    const outputs = await visionModel(inputs);
-    const embedding = Array.from(outputs.image_embeds.data) as number[];
-    const normalized = normalizeVector(embedding);
-
-    console.log(`[CLIP] Crop embedding generated in ${Date.now() - start}ms`);
-    return normalized;
-  } catch (error) {
-    console.error('[CLIP] Failed to generate crop embedding:', error);
-    throw error;
-  }
+  console.log('[CLIP] Vision model is SKIPPED - cannot generate crop embeddings');
+  console.log('[CLIP] Customer will implement crop embedding later');
+  
+  // Return a placeholder/error since vision model isn't available
+  throw new Error('Crop embedding is not available yet. Vision model loading is skipped - customer will handle implementation later.');
 }
 
 /**
@@ -437,21 +299,21 @@ export function getClipStatus(): { textReady: boolean; visionReady: boolean; isD
   return {
     textReady: isTextModelLoaded,
     visionReady: isVisionModelLoaded,
-    isDownloading: isVisionModelLoading,
-    downloadProgress: visionModelDownloadProgress
+    isDownloading: isTextModelDownloading,
+    downloadProgress: textModelDownloadProgress
   };
 }
 
 /**
- * Get vision model download progress (0-100)
+ * Get text model download progress (0-100)
  */
-export function getVisionModelProgress(): number {
-  return visionModelDownloadProgress;
+export function getTextModelProgress(): number {
+  return textModelDownloadProgress;
 }
 
 /**
- * Check if vision model is still downloading
+ * Check if text model is still downloading
  */
-export function isVisionModelDownloading(): boolean {
-  return isVisionModelLoading && !isVisionModelLoaded;
+export function isTextModelDownloading(): boolean {
+  return isTextModelDownloading && !isTextModelLoaded;
 }

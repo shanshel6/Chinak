@@ -52,6 +52,7 @@ const DeleteAccountConfirm = lazy(() => import('./pages/DeleteAccountConfirm'));
 const ContactUs = lazy(() => import('./pages/ContactUs'));
 const PrivacyPolicy = lazy(() => import('./pages/PrivacyPolicy'));
 const TermsOfService = lazy(() => import('./pages/TermsOfService'));
+const WelcomeDownloadPage = lazy(() => import('./pages/WelcomeDownloadPage'));
 
 import { performCacheMaintenance } from './services/api';
 import { ensureTranslationModelDownloaded } from './services/translationService';
@@ -254,7 +255,8 @@ function AnimatedRoutes() {
     <AnimatePresence mode="wait">
       <Suspense fallback={<PageLoader />}>
         <Routes location={location} key={location.pathname}>
-        <Route path="/" element={<PageTransition><Home /></PageTransition>} />
+        <Route path="/" element={<PageTransition><WelcomeDownloadPage /></PageTransition>} />
+        <Route path="/home" element={<PageTransition><Home /></PageTransition>} />
         <Route path="/onboarding" element={<PageTransition><Onboarding /></PageTransition>} />
         <Route path="/cart" element={
           <ProtectedRoute>

@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom';
 import { AlertCircle, Search, ArrowRight, Camera, X, Loader2 } from 'lucide-react';
 import { searchProductsByImage, searchProductsByImageCrop, searchProducts } from '../services/api';
-import { initializeClipService, isClipReady, getVisionModelProgress, isVisionModelDownloading, isVisionModelReady } from '../services/clipService';
+import { initializeClipService, isClipReady, getTextModelProgress, isTextModelDownloading } from '../services/clipService';
 import { useAuthStore } from '../store/useAuthStore';
 import { normalizeWishlistProductId, useWishlistStore } from '../store/useWishlistStore';
 import { usePageCacheStore } from '../store/usePageCacheStore';
@@ -78,14 +78,14 @@ const SearchResults: React.FC = () => {
   const [visionModelDownloadProgress, setVisionModelDownloadProgress] = useState<number>(0);
   const [showVisionDownloadModal, setShowVisionDownloadModal] = useState<boolean>(false);
   
-  // Track vision model download progress
+  // Track text model download progress
   useEffect(() => {
     const interval = setInterval(() => {
-      const progress = getVisionModelProgress();
+      const progress = getTextModelProgress();
       setVisionModelDownloadProgress(progress);
       
-      // Close modal when vision model is ready
-      if (isVisionModelReady() && showVisionDownloadModal) {
+      // Close modal when text model is ready
+      if (isClipReady() && showVisionDownloadModal) {
         setShowVisionDownloadModal(false);
       }
     }, 500);
@@ -826,11 +826,11 @@ const SearchResults: React.FC = () => {
                   const file = e.target.files?.[0];
                   if (!file) return;
 
-                  // Check if vision model is still downloading
-                  if (isVisionModelDownloading()) {
+                  // Check if text model is still downloading
+                  if (isTextModelDownloading()) {
                     // Show download progress modal
                     setShowVisionDownloadModal(true);
-                    showToast('⏳ جاري تحميل نموذج الرؤية...', 'info', 5000);
+                    showToast('⏳ جاري تحميل النموذج النصي...', 'info', 5000);
                     return;
                   }
 
