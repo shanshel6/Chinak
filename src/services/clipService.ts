@@ -15,7 +15,7 @@ env.allowLocalModels = true;
 env.allowRemoteModels = false;
 env.backends.onnx.wasm.numThreads = 1;
 env.useBrowserCache = false; // Don't cache - use bundled files directly
-env.localModelPath = '/public/models/clip/';
+env.localModelPath = '/models/clip/';
 
 // Singleton instances (lazy loaded)
 let tokenizer: any = null;

@@ -383,7 +383,7 @@ function App() {
           setClipStatusPopup({ exists: false, checking: true });
           try {
             // Try to fetch a model config file to check if bundled files exist
-            const resp = await fetch('/public/models/clip/config.json', { method: 'HEAD' });
+            const resp = await fetch('/models/clip/config.json', { method: 'HEAD' });
             const exists = resp.ok;
             setClipStatusPopup({ exists, checking: false });
           } catch {
