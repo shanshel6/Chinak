@@ -52,11 +52,9 @@ const DeleteAccountConfirm = lazy(() => import('./pages/DeleteAccountConfirm'));
 const ContactUs = lazy(() => import('./pages/ContactUs'));
 const PrivacyPolicy = lazy(() => import('./pages/PrivacyPolicy'));
 const TermsOfService = lazy(() => import('./pages/TermsOfService'));
-import DownloadOverlay from './pages/WelcomeDownloadPage';
 
 import { performCacheMaintenance } from './services/api';
 import { ensureTranslationModelDownloaded } from './services/translationService';
-import { isClipReady } from './services/clipService';
 
 import { App as CapApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
@@ -343,7 +341,6 @@ function App() {
   const cleanupNotificationSocket = useNotificationStore((state) => state.cleanupSocket);
   const isServerDown = useMaintenanceStore((state) => state.isServerDown);
   const [isAppInitialized, setIsAppInitialized] = useState(false);
-  const [showDownloadOverlay, setShowDownloadOverlay] = useState(false);
   // Update check state
   const [showUpdate, setShowUpdate] = useState(false);
   const [updateUrl, setUpdateUrl] = useState('');
@@ -377,13 +374,8 @@ function App() {
         checkAuth();
         initChatSocket();
         
-        // Show download overlay if model isn't ready yet
-        if (!isClipReady()) {
-          console.log('[App Init] CLIP not ready, showing download overlay');
-          setShowDownloadOverlay(true);
-        } else {
-          console.log('[App Init] CLIP model already ready');
-        }
+        // CLIP model is bundled with the app - no download needed
+        console.log('[App Init] CLIP model bundled with app - no download required');
       } catch (error) {
         console.error('App initialization error:', error);
       } finally {
@@ -513,9 +505,6 @@ function App() {
     <Router>
       <BackButtonHandler />
       <ScrollToTop />
-      {showDownloadOverlay && (
-        <DownloadOverlay onComplete={() => setShowDownloadOverlay(false)} />
-      )}
       <div className="min-h-screen bg-background-light">
         <Toast />
         <ErrorBoundary>

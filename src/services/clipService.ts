@@ -2,45 +2,20 @@
  * Client-side CLIP service for generating embeddings on the user's device
  * 
  * Strategy:
- * - TEXT model: DOWNLOADS on first app open (shows welcome page with progress)
+ * - TEXT model: BUNDLED with the app (in public/models/clip/)
  * - VISION model: SKIPPED for now (customer will handle later)
  * 
- * User sees welcome page while text model downloads!
+ * No download needed - models are included in the app bundle!
  */
 
 import { AutoTokenizer, CLIPTextModelWithProjection, env } from '@xenova/transformers';
 
-// Debug instrumentation
-const DEBUG_SERVER_URL = 'http://localhost:3000';
-async function debugLog(event: string, data: any = {}) {
-  try {
-    const logEntry = {
-      sessionId: 'clip-model-loading-failure',
-      event,
-      data,
-      timestamp: new Date().toISOString(),
-      source: 'clipService'
-    };
-    
-    // Don't await - fire and forget to avoid blocking
-    fetch(`${DEBUG_SERVER_URL}/log`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(logEntry)
-    }).catch(() => {
-      // Ignore errors - debug logging shouldn't break the app
-    });
-  } catch (error) {
-    // Silently fail - debug logging shouldn't break the app
-    console.warn('[DEBUG] Failed to send log:', error);
-  }
-}
-
-// Configure environment
-env.allowLocalModels = false; // Don't look for local models
-env.allowRemoteModels = true; // Always download from HuggingFace
+// Configure environment to use LOCAL models bundled with the app
+env.allowLocalModels = true;
+env.allowRemoteModels = false;
 env.backends.onnx.wasm.numThreads = 1;
-env.useBrowserCache = true; // Cache downloaded models
+env.useBrowserCache = false; // Don't cache - use bundled files directly
+env.localModelPath = '/models/clip/';
 
 // Singleton instances (lazy loaded)
 let tokenizer: any = null;
@@ -49,27 +24,9 @@ let textModel: any = null;
 // Loading states
 let isTextModelLoaded = false;
 let isVisionModelLoaded = false;
-let textModelDownloading = false;
-let textModelDownloadProgress = 0;
-let textModelDownloadPromise: Promise<void> | null = null;
 
 // Model configuration
 const MODEL_ID = 'Xenova/clip-vit-base-patch32';
-
-/**
- * Track progress from transformers.js model downloads
- * The callback receives objects like { status: 'download', progress: 0.5 } or { status: 'initiate' }
- */
-function onDownloadProgress(progressInfo: any, basePercent: number, scale: number) {
-  if (progressInfo.status === 'download' && progressInfo.progress !== undefined) {
-    const percent = basePercent + Math.round(progressInfo.progress * scale);
-    textModelDownloadProgress = Math.min(percent, basePercent + scale);
-    console.log(`[CLIP] Text model download: ${textModelDownloadProgress}%`);
-  } else if (progressInfo.status === 'done') {
-    textModelDownloadProgress = basePercent + scale;
-    console.log(`[CLIP] Text model download: ${textModelDownloadProgress}%`);
-  }
-}
 
 /**
  * Normalize vector (L2 normalization)
@@ -81,92 +38,34 @@ const normalizeVector = (vector: number[]): number[] => {
 };
 
 /**
- * Sleep helper
- */
-const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-
-/**
- * Load TEXT model from HuggingFace (always downloads on first app open)
- * Automatically retries up to 3 times with exponential backoff
+ * Load TEXT model from local bundle (no download needed)
  */
 async function loadTextModel(): Promise<void> {
   if (isTextModelLoaded && tokenizer && textModel) {
     return Promise.resolve();
   }
 
-  if (textModelDownloading && textModelDownloadPromise) {
-    // Already downloading, return existing promise
-    return textModelDownloadPromise;
-  }
-
-  textModelDownloading = true;
   const start = Date.now();
   
-  console.log('[CLIP] Starting TEXT model download from HuggingFace...');
-  await debugLog('text_model_download_start', { modelId: MODEL_ID });
+  console.log('[CLIP] Loading TEXT model from local bundle...');
 
-  const maxRetries = 3;
-  
-  textModelDownloadPromise = new Promise<void>(async (resolve, reject) => {
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        console.log(`[CLIP] Downloading TEXT model... (attempt ${attempt}/${maxRetries})`);
-        
-        [tokenizer, textModel] = await Promise.all([
-          AutoTokenizer.from_pretrained(MODEL_ID, { 
-            quantized: true,
-            progress_callback: (p: any) => onDownloadProgress(p, 0, 50) // tokenizer = 0-50%
-          }),
-          CLIPTextModelWithProjection.from_pretrained(MODEL_ID, { 
-            quantized: true,
-            progress_callback: (p: any) => onDownloadProgress(p, 50, 50) // model = 50-100%
-          })
-        ]);
-        
-        isTextModelLoaded = true;
-        textModelDownloading = false;
-        const loadTime = Date.now() - start;
-        console.log(`[CLIP] TEXT model downloaded in ${loadTime}ms ✅`);
-        await debugLog('text_model_download_success', { 
-          modelId: MODEL_ID, 
-          loadTime,
-          progress: 100
-        });
-        resolve();
-        return; // Success - exit function
-      } catch (error) {
-        const errorMsg = error instanceof Error ? error.message : String(error);
-        console.error(`[CLIP] Failed to download TEXT model (attempt ${attempt}/${maxRetries}):`, errorMsg);
-        
-        if (attempt < maxRetries) {
-          // Exponential backoff: 1s, 2s, 4s
-          const delayMs = 1000 * Math.pow(2, attempt - 1);
-          console.log(`[CLIP] Retrying in ${delayMs}ms...`);
-          await debugLog('text_model_download_retry', { 
-            attempt, 
-            maxRetries, 
-            delayMs,
-            error: errorMsg
-          });
-          await sleep(delayMs);
-        } else {
-          // All retries exhausted - reject
-          textModelDownloading = false;
-          console.error(`[CLIP] All ${maxRetries} attempts failed for TEXT model:`, error);
-          const errorStack = error instanceof Error ? error.stack : undefined;
-          await debugLog('text_model_download_failure', { 
-            modelId: MODEL_ID, 
-            error: errorMsg,
-            stack: errorStack,
-            attempts: maxRetries
-          });
-          reject(error instanceof Error ? error : new Error(String(error)));
-        }
-      }
-    }
-  });
-
-  return textModelDownloadPromise;
+  try {
+    [tokenizer, textModel] = await Promise.all([
+      AutoTokenizer.from_pretrained(MODEL_ID, { 
+        quantized: true,
+      }),
+      CLIPTextModelWithProjection.from_pretrained(MODEL_ID, { 
+        quantized: true,
+      })
+    ]);
+    
+    isTextModelLoaded = true;
+    const loadTime = Date.now() - start;
+    console.log(`[CLIP] TEXT model loaded in ${loadTime}ms ✅`);
+  } catch (error) {
+    console.error('[CLIP] Failed to load TEXT model:', error);
+    throw error instanceof Error ? error : new Error(String(error));
+  }
 }
 
 /**
@@ -185,30 +84,17 @@ async function loadVisionModelInBackground(): Promise<void> {
  */
 export async function initializeClipService(): Promise<void> {
   console.log('[CLIP] Initializing CLIP service...');
-  await debugLog('clip_service_init_start');
   
   try {
-    // Step 1: Load TEXT model immediately (it's bundled!)
-    await debugLog('clip_service_load_text_start');
+    // Step 1: Load TEXT model from local bundle
     await loadTextModel();
-    await debugLog('clip_service_load_text_complete');
     
     // Step 2: Load VISION model in background (non-blocking)
-    // User can search immediately while vision model downloads!
-    await debugLog('clip_service_load_vision_background_start');
     loadVisionModelInBackground(); // Don't await - let it download in background
-    await debugLog('clip_service_load_vision_background_triggered');
     
-    console.log('[CLIP] Service ready for TEXT search! (Vision model downloading in background...)');
-    await debugLog('clip_service_init_success');
+    console.log('[CLIP] Service ready for TEXT search! (Vision model loading in background...)');
   } catch (error) {
     console.error('[CLIP] Initialization failed:', error);
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    const errorStack = error instanceof Error ? error.stack : undefined;
-    await debugLog('clip_service_init_failure', { 
-      error: errorMsg,
-      stack: errorStack
-    });
     throw error instanceof Error ? error : new Error(String(error));
   }
 }
@@ -300,21 +186,7 @@ export function getClipStatus(): { textReady: boolean; visionReady: boolean; isD
   return {
     textReady: isTextModelLoaded,
     visionReady: isVisionModelLoaded,
-    isDownloading: textModelDownloading,
-    downloadProgress: textModelDownloadProgress
+    isDownloading: false,
+    downloadProgress: 100
   };
-}
-
-/**
- * Get text model download progress (0-100)
- */
-export function getTextModelProgress(): number {
-  return textModelDownloadProgress;
-}
-
-/**
- * Check if text model is still downloading
- */
-export function isTextModelDownloading(): boolean {
-  return textModelDownloading && !isTextModelLoaded;
 }

@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom';
 import { AlertCircle, Search, ArrowRight, Camera, X, Loader2 } from 'lucide-react';
 import { searchProductsByImage, searchProductsByImageCrop, searchProducts } from '../services/api';
-import { initializeClipService, isClipReady, getTextModelProgress, isTextModelDownloading } from '../services/clipService';
+import { initializeClipService, isClipReady } from '../services/clipService';
 import { useAuthStore } from '../store/useAuthStore';
 import { normalizeWishlistProductId, useWishlistStore } from '../store/useWishlistStore';
 import { usePageCacheStore } from '../store/usePageCacheStore';
@@ -62,24 +62,6 @@ const SearchResults: React.FC = () => {
   const [hasMore, setHasMore] = useState(cachedData?.hasMore || false);
   const [error, setError] = useState<string | null>(null);
   const [searchVersion, setSearchVersion] = useState(0);
-  
-  const [visionModelDownloadProgress, setVisionModelDownloadProgress] = useState<number>(0);
-  const [showVisionDownloadModal, setShowVisionDownloadModal] = useState<boolean>(false);
-  
-  // Track text model download progress
-  useEffect(() => {
-    const interval = setInterval(() => {
-      const progress = getTextModelProgress();
-      setVisionModelDownloadProgress(progress);
-      
-      // Close modal when text model is ready
-      if (isClipReady() && showVisionDownloadModal) {
-        setShowVisionDownloadModal(false);
-      }
-    }, 500);
-    
-    return () => clearInterval(interval);
-  }, [showVisionDownloadModal]);
   
   const inputRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -804,14 +786,6 @@ const SearchResults: React.FC = () => {
                   const file = e.target.files?.[0];
                   if (!file) return;
 
-                  // Check if text model is still downloading
-                  if (isTextModelDownloading()) {
-                    // Show download progress modal
-                    setShowVisionDownloadModal(true);
-                    showToast('⏳ جاري تحميل النموذج النصي...', 'info', 5000);
-                    return;
-                  }
-
                   const fileToDataUrl = (selectedFile: File) => new Promise<string>((resolve, reject) => {
                     const reader = new FileReader();
                     reader.onload = () => resolve(String(reader.result || ''));
@@ -1026,52 +1000,6 @@ const SearchResults: React.FC = () => {
               </div>
             </>
           )}
-        </div>
-      )}
-
-      {/* Vision Model Download Progress Modal */}
-      {showVisionDownloadModal && (
-        <div className="fixed inset-0 z-[200] bg-black/70 flex flex-col items-center justify-center p-6">
-          <div className="bg-white dark:bg-slate-900 rounded-2xl p-6 max-w-sm w-full shadow-2xl">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="size-10 bg-blue-100 dark:bg-blue-900/50 rounded-full flex items-center justify-center">
-                <Loader2 size={24} className="text-blue-600 animate-spin" />
-              </div>
-              <div>
-                <h3 className="text-lg font-bold text-slate-900 dark:text-white">
-                  تحميل نموذج الرؤية
-                </h3>
-                <p className="text-sm text-slate-500 dark:text-slate-400">
-                  يرجى الانتظار...
-                </p>
-              </div>
-            </div>
-            
-            {/* Progress Bar */}
-            <div className="mb-3">
-              <div className="flex justify-between text-sm mb-1">
-                <span className="text-slate-600 dark:text-slate-400">التقدم</span>
-                <span className="font-bold text-slate-900 dark:text-white">{visionModelDownloadProgress}%</span>
-              </div>
-              <div className="h-3 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
-                <div 
-                  className="h-full bg-gradient-to-r from-blue-500 to-blue-600 transition-all duration-300 ease-out"
-                  style={{ width: `${visionModelDownloadProgress}%` }}
-                />
-              </div>
-            </div>
-            
-            <p className="text-xs text-slate-500 dark:text-slate-400 text-center">
-              جاري تحميل نموذج الرؤية لتتمكن من البحث بالصورة...
-            </p>
-            
-            <button
-              onClick={() => setShowVisionDownloadModal(false)}
-              className="mt-4 w-full py-2.5 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-xl font-semibold hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
-            >
-              إلغاء
-            </button>
-          </div>
         </div>
       )}
 
