@@ -972,16 +972,30 @@ export async function searchProducts(query: string, page = 1, limit = 20, maxPri
   const translationMethod = translation.method;
   console.log('[API Search] Translated to English:', englishQuery, '(method:', translationMethod + ')');
 
-  // Step 3: Try to generate CLIP text embedding (on-device)
-  // Fall back to server-side embedding if client-side fails (e.g., on iOS Safari with WebAssembly issues)
+  // Step 3: Detect if we're on a native platform (iOS/Android)
+  // On native, skip client-side CLIP embedding because:
+  //  - CLIP model download from HuggingFace is blocked in China
+  //  - Even with VPN, large model downloads often fail/timeout
+  //  - Server-side embedding works reliably
+  const isNative = typeof (window as any).Capacitor !== 'undefined' || window.location.protocol === 'capacitor:';
+  console.log('[API Search] Running on native platform:', isNative);
+
+  // Step 4: Try to generate CLIP text embedding (on-device)
+  // Fall back to server-side embedding if client-side fails
   let embedding: number[] | null = null;
   let useServerFallback = false;
 
-  try {
-    embedding = await embedText(englishQuery);
-    console.log('[API Search] Generated embedding:', embedding.slice(0, 5), '...');
-  } catch (embedError: any) {
-    console.warn('[API Search] Client-side embedding failed, falling back to server:', embedError?.message || embedError);
+  // On native platforms, skip client-side CLIP entirely to avoid model download issues
+  if (!isNative) {
+    try {
+      embedding = await embedText(englishQuery);
+      console.log('[API Search] Generated embedding:', embedding.slice(0, 5), '...');
+    } catch (embedError: any) {
+      console.warn('[API Search] Client-side embedding failed, falling back to server:', embedError?.message || embedError);
+      useServerFallback = true;
+    }
+  } else {
+    console.log('[API Search] Native platform detected, using server-side embedding directly');
     useServerFallback = true;
   }
 
