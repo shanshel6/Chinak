@@ -18,8 +18,10 @@ let textModel: any = null;
 let isLoading = false;
 let loadPromise: Promise<void> | null = null;
 
-// Model configuration - use the same model as backend for consistency
-const MODEL_ID = 'Xenova/clip-vit-base-patch32';
+// Model configuration - use TinyCLIP for smaller size and faster mobile inference
+// TinyCLIP-ViT-8M-16-Text-3M-YFCC15M is only ~50MB (vs ~150MB for full CLIP)
+// Same architecture as CLIP, just distilled to be smaller and faster
+const MODEL_ID = 'wkcn/TinyCLIP-ViT-8M-16-Text-3M-YFCC15M';
 
 /**
  * Normalize vector (L2 normalization)
