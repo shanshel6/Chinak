@@ -21,7 +21,19 @@ const SearchResults: React.FC = () => {
   const { showToast } = useToastStore();
   const isFirstRender = useRef(true);
 
-
+  // Helper function to label translation methods
+  const translationMethodLabel = (method: string | undefined): string => {
+    switch (method) {
+      case 'google':
+        return 'Google';
+      case 'mlkit':
+        return 'Offline (ML Kit)';
+      case 'fallback':
+        return 'Fallback';
+      default:
+        return 'Unknown';
+    }
+  };
 
   // Preload CLIP models on component mount
   useEffect(() => {
@@ -62,6 +74,8 @@ const SearchResults: React.FC = () => {
   const [hasMore, setHasMore] = useState(cachedData?.hasMore || false);
   const [error, setError] = useState<string | null>(null);
   const [searchVersion, setSearchVersion] = useState(0);
+  const [translatedQuery, setTranslatedQuery] = useState<string>('');
+  const [translationMethod, setTranslationMethod] = useState<string>('');
   const inputRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const activeQueryRef = useRef(activeQuery);
@@ -490,10 +504,18 @@ const SearchResults: React.FC = () => {
         const response = await searchProducts(query, initialPage, LIMIT);
         if (cancelled) return;
 
-        // Translation toast removed - no longer needed
-        // const methodLabel = translationMethodLabel(response.translationMethod);
-        // const methodText = methodLabel ? ` [${methodLabel}]` : '';
-        // showToast(`تم الترجمة إلى: ${response.translatedQuery}${methodText}`, 'info', 5000);
+        // Set translation info for display
+        setTranslatedQuery(response.translatedQuery || '');
+        setTranslationMethod(response.translationMethod || '');
+
+        // Translation info - show toast with what was translated
+        const methodLabel = translationMethodLabel(response.translationMethod);
+        const methodText = methodLabel ? ` [${methodLabel}]` : '';
+        showToast(
+          `🔍 تم البحث: "${response.normalizedQuery}" → "${response.translatedQuery}"${methodText}`,
+          'info',
+          5000
+        );
         
         const orderedResults = Array.isArray(response.products) ? response.products : [];
         setResults(orderedResults);
@@ -1085,6 +1107,24 @@ const SearchResults: React.FC = () => {
             <p className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 font-medium mt-1 mb-3">
               {hasMore ? `+${results.length} منتجات` : `${results.length} منتجات`}
             </p>
+            
+            {/* Translation Info Badge */}
+            {translatedQuery && (
+              <div className="mb-3 p-2 bg-blue-50 dark:bg-blue-900/30 rounded-lg border border-blue-200 dark:border-blue-800">
+                <p className="text-xs text-blue-700 dark:text-blue-300">
+                  <span className="font-semibold">الترجمة:</span> {translatedQuery}
+                  <span className={`ml-2 px-2 py-0.5 rounded text-[10px] font-bold ${
+                    translationMethod === 'google' 
+                      ? 'bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-300'
+                      : translationMethod === 'mlkit'
+                      ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/50 dark:text-purple-300'
+                      : 'bg-gray-100 text-gray-700 dark:bg-gray-900/50 dark:text-gray-300'
+                  }`}>
+                    {translationMethodLabel(translationMethod)}
+                  </span>
+                </p>
+              </div>
+            )}
           </div>
           <div className="px-4 pb-6">
             <div className="grid grid-cols-2 gap-4">
