@@ -55,6 +55,7 @@ const TermsOfService = lazy(() => import('./pages/TermsOfService'));
 
 import { performCacheMaintenance } from './services/api';
 import { ensureTranslationModelDownloaded } from './services/translationService';
+import { isClipReady } from './services/clipService';
 
 import { App as CapApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
@@ -341,6 +342,7 @@ function App() {
   const cleanupNotificationSocket = useNotificationStore((state) => state.cleanupSocket);
   const isServerDown = useMaintenanceStore((state) => state.isServerDown);
   const [isAppInitialized, setIsAppInitialized] = useState(false);
+  const [clipStatusPopup, setClipStatusPopup] = useState<{exists: boolean; checking: boolean} | null>(null);
   // Update check state
   const [showUpdate, setShowUpdate] = useState(false);
   const [updateUrl, setUpdateUrl] = useState('');
@@ -376,6 +378,19 @@ function App() {
         
         // CLIP model is bundled with the app - no download needed
         console.log('[App Init] CLIP model bundled with app - no download required');
+        
+        // Check CLIP files after 5 seconds and show popup
+        setTimeout(async () => {
+          setClipStatusPopup({ exists: false, checking: true });
+          try {
+            // Try to fetch a model config file to check if bundled files exist
+            const resp = await fetch('/models/clip/config.json', { method: 'HEAD' });
+            const exists = resp.ok;
+            setClipStatusPopup({ exists, checking: false });
+          } catch {
+            setClipStatusPopup({ exists: false, checking: false });
+          }
+        }, 5000);
       } catch (error) {
         console.error('App initialization error:', error);
       } finally {
@@ -505,6 +520,42 @@ function App() {
     <Router>
       <BackButtonHandler />
       <ScrollToTop />
+      
+      {/* CLIP Files Status Popup */}
+      {clipStatusPopup && !clipStatusPopup.checking && (
+        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 max-w-sm w-full mx-4 shadow-2xl text-center" dir="rtl">
+            {clipStatusPopup.exists ? (
+              <>
+                <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
+                  <svg className="w-8 h-8 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                </div>
+                <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-2">ملفات النموذج موجودة</h3>
+                <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">تم العثور على ملفات CLIP النصية في حزمة التطبيق</p>
+              </>
+            ) : (
+              <>
+                <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
+                  <svg className="w-8 h-8 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </div>
+                <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-2">ملفات النموذج غير موجودة</h3>
+                <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">لم يتم العثور على ملفات CLIP في حزمة التطبيق. قد لا يعمل البحث بشكل صحيح.</p>
+              </>
+            )}
+            <button
+              onClick={() => setClipStatusPopup(null)}
+              className="w-full py-2.5 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl font-semibold hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
+            >
+              حسناً
+            </button>
+          </div>
+        </div>
+      )}
+      
       <div className="min-h-screen bg-background-light">
         <Toast />
         <ErrorBoundary>
