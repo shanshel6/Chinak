@@ -10,6 +10,32 @@
 
 import { AutoProcessor, CLIPVisionModelWithProjection, AutoTokenizer, CLIPTextModelWithProjection, RawImage, env } from '@xenova/transformers';
 
+// Debug instrumentation
+const DEBUG_SERVER_URL = 'http://localhost:3000';
+async function debugLog(event: string, data: any = {}) {
+  try {
+    const logEntry = {
+      sessionId: 'clip-model-loading-failure',
+      event,
+      data,
+      timestamp: new Date().toISOString(),
+      source: 'clipService'
+    };
+    
+    // Don't await - fire and forget to avoid blocking
+    fetch(`${DEBUG_SERVER_URL}/log`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(logEntry)
+    }).catch(() => {
+      // Ignore errors - debug logging shouldn't break the app
+    });
+  } catch (error) {
+    // Silently fail - debug logging shouldn't break the app
+    console.warn('[DEBUG] Failed to send log:', error);
+  }
+}
+
 // Configure environment
 env.allowLocalModels = true;
 env.allowRemoteModels = true;
@@ -39,8 +65,12 @@ env.useBrowserCache = false;
 
 // Model configuration
 const MODEL_ID = 'Xenova/clip-vit-base-patch32';
-// Use relative path - works better with Capacitor iOS bundle
-const LOCAL_TEXT_PATH = 'models/clip';
+// Try multiple path formats for iOS compatibility
+const LOCAL_TEXT_PATHS = [
+  '/models/clip',      // Absolute path (works if served from root)
+  './models/clip',     // Relative to current directory
+  'models/clip',       // Original relative path
+];
 
 /**
  * Normalize vector (L2 normalization)
@@ -59,38 +89,72 @@ async function loadTextModel(): Promise<void> {
     return Promise.resolve();
   }
 
-  console.log('[CLIP] Loading TEXT model from local bundle at:', LOCAL_TEXT_PATH);
   const start = Date.now();
+  
+  // Debug: Start model loading
+  await debugLog('text_model_load_start', { paths: LOCAL_TEXT_PATHS });
 
-  // Try loading from local bundle first
-  try {
-    console.log('[CLIP] Attempting to load from local bundle...');
-    [processor, tokenizer, textModel] = await Promise.all([
-      AutoProcessor.from_pretrained(LOCAL_TEXT_PATH, { quantized: true }),
-      AutoTokenizer.from_pretrained(LOCAL_TEXT_PATH, { quantized: true }),
-      CLIPTextModelWithProjection.from_pretrained(LOCAL_TEXT_PATH, { quantized: true })
-    ]);
+  // Try loading from local bundle with multiple path formats
+  let lastError: Error | null = null;
+  
+  for (const path of LOCAL_TEXT_PATHS) {
+    console.log('[CLIP] Attempting to load TEXT model from:', path);
+    await debugLog('text_model_local_attempt', { path });
     
-    isTextModelLoaded = true;
-    console.log(`[CLIP] TEXT model loaded from bundle in ${Date.now() - start}ms ✅`);
-  } catch (error) {
-    console.error('[CLIP] Failed to load TEXT model from bundle:', error);
-    console.log('[CLIP] Bundle load failed, trying to download from HuggingFace...');
-    
-    // Try downloading from HuggingFace as fallback
     try {
-      console.log('[CLIP] Downloading TEXT model from HuggingFace...');
       [processor, tokenizer, textModel] = await Promise.all([
-        AutoProcessor.from_pretrained(MODEL_ID, { quantized: true }),
-        AutoTokenizer.from_pretrained(MODEL_ID, { quantized: true }),
-        CLIPTextModelWithProjection.from_pretrained(MODEL_ID, { quantized: true })
+        AutoProcessor.from_pretrained(path, { quantized: true }),
+        AutoTokenizer.from_pretrained(path, { quantized: true }),
+        CLIPTextModelWithProjection.from_pretrained(path, { quantized: true })
       ]);
+      
       isTextModelLoaded = true;
-      console.log(`[CLIP] TEXT model downloaded from HuggingFace in ${Date.now() - start}ms ✅`);
-    } catch (fallbackError) {
-      console.error('[CLIP] Failed to load TEXT model:', fallbackError);
-      throw fallbackError;
+      const loadTime = Date.now() - start;
+      console.log(`[CLIP] TEXT model loaded from ${path} in ${loadTime}ms ✅`);
+      await debugLog('text_model_load_success', { 
+        path, 
+        loadTime,
+        source: 'local_bundle'
+      });
+      return; // Success!
+    } catch (error) {
+      console.error(`[CLIP] Failed to load TEXT model from ${path}:`, error);
+      await debugLog('text_model_local_failure', { 
+        path, 
+        error: error.message
+      });
+      lastError = error;
+      // Continue to try next path
     }
+  }
+  
+  // All local paths failed, try downloading from HuggingFace as fallback
+  console.log('[CLIP] All local paths failed, trying to download from HuggingFace...');
+  await debugLog('text_model_fallback_attempt', { modelId: MODEL_ID });
+  
+  try {
+    console.log('[CLIP] Downloading TEXT model from HuggingFace...');
+    [processor, tokenizer, textModel] = await Promise.all([
+      AutoProcessor.from_pretrained(MODEL_ID, { quantized: true }),
+      AutoTokenizer.from_pretrained(MODEL_ID, { quantized: true }),
+      CLIPTextModelWithProjection.from_pretrained(MODEL_ID, { quantized: true })
+    ]);
+    isTextModelLoaded = true;
+    const loadTime = Date.now() - start;
+    console.log(`[CLIP] TEXT model downloaded from HuggingFace in ${loadTime}ms ✅`);
+    await debugLog('text_model_load_success', { 
+      modelId: MODEL_ID, 
+      loadTime,
+      source: 'huggingface'
+    });
+  } catch (fallbackError) {
+    console.error('[CLIP] Failed to load TEXT model:', fallbackError);
+    await debugLog('text_model_load_failure', { 
+      modelId: MODEL_ID, 
+      error: fallbackError.message,
+      stack: fallbackError.stack
+    });
+    throw lastError || fallbackError;
   }
 }
 
@@ -117,13 +181,22 @@ async function loadVisionModelInBackground(): Promise<void> {
 
     try {
       // Try local bundle first (though we don't bundle vision model currently)
-      try {
-        visionModel = await CLIPVisionModelWithProjection.from_pretrained(LOCAL_TEXT_PATH, { quantized: true });
-        isVisionModelLoaded = true;
-        console.log(`[CLIP] VISION model loaded from bundle in ${Date.now() - start}ms ✅`);
-        resolve();
-        return;
-      } catch (localError) {
+      // Try each path format
+      let localLoadSuccess = false;
+      for (const path of LOCAL_TEXT_PATHS) {
+        try {
+          visionModel = await CLIPVisionModelWithProjection.from_pretrained(path, { quantized: true });
+          isVisionModelLoaded = true;
+          console.log(`[CLIP] VISION model loaded from ${path} in ${Date.now() - start}ms ✅`);
+          resolve();
+          localLoadSuccess = true;
+          return;
+        } catch (localError) {
+          // Try next path
+        }
+      }
+      
+      if (!localLoadSuccess) {
         console.log('[CLIP] No local vision model, downloading from HuggingFace...');
       }
 
@@ -151,18 +224,28 @@ async function loadVisionModelInBackground(): Promise<void> {
  */
 export async function initializeClipService(): Promise<void> {
   console.log('[CLIP] Initializing CLIP service...');
+  await debugLog('clip_service_init_start');
   
   try {
     // Step 1: Load TEXT model immediately (it's bundled!)
+    await debugLog('clip_service_load_text_start');
     await loadTextModel();
+    await debugLog('clip_service_load_text_complete');
     
     // Step 2: Load VISION model in background (non-blocking)
     // User can search immediately while vision model downloads!
+    await debugLog('clip_service_load_vision_background_start');
     loadVisionModelInBackground(); // Don't await - let it download in background
+    await debugLog('clip_service_load_vision_background_triggered');
     
     console.log('[CLIP] Service ready for TEXT search! (Vision model downloading in background...)');
+    await debugLog('clip_service_init_success');
   } catch (error) {
     console.error('[CLIP] Initialization failed:', error);
+    await debugLog('clip_service_init_failure', { 
+      error: error.message,
+      stack: error.stack
+    });
     throw error;
   }
 }
