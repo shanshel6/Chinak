@@ -99,6 +99,7 @@ rapid-scraper/
 !public/models/**/*.json
 !public/models/**/*.txt
 !public/models/**/*.onnx
+!public/models/**/*.wasm
 
 # Android
 android/.gradle/

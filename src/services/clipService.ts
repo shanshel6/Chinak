@@ -29,6 +29,15 @@ const getBaseModelPath = () => {
 
 env.localModelPath = getBaseModelPath();
 
+// Configure WASM paths to use bundled files for full offline support
+// These files are downloaded to public/models/clip/ by our script
+const wasmPath = `${env.localModelPath}clip/`;
+env.backends.onnx.wasm.wasmPaths = {
+  'ort-wasm-simd.wasm': `${wasmPath}ort-wasm-simd.wasm`,
+  'ort-wasm.wasm': `${wasmPath}ort-wasm.wasm`,
+  'ort-wasm-threaded.wasm': `${wasmPath}ort-wasm-threaded.wasm`,
+};
+
 // Crucial for Capacitor: set WASM paths if they are in the bundle
 // By default, transformers.js fetches them from CDN. 
 // For a fully offline app, they should be bundled.

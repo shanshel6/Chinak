@@ -24,6 +24,15 @@ const FILES = [
   'onnx/text_model_quantized.onnx',
 ];
 
+// ONNX WASM files for offline support
+const WASM_FILES = [
+  'ort-wasm-simd.wasm',
+  'ort-wasm.wasm',
+  'ort-wasm-threaded.wasm',
+];
+
+const WASM_URL_BASE = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.1/dist/';
+
 function downloadFile(url, destPath, retries = 3) {
   return new Promise((resolve, reject) => {
     const dir = path.dirname(destPath);
@@ -130,6 +139,31 @@ async function main() {
 
     process.stdout.write(`📥 ${file}...`);
     
+    try {
+      const start = Date.now();
+      await downloadFile(url, destPath);
+      const stats = fs.statSync(destPath);
+      console.log(` ✅ ${(stats.size / 1024 / 1024).toFixed(2)} MB (${Date.now() - start}ms)`);
+      success++;
+    } catch (error) {
+      console.log(` ❌ ${error.message}`);
+      failed++;
+    }
+  }
+
+  console.log('\n📦 Downloading ONNX WASM files for offline support...\n');
+  for (const file of WASM_FILES) {
+    const url = `${WASM_URL_BASE}${file}`;
+    const destPath = path.join(OUTPUT_DIR, file);
+    
+    if (fs.existsSync(destPath) && fs.statSync(destPath).size > 1000) {
+      const mb = (fs.statSync(destPath).size / 1024 / 1024).toFixed(2);
+      console.log(`⏭️  ${file} (already exists, ${mb} MB)`);
+      success++;
+      continue;
+    }
+
+    process.stdout.write(`📥 ${file}...`);
     try {
       const start = Date.now();
       await downloadFile(url, destPath);
