@@ -54,7 +54,6 @@ const PrivacyPolicy = lazy(() => import('./pages/PrivacyPolicy'));
 const TermsOfService = lazy(() => import('./pages/TermsOfService'));
 
 import { performCacheMaintenance } from './services/api';
-import { ensureTranslationModelDownloaded } from './services/translationService';
 import { isClipReady, warmupClipService, getClipStatus } from './services/clipService';
 
 import { App as CapApp } from '@capacitor/app';
@@ -346,7 +345,7 @@ function App() {
   // Update check state
   const [showUpdate, setShowUpdate] = useState(false);
   const [updateUrl, setUpdateUrl] = useState('');
-  const CURRENT_VERSION = '1.0.96'; // keep in sync with package.json
+  const CURRENT_VERSION = '1.0.97'; // keep in sync with package.json
 
   useEffect(() => {
     const initializeApp = async () => {
@@ -357,16 +356,6 @@ function App() {
             await LocalNotifications.requestPermissions();
           } catch (e) {
             console.error('Notification permission error:', e);
-          }
-          
-          // Download ML Kit translation model (with timeout)
-          try {
-            await Promise.race([
-              ensureTranslationModelDownloaded(),
-              new Promise((_, reject) => setTimeout(() => reject(new Error('ML Kit download timeout')), 15000))
-            ]);
-          } catch (e: unknown) {
-            console.warn('[App Init] ML Kit model download timeout or error:', (e as Error)?.message);
           }
         }
         

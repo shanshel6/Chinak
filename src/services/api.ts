@@ -2,7 +2,6 @@ import { useMaintenanceStore } from '../store/useMaintenanceStore';
 import { localProductService } from './localProductService';
 import { embedImage, embedImageCrop, embedText } from './clipService';
 import { normalizeArabicSearchTerm } from '../data/arabicSearchNormalization';
-import { translateArabicToEnglish } from './translationService';
 
 export const getBaseDomain = () => {
   const hostname = window.location.hostname;
@@ -966,11 +965,10 @@ export async function searchProducts(query: string, page = 1, limit = 20, maxPri
   const normalizedArabicQuery = normalizeArabicSearchTerm(query);
   console.log('[API Search] Normalized Arabic:', normalizedArabicQuery);
 
-  // Step 2: Translate to English (Google online → ML Kit offline)
-  const translation = await translateArabicToEnglish(normalizedArabicQuery);
-  const englishQuery = translation.text;
-  const translationMethod = translation.method;
-  console.log('[API Search] Translated to English:', englishQuery, '(method:', translationMethod + ')');
+  // Step 2: Skip translation (ML Kit removed)
+  const englishQuery = normalizedArabicQuery; // Use normalized Arabic directly
+  const translationMethod = 'none';
+  console.log('[API Search] Search query (raw):', englishQuery);
 
   // Step 3: Try to generate TinyCLIP text embedding (on-device)
   // TinyCLIP is a small (~50MB) model that works well on mobile devices
