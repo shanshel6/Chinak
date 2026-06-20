@@ -22,7 +22,9 @@ env.useBrowserCache = false; // Don't cache - use bundled files directly
 // We use window.location.origin to ensure it's an absolute URL
 const getBaseModelPath = () => {
   if (Capacitor.isNativePlatform()) {
-    return `${window.location.origin}/models/`;
+    // For Capacitor, the files are at the root of the web app
+    // Using a relative path starting with / is usually most reliable
+    return '/models/';
   }
   return 'models/';
 };

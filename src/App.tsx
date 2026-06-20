@@ -345,7 +345,7 @@ function App() {
   // Update check state
   const [showUpdate, setShowUpdate] = useState(false);
   const [updateUrl, setUpdateUrl] = useState('');
-  const CURRENT_VERSION = '1.0.98'; // keep in sync with package.json
+  const CURRENT_VERSION = '1.0.99'; // keep in sync with package.json
 
   useEffect(() => {
     const initializeApp = async () => {
