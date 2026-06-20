@@ -13,30 +13,37 @@ import { Capacitor } from '@capacitor/core';
 
 // Configure environment to use LOCAL models bundled with the app
 env.allowLocalModels = true;
-env.allowRemoteModels = true; // Allow remote as fallback
+env.allowRemoteModels = false; // Stick to local for offline consistency
 env.useBrowserCache = false;
 
 // Basic WASM configuration for mobile stability
 env.backends.onnx.wasm.numThreads = 1;
 env.backends.onnx.wasm.proxy = false;
 
-// Use relative path for models
+// Force SIMD off if it's causing issues, but keep it on by default for performance
+// env.backends.onnx.wasm.simd = false; 
+
+// Use root-relative paths for models - most reliable for Capacitor
 const getBaseModelPath = () => {
-  return 'models/';
+  return '/models/';
 };
 
 env.localModelPath = getBaseModelPath();
 
-// For WASM paths, we'll try to use the most direct relative path possible
-// This works best with Capacitor's local server
-env.backends.onnx.wasm.wasmPaths = 'models/clip/';
+/**
+ * Explicitly set WASM paths using absolute URLs to avoid resolution ambiguity
+ */
+const wasmDir = `${window.location.origin}/models/clip/`;
+env.backends.onnx.wasm.wasmPaths = {
+  'ort-wasm-simd.wasm': `${wasmDir}ort-wasm-simd.wasm`,
+  'ort-wasm.wasm': `${wasmDir}ort-wasm.wasm`,
+  'ort-wasm-threaded.wasm': `${wasmDir}ort-wasm-threaded.wasm`,
+};
 
-console.log('[CLIP] Environment Config:', {
+console.log('[CLIP] Final Config:', {
+  origin: window.location.origin,
   localModelPath: env.localModelPath,
-  allowLocalModels: env.allowLocalModels,
-  allowRemoteModels: env.allowRemoteModels,
   wasmPaths: env.backends.onnx.wasm.wasmPaths,
-  platform: Capacitor.getPlatform(),
 });
 
 // Singleton instances (lazy loaded)
@@ -69,15 +76,34 @@ async function loadTextModel(): Promise<void> {
   }
 
   const start = Date.now();
+  lastError = null;
   
   console.log(`[CLIP] Loading TEXT model from: ${env.localModelPath}${MODEL_ID}`);
   
-  // Try loading normally first
   try {
+    // 1. Diagnostic: Check if files are reachable
+    if (Capacitor.isNativePlatform()) {
+      const filesToTest = ['config.json', 'onnx/text_model_quantized.onnx', 'ort-wasm.wasm'];
+      for (const f of filesToTest) {
+        const url = `${window.location.origin}/models/clip/${f}`;
+        try {
+          const res = await fetch(url, { method: 'HEAD' });
+          console.log(`[CLIP] File Check: ${f} -> ${res.status}`);
+          if (res.status !== 200) {
+            console.warn(`[CLIP] Warning: ${f} returned status ${res.status}`);
+          }
+        } catch (e) {
+          console.error(`[CLIP] Error checking ${f}:`, e);
+        }
+      }
+    }
+
+    // 2. Load Tokenizer
+    console.log('[CLIP] Loading tokenizer...');
     tokenizer = await AutoTokenizer.from_pretrained(MODEL_ID);
     
-    // We try to load the model. If it fails with a WASM error, 
-    // it's likely a path resolution issue.
+    // 3. Load Model
+    console.log('[CLIP] Loading ONNX model...');
     textModel = await CLIPTextModelWithProjection.from_pretrained(MODEL_ID, { 
       quantized: true,
     });
@@ -86,31 +112,28 @@ async function loadTextModel(): Promise<void> {
     lastError = null;
     console.log(`[CLIP] TEXT model loaded successfully in ${Date.now() - start}ms ✅`);
   } catch (error) {
-    console.error('[CLIP] Normal load failed, trying fallback path...', error);
+    console.error('[CLIP] Load failed:', error);
     
-    // FALLBACK: Try with absolute origin path if relative failed
-    try {
-      const absoluteWasmPath = `${window.location.origin}/models/clip/`;
-      console.log(`[CLIP] Fallback: Trying absolute WASM path: ${absoluteWasmPath}`);
-      env.backends.onnx.wasm.wasmPaths = absoluteWasmPath;
-      
-      textModel = await CLIPTextModelWithProjection.from_pretrained(MODEL_ID, { 
-        quantized: true,
-      });
-      
-      isTextModelLoaded = true;
-      lastError = null;
-      console.log(`[CLIP] TEXT model loaded via fallback in ${Date.now() - start}ms ✅`);
-    } catch (fallbackError) {
-      console.error('[CLIP] All load attempts failed.', fallbackError);
-      lastError = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
-      
-      if (lastError.includes('buffer')) {
-        lastError = `WASM Initialization Error: ${lastError}. This usually means the browser cannot load the .wasm files correctly from the app bundle.`;
+    let detailedError = '';
+    if (error instanceof Error) {
+      detailedError = `${error.name}: ${error.message}`;
+      if (error.stack) {
+        // Log stack for remote debugging if needed
+        console.debug('[CLIP] Stack:', error.stack);
       }
-      
-      throw fallbackError;
+    } else {
+      detailedError = String(error);
     }
+
+    // Specialized error messages for common WASM issues
+    if (detailedError.includes('backend') || detailedError.includes('wasm')) {
+      detailedError = `Backend/WASM Error: ${detailedError}. This usually means the app cannot find or load the .wasm files in /public/models/clip/. Origin: ${window.location.origin}`;
+    } else if (detailedError.includes('fetch')) {
+      detailedError = `Network/File Error: ${detailedError}. Could not fetch model files from the bundle.`;
+    }
+    
+    lastError = detailedError;
+    throw error;
   }
 }
 
