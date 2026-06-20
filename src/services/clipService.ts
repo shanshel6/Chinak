@@ -14,42 +14,31 @@ import { Capacitor } from '@capacitor/core';
 // Configure environment to use LOCAL models bundled with the app
 env.allowLocalModels = true;
 env.allowRemoteModels = false;
-env.backends.onnx.wasm.numThreads = 1;
 env.useBrowserCache = false; // Don't cache - use bundled files directly
 
-// Use absolute path for Capacitor to avoid resolution issues on iOS
-// In Capacitor, the public folder IS the web root, so path is just 'models/'
-// We use window.location.origin to ensure it's an absolute URL
+// Force single-threaded execution to avoid Cross-Origin Isolation issues in WebViews
+env.backends.onnx.wasm.numThreads = 1;
+env.backends.onnx.wasm.proxy = false; // Run in main thread to simplify debugging
+
+// Use relative path for better compatibility
+// In Capacitor, 'models/' is relative to index.html and works on both iOS and Android
 const getBaseModelPath = () => {
-  if (Capacitor.isNativePlatform()) {
-    // For Capacitor, the files are at the root of the web app
-    // Using a relative path starting with / is usually most reliable
-    return '/models/';
-  }
   return 'models/';
 };
 
 env.localModelPath = getBaseModelPath();
 
 // Configure WASM paths to use bundled files for full offline support
-// These files are downloaded to public/models/clip/ by our script
-const wasmPath = `${env.localModelPath}clip/`;
-env.backends.onnx.wasm.wasmPaths = {
-  'ort-wasm-simd.wasm': `${wasmPath}ort-wasm-simd.wasm`,
-  'ort-wasm.wasm': `${wasmPath}ort-wasm.wasm`,
-  'ort-wasm-threaded.wasm': `${wasmPath}ort-wasm-threaded.wasm`,
-};
-
-// Crucial for Capacitor: set WASM paths if they are in the bundle
-// By default, transformers.js fetches them from CDN. 
-// For a fully offline app, they should be bundled.
-// For now, let's at least fix the model path and add logging.
+// On Capacitor, we must use the correct relative path
+const wasmPath = 'models/clip/';
+env.backends.onnx.wasm.wasmPaths = wasmPath; // Can be a string (directory) or an object
 
 console.log('[CLIP] Environment Config:', {
   localModelPath: env.localModelPath,
   allowLocalModels: env.allowLocalModels,
   allowRemoteModels: env.allowRemoteModels,
   origin: window.location.origin,
+  wasmPaths: env.backends.onnx.wasm.wasmPaths,
   platform: Capacitor.getPlatform(),
   isNative: Capacitor.isNativePlatform()
 });
@@ -86,6 +75,18 @@ async function loadTextModel(): Promise<void> {
   const start = Date.now();
   
   console.log(`[CLIP] Loading TEXT model from: ${env.localModelPath}${MODEL_ID}`);
+  
+  // Diagnostic: Try to fetch a small file to verify path resolution
+  if (Capacitor.isNativePlatform()) {
+    try {
+      const testUrl = `${window.location.origin}/${env.localModelPath}${MODEL_ID}/config.json`;
+      console.log(`[CLIP] Diagnostic: Testing fetch for ${testUrl}`);
+      const response = await fetch(testUrl);
+      console.log(`[CLIP] Diagnostic: Fetch status ${response.status} (${response.statusText})`);
+    } catch (e) {
+      console.warn('[CLIP] Diagnostic: Fetch failed', e);
+    }
+  }
 
   try {
     // We explicitly specify the model file names if needed, 
