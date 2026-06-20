@@ -17,10 +17,17 @@ env.allowRemoteModels = false;
 env.backends.onnx.wasm.numThreads = 1;
 env.useBrowserCache = false; // Don't cache - use bundled files directly
 
-// Use relative path for better compatibility with iOS/Android
-// The models are in public/models/clip/ which gets copied to the app bundle
+// Use absolute path for Capacitor to avoid resolution issues on iOS
 // In Capacitor, the public folder IS the web root, so path is just 'models/'
-env.localModelPath = 'models/';
+// We use window.location.origin to ensure it's an absolute URL
+const getBaseModelPath = () => {
+  if (Capacitor.isNativePlatform()) {
+    return `${window.location.origin}/models/`;
+  }
+  return 'models/';
+};
+
+env.localModelPath = getBaseModelPath();
 
 // Crucial for Capacitor: set WASM paths if they are in the bundle
 // By default, transformers.js fetches them from CDN. 
@@ -31,6 +38,7 @@ console.log('[CLIP] Environment Config:', {
   localModelPath: env.localModelPath,
   allowLocalModels: env.allowLocalModels,
   allowRemoteModels: env.allowRemoteModels,
+  origin: window.location.origin,
   platform: Capacitor.getPlatform(),
   isNative: Capacitor.isNativePlatform()
 });
@@ -42,6 +50,7 @@ let textModel: any = null;
 // Loading states
 let isTextModelLoaded = false;
 let isVisionModelLoaded = false;
+let lastError: string | null = null;
 
 // Model configuration - must match the folder name in public/models/
 const MODEL_ID = 'clip';
@@ -74,19 +83,21 @@ async function loadTextModel(): Promise<void> {
       AutoTokenizer.from_pretrained(MODEL_ID),
       CLIPTextModelWithProjection.from_pretrained(MODEL_ID, { 
         quantized: true,
-        // In v2, we can't easily specify the exact onnx file name here, 
-        // it expects {MODEL_ID}/onnx/text_model_quantized.onnx
       })
     ]);
     
     isTextModelLoaded = true;
+    lastError = null;
     const loadTime = Date.now() - start;
     console.log(`[CLIP] TEXT model loaded successfully in ${loadTime}ms ✅`);
   } catch (error) {
     console.error('[CLIP] Failed to load TEXT model. Error details:', error);
     if (error instanceof Error) {
+      lastError = error.message;
       console.error('[CLIP] Error message:', error.message);
       console.error('[CLIP] Error stack:', error.stack);
+    } else {
+      lastError = String(error);
     }
     throw error;
   }
@@ -206,11 +217,12 @@ export function isVisionModelReady(): boolean {
 /**
  * Get loading status for UI display
  */
-export function getClipStatus(): { textReady: boolean; visionReady: boolean; isDownloading: boolean; downloadProgress: number } {
+export function getClipStatus(): { textReady: boolean; visionReady: boolean; isDownloading: boolean; downloadProgress: number; error: string | null } {
   return {
     textReady: isTextModelLoaded,
     visionReady: isVisionModelLoaded,
     isDownloading: false,
-    downloadProgress: 100
+    downloadProgress: 100,
+    error: lastError
   };
 }

@@ -101,6 +101,18 @@ async function main() {
   console.log('📦 Downloading CLIP models for app bundling...\n');
   console.log(`Output: ${OUTPUT_DIR}\n`);
 
+  // Clean up old model files to reduce app size
+  const onnxDir = path.join(OUTPUT_DIR, 'onnx');
+  if (fs.existsSync(onnxDir)) {
+    const files = fs.readdirSync(onnxDir);
+    for (const file of files) {
+      if (!FILES.includes(`onnx/${file}`)) {
+        console.log(`🧹 Removing old model file: onnx/${file}`);
+        try { fs.unlinkSync(path.join(onnxDir, file)); } catch (e) {}
+      }
+    }
+  }
+
   let success = 0;
   let failed = 0;
 
@@ -147,6 +159,12 @@ async function main() {
   walk(OUTPUT_DIR);
   console.log(`Total size: ${(total / 1024 / 1024).toFixed(2)} MB`);
   console.log('='.repeat(50));
+  
+  // Force exit to prevent hanging on timeouts/timers
+  process.exit(failed > 0 ? 1 : 0);
 }
 
-main().catch(console.error);
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

@@ -55,7 +55,7 @@ const TermsOfService = lazy(() => import('./pages/TermsOfService'));
 
 import { performCacheMaintenance } from './services/api';
 import { ensureTranslationModelDownloaded } from './services/translationService';
-import { isClipReady, warmupClipService } from './services/clipService';
+import { isClipReady, warmupClipService, getClipStatus } from './services/clipService';
 
 import { App as CapApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
@@ -342,7 +342,7 @@ function App() {
   const cleanupNotificationSocket = useNotificationStore((state) => state.cleanupSocket);
   const isServerDown = useMaintenanceStore((state) => state.isServerDown);
   const [isAppInitialized, setIsAppInitialized] = useState(false);
-  const [clipStatusPopup, setClipStatusPopup] = useState<{exists: boolean; checking: boolean} | null>(null);
+  const [clipStatusPopup, setClipStatusPopup] = useState<{exists: boolean; checking: boolean; error: string | null} | null>(null);
   // Update check state
   const [showUpdate, setShowUpdate] = useState(false);
   const [updateUrl, setUpdateUrl] = useState('');
@@ -382,14 +382,15 @@ function App() {
         
         // Check CLIP model status after 5 seconds and show popup
         setTimeout(async () => {
-          setClipStatusPopup({ exists: false, checking: true });
+          setClipStatusPopup({ exists: false, checking: true, error: null });
           try {
             // Wait a bit more for model to finish loading, then check status
             await new Promise(r => setTimeout(r, 2000));
             const ready = isClipReady();
-            setClipStatusPopup({ exists: ready, checking: false });
+            const status = getClipStatus();
+            setClipStatusPopup({ exists: ready, checking: false, error: status.error });
           } catch {
-            setClipStatusPopup({ exists: false, checking: false });
+            setClipStatusPopup({ exists: false, checking: false, error: 'Unknown check error' });
           }
         }, 5000);
       } catch (error) {
@@ -544,7 +545,12 @@ function App() {
                   </svg>
                 </div>
                 <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-2">ملفات النموذج غير موجودة</h3>
-                <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">لم يتم العثور على ملفات CLIP في حزمة التطبيق. قد لا يعمل البحث بشكل صحيح.</p>
+                <p className="text-sm text-slate-500 dark:text-slate-400 mb-2">لم يتم العثور على ملفات CLIP في حزمة التطبيق. قد لا يعمل البحث بشكل صحيح.</p>
+                {clipStatusPopup.error && (
+                  <div className="mt-2 p-2 bg-red-50 dark:bg-red-900/20 rounded-lg text-xs text-red-600 dark:text-red-400 font-mono break-all overflow-auto max-h-32">
+                    Error: {clipStatusPopup.error}
+                  </div>
+                )}
               </>
             )}
             <button
