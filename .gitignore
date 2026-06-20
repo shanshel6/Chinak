@@ -96,6 +96,9 @@ rapid-scraper/
 !admin-app/capacitor.config.json
 !custom-search-terms.json
 !custom-search-terms-2.json
+!public/models/**/*.json
+!public/models/**/*.txt
+!public/models/**/*.onnx
 
 # Android
 android/.gradle/

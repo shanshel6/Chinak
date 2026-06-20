@@ -40,6 +40,7 @@ workflows:
           npm install --no-audit
       - name: Build web assets and sync Capacitor
         script: |
+          node scripts/download-clip-models.cjs
           npm run build:ios
       - name: Set unique iOS build number
         script: |
