@@ -13,37 +13,32 @@ import { Capacitor } from '@capacitor/core';
 
 // Configure environment to use LOCAL models bundled with the app
 env.allowLocalModels = true;
-env.allowRemoteModels = false; // Stick to local for offline consistency
+env.allowRemoteModels = false;
 env.useBrowserCache = false;
 
 // Basic WASM configuration for mobile stability
+// On Android, we must be careful with threading and SIMD in the WebView
 env.backends.onnx.wasm.numThreads = 1;
+env.backends.onnx.wasm.simd = false; // Disable SIMD to see if it fixes the buffer error
 env.backends.onnx.wasm.proxy = false;
-
-// Force SIMD off if it's causing issues, but keep it on by default for performance
-// env.backends.onnx.wasm.simd = false; 
 
 // Use root-relative paths for models - most reliable for Capacitor
 const getBaseModelPath = () => {
-  return '/models/';
+  return 'models/';
 };
 
 env.localModelPath = getBaseModelPath();
 
 /**
- * Explicitly set WASM paths using absolute URLs to avoid resolution ambiguity
+ * Explicitly set WASM paths using relative URLs for maximum compatibility
+ * This avoids origin issues while still pointing to the correct bundled files
  */
-const wasmDir = `${window.location.origin}/models/clip/`;
-env.backends.onnx.wasm.wasmPaths = {
-  'ort-wasm-simd.wasm': `${wasmDir}ort-wasm-simd.wasm`,
-  'ort-wasm.wasm': `${wasmDir}ort-wasm.wasm`,
-  'ort-wasm-threaded.wasm': `${wasmDir}ort-wasm-threaded.wasm`,
-};
+env.backends.onnx.wasm.wasmPaths = 'models/clip/';
 
 console.log('[CLIP] Final Config:', {
-  origin: window.location.origin,
   localModelPath: env.localModelPath,
   wasmPaths: env.backends.onnx.wasm.wasmPaths,
+  platform: Capacitor.getPlatform(),
 });
 
 // Singleton instances (lazy loaded)

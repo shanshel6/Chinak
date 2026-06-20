@@ -543,7 +543,7 @@ function App() {
                 <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-2">ملفات النموذج غير موجودة</h3>
                 <p className="text-sm text-slate-500 dark:text-slate-400 mb-2">لم يتم العثور على ملفات CLIP في حزمة التطبيق. قد لا يعمل البحث بشكل صحيح.</p>
                 {clipStatusPopup.error && (
-                  <div className="mt-2 p-2 bg-red-50 dark:bg-red-900/20 rounded-lg text-xs text-red-600 dark:text-red-400 font-mono break-all overflow-auto max-h-32">
+                  <div className="mt-2 p-2 bg-red-50 dark:bg-red-900/20 rounded-lg text-xs text-red-600 dark:text-red-400 font-mono break-words overflow-y-auto max-h-48 whitespace-pre-wrap">
                     Error: {clipStatusPopup.error}
                   </div>
                 )}
