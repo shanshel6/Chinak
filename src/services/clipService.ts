@@ -13,38 +13,33 @@ import { Capacitor } from '@capacitor/core';
 
 // Configure environment to use LOCAL models bundled with the app
 env.allowLocalModels = true;
-env.allowRemoteModels = false;
-env.useBrowserCache = false; // Don't cache - use bundled files directly
+env.allowRemoteModels = true; // Allow remote as fallback if local fails
+env.useBrowserCache = false;
 
 // Force single-threaded execution to avoid Cross-Origin Isolation issues in WebViews
+// This is often the cause of "buffer" errors in WebViews
 env.backends.onnx.wasm.numThreads = 1;
-env.backends.onnx.wasm.proxy = false; // Run in main thread to simplify debugging
+env.backends.onnx.wasm.proxy = false;
 
-// Use absolute path from window.location.origin to ensure consistency across routes
-// This prevents relative path resolution issues on Android/iOS
+// Use root-relative paths for Capacitor compatibility
+// This works regardless of the current route (e.g. / or /search)
 const getBaseModelPath = () => {
-  return `${window.location.origin}/models/`;
+  return '/models/';
 };
 
 env.localModelPath = getBaseModelPath();
 
-// Configure WASM paths to use bundled files for full offline support
-// We use an object with absolute URLs to ensure the AI engine finds the files
-const wasmDir = `${window.location.origin}/models/clip/`;
-env.backends.onnx.wasm.wasmPaths = {
-  'ort-wasm-simd.wasm': `${wasmDir}ort-wasm-simd.wasm`,
-  'ort-wasm-threaded.wasm': `${wasmDir}ort-wasm-threaded.wasm`,
-  'ort-wasm.wasm': `${wasmDir}ort-wasm.wasm`,
-};
+// Configure WASM paths
+// We provide the directory path with a leading slash to ensure it's absolute from the web root
+env.backends.onnx.wasm.wasmPaths = '/models/clip/';
 
 console.log('[CLIP] Environment Config:', {
   localModelPath: env.localModelPath,
   allowLocalModels: env.allowLocalModels,
   allowRemoteModels: env.allowRemoteModels,
-  origin: window.location.origin,
   wasmPaths: env.backends.onnx.wasm.wasmPaths,
+  origin: window.location.origin,
   platform: Capacitor.getPlatform(),
-  isNative: Capacitor.isNativePlatform()
 });
 
 // Singleton instances (lazy loaded)
@@ -80,27 +75,28 @@ async function loadTextModel(): Promise<void> {
   
   console.log(`[CLIP] Loading TEXT model from: ${env.localModelPath}${MODEL_ID}`);
   
-  // Diagnostic: Try to fetch a small file to verify path resolution
+  // Diagnostic: Try to fetch a file to verify path resolution
   if (Capacitor.isNativePlatform()) {
     try {
-      const testUrl = `${window.location.origin}/${env.localModelPath}${MODEL_ID}/config.json`;
-      console.log(`[CLIP] Diagnostic: Testing fetch for ${testUrl}`);
+      const testUrl = `${window.location.origin}/models/clip/config.json`;
       const response = await fetch(testUrl);
-      console.log(`[CLIP] Diagnostic: Fetch status ${response.status} (${response.statusText})`);
+      console.log(`[CLIP] Diagnostic: Fetch ${testUrl} -> ${response.status}`);
+      if (response.status !== 200) {
+        throw new Error(`Failed to fetch model config: ${response.status}`);
+      }
     } catch (e) {
-      console.warn('[CLIP] Diagnostic: Fetch failed', e);
+      console.error('[CLIP] Diagnostic: Fetch failed', e);
     }
   }
 
   try {
-    // We explicitly specify the model file names if needed, 
-    // but transformers.js should find them if structured correctly.
-    [tokenizer, textModel] = await Promise.all([
-      AutoTokenizer.from_pretrained(MODEL_ID),
-      CLIPTextModelWithProjection.from_pretrained(MODEL_ID, { 
-        quantized: true,
-      })
-    ]);
+    // Initialize tokenizer and model
+    tokenizer = await AutoTokenizer.from_pretrained(MODEL_ID);
+    
+    // Load model with explicit error handling for the backend
+    textModel = await CLIPTextModelWithProjection.from_pretrained(MODEL_ID, { 
+      quantized: true,
+    });
     
     isTextModelLoaded = true;
     lastError = null;
@@ -108,13 +104,13 @@ async function loadTextModel(): Promise<void> {
     console.log(`[CLIP] TEXT model loaded successfully in ${loadTime}ms ✅`);
   } catch (error) {
     console.error('[CLIP] Failed to load TEXT model. Error details:', error);
-    if (error instanceof Error) {
-      lastError = error.message;
-      console.error('[CLIP] Error message:', error.message);
-      console.error('[CLIP] Error stack:', error.stack);
-    } else {
-      lastError = String(error);
+    lastError = error instanceof Error ? error.message : String(error);
+    
+    // If it's a backend error, try to provide more context
+    if (lastError.includes('backend') || lastError.includes('wasm')) {
+      lastError = `Backend Error: ${lastError}. Check if WASM files are in /models/clip/`;
     }
+    
     throw error;
   }
 }
