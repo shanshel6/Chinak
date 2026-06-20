@@ -20,18 +20,22 @@ env.useBrowserCache = false; // Don't cache - use bundled files directly
 env.backends.onnx.wasm.numThreads = 1;
 env.backends.onnx.wasm.proxy = false; // Run in main thread to simplify debugging
 
-// Use relative path for better compatibility
-// In Capacitor, 'models/' is relative to index.html and works on both iOS and Android
+// Use absolute path from window.location.origin to ensure consistency across routes
+// This prevents relative path resolution issues on Android/iOS
 const getBaseModelPath = () => {
-  return 'models/';
+  return `${window.location.origin}/models/`;
 };
 
 env.localModelPath = getBaseModelPath();
 
 // Configure WASM paths to use bundled files for full offline support
-// On Capacitor, we must use the correct relative path
-const wasmPath = 'models/clip/';
-env.backends.onnx.wasm.wasmPaths = wasmPath; // Can be a string (directory) or an object
+// We use an object with absolute URLs to ensure the AI engine finds the files
+const wasmDir = `${window.location.origin}/models/clip/`;
+env.backends.onnx.wasm.wasmPaths = {
+  'ort-wasm-simd.wasm': `${wasmDir}ort-wasm-simd.wasm`,
+  'ort-wasm-threaded.wasm': `${wasmDir}ort-wasm-threaded.wasm`,
+  'ort-wasm.wasm': `${wasmDir}ort-wasm.wasm`,
+};
 
 console.log('[CLIP] Environment Config:', {
   localModelPath: env.localModelPath,
