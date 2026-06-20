@@ -13,32 +13,31 @@ import { Capacitor } from '@capacitor/core';
 
 // Configure environment to use LOCAL models bundled with the app
 env.allowLocalModels = true;
-env.allowRemoteModels = true; // Allow remote as fallback if local fails
+env.allowRemoteModels = false;
 env.useBrowserCache = false;
 
-// Force single-threaded execution to avoid Cross-Origin Isolation issues in WebViews
-// This is often the cause of "buffer" errors in WebViews
+// Basic WASM configuration
+// Disable SIMD and Multi-threading as they often cause "buffer" errors in older or restricted WebViews
 env.backends.onnx.wasm.numThreads = 1;
+env.backends.onnx.wasm.simd = false;
 env.backends.onnx.wasm.proxy = false;
 
-// Use root-relative paths for Capacitor compatibility
-// This works regardless of the current route (e.g. / or /search)
+// Use relative path without leading slash
+// This is often more compatible with different Capacitor base hrefs
 const getBaseModelPath = () => {
-  return '/models/';
+  return 'models/';
 };
 
 env.localModelPath = getBaseModelPath();
 
-// Configure WASM paths
-// We provide the directory path with a leading slash to ensure it's absolute from the web root
-env.backends.onnx.wasm.wasmPaths = '/models/clip/';
+// Configure WASM paths - use the simplest relative path
+env.backends.onnx.wasm.wasmPaths = 'models/clip/';
 
 console.log('[CLIP] Environment Config:', {
   localModelPath: env.localModelPath,
   allowLocalModels: env.allowLocalModels,
   allowRemoteModels: env.allowRemoteModels,
   wasmPaths: env.backends.onnx.wasm.wasmPaths,
-  origin: window.location.origin,
   platform: Capacitor.getPlatform(),
 });
 
