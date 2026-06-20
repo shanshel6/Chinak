@@ -55,7 +55,7 @@ const TermsOfService = lazy(() => import('./pages/TermsOfService'));
 
 import { performCacheMaintenance } from './services/api';
 import { ensureTranslationModelDownloaded } from './services/translationService';
-import { isClipReady } from './services/clipService';
+import { isClipReady, warmupClipService } from './services/clipService';
 
 import { App as CapApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
@@ -346,7 +346,7 @@ function App() {
   // Update check state
   const [showUpdate, setShowUpdate] = useState(false);
   const [updateUrl, setUpdateUrl] = useState('');
-  const CURRENT_VERSION = '1.0.69'; // keep in sync with package.json
+  const CURRENT_VERSION = '1.0.94'; // keep in sync with package.json
 
   useEffect(() => {
     const initializeApp = async () => {
@@ -376,8 +376,9 @@ function App() {
         checkAuth();
         initChatSocket();
         
-        // CLIP model is bundled with the app - no download needed
-        console.log('[App Init] CLIP model bundled with app - no download required');
+        // CLIP model is bundled with the app - no download required
+        console.log('[App Init] CLIP model bundled with app - warming up service');
+        warmupClipService();
         
         // Check CLIP model status after 5 seconds and show popup
         setTimeout(async () => {

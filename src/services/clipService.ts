@@ -9,13 +9,31 @@
  */
 
 import { AutoTokenizer, CLIPTextModelWithProjection, env } from '@xenova/transformers';
+import { Capacitor } from '@capacitor/core';
 
 // Configure environment to use LOCAL models bundled with the app
 env.allowLocalModels = true;
 env.allowRemoteModels = false;
 env.backends.onnx.wasm.numThreads = 1;
 env.useBrowserCache = false; // Don't cache - use bundled files directly
-env.localModelPath = '/models/clip/';
+
+// Use relative path for better compatibility with iOS/Android
+// The models are in public/models/clip/ which gets copied to the app bundle
+// In Capacitor, the public folder IS the web root, so path is just 'models/'
+env.localModelPath = 'models/';
+
+// Crucial for Capacitor: set WASM paths if they are in the bundle
+// By default, transformers.js fetches them from CDN. 
+// For a fully offline app, they should be bundled.
+// For now, let's at least fix the model path and add logging.
+
+console.log('[CLIP] Environment Config:', {
+  localModelPath: env.localModelPath,
+  allowLocalModels: env.allowLocalModels,
+  allowRemoteModels: env.allowRemoteModels,
+  platform: Capacitor.getPlatform(),
+  isNative: Capacitor.isNativePlatform()
+});
 
 // Singleton instances (lazy loaded)
 let tokenizer: any = null;
@@ -25,8 +43,8 @@ let textModel: any = null;
 let isTextModelLoaded = false;
 let isVisionModelLoaded = false;
 
-// Model configuration
-const MODEL_ID = 'Xenova/clip-vit-base-patch32';
+// Model configuration - must match the folder name in public/models/
+const MODEL_ID = 'clip';
 
 /**
  * Normalize vector (L2 normalization)
@@ -47,24 +65,30 @@ async function loadTextModel(): Promise<void> {
 
   const start = Date.now();
   
-  console.log('[CLIP] Loading TEXT model from local bundle...');
+  console.log(`[CLIP] Loading TEXT model from: ${env.localModelPath}${MODEL_ID}`);
 
   try {
+    // We explicitly specify the model file names if needed, 
+    // but transformers.js should find them if structured correctly.
     [tokenizer, textModel] = await Promise.all([
-      AutoTokenizer.from_pretrained(MODEL_ID, { 
-        quantized: true,
-      }),
+      AutoTokenizer.from_pretrained(MODEL_ID),
       CLIPTextModelWithProjection.from_pretrained(MODEL_ID, { 
         quantized: true,
+        // In v2, we can't easily specify the exact onnx file name here, 
+        // it expects {MODEL_ID}/onnx/text_model_quantized.onnx
       })
     ]);
     
     isTextModelLoaded = true;
     const loadTime = Date.now() - start;
-    console.log(`[CLIP] TEXT model loaded in ${loadTime}ms ✅`);
+    console.log(`[CLIP] TEXT model loaded successfully in ${loadTime}ms ✅`);
   } catch (error) {
-    console.error('[CLIP] Failed to load TEXT model:', error);
-    throw error instanceof Error ? error : new Error(String(error));
+    console.error('[CLIP] Failed to load TEXT model. Error details:', error);
+    if (error instanceof Error) {
+      console.error('[CLIP] Error message:', error.message);
+      console.error('[CLIP] Error stack:', error.stack);
+    }
+    throw error;
   }
 }
 

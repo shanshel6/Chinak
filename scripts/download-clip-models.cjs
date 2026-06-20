@@ -21,8 +21,7 @@ const FILES = [
   'vocab.json',
   'merges.txt',
   'special_tokens_map.json',
-  'onnx/text_model_int8.onnx',
-  'onnx/config.json',
+  'onnx/text_model_quantized.onnx',
 ];
 
 function downloadFile(url, destPath, retries = 3) {
@@ -37,7 +36,7 @@ function downloadFile(url, destPath, retries = 3) {
       const req = https.get(urlToUse, (response) => {
         // Follow redirects (301, 302, 307, 308)
         if (response.statusCode >= 301 && response.statusCode <= 308 && response.statusCode !== 304) {
-          const redirectUrl = response.headers.location;
+          let redirectUrl = response.headers.location;
           file.close();
           try { fs.unlinkSync(destPath); } catch (e) {}
           if (!redirectUrl) {
@@ -49,6 +48,13 @@ function downloadFile(url, destPath, retries = 3) {
             }
             return;
           }
+          
+          // Handle relative redirect
+          if (redirectUrl.startsWith('/')) {
+            const urlObj = new URL(urlToUse);
+            redirectUrl = `${urlObj.protocol}//${urlObj.host}${redirectUrl}`;
+          }
+          
           console.log(`   ↪️ Redirecting...`);
           attempt(redirectUrl, triesLeft);
         } else if (response.statusCode === 200) {
