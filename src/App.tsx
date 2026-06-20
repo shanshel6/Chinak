@@ -340,12 +340,13 @@ function App() {
   const fetchNotifications = useNotificationStore((state) => state.fetchNotifications);
   const initNotificationSocket = useNotificationStore((state) => state.initSocket);
   const cleanupNotificationSocket = useNotificationStore((state) => state.cleanupSocket);
+  const isServerDown = useMaintenanceStore((state) => state.isServerDown);
   const [isAppInitialized, setIsAppInitialized] = useState(false);
   const [clipStatusPopup, setClipStatusPopup] = useState<{exists: boolean; checking: boolean; error: string | null; isLoading: boolean} | null>(null);
   // Update check state
   const [showUpdate, setShowUpdate] = useState(false);
   const [updateUrl, setUpdateUrl] = useState('');
-  const CURRENT_VERSION = '1.0.94'; // keep in sync with package.json
+  const CURRENT_VERSION = '1.0.96'; // keep in sync with package.json
 
   useEffect(() => {
     const initializeApp = async () => {
