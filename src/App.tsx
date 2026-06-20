@@ -340,9 +340,8 @@ function App() {
   const fetchNotifications = useNotificationStore((state) => state.fetchNotifications);
   const initNotificationSocket = useNotificationStore((state) => state.initSocket);
   const cleanupNotificationSocket = useNotificationStore((state) => state.cleanupSocket);
-  const isServerDown = useMaintenanceStore((state) => state.isServerDown);
   const [isAppInitialized, setIsAppInitialized] = useState(false);
-  const [clipStatusPopup, setClipStatusPopup] = useState<{exists: boolean; checking: boolean; error: string | null} | null>(null);
+  const [clipStatusPopup, setClipStatusPopup] = useState<{exists: boolean; checking: boolean; error: string | null; isLoading: boolean} | null>(null);
   // Update check state
   const [showUpdate, setShowUpdate] = useState(false);
   const [updateUrl, setUpdateUrl] = useState('');
@@ -380,19 +379,30 @@ function App() {
         console.log('[App Init] CLIP model bundled with app - warming up service');
         warmupClipService();
         
-        // Check CLIP model status after 5 seconds and show popup
+        // Check CLIP model status after 10 seconds and show popup if not ready
         setTimeout(async () => {
-          setClipStatusPopup({ exists: false, checking: true, error: null });
+          setClipStatusPopup({ exists: false, checking: true, error: null, isLoading: true });
           try {
-            // Wait a bit more for model to finish loading, then check status
-            await new Promise(r => setTimeout(r, 2000));
-            const ready = isClipReady();
+            // Wait for model to finish loading, then check status
+            // On real devices, 60MB model can take 10-15s to init
+            let ready = isClipReady();
+            if (!ready) {
+              // Wait another 5 seconds before giving up
+              await new Promise(r => setTimeout(r, 5000));
+              ready = isClipReady();
+            }
+            
             const status = getClipStatus();
-            setClipStatusPopup({ exists: ready, checking: false, error: status.error });
+            setClipStatusPopup({ 
+              exists: ready, 
+              checking: false, 
+              error: status.error,
+              isLoading: !ready && !status.error // Still loading if not ready and no error
+            });
           } catch {
-            setClipStatusPopup({ exists: false, checking: false, error: 'Unknown check error' });
+            setClipStatusPopup({ exists: false, checking: false, error: 'Unknown check error', isLoading: false });
           }
-        }, 5000);
+        }, 10000);
       } catch (error) {
         console.error('App initialization error:', error);
       } finally {
@@ -523,25 +533,21 @@ function App() {
       <BackButtonHandler />
       <ScrollToTop />
       
-      {/* CLIP Files Status Popup */}
-      {clipStatusPopup && !clipStatusPopup.checking && (
-        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/50 backdrop-blur-sm">
-          <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 max-w-sm w-full mx-4 shadow-2xl text-center" dir="rtl">
-            {clipStatusPopup.exists ? (
-              <>
-                <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
-                  <svg className="w-8 h-8 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                  </svg>
-                </div>
-                <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-2">ملفات النموذج موجودة</h3>
-                <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">تم العثور على ملفات CLIP النصية في حزمة التطبيق</p>
-              </>
+      {/* CLIP Status Popup */}
+      {clipStatusPopup && !clipStatusPopup.exists && (
+        <div className="fixed inset-0 z-[1000] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 max-w-sm w-full shadow-2xl animate-in fade-in zoom-in duration-300">
+            {clipStatusPopup.isLoading ? (
+              <div className="text-center">
+                <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-2">جاري تحميل النموذج...</h3>
+                <p className="text-sm text-slate-500 dark:text-slate-400">يرجى الانتظار، يتم تحضير محرك البحث المحلي. قد يستغرق ذلك بضع ثوانٍ.</p>
+              </div>
             ) : (
               <>
-                <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
-                  <svg className="w-8 h-8 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                <div className="w-12 h-12 bg-red-100 dark:bg-red-900/30 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <svg className="w-6 h-6 text-red-600 dark:text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                   </svg>
                 </div>
                 <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-2">ملفات النموذج غير موجودة</h3>
@@ -551,14 +557,30 @@ function App() {
                     Error: {clipStatusPopup.error}
                   </div>
                 )}
+                <div className="flex gap-2 mt-4">
+                  <button 
+                    onClick={() => {
+                      warmupClipService();
+                      setClipStatusPopup({ exists: false, checking: true, error: null, isLoading: true });
+                      setTimeout(async () => {
+                        const ready = isClipReady();
+                        const status = getClipStatus();
+                        setClipStatusPopup({ exists: ready, checking: false, error: status.error, isLoading: !ready && !status.error });
+                      }, 5000);
+                    }}
+                    className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-medium transition-colors"
+                  >
+                    إعادة المحاولة
+                  </button>
+                  <button 
+                    onClick={() => setClipStatusPopup(null)}
+                    className="flex-1 py-2.5 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-900 dark:text-white rounded-xl font-medium transition-colors"
+                  >
+                    تجاهل
+                  </button>
+                </div>
               </>
             )}
-            <button
-              onClick={() => setClipStatusPopup(null)}
-              className="w-full py-2.5 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl font-semibold hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
-            >
-              حسناً
-            </button>
           </div>
         </div>
       )}
