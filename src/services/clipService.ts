@@ -16,27 +16,33 @@ env.allowLocalModels = true;
 env.allowRemoteModels = false;
 env.useBrowserCache = false;
 
-// Basic WASM configuration for maximum mobile stability
-// We disable SIMD and proxy to avoid buffer/memory errors in Android WebViews
+// CRITICAL: Disable all optimizations that cause "buffer" errors in Android WebViews
 env.backends.onnx.wasm.numThreads = 1;
-env.backends.onnx.wasm.simd = false;
+env.backends.onnx.wasm.simd = false; 
 env.backends.onnx.wasm.proxy = false;
 
-// Use root-relative paths - most reliable for Capacitor's local server
+// Use root-relative paths for models - most reliable for Capacitor
 const getBaseModelPath = () => {
   return '/models/';
 };
 
 env.localModelPath = getBaseModelPath();
 
-// For WASM paths, we use a string pointing to the directory with a leading slash
-// This ensures the AI engine looks in http://localhost/models/clip/
-env.backends.onnx.wasm.wasmPaths = '/models/clip/';
+/**
+ * EXPLICIT WASM MAPPING
+ * On Android WebViews, the auto-detection of WASM files often fails with a TypeError.
+ * We explicitly point to the standard (non-SIMD) WASM file for all roles.
+ */
+const wasmUrl = `${window.location.origin}/models/clip/ort-wasm.wasm`;
+env.backends.onnx.wasm.wasmPaths = {
+    'ort-wasm-simd.wasm': wasmUrl,
+    'ort-wasm-threaded.wasm': wasmUrl,
+    'ort-wasm.wasm': wasmUrl
+};
 
-console.log('[CLIP] Final Config:', {
+console.log('[CLIP] Force-Safe Config:', {
   localModelPath: env.localModelPath,
-  wasmPaths: env.backends.onnx.wasm.wasmPaths,
-  origin: window.location.origin,
+  wasmUrl: wasmUrl,
   platform: Capacitor.getPlatform(),
 });
 
@@ -62,7 +68,7 @@ const normalizeVector = (vector: number[]): number[] => {
 };
 
 /**
- * Load the model from the local bundle
+ * Load the model from the local bundle with aggressive error catching
  */
 async function loadTextModel(): Promise<void> {
   if (isTextModelLoaded && tokenizer && textModel) {
@@ -78,7 +84,7 @@ async function loadTextModel(): Promise<void> {
     // Initialize tokenizer
     tokenizer = await AutoTokenizer.from_pretrained(MODEL_ID);
     
-    // Load model - the library will use the configured wasmPaths
+    // Load model - the library will use our explicit wasmPaths
     textModel = await CLIPTextModelWithProjection.from_pretrained(MODEL_ID, { 
       quantized: true,
     });
@@ -89,11 +95,11 @@ async function loadTextModel(): Promise<void> {
   } catch (error) {
     console.error('[CLIP] Load failed:', error);
     
-    lastError = error instanceof Error ? error.message : String(error);
+    const errObj = error instanceof Error ? error : new Error(String(error));
+    lastError = `Initialization Error: ${errObj.message}`;
     
-    // Add context if it's a backend/wasm error
-    if (lastError.includes('backend') || lastError.includes('wasm') || lastError.includes('buffer')) {
-      lastError = `WASM Error: ${lastError}. Make sure .wasm files are in public/models/clip/ and are reachable at ${window.location.origin}/models/clip/`;
+    if (lastError.includes('buffer')) {
+      lastError += "\n\nTip: This is a memory alignment issue in the WebView. We are trying to use the safest non-SIMD engine.";
     }
     
     throw error;
