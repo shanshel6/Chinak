@@ -16,28 +16,27 @@ env.allowLocalModels = true;
 env.allowRemoteModels = false;
 env.useBrowserCache = false;
 
-// Basic WASM configuration for mobile stability
-// On Android, we must be careful with threading and SIMD in the WebView
+// Basic WASM configuration for maximum mobile stability
+// We disable SIMD and proxy to avoid buffer/memory errors in Android WebViews
 env.backends.onnx.wasm.numThreads = 1;
-env.backends.onnx.wasm.simd = false; // Disable SIMD to see if it fixes the buffer error
+env.backends.onnx.wasm.simd = false;
 env.backends.onnx.wasm.proxy = false;
 
-// Use root-relative paths for models - most reliable for Capacitor
+// Use root-relative paths - most reliable for Capacitor's local server
 const getBaseModelPath = () => {
-  return 'models/';
+  return '/models/';
 };
 
 env.localModelPath = getBaseModelPath();
 
-/**
- * Explicitly set WASM paths using relative URLs for maximum compatibility
- * This avoids origin issues while still pointing to the correct bundled files
- */
-env.backends.onnx.wasm.wasmPaths = 'models/clip/';
+// For WASM paths, we use a string pointing to the directory with a leading slash
+// This ensures the AI engine looks in http://localhost/models/clip/
+env.backends.onnx.wasm.wasmPaths = '/models/clip/';
 
 console.log('[CLIP] Final Config:', {
   localModelPath: env.localModelPath,
   wasmPaths: env.backends.onnx.wasm.wasmPaths,
+  origin: window.location.origin,
   platform: Capacitor.getPlatform(),
 });
 
@@ -63,7 +62,7 @@ const normalizeVector = (vector: number[]): number[] => {
 };
 
 /**
- * Robustly load the model, with a fallback for WASM path issues
+ * Load the model from the local bundle
  */
 async function loadTextModel(): Promise<void> {
   if (isTextModelLoaded && tokenizer && textModel) {
@@ -76,29 +75,10 @@ async function loadTextModel(): Promise<void> {
   console.log(`[CLIP] Loading TEXT model from: ${env.localModelPath}${MODEL_ID}`);
   
   try {
-    // 1. Diagnostic: Check if files are reachable
-    if (Capacitor.isNativePlatform()) {
-      const filesToTest = ['config.json', 'onnx/text_model_quantized.onnx', 'ort-wasm.wasm'];
-      for (const f of filesToTest) {
-        const url = `${window.location.origin}/models/clip/${f}`;
-        try {
-          const res = await fetch(url, { method: 'HEAD' });
-          console.log(`[CLIP] File Check: ${f} -> ${res.status}`);
-          if (res.status !== 200) {
-            console.warn(`[CLIP] Warning: ${f} returned status ${res.status}`);
-          }
-        } catch (e) {
-          console.error(`[CLIP] Error checking ${f}:`, e);
-        }
-      }
-    }
-
-    // 2. Load Tokenizer
-    console.log('[CLIP] Loading tokenizer...');
+    // Initialize tokenizer
     tokenizer = await AutoTokenizer.from_pretrained(MODEL_ID);
     
-    // 3. Load Model
-    console.log('[CLIP] Loading ONNX model...');
+    // Load model - the library will use the configured wasmPaths
     textModel = await CLIPTextModelWithProjection.from_pretrained(MODEL_ID, { 
       quantized: true,
     });
@@ -109,25 +89,13 @@ async function loadTextModel(): Promise<void> {
   } catch (error) {
     console.error('[CLIP] Load failed:', error);
     
-    let detailedError = '';
-    if (error instanceof Error) {
-      detailedError = `${error.name}: ${error.message}`;
-      if (error.stack) {
-        // Log stack for remote debugging if needed
-        console.debug('[CLIP] Stack:', error.stack);
-      }
-    } else {
-      detailedError = String(error);
-    }
-
-    // Specialized error messages for common WASM issues
-    if (detailedError.includes('backend') || detailedError.includes('wasm')) {
-      detailedError = `Backend/WASM Error: ${detailedError}. This usually means the app cannot find or load the .wasm files in /public/models/clip/. Origin: ${window.location.origin}`;
-    } else if (detailedError.includes('fetch')) {
-      detailedError = `Network/File Error: ${detailedError}. Could not fetch model files from the bundle.`;
+    lastError = error instanceof Error ? error.message : String(error);
+    
+    // Add context if it's a backend/wasm error
+    if (lastError.includes('backend') || lastError.includes('wasm') || lastError.includes('buffer')) {
+      lastError = `WASM Error: ${lastError}. Make sure .wasm files are in public/models/clip/ and are reachable at ${window.location.origin}/models/clip/`;
     }
     
-    lastError = detailedError;
     throw error;
   }
 }
