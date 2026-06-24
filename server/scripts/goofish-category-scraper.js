@@ -169,7 +169,7 @@ function calculatePriceMultiplier(basePriceIQD) {
 }
 
 const SILICONFLOW_API_KEY = String(process.env.SILICONFLOW_API_KEY || '').trim();
-const GOOFISH_AI_MODEL = String(process.env.GOOFISH_AI_MODEL || 'Qwen/Qwen3.5-9B').trim() || 'Qwen/Qwen3.5-9B';
+const GOOFISH_AI_MODEL = String(process.env.GOOFISH_AI_MODEL || 'deepseek-ai/DeepSeek-V4-Flash').trim() || 'deepseek-ai/DeepSeek-V4-Flash';
 const DISABLE_DB_WRITE = String(process.env.GOOFISH_DISABLE_DB_WRITE || '').toLowerCase() === 'true';
 const configuredMaxProducts = parseInt(process.env.GOOFISH_MAX_PRODUCTS || '', 10);
 const MAX_PRODUCTS_TO_PROCESS = Number.isFinite(configuredMaxProducts) && configuredMaxProducts > 0

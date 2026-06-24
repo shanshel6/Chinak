@@ -1,7 +1,7 @@
 const axios = require('axios');
 
-const API_KEY = 'sk-mwpajtvsmzpttyzbetmkkgaeydvrgymxfmwavasaacjgztgu';
-const MODEL = 'Qwen/Qwen3-8B';
+const API_KEY = 'sk-7b6193a7cfe348c8b3dea6d0c1248482';
+const MODEL = 'deepseek-ai/DeepSeek-V4-Flash';
 
 async function testModel() {
   try {

@@ -1,7 +1,8 @@
 import { useMaintenanceStore } from '../store/useMaintenanceStore';
 import { localProductService } from './localProductService';
 import { embedImage, embedImageCrop, embedText } from './clipService';
-import { normalizeArabicSearchTerm } from '../data/arabicSearchNormalization';
+// import { normalizeArabicSearchTerm } from '../data/arabicSearchNormalization';
+// import { translateArabicToEnglish } from './translationService';
 
 export const getBaseDomain = () => {
   const hostname = window.location.hostname;
@@ -961,25 +962,27 @@ export interface CategorySuggestion {
 
 export async function searchProducts(query: string, page = 1, limit = 20, maxPrice?: number, condition?: 'new' | 'used') {
   // iOS search: uses server-side fallback if client CLIP fails (WebAssembly issues)
-  // Step 1: Normalize Arabic query (handle Iraqi slang)
-  const normalizedArabicQuery = normalizeArabicSearchTerm(query);
-  console.log('[API Search] Normalized Arabic:', normalizedArabicQuery);
+  // TEMP: DISABLED
+  const normalizedArabicQuery = query;
 
-  // Step 2: Skip translation (ML Kit removed)
-  const englishQuery = normalizedArabicQuery; // Use normalized Arabic directly
+  // TEMP: DISABLE TRANSLATION - USE RAW QUERY
+  const englishQuery = query.trim();
+  console.log('[API Search] NO TRANSLATION - Using raw query:', englishQuery);
   const translationMethod = 'none';
-  console.log('[API Search] Search query (raw):', englishQuery);
 
   // Step 3: Try to generate TinyCLIP text embedding (on-device)
   // TinyCLIP is a small (~50MB) model that works well on mobile devices
   let embedding: number[] | null = null;
-  let useServerFallback = false;
+  let useServerFallback = true; // TEMP: FORCE SERVER FALLBACK
 
   try {
+    console.log('[API Search] Attempting to generate client-side embedding...');
     embedding = await embedText(englishQuery);
-    console.log('[API Search] Generated TinyCLIP embedding:', embedding.slice(0, 5), '...');
+    console.log('[API Search] Generated TinyCLIP embedding (first 10 values):', embedding.slice(0, 10));
+    console.log('[API Search] Embedding length:', embedding.length);
   } catch (embedError: any) {
     console.warn('[API Search] Client-side TinyCLIP embedding failed, falling back to server:', embedError?.message || embedError);
+    console.warn('[API Search] Error stack:', embedError?.stack);
     useServerFallback = true;
   }
 
@@ -1012,17 +1015,41 @@ export async function searchProducts(query: string, page = 1, limit = 20, maxPri
 
   // Step 4: Send embedding to backend
   try {
+    const requestBody = {
+      embedding, // The server expects "embedding" param, not "vector"!
+      type: 'text', // <-- tell the server to compare against textEmbedding
+      page,
+      limit,
+      maxPrice,
+      condition,
+      _t: Date.now() // Cache-busting timestamp
+    };
+    
+    console.log('[API Search] Sending request to /search/embedding');
+    console.log('[API Search] Request body keys:', Object.keys(requestBody));
+    console.log('[API Search] Type parameter:', requestBody.type);
+    console.log('[API Search] Embedding present:', !!embedding);
+    console.log('[API Search] Embedding length:', embedding?.length);
+    
+    // Log the full request body for debugging - include the END to see if type is there
+    const requestBodyStr = JSON.stringify(requestBody);
+    console.log('[API Search] Request body length:', requestBodyStr.length);
+    console.log('[API Search] Request body (first 300 chars):', requestBodyStr.substring(0, 300));
+    console.log('[API Search] Request body (last 100 chars):', requestBodyStr.substring(Math.max(0, requestBodyStr.length - 100)));
+    
+    // Also log the exact JSON to verify structure
+    console.log('[API Search] Full request body JSON:', requestBodyStr);
+    
     const response = await request('/search/embedding', {
       method: 'POST',
-      body: JSON.stringify({
-        embedding, // The server expects "embedding" param, not "vector"!
-        page,
-        limit,
-        maxPrice,
-        condition
-      }),
+      body: requestBodyStr,
       skipCache: true
     });
+
+    console.log('[API Search] Server response received!');
+    console.log('[API Search] Response keys:', Object.keys(response || {}));
+    console.log('[API Search] Number of products:', response?.products?.length || 0);
+    console.log('[API Search] Product IDs:', response?.products?.map((p: any) => p.id) || 'none');
 
     return {
       products: Array.isArray(response?.products) ? response.products : [],
@@ -1097,11 +1124,11 @@ export async function searchProductsByCategory(
 export async function searchProductsByImage(imageBase64: string, page = 1, limit = 40) {
   // Generate embedding client-side first
   const embedding = await embedImage(imageBase64);
-  
+
   // Send embedding to backend for search
   const response = await request('/search/embedding', {
     method: 'POST',
-    body: JSON.stringify({ embedding, page, limit }),
+    body: JSON.stringify({ embedding, type: 'image', page, limit }),
     skipCache: true
   });
   return {
@@ -1120,11 +1147,11 @@ export async function analyzeImageObjects() {
 export async function searchProductsByImageCrop(imageBase64: string, box: number[], page = 1, limit = 60) {
   // Generate embedding client-side from crop
   const embedding = await embedImageCrop(imageBase64, box);
-  
+
   // Send embedding to backend for search
   const response = await request('/search/embedding', {
     method: 'POST',
-    body: JSON.stringify({ embedding, page, limit }),
+    body: JSON.stringify({ embedding, type: 'image', page, limit }),
     skipCache: true
   });
   return {

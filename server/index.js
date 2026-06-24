@@ -33,6 +33,7 @@ import { ensureProductImageEmbeddings, searchProductsByImageVector, searchProduc
 import { pickStratifiedPage } from './services/searchBucketingService.js';
 import { scrapeGoofishProductImages } from './services/goofishScrapeService.js';
 import { loadCategoryVectors, searchByEmbedding, hasCachedVectors, syncDBVectorsToCache, searchByEmbeddingDB } from './services/categoryEmbeddingService.js';
+import { ensureVisionModels } from './services/visionModelService.js';
 import multer from 'multer';
 
 // Setup multer for memory storage (for image uploads)
@@ -1223,7 +1224,7 @@ io.on('connection', (socket) => {
   });
 });
 
-const PORT = process.env.PORT || 5001;
+const PORT = 5001; // Forced to 5001 for Android Emulator compatibility (10.0.2.2:5001)
 const JWT_SECRET = process.env.JWT_SECRET || 'c2hhbnNoYWw2Ni1teS1zaG9wLWJhY2tlbmQtc2VjcmV0LTIwMjY=';
 
 // --- Normalization Helpers ---
@@ -1363,6 +1364,7 @@ app.use(cors({
         origin.startsWith('http://localhost') || 
         origin.startsWith('https://localhost') || 
         origin.startsWith('http://127.0.0.1') || 
+        origin.startsWith('http://10.0.2.2') ||  // Android emulator host
         origin.includes('ngrok-free.dev') || 
         origin.startsWith('http://192.168.')) {
       callback(null, true);
@@ -1375,6 +1377,80 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept']
 }));
+
+// Vision Model Files Endpoint
+// Serves the CLIP vision model files that were pre-downloaded via
+// server/scripts/download-vision-models.mjs. This allows the Android
+// app to download the model files from the local server instead of
+// huggingface.co, which often fails in the Android WebView.
+import { createReadStream, statSync, existsSync } from 'fs';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname_server = dirname(fileURLToPath(import.meta.url));
+const VISION_MODELS_DIR = join(__dirname_server, '..', 'public', 'vision-models');
+
+app.get('/api/vision-models/:filename', (req, res) => {
+  const filename = req.params.filename;
+  
+  // Security: prevent directory traversal
+  if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
+    return res.status(400).json({ error: 'Invalid filename' });
+  }
+  
+  const filePath = join(VISION_MODELS_DIR, filename);
+  
+  if (!existsSync(filePath)) {
+    console.error(`[VisionModel] File not found: ${filePath}`);
+    return res.status(404).json({ error: 'Model file not found on server. Run: node server/scripts/download-vision-models.mjs' });
+  }
+  
+  const stat = statSync(filePath);
+  const fileSize = stat.size;
+  const range = req.headers.range;
+  
+  // Set appropriate content type
+  let contentType = 'application/octet-stream';
+  if (filename.endsWith('.json')) {
+    contentType = 'application/json';
+  }
+  
+  // CORS for this specific endpoint to be extra safe
+  res.set({
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, OPTIONS',
+    'Access-Control-Allow-Headers': 'Range, Content-Type',
+    'Access-Control-Expose-Headers': 'Content-Range, Content-Length, Accept-Ranges',
+  });
+
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+  
+  // Support range requests for resumable downloads
+  if (range) {
+    const parts = range.replace(/bytes=/, '').split('-');
+    const start = parseInt(parts[0], 10);
+    const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+    const chunkSize = end - start + 1;
+    
+    res.status(206);
+    res.set({
+      'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+      'Accept-Ranges': 'bytes',
+      'Content-Length': chunkSize,
+      'Content-Type': contentType,
+    });
+    createReadStream(filePath, { start, end }).pipe(res);
+  } else {
+    res.set({
+      'Content-Length': fileSize,
+      'Content-Type': contentType,
+      'Accept-Ranges': 'bytes',
+    });
+    createReadStream(filePath).pipe(res);
+  }
+});
 
 // Request Logger Middleware
 app.use((req, res, next) => {
@@ -4368,7 +4444,7 @@ app.get('/api/tools/rapid/item-detail', async (req, res) => {
   /**
    * Photo‑embedding search endpoint.
    * Accepts a text query (Arabic or any language), generates a CLIP text embedding,
-   * then performs a nearest‑neighbor search against stored product image embeddings.
+   * then performs a nearest‑neighbor search against stored product IMAGE embeddings.
    * Returns products ordered from most similar to least similar.
    */
   app.get('/api/products/search-by-photo', async (req, res) => {
@@ -4382,17 +4458,17 @@ app.get('/api/tools/rapid/item-detail', async (req, res) => {
     const offset = (page - 1) * limit;
 
     try {
-      // 1️⃣ Generate text embedding using CLIP
+      // 1️⃣ Generate TEXT embedding using CLIP (the query is text)
       const embedding = await embedText(query);
       if (!embedding || embedding.length === 0) {
         throw new Error('Failed to generate embedding');
       }
 
-      // 2️⃣ Search product images by vector similarity
-      const matches = await searchProductsByImageVector(prisma, embedding, limit, offset);
+      // 2️⃣ Search products by TEXT-vector similarity (the query was text)
+      const matches = await searchProductsByTextVector(prisma, embedding, limit, offset);
 
       if (!matches || matches.length === 0) {
-        return res.json({ products: [], total: 0, page, totalPages: 0, engine: 'vector' });
+        return res.json({ products: [], total: 0, page, totalPages: 0, engine: 'vector-text' });
       }
 
       // 3️⃣ Load full product data for the matched IDs
@@ -5228,24 +5304,41 @@ app.post('/api/tools/rapid/search-image', async (req, res) => {
 
 app.post('/api/search/embedding', async (req, res) => {
   try {
+    console.log('[CLIP Client] Received search request');
+    console.log('[CLIP Client] Request body keys:', Object.keys(req.body || {}));
+    console.log('[CLIP Client] Request body type:', req.body?.type, '(typeof:', typeof req.body?.type, ')');
+    console.log('[CLIP Client] Full request body (first 500 chars):', JSON.stringify(req.body || {}).substring(0, 500));
+    
     const limit = Math.min(60, Math.max(1, parseInt(String(req.body?.limit || req.body?.pageSize || '20'), 10) || 20));
     const page = Math.max(1, parseInt(String(req.body?.page || '1'), 10) || 1);
     const offset = (page - 1) * limit;
     let embedding = req.body?.embedding;
-    
+
     if (!embedding || !Array.isArray(embedding)) {
+      console.warn('[CLIP Client] Missing or invalid embedding array');
       return res.status(400).json({ error: 'Missing or invalid embedding array' });
     }
 
-    console.log(`[CLIP Client] Received pre-generated vector. Querying similar products...`);
-    
-    const matches = await searchProductsByImageVector(prisma, embedding, limit + 1, offset);
+    // Discriminator for vector type. The Android app uses the SAME standard
+    // CLIP model on the device as the server (Xenova/clip-vit-base-patch32),
+    // so a TEXT embedding from the client must be compared against
+    // `textEmbedding` (built from the English product name), NOT against
+    // `imageEmbedding`. Default to "image" for backwards compatibility.
+    const vectorType = String(req.body?.type || req.body?.vectorType || 'image').toLowerCase();
+    const isTextQuery = vectorType === 'text' || vectorType === 'textvector';
+
+    console.log(`[CLIP Client] Received pre-generated ${isTextQuery ? 'TEXT' : 'IMAGE'} vector. Querying similar products...`);
+    console.log(`[CLIP Client] Vector type received: "${vectorType}", isTextQuery: ${isTextQuery}`);
+
+    const matches = isTextQuery
+      ? await searchProductsByTextVector(prisma, embedding, limit + 1, offset)
+      : await searchProductsByImageVector(prisma, embedding, limit + 1, offset);
     const visibleMatches = matches.slice(0, limit);
     const hasMore = matches.length > limit;
     const ids = visibleMatches.map((match) => match.id).filter((id) => Number.isFinite(id));
 
     if (ids.length === 0) {
-      return res.json({ products: [], total: 0, hasMore: false, engine: 'clip-client' });
+      return res.json({ products: [], total: 0, hasMore: false, engine: isTextQuery ? 'clip-client-text' : 'clip-client' });
     }
 
     const shippingRates = {
@@ -5314,6 +5407,9 @@ app.post('/api/search/embedding', async (req, res) => {
           aiMetadata,
           isRealBrand,
           neworold,
+          similarity: match.similarity,
+          // Keep legacy field name too, but expose a `similarity` alias that
+          // works for both text and image searches.
           imageSimilarity: match.similarity,
           matchedImageId: match.matchedImageId,
           matchedImageUrl: match.matchedImageUrl,
@@ -5322,7 +5418,7 @@ app.post('/api/search/embedding', async (req, res) => {
       })
       .filter(Boolean);
 
-    return res.json({ products: ranked, total: ranked.length, hasMore, engine: 'clip-client' });
+    return res.json({ products: ranked, total: ranked.length, hasMore, engine: isTextQuery ? 'clip-client-text' : 'clip-client' });
   } catch (error) {
     console.error('[CLIP client embedding search] error details:', error);
     console.error(error.stack);
@@ -5647,21 +5743,25 @@ app.post('/api/translate/arabic-to-english', async (req, res) => {
     if (!text || typeof text !== 'string') {
       return res.status(400).json({ error: 'Missing or invalid text' });
     }
-    
-    console.log(`[Translation API] Translating: "${text}"`);
-    const translatedText = await translateArabicToEnglish(text);
+
+    // ?nocache=1 → skip the DB cache, force a fresh AI call. Used by
+    // the client while we are debugging translation regressions.
+    const skipCache = String(req.query?.nocache || '') === '1';
+
+    console.log(`[Translation API] Translating: "${text}" (skipCache=${skipCache})`);
+    const translatedText = await translateArabicToEnglish(text, { skipCache });
     console.log(`[Translation API] Translated to: "${translatedText}"`);
-    
-    return res.json({ 
-      original: text, 
+
+    return res.json({
+      original: text,
       translated: translatedText,
-      success: true 
+      success: true
     });
   } catch (error) {
     console.error('[Translation API] error:', error);
-    return res.status(500).json({ 
+    return res.status(500).json({
       error: 'Translation failed',
-      success: false 
+      success: false
     });
   }
 });
@@ -12720,6 +12820,9 @@ console.log('[Perf] ENABLE_SEARCH_PERF_LOGS =', ENABLE_SEARCH_PERF_LOGS, `(raw: 
 console.log('[Embedding] Category vectors cached:', hasCachedVectors());
 // Sync DB-backed name embeddings into the JSON cache on startup
 syncDBVectorsToCache().catch((err) => console.warn('[Embedding] DB sync failed:', err.message));
+
+// Ensure vision models are cached locally for Android emulator access
+ensureVisionModels().catch((err) => console.error('[VisionModel] Startup check failed:', err.message));
 
 const server = httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`Server is running on port ${PORT} (accessible from network)`);

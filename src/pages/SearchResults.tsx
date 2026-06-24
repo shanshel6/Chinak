@@ -2,13 +2,15 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom';
 import { AlertCircle, Search, ArrowRight, Camera, X } from 'lucide-react';
 import { searchProductsByImage, searchProductsByImageCrop, searchProducts } from '../services/api';
-import { initializeClipService, isClipReady } from '../services/clipService';
+import { initializeClipService, isClipReady, isVisionModelReady } from '../services/clipService';
+import { useVisionDownloadState } from '../services/visionDownloadManager';
 import { useAuthStore } from '../store/useAuthStore';
 import { normalizeWishlistProductId, useWishlistStore } from '../store/useWishlistStore';
 import { usePageCacheStore } from '../store/usePageCacheStore';
 import { useToastStore } from '../store/useToastStore';
 import { normalizeArabicSearchTerm } from '../data/arabicSearchNormalization';
 import ProductCard from '../components/home/ProductCard';
+import VisionDownloadPrompt from '../components/VisionDownloadPrompt';
 import type { Product } from '../types/product';
 
 const SearchResults: React.FC = () => {
@@ -45,7 +47,47 @@ const SearchResults: React.FC = () => {
   const [detectedObjects, setDetectedObjects] = useState<any[]>([]);
   const [selectedObjectBox, setSelectedObjectBox] = useState<number[] | null>(null);
   const [isAnalyzingImage, setIsAnalyzingImage] = useState(false);
-  
+  // Vision model download prompt — shown when the user taps the camera
+  // icon and the vision model isn't ready yet.
+  const [visionPromptOpen, setVisionPromptOpen] = useState(false);
+  const visionState = useVisionDownloadState();
+
+  /**
+   * Handler called when the user taps the camera icon. If the vision
+   * model is ready, immediately open the OS file picker. If not, show
+   * the download status modal first.
+   */
+  const handleCameraIconClick = useCallback(() => {
+    if (isVisionModelReady() || visionState.status === 'ready') {
+      // Vision is ready — open the file picker
+      fileInputRef.current?.click();
+    } else {
+      // Vision not ready — show the download prompt
+      setVisionPromptOpen(true);
+    }
+  }, [visionState.status]);
+
+  // When the user closes the vision download prompt and vision is now
+  // ready, auto-open the file picker.
+  const handleVisionReady = useCallback(() => {
+    setVisionPromptOpen(false);
+    setTimeout(() => fileInputRef.current?.click(), 50);
+  }, []);
+
+  /**
+   * "Search by text instead" — closes the prompt and focuses the
+   * search input on this page (we are already on /search).
+   */
+  const handleSearchByTextInstead = useCallback(() => {
+    setVisionPromptOpen(false);
+    setTimeout(() => {
+      if (inputRef.current) {
+        inputRef.current.focus();
+        inputRef.current.setAttribute('inputmode', 'search');
+      }
+    }, 50);
+  }, []);
+
   // Create cache key based on search query
   const cacheKey = useMemo(() => {
     if (imageSearchInput) return '';
@@ -339,7 +381,16 @@ const SearchResults: React.FC = () => {
         pageRef.current = 1;
       }
     } catch (err: any) {
-      setError('فشل البحث في المنطقة المحددة.');
+      const message = String(err?.message || '');
+      if (message.startsWith('VISION_DOWNLOADING') || message.startsWith('VISION_DOWNLOAD_FAILED')) {
+        // Vision model is not ready yet. Surface the dedicated prompt
+        // so the user knows it's downloading in the background and can
+        // opt to search by text in the meantime.
+        setVisionPromptOpen(true);
+        setError(null);
+      } else {
+        setError('فشل البحث في المنطقة المحددة.');
+      }
     } finally {
       setLoading(false);
     }
@@ -776,13 +827,20 @@ const SearchResults: React.FC = () => {
               </button>
             )}
             <div className="w-px h-4 bg-slate-200 dark:bg-slate-700 mx-1"></div>
-            <label className="p-1 cursor-pointer text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 hover:text-primary transition-colors">
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*,.heic,.heif"
-                className="hidden"
-                onChange={async (e) => {
+            <button
+              type="button"
+              onClick={handleCameraIconClick}
+              className="p-1 text-slate-500 dark:text-slate-400 hover:text-primary transition-colors"
+              aria-label="بحث بالصورة"
+            >
+              <Camera size={18} />
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*,.heic,.heif"
+              className="hidden"
+              onChange={async (e) => {
                   const file = e.target.files?.[0];
                   if (!file) return;
 
@@ -837,9 +895,7 @@ const SearchResults: React.FC = () => {
                     e.target.value = '';
                   }
                 }}
-              />
-              <Camera size={18} />
-            </label>
+            />
             <button
               type="button"
               onClick={submitSearch}
@@ -1144,6 +1200,13 @@ const SearchResults: React.FC = () => {
           </div>
         )
       )}
+
+      <VisionDownloadPrompt
+        open={visionPromptOpen}
+        onClose={() => setVisionPromptOpen(false)}
+        onReady={handleVisionReady}
+        onSearchByTextInstead={handleSearchByTextInstead}
+      />
     </div>
   );
 };

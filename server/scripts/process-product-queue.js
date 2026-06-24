@@ -113,7 +113,7 @@ const EMBEDDING_RETRIES = 5;
 
 // AI Configuration
 const SILICONFLOW_API_KEY = String(process.env.SILICONFLOW_API_KEY || '').trim();
-const CATEGORY_MODEL = process.env.SILICONFLOW_MODEL || 'Qwen/Qwen3.5-9B';
+const CATEGORY_MODEL = process.env.SILICONFLOW_MODEL || 'deepseek-ai/DeepSeek-V4-Flash';
 const CATEGORY_API_TIMEOUT_MS = 120000;
 
 // Helper function to call SiliconFlow API for category generation
@@ -395,6 +395,9 @@ async function insertProduct(productData, goofishMappings, categories) {
               goofishItemId: productData.itemId,
               goofishCategoryId: productData.categoryId || null,
               originalTitle: productData.originalTitle,
+              originalTitleEnglish: productData.titleEn || null,
+              isOriginal: typeof productData.isOriginal !== 'undefined' ? productData.isOriginal : null,
+              brandName: productData.brandName || null,
               translatedDescription: productData.description || null,
               detailTranslationUpdatedAt: productData.description ? productData.scrapedAt : null
             },

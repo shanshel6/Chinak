@@ -13,7 +13,7 @@ console.log('=== SiliconFlow API Connectivity Test ===\n');
 
 // Get configuration
 const SILICONFLOW_API_KEY = String(process.env.SILICONFLOW_API_KEY || '').trim();
-const GOOFISH_AI_MODEL = String(process.env.GOOFISH_AI_MODEL || 'Qwen/Qwen3.5-9B').trim() || 'Qwen/Qwen3.5-9B';
+const GOOFISH_AI_MODEL = String(process.env.GOOFISH_AI_MODEL || 'deepseek-ai/DeepSeek-V4-Flash').trim() || 'deepseek-ai/DeepSeek-V4-Flash';
 
 console.log('Configuration:');
 console.log(`- API Key: ${SILICONFLOW_API_KEY ? 'Set (' + SILICONFLOW_API_KEY.length + ' chars)' : 'NOT SET!'}`);

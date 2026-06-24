@@ -1,6 +1,20 @@
 import { create } from 'zustand';
 import type { Product } from '../types/product';
 
+// =====================================================================
+// SEARCH CACHING IS DISABLED.
+//
+// We were hitting a bug where stale cached results were being served for
+// Arabic queries whose translation had been cached at a moment when the
+// AI translator was failing (it would echo the Arabic back, CLIP would
+// embed raw Arabic, and the user would see random products forever).
+//
+// Rather than try to make the cache "smart enough" to know when it's
+// stale, we just turn it off. Every search now hits the network fresh.
+// If perf becomes a concern later we can revisit with a much smaller
+// in-memory LRU and a strict TTL, but right now correctness > speed.
+// =====================================================================
+
 interface SearchCacheEntry {
   results: Product[];
   page: number;
@@ -21,62 +35,48 @@ interface PageCacheState {
   getSearchData: (key: string) => SearchCacheEntry | undefined;
 }
 
-export const usePageCacheStore = create<PageCacheState>((set, get) => {
-  const readSearch = (key: string): SearchCacheEntry | undefined => {
-    try {
-      const raw = localStorage.getItem(`search_cache_v1:${key}`);
-      if (!raw) return undefined;
-      return JSON.parse(raw);
-    } catch {
-      return undefined;
-    }
-  };
-  const writeSearch = (key: string, entry: SearchCacheEntry) => {
-    try {
-      localStorage.setItem(`search_cache_v1:${key}`, JSON.stringify(entry));
-    } catch {}
-  };
-  return ({
-    homeScrollPos: 0,
-    homeCategoryId: 'all',
+// Best-effort wipe of every old prefix so we don't leave dead entries
+// around in localStorage. Safe to run multiple times.
+function wipeLegacySearchCache(): void {
+  try {
+    Object.keys(localStorage).forEach((key) => {
+      if (
+        key.startsWith('search_cache_v1:') ||
+        key.startsWith('search_cache_v2:') ||
+        key.startsWith('search_cache_v3:')
+      ) {
+        localStorage.removeItem(key);
+      }
+    });
+  } catch {}
+}
+wipeLegacySearchCache();
 
-    setHomeScrollPos: (pos) => set({ homeScrollPos: pos }),
+export const usePageCacheStore = create<PageCacheState>(() => ({
+  homeScrollPos: 0,
+  homeCategoryId: 'all',
 
-    clearCache: () => set(() => {
-      try {
-        Object.keys(localStorage).forEach((key) => {
-          if (key.startsWith('search_cache_v1:')) {
-            localStorage.removeItem(key);
-          }
-        });
-      } catch {}
-      return {
-        homeScrollPos: 0,
-        homeCategoryId: 'all',
-        searchCache: {},
-      };
-    }),
+  setHomeScrollPos: () => {
+    /* no-op while search caching is disabled */
+  },
 
-    searchCache: {},
-    setSearchData: (key, entry) => {
-      const current = get().searchCache[key] || readSearch(key) || { results: [], page: 1, hasMore: false, scrollPos: 0, condition: null, price: null };
-      const next: SearchCacheEntry = {
-        results: entry.results ?? current.results,
-        page: entry.page ?? current.page,
-        hasMore: entry.hasMore ?? current.hasMore,
-        scrollPos: entry.scrollPos ?? current.scrollPos,
-        condition: entry.condition ?? current.condition,
-        price: entry.price ?? current.price,
-      };
-      writeSearch(key, next);
-      set((s) => ({ searchCache: { ...s.searchCache, [key]: next } }));
-    },
-    setSearchScrollPos: (key, pos) => {
-      const current = get().searchCache[key] || readSearch(key) || { results: [], page: 1, hasMore: false, scrollPos: 0, condition: null, price: null };
-      const next: SearchCacheEntry = { ...current, scrollPos: pos };
-      writeSearch(key, next);
-      set((s) => ({ searchCache: { ...s.searchCache, [key]: next } }));
-    },
-    getSearchData: (key) => get().searchCache[key] || readSearch(key),
-  });
-});
+  clearCache: () => {
+    wipeLegacySearchCache();
+  },
+
+  searchCache: {},
+
+  // Disabled: do not write search results to localStorage.
+  setSearchData: () => {
+    /* no-op */
+  },
+
+  // Disabled: do not persist scroll positions for cached searches.
+  setSearchScrollPos: () => {
+    /* no-op */
+  },
+
+  // Disabled: always return undefined so the caller falls through to the
+  // live network request.
+  getSearchData: () => undefined,
+}));

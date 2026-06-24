@@ -15,7 +15,7 @@ process.on('unhandledRejection', (reason) => {
 
 const deepInfraKey = String(process.env.DEEPINFRA_API_KEY || '').trim();
 const deepInfraUrl = String(process.env.DEEPINFRA_TRANSLATION_API_URL || process.env.DEEPINFRA_CATEGORY_TRANSLATION_API_URL || process.env.DEEPINFRA_API_URL || 'https://api.deepinfra.com/v1/openai/chat/completions').trim();
-const deepInfraModel = String(process.env.DEEPINFRA_TRANSLATION_MODEL || process.env.DEEPINFRA_CATEGORY_MODEL || process.env.DEEPINFRA_MODEL || 'deepseek-ai/DeepSeek-V3').trim();
+const deepInfraModel = String(process.env.DEEPINFRA_TRANSLATION_MODEL || process.env.DEEPINFRA_CATEGORY_MODEL || process.env.DEEPINFRA_MODEL || 'deepseek-ai/DeepSeek-V4-Flash').trim();
 
 if (!deepInfraKey) {
   throw new Error('DEEPINFRA_API_KEY missing');

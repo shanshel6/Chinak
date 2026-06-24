@@ -17,6 +17,19 @@
 -keep class org.apache.cordova.** { *; }
 -keep class com.chinak.app.** { *; }
 
+# ONNX Runtime Web / Transformers - preserve to avoid runtime errors
+-keep class ai.onnxruntime.** { *; }
+-keep class com.microsoft.onnxruntime.** { *; }
+-dontwarn ai.onnxruntime.**
+-dontwarn com.microsoft.onnxruntime.**
+
+# Keep WASM-loaded classes' reflective access
+-keepclassmembers class * {
+    @org.transformers.** *;
+}
+-keep class org.transformers.** { *; }
+-dontwarn org.transformers.**
+
 # If your project uses WebView with JS, uncomment the following
 # and specify the fully qualified class name to the JavaScript interface
 # class:

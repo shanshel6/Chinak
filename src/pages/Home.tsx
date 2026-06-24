@@ -7,6 +7,9 @@ import Skeleton from '../components/Skeleton';
 import { useTranslation } from 'react-i18next';
 import ProductCard from '../components/home/ProductCard';
 import { AlertCircle, Camera, Search, PackageSearch, MessageCircle } from 'lucide-react';
+import { isVisionModelReady } from '../services/clipService';
+import { useVisionDownloadState } from '../services/visionDownloadManager';
+import VisionDownloadPrompt from '../components/VisionDownloadPrompt';
 import type { Product } from '../types/product';
 
 const Home: React.FC = () => {
@@ -24,6 +27,12 @@ const Home: React.FC = () => {
   const [storeSettings, setStoreSettings] = useState<any>({
     socialLinks: { whatsapp: '' }
   });
+
+  // Vision download state — used by the camera icon to show the
+  // download prompt BEFORE letting the user pick a photo.
+  const visionState = useVisionDownloadState();
+  const [visionPromptOpen, setVisionPromptOpen] = useState(false);
+  const pendingPhotoActionRef = useRef<null | (() => void)>(null);
 
   const [hasMore, setHasMore] = useState(true);
   const pageRef = useRef(1);
@@ -168,80 +177,117 @@ const Home: React.FC = () => {
     navigate(`/product?id=${id}`, { state: { initialProduct: product } });
   }, [navigate]);
 
-  const handleSearchByPhotoBannerClick = () => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = 'image/*';
-    input.style.display = 'none';
-    document.body.appendChild(input);
-    const removeInput = () => {
-      document.body.removeChild(input);
-    };
-    input.onchange = async (e: Event) => {
-      const target = e.target as HTMLInputElement;
-      const file = target.files?.[0];
-      if (!file) {
-        removeInput();
-        return;
-      }
-      try {
-        const fileToDataUrl = (f: File): Promise<string> => {
-          return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(reader.result as string);
-            reader.onerror = reject;
-            reader.readAsDataURL(f);
-          });
-        };
-        const fileToJpegDataUrl = async (f: File): Promise<string> => {
-          return new Promise((resolve, reject) => {
-            const img = new Image();
-            const objectUrl = URL.createObjectURL(f);
-            const cleanup = () => {
-              URL.revokeObjectURL(objectUrl);
-            };
-            img.onload = () => {
-              try {
-                const canvas = document.createElement('canvas');
-                const ctx = canvas.getContext('2d');
-                if (!ctx) {
-                  cleanup();
-                  throw new Error('canvas_failed');
-                }
-                canvas.width = img.width;
-                canvas.height = img.height;
-                ctx.drawImage(img, 0, 0);
-                const jpegDataUrl = canvas.toDataURL('image/jpeg', 0.85);
-                cleanup();
-                resolve(jpegDataUrl);
-              } catch (err) {
-                cleanup();
-                reject(err);
-              }
-            };
-            img.onerror = () => {
-              cleanup();
-              reject(new Error('decode_failed'));
-            };
-            img.src = objectUrl;
-          });
-        };
-        let payload = '';
+  /**
+   * Triggered by any "search by photo" entry point (banner or camera icon).
+   * If the vision model is ready, open the file picker. Otherwise, show
+   * the download prompt and remember this action so it can run when ready.
+   */
+  const requestImageSearch = useCallback(() => {
+    const run = () => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/*,.heic,.heif';
+      input.style.display = 'none';
+      document.body.appendChild(input);
+      const removeInput = () => {
+        if (input.parentNode) input.parentNode.removeChild(input);
+      };
+      input.onchange = async (e: Event) => {
+        const target = e.target as HTMLInputElement;
+        const file = target.files?.[0];
+        if (!file) {
+          removeInput();
+          return;
+        }
         try {
-          payload = await fileToJpegDataUrl(file);
-        } catch {
-          payload = await fileToDataUrl(file);
+          const fileToDataUrl = (f: File): Promise<string> => {
+            return new Promise((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(reader.result as string);
+              reader.onerror = reject;
+              reader.readAsDataURL(f);
+            });
+          };
+          const fileToJpegDataUrl = async (f: File): Promise<string> => {
+            return new Promise((resolve, reject) => {
+              const img = new Image();
+              const objectUrl = URL.createObjectURL(f);
+              const cleanup = () => {
+                URL.revokeObjectURL(objectUrl);
+              };
+              img.onload = () => {
+                try {
+                  const canvas = document.createElement('canvas');
+                  const ctx = canvas.getContext('2d');
+                  if (!ctx) {
+                    cleanup();
+                    throw new Error('canvas_failed');
+                  }
+                  canvas.width = img.width;
+                  canvas.height = img.height;
+                  ctx.drawImage(img, 0, 0);
+                  const jpegDataUrl = canvas.toDataURL('image/jpeg', 0.9);
+                  cleanup();
+                  resolve(jpegDataUrl);
+                } catch (err) {
+                  cleanup();
+                  reject(err);
+                }
+              };
+              img.onerror = () => {
+                cleanup();
+                reject(new Error('decode_failed'));
+              };
+              img.src = objectUrl;
+            });
+          };
+          let payload = '';
+          try {
+            payload = await fileToJpegDataUrl(file);
+          } catch {
+            payload = await fileToDataUrl(file);
+          }
+          if (payload) {
+            sessionStorage.setItem('pendingImageSearch', payload);
+            navigate('/search');
+          }
+        } finally {
+          removeInput();
         }
-        if (payload) {
-          sessionStorage.setItem('pendingImageSearch', payload);
-          navigate('/search');
-        }
-      } finally {
-        removeInput();
-      }
+      };
+      input.click();
     };
-    input.click();
-  };
+
+    if (isVisionModelReady() || visionState.status === 'ready') {
+      run();
+    } else {
+      pendingPhotoActionRef.current = run;
+      setVisionPromptOpen(true);
+    }
+  }, [navigate, visionState.status]);
+
+  // When the vision download finishes, run the queued photo action
+  const handleVisionReadyFromHome = useCallback(() => {
+    setVisionPromptOpen(false);
+    const pending = pendingPhotoActionRef.current;
+    pendingPhotoActionRef.current = null;
+    if (pending) {
+      // small delay so the user sees the success state
+      setTimeout(pending, 250);
+    }
+  }, []);
+
+  /**
+   * "Search by text instead" — closes the prompt and navigates to the
+   * search page where the user can type a query.
+   */
+  const handleSearchByTextFromHome = useCallback(() => {
+    setVisionPromptOpen(false);
+    pendingPhotoActionRef.current = null;
+    navigate('/search');
+  }, [navigate]);
+
+  const handleSearchByPhotoBannerClick = requestImageSearch;
 
   if (loading && products.length === 0) {
     return (
@@ -273,68 +319,7 @@ const Home: React.FC = () => {
             <span className="text-sm text-slate-500 font-medium">ابحث عن منتجات...</span>
           </button>
           <button 
-            onClick={() => {
-              const input = document.createElement('input');
-              input.type = 'file';
-              input.accept = 'image/*,.heic,.heif';
-              input.style.display = 'none';
-              document.body.appendChild(input);
-              const removeInput = () => {
-                if (input.parentNode) input.parentNode.removeChild(input);
-              };
-              input.onchange = async (e) => {
-                const file = (e.target as HTMLInputElement).files?.[0];
-                if (!file) {
-                  removeInput();
-                  return;
-                }
-                const fileToDataUrl = (selectedFile: File) => new Promise<string>((resolve, reject) => {
-                  const reader = new FileReader();
-                  reader.onload = () => resolve(String(reader.result || ''));
-                  reader.onerror = () => reject(new Error('read_failed'));
-                  reader.readAsDataURL(selectedFile);
-                });
-                const fileToJpegDataUrl = (selectedFile: File) => new Promise<string>((resolve, reject) => {
-                  const img = new Image();
-                  const objectUrl = URL.createObjectURL(selectedFile);
-                  const cleanup = () => URL.revokeObjectURL(objectUrl);
-                  img.onload = () => {
-                    const canvas = document.createElement('canvas');
-                    canvas.width = img.width;
-                    canvas.height = img.height;
-                    const ctx = canvas.getContext('2d');
-                    if (ctx) {
-                      ctx.drawImage(img, 0, 0);
-                      cleanup();
-                      resolve(canvas.toDataURL('image/jpeg', 0.9));
-                      return;
-                    }
-                    cleanup();
-                    reject(new Error('canvas_failed'));
-                  };
-                  img.onerror = () => {
-                    cleanup();
-                    reject(new Error('decode_failed'));
-                  };
-                  img.src = objectUrl;
-                });
-                try {
-                  let payload = '';
-                  try {
-                    payload = await fileToJpegDataUrl(file);
-                  } catch {
-                    payload = await fileToDataUrl(file);
-                  }
-                  if (payload) {
-                    sessionStorage.setItem('pendingImageSearch', payload);
-                    navigate('/search');
-                  }
-                } finally {
-                  removeInput();
-                }
-              };
-              input.click();
-            }}
+            onClick={requestImageSearch}
             className="p-2.5 bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-primary rounded-xl transition-colors shrink-0"
             aria-label="بحث بالصورة"
           >
@@ -485,6 +470,13 @@ const Home: React.FC = () => {
           </div>
         )}
       </div>
+
+      <VisionDownloadPrompt
+        open={visionPromptOpen}
+        onClose={() => setVisionPromptOpen(false)}
+        onReady={handleVisionReadyFromHome}
+        onSearchByTextInstead={handleSearchByTextFromHome}
+      />
     </div>
   );
 };

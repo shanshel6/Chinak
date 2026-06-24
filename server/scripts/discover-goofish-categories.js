@@ -24,7 +24,7 @@ function saveDiscoveries(data) {
 async function callSiliconFlowLLM(messages, options = {}) {
   const apiKey = String(process.env.SILICONFLOW_API_KEY || '').trim();
   if (!apiKey) throw new Error('No SILICONFLOW_API_KEY');
-  const sfModel = options.model || process.env.SILICONFLOW_MODEL || 'Qwen/Qwen3.5-9B';
+  const sfModel = options.model || process.env.SILICONFLOW_MODEL || 'deepseek-ai/DeepSeek-V4-Flash';
   const res = await axios.post(
     'https://api.siliconflow.com/v1/chat/completions',
     {

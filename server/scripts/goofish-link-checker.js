@@ -65,7 +65,7 @@ const PRICE_PROFIT_MULTIPLIER = Number.parseFloat(process.env.GOOFISH_PRICE_PROF
 const GOOFISH_USE_CHROME_PROFILE = String(process.env.GOOFISH_USE_CHROME_PROFILE || '0').trim() === '1';
 const GOOFISH_AI_CALL_TIMEOUT_MS = Math.max(5000, Number.parseInt(process.env.GOOFISH_AI_CALL_TIMEOUT_MS || '45000', 10) || 45000);
 const GOOFISH_AI_RETRY_MAX_ATTEMPTS = Math.max(1, Number.parseInt(process.env.GOOFISH_AI_RETRY_MAX_ATTEMPTS || '10', 10) || 10);
-const SILICONFLOW_MODEL = process.env.SILICONFLOW_MODEL || 'Qwen/Qwen3.5-9B';
+const SILICONFLOW_MODEL = process.env.SILICONFLOW_MODEL || 'deepseek-ai/DeepSeek-V4-Flash';
 const GOOFISH_AI_RATE_LIMIT_DELAY_MS = Math.max(0, Number.parseInt(process.env.GOOFISH_AI_RATE_LIMIT_DELAY_MS || '200', 10) || 200);
 const USER_AGENTS = [
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',

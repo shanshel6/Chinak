@@ -12,7 +12,7 @@ dotenv.config({ path: envPath });
 console.log('=== Detailed SiliconFlow API Test ===\n');
 
 const SILICONFLOW_API_KEY = String(process.env.SILICONFLOW_API_KEY || '').trim();
-const GOOFISH_AI_MODEL = String(process.env.GOOFISH_AI_MODEL || 'Qwen/Qwen3.5-9B').trim() || 'Qwen/Qwen3.5-9B';
+const GOOFISH_AI_MODEL = String(process.env.GOOFISH_AI_MODEL || 'deepseek-ai/DeepSeek-V4-Flash').trim() || 'deepseek-ai/DeepSeek-V4-Flash';
 
 console.log('Configuration:');
 console.log(`- API Key: ${SILICONFLOW_API_KEY ? 'Set (' + SILICONFLOW_API_KEY.length + ' chars)' : 'NOT SET!'}`);
@@ -171,9 +171,10 @@ console.log('\n---\n');
 // Test 3: Try alternative models
 console.log('Test 3: Testing alternative models...');
 const alternativeModels = [
-  'Qwen/Qwen3-8B',
+  'deepseek-ai/DeepSeek-V4-Flash',
   'Qwen/Qwen3-14B',
   'deepseek-ai/DeepSeek-V3.2',
+  'Qwen/Qwen3-8B',
   'Qwen/Qwen2.5-7B-Instruct'
 ];
 
@@ -218,7 +219,7 @@ console.log('\n=== Summary ===');
 console.log('The API key appears to be valid.');
 console.log('If the configured model is not working, try:');
 console.log('1. Check the exact model name on SiliconFlow');
-console.log('2. Use Qwen/Qwen3-8B (simpler, more reliable)');
+console.log('2. Use deepseek-ai/DeepSeek-V4-Flash (default model)');
 console.log('3. Use deepseek-ai/DeepSeek-V3.2 (alternative)');
 console.log('\nTo fix the circuit breaker issue:');
 console.log('1. Restart the scraper to reset circuit breaker');

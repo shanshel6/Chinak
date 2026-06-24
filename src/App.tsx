@@ -54,7 +54,8 @@ const PrivacyPolicy = lazy(() => import('./pages/PrivacyPolicy'));
 const TermsOfService = lazy(() => import('./pages/TermsOfService'));
 
 import { performCacheMaintenance } from './services/api';
-import { isClipReady, warmupClipService, getClipStatus } from './services/clipService';
+import { warmupClipService } from './services/clipService';
+import { visionDownloadManager, safeLog, safeClipLog } from './services/visionDownloadManager';
 
 import { App as CapApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
@@ -341,7 +342,7 @@ function App() {
   const cleanupNotificationSocket = useNotificationStore((state) => state.cleanupSocket);
   const isServerDown = useMaintenanceStore((state) => state.isServerDown);
   const [isAppInitialized, setIsAppInitialized] = useState(false);
-  const [clipStatusPopup, setClipStatusPopup] = useState<{exists: boolean; checking: boolean; error: string | null; isLoading: boolean} | null>(null);
+  
   // Update check state
   const [showUpdate, setShowUpdate] = useState(false);
   const [updateUrl, setUpdateUrl] = useState('');
@@ -364,35 +365,18 @@ function App() {
         ensureGuestSession();
         checkAuth();
         initChatSocket();
-        
-        // CLIP model is bundled with the app - no download required
-        console.log('[App Init] CLIP model bundled with app - warming up service');
+
+        // CLIP text model is bundled with the app - no download required.
+        // The VISION model (~150 MB) is downloaded on first launch and
+        // kept on disk for all future sessions. It runs in the background
+        // and the user can keep searching by text while it downloads.
+        safeClipLog('[App Init] CLIP text model bundled with app - warming up service');
         warmupClipService();
-        
-        // Check CLIP model status after 10 seconds and show popup if not ready
-        setTimeout(async () => {
-          setClipStatusPopup({ exists: false, checking: true, error: null, isLoading: true });
-          try {
-            // Wait for model to finish loading, then check status
-            // On real devices, 60MB model can take 10-15s to init
-            let ready = isClipReady();
-            if (!ready) {
-              // Wait another 5 seconds before giving up
-              await new Promise(r => setTimeout(r, 5000));
-              ready = isClipReady();
-            }
-            
-            const status = getClipStatus();
-            setClipStatusPopup({ 
-              exists: ready, 
-              checking: false, 
-              error: status.error,
-              isLoading: !ready && !status.error // Still loading if not ready and no error
-            });
-          } catch {
-            setClipStatusPopup({ exists: false, checking: false, error: 'Unknown check error', isLoading: false });
-          }
-        }, 10000);
+
+        // Make sure the vision model download is running. This is safe
+        // to call repeatedly: if the download is already done, in
+        // progress, or paused mid-resume, this is a no-op.
+        visionDownloadManager.ensureDownloadStarted();
       } catch (error) {
         console.error('App initialization error:', error);
       } finally {
@@ -400,6 +384,27 @@ function App() {
       }
     };
     initializeApp();
+
+    // Keep the vision download running while the app is in the
+    // background. Android may pause network IO when the app is hidden
+    // for a while, so we re-kick the download on every "resume" event
+    // (and don't pause it on "pause" so the OS can keep the fetch alive
+    // in the background as long as it wants).
+    let appStateListener: PluginListenerHandle | undefined;
+    if (Capacitor.isNativePlatform()) {
+      CapApp.addListener('appStateChange', ({ isActive }) => {
+        safeLog('appStateChange isActive=', isActive);
+        if (isActive) {
+          visionDownloadManager.ensureDownloadStarted();
+        }
+      })
+        .then((handle) => {
+          appStateListener = handle;
+        })
+        .catch((e) => {
+          console.warn('[VisionDL] failed to register appStateChange listener:', e);
+        });
+    }
 
     // Listen for unauthorized errors from API
     const handleUnauthorized = () => {
@@ -410,6 +415,9 @@ function App() {
 
     return () => {
       window.removeEventListener('auth-unauthorized', handleUnauthorized);
+      if (appStateListener) {
+        appStateListener.remove();
+      }
     };
   }, [checkAuth, ensureGuestSession, initChatSocket]);
 
@@ -490,105 +498,59 @@ function App() {
     }
   }, [isAuthenticated, user, isLoading, fetchCart, fetchWishlist, fetchNotifications, initNotificationSocket, cleanupNotificationSocket]);
 
-  if (isServerDown) {
-    return <MaintenanceScreen />;
-  }
+  const mainContent = (() => {
+    if (isServerDown) {
+      return <MaintenanceScreen />;
+    }
 
-  if (!isAppInitialized) {
-    return (
-      <div className="min-h-screen bg-background-light dark:bg-background-dark flex items-center justify-center">
-        <div className="flex flex-col items-center gap-6">
-          <div className="flex gap-1 mb-2">
-            <div className="size-1.5 rounded-full bg-primary animate-bounce [animation-delay:-0.3s]"></div>
-            <div className="size-1.5 rounded-full bg-primary animate-bounce [animation-delay:-0.15s]"></div>
-            <div className="size-1.5 rounded-full bg-primary animate-bounce"></div>
+    if (!isAppInitialized) {
+      return (
+        <div className="min-h-screen bg-background-light dark:bg-background-dark flex items-center justify-center">
+          <div className="flex flex-col items-center gap-6">
+            <div className="flex gap-1 mb-2">
+              <div className="size-1.5 rounded-full bg-primary animate-bounce [animation-delay:-0.3s]"></div>
+              <div className="size-1.5 rounded-full bg-primary animate-bounce [animation-delay:-0.15s]"></div>
+              <div className="size-1.5 rounded-full bg-primary animate-bounce"></div>
+            </div>
+            <p className="text-sm font-bold text-slate-500 animate-pulse">
+              جاري تحضير التطبيق...
+            </p>
           </div>
-          <p className="text-sm font-bold text-slate-500 animate-pulse">
-            جاري تحضير التطبيق...
-          </p>
         </div>
-      </div>
-    );
-  }
+      );
+    }
 
-  // Render update prompt if needed
-  if (showUpdate) {
+    if (showUpdate) {
+      return (
+        <UpdatePrompt url={updateUrl} onClose={() => setShowUpdate(false)} />
+      );
+    }
+
     return (
-      <UpdatePrompt url={updateUrl} onClose={() => setShowUpdate(false)} />
+      <Router>
+        <BackButtonHandler />
+        <ScrollToTop />
+        <div className="min-h-screen bg-background-light">
+          <Toast />
+          <ErrorBoundary>
+            <Routes>
+              <Route path="/admin/*" element={<AdminRoutes />} />
+              <Route path="/*" element={
+                <Suspense fallback={<PageLoader />}>
+                  <MainLayout />
+                </Suspense>
+              } />
+            </Routes>
+          </ErrorBoundary>
+        </div>
+      </Router>
     );
-  }
+  })();
 
   return (
-    <Router>
-      <BackButtonHandler />
-      <ScrollToTop />
-      
-      {/* CLIP Status Popup */}
-      {clipStatusPopup && !clipStatusPopup.exists && (
-        <div className="fixed inset-0 z-[1000] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 max-w-sm w-full shadow-2xl animate-in fade-in zoom-in duration-300">
-            {clipStatusPopup.isLoading ? (
-              <div className="text-center">
-                <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-                <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-2">جاري تحميل النموذج...</h3>
-                <p className="text-sm text-slate-500 dark:text-slate-400">يرجى الانتظار، يتم تحضير محرك البحث المحلي. قد يستغرق ذلك بضع ثوانٍ.</p>
-              </div>
-            ) : (
-              <>
-                <div className="w-12 h-12 bg-red-100 dark:bg-red-900/30 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <svg className="w-6 h-6 text-red-600 dark:text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                  </svg>
-                </div>
-                <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-2">ملفات النموذج غير موجودة</h3>
-                <p className="text-sm text-slate-500 dark:text-slate-400 mb-2">لم يتم العثور على ملفات CLIP في حزمة التطبيق. قد لا يعمل البحث بشكل صحيح.</p>
-                {clipStatusPopup.error && (
-                  <div className="mt-2 p-2 bg-red-50 dark:bg-red-900/20 rounded-lg text-xs text-red-600 dark:text-red-400 font-mono break-words overflow-y-auto max-h-48 whitespace-pre-wrap">
-                    Error: {clipStatusPopup.error}
-                  </div>
-                )}
-                <div className="flex gap-2 mt-4">
-                  <button 
-                    onClick={() => {
-                      warmupClipService();
-                      setClipStatusPopup({ exists: false, checking: true, error: null, isLoading: true });
-                      setTimeout(async () => {
-                        const ready = isClipReady();
-                        const status = getClipStatus();
-                        setClipStatusPopup({ exists: ready, checking: false, error: status.error, isLoading: !ready && !status.error });
-                      }, 5000);
-                    }}
-                    className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-medium transition-colors"
-                  >
-                    إعادة المحاولة
-                  </button>
-                  <button 
-                    onClick={() => setClipStatusPopup(null)}
-                    className="flex-1 py-2.5 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-900 dark:text-white rounded-xl font-medium transition-colors"
-                  >
-                    تجاهل
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      )}
-      
-      <div className="min-h-screen bg-background-light">
-        <Toast />
-        <ErrorBoundary>
-          <Routes>
-            <Route path="/admin/*" element={<AdminRoutes />} />
-            <Route path="/*" element={
-              <Suspense fallback={<PageLoader />}>
-                <MainLayout />
-              </Suspense>
-            } />
-          </Routes>
-        </ErrorBoundary>
-      </div>
-    </Router>
+    <>
+      {mainContent}
+    </>
   );
 }
 

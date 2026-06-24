@@ -382,7 +382,7 @@ export async function estimateProductPhysicals(product) {
       }
     }
 
-    // 3. Fallback to Text-based estimation (Qwen3-8B on SiliconFlow)
+    // 3. Fallback to Text-based estimation (deepseek-ai/DeepSeek-V4-Flash on SiliconFlow)
     console.log(`[AI Debug] Falling back to text-based estimation for ${product.name}...`);
     const { siliconflow } = getClients();
     
@@ -407,7 +407,7 @@ export async function estimateProductPhysicals(product) {
     Return ONLY JSON, no markdown.`;
 
     const response = await withTimeout(siliconflow.chat.completions.create({
-      model: 'Qwen/Qwen3-8B',
+      model: 'deepseek-ai/DeepSeek-V4-Flash',
       messages: [{ role: 'user', content: prompt }],
       response_format: { type: 'json_object' }
     }), 15000);
@@ -429,7 +429,7 @@ export async function estimateProductPhysicals(product) {
 }
 
 /**
- * Auto-Tagging Pipeline using SiliconFlow with Qwen/Qwen3-8B
+ * Auto-Tagging Pipeline using SiliconFlow with deepseek-ai/DeepSeek-V4-Flash
  * Triggers when a product is added or updated.
  */
 export async function processProductAI(productId) {
@@ -464,7 +464,7 @@ export async function processProductAI(productId) {
       console.log(`[AI Debug] Calling SiliconFlow for product ${productId}...`);
       
       const response = await siliconflow.chat.completions.create({
-        model: 'Qwen/Qwen3-8B',
+        model: 'deepseek-ai/DeepSeek-V4-Flash',
         messages: [
           { role: 'user', content: prompt }
         ],
@@ -561,7 +561,7 @@ Return ONLY a JSON object:
 }
 Keep keywords short and relevant.`;
     const response = await withTimeout(siliconflow.chat.completions.create({
-      model: 'Qwen/Qwen3-8B',
+      model: 'deepseek-ai/DeepSeek-V4-Flash',
       messages: [{ role: 'user', content: prompt }],
       response_format: { type: 'json_object' },
       temperature: 0.2,
@@ -582,24 +582,32 @@ Keep keywords short and relevant.`;
 };
 
 /**
- * Translate Arabic text to English using SiliconFlow with Qwen/Qwen3-8B for CLIP compatibility
+ * Translate Arabic text to English using SiliconFlow with deepseek-ai/DeepSeek-V4-Flash for CLIP compatibility
  * Includes database caching for repeated queries
+ *
+ * @param {string} text
+ * @param {{ skipCache?: boolean }} [options]
  */
-export async function translateArabicToEnglish(text) {
+export async function translateArabicToEnglish(text, options = {}) {
+  const skipCache = Boolean(options && options.skipCache);
   try {
-    // 1. Check cache first
-    const cached = await prisma.translationCache.findUnique({
-      where: { arabicQuery: text }
-    });
-
-    if (cached) {
-      // Increment hit count for analytics
-      await prisma.translationCache.update({
-        where: { id: cached.id },
-        data: { hitCount: { increment: 1 } }
+    // 1. Check cache first (skippable via ?nocache=1 for debugging)
+    if (!skipCache) {
+      const cached = await prisma.translationCache.findUnique({
+        where: { arabicQuery: text }
       });
-      console.log(`[AI Debug] Cache hit! "${text}" → "${cached.englishTranslation}"`);
-      return cached.englishTranslation;
+
+      if (cached) {
+        // Increment hit count for analytics
+        await prisma.translationCache.update({
+          where: { id: cached.id },
+          data: { hitCount: { increment: 1 } }
+        });
+        console.log(`[AI Debug] Cache hit! "${text}" → "${cached.englishTranslation}"`);
+        return cached.englishTranslation;
+      }
+    } else {
+      console.log(`[AI Debug] skipCache=true → bypassing translationCache for "${text}"`);
     }
 
     // 2. If no cache, call AI
@@ -610,7 +618,7 @@ export async function translateArabicToEnglish(text) {
     }
 
     const response = await siliconflow.chat.completions.create({
-      model: 'Qwen/Qwen3-8B',
+      model: 'deepseek-ai/DeepSeek-V4-Flash',
       messages: [
         {
           role: 'system',

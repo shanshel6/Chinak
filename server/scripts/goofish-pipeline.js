@@ -15,6 +15,7 @@ import https from 'https';
 import { ensureProductImageEmbeddings } from '../services/productImageVectorService.js';
 import { embedImage, embedText } from '../services/clipService.js';
 import { sanitizeProductImageUrl } from '../services/productImageVectorService.js';
+import { translateProduct, isBadTranslation } from '../services/translationService.js';
 
 const QUEUE_DIR = join(dirname(fileURLToPath(import.meta.url)), '../../' + (process.env.GOOFISH_QUEUE_DIR || 'product-queue'));
 const USE_QUEUE_MODE = String(process.env.GOOFISH_USE_QUEUE || '').toLowerCase() === 'true';
@@ -39,11 +40,14 @@ async function saveToQueue(accumulatedData) {
       itemId,
       url: accumulatedData.url,
       name: accumulatedData.name,
+      titleEn: accumulatedData.titleEn || null,
       originalTitle: accumulatedData.originalName || null,
       priceCny: accumulatedData.priceCny,
       newOrOld: accumulatedData.newOrOld,
       description: accumulatedData.description,
       specs: accumulatedData.specs,
+      // Persist translated specs so Phase 3 doesn't re-translate the same string.
+      translatedSpecs: accumulatedData.translatedSpecs || null,
       images: accumulatedData.images,
       imageEmbeddings: accumulatedData.imageEmbeddings || [],
       textEmbedding: accumulatedData.textEmbedding || null,
@@ -132,11 +136,11 @@ export function calculatePriceMultiplier(basePriceIQD) {
   return 1.2;
 }
 
-const isPipeline2 = String(process.env.GOOFISH_QUEUE_DIR || '').includes('2');
-const SILICONFLOW_API_KEY = isPipeline2 
-  ? String(process.env.SILICONFLOW_API_KEY || 'sk-sbkaquplmslwtqghchtceehtkluvpjuarqvnffwkbfvnflfu').trim() 
-  : String(process.env.SILICONFLOW_API_KEY || '').trim();
-console.log(`[Debug] Pipeline ${isPipeline2 ? '2' : '1'} - SILICONFLOW_API_KEY is set: ${SILICONFLOW_API_KEY ? 'YES (length=' + SILICONFLOW_API_KEY.length + ')' : 'NO'}`);
+const SILICONFLOW_API_KEY = (process.env.SILICONFLOW_API_KEY || '').trim();
+const IS_DEEPSEEK_KEY = SILICONFLOW_API_KEY.length === 35 && SILICONFLOW_API_KEY.startsWith('sk-');
+const SF_BASE_URL = IS_DEEPSEEK_KEY ? 'https://api.deepseek.com/v1' : 'https://api.siliconflow.cn/v1';
+
+console.log(`[Debug] SILICONFLOW_API_KEY is set: ${SILICONFLOW_API_KEY ? 'YES (length=' + SILICONFLOW_API_KEY.length + ')' : 'NO'}`);
 console.log(`[Debug] SILICONFLOW_API_KEY prefix: ${SILICONFLOW_API_KEY.substring(0, 10)}...`);
 console.log(`[Debug] SILICONFLOW_API_KEY suffix: ...${SILICONFLOW_API_KEY.substring(SILICONFLOW_API_KEY.length - 5)}`);
 
@@ -147,7 +151,7 @@ const configuredMaxProducts = parseInt(process.env.GOOFISH_MAX_PRODUCTS || '', 1
 const CATEGORY_ASSIGN_ENABLED = String(process.env.GOOFISH_CATEGORY_ASSIGN || 'true').toLowerCase() === 'true';
 const CATEGORY_AI_RATE_LIMIT_DELAY_MS = Math.max(0, parseInt(process.env.CATEGORY_AI_RATE_LIMIT_DELAY_MS || '200', 10) || 200);
 const CATEGORY_API_TIMEOUT_MS = parseInt(process.env.CATEGORY_API_TIMEOUT_MS || '120000', 10);
-const CATEGORY_MODEL = process.env.SILICONFLOW_MODEL || 'Qwen/Qwen3-8B';
+const CATEGORY_MODEL = process.env.SILICONFLOW_MODEL || 'deepseek-ai/DeepSeek-V4-Flash';
 
 // Load category data
 let categories = [];
@@ -608,21 +612,21 @@ async function batchInsertFromJson() {
         
         while (attempt <= maxRetries && !inserted) {
           try {
-            console.log(`[Batch Insert] Processing item ${totalProcessed + 1}: ${item.titleEn?.substring(0, 30)}... (attempt ${attempt}/${maxRetries})`);
+            console.log(`[Batch Insert] Processing item ${totalProcessed + 1}: ${item.name?.substring(0, 30)}... (attempt ${attempt}/${maxRetries})`);
             
             const goofishItemId = extractGoofishItemId(item?.url);
             const existing = await findExistingProductByUrl(item.url);
             
             const metadata = {
-              originalTitle: item.title,
+              originalTitle: item.originalTitle || item.title,
+              originalTitleEnglish: item.titleEn || null,
               translatedDescription: item.descriptionAr || '',
-              isRealBrand: typeof item.realBrand === 'boolean' ? item.realBrand : null,
               goofishItemId: goofishItemId || null,
               source: 'goofish',
               scrapedAt: new Date()
             };
             
-            const keywordsList = ensureKeywordList(item.keywords, item.titleEn || item.title);
+            const keywordsList = ensureKeywordList(item.keywords, item.name || item.titleEn || item.title);
             const basePriceIQD = Math.max(0, Number(item.priceCny || 0) * CNY_TO_IQD_RATE);
             const multiplier = calculatePriceMultiplier(basePriceIQD);
             const priceIQD = Math.round(basePriceIQD * multiplier);
@@ -634,7 +638,7 @@ async function batchInsertFromJson() {
               await prisma.product.update({
                 where: { id: existing.id },
                 data: {
-                  name: item.titleEn || item.title,
+                  name: item.name || item.titleEn || item.title,
                   price: priceIQD,
                   basePriceIQD,
                   aiMetadata: metadata,
@@ -657,7 +661,7 @@ async function batchInsertFromJson() {
               // Create new
               const newProduct = await prisma.product.create({
                 data: {
-                  name: item.titleEn || item.title,
+                  name: item.name || item.titleEn || item.title,
                   price: priceIQD,
                   basePriceIQD,
                   image: item.image,
@@ -697,7 +701,7 @@ async function batchInsertFromJson() {
               
               // Assign category
               try {
-                await assignCategoryToProduct(newProduct.id, item.titleEn || item.title, item.url);
+                await assignCategoryToProduct(newProduct.id, item.name || item.titleEn || item.title, item.url);
               } catch (categoryErr) {
                 console.warn(`[Batch Insert] Failed to assign category for ${newProduct.id}: ${toErrorText(categoryErr)}`);
               }
@@ -712,7 +716,7 @@ async function batchInsertFromJson() {
                       () => ensureProductImageEmbeddings({
                         prisma,
                         productId: newProduct.id,
-                        productName: GOOFISH_EMBED_USE_PRODUCT_NAME ? (item.titleEn || item.title || null) : null,
+                        productName: GOOFISH_EMBED_USE_PRODUCT_NAME ? (item.name || item.titleEn || item.title || null) : null,
                         fallbackImageUrl: imageToEmbed,
                         runDb: (operation, label) => withRetry(
                           operation,
@@ -1073,7 +1077,7 @@ sfCircuitOpenUntil = 0;
 
 const GOOFISH_TERM_AI_CALL_TIMEOUT_MS = Math.max(5000, parseInt(process.env.GOOFISH_TERM_AI_CALL_TIMEOUT_MS || '20000', 10) || 20000);
 const GOOFISH_TERM_AI_MAX_ATTEMPTS = Math.max(1, parseInt(process.env.GOOFISH_TERM_AI_MAX_ATTEMPTS || '10', 10) || 10);
-const GOOFISH_AI_MODEL = String(process.env.GOOFISH_AI_MODEL || 'Qwen/Qwen3-8B').trim() || 'Qwen/Qwen3-8B';
+const GOOFISH_AI_MODEL = String(process.env.GOOFISH_AI_MODEL || 'deepseek-ai/DeepSeek-V4-Flash').trim() || 'deepseek-ai/DeepSeek-V4-Flash';
 const GOOFISH_AI_RATE_LIMIT_DELAY_MS = Math.max(0, Number.parseInt(process.env.GOOFISH_AI_RATE_LIMIT_DELAY_MS || '200', 10) || 200);
 const GOOFISH_ENABLE_TRANSLATION_RETRY = String(process.env.GOOFISH_ENABLE_TRANSLATION_RETRY || '').toLowerCase() === 'true';
 const GOOFISH_SKIP_ON_TRANSLATION_FAILURE = String(process.env.GOOFISH_SKIP_ON_TRANSLATION_FAILURE || 'true').toLowerCase() !== 'false';
@@ -1316,17 +1320,26 @@ async function callSiliconFlow(messages, temperature = 0.3, maxTokens = 500, opt
   
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      console.log(`[SiliconFlow] Request attempt ${attempt}/${maxAttempts} (timeout=${timeoutMs}ms, model=${GOOFISH_AI_MODEL})`);
+          const modelName = IS_DEEPSEEK_KEY ? 'deepseek-v4-flash' : GOOFISH_AI_MODEL;
+          const isThinkingModel = /DeepSeek-V4|DeepSeek-R1|reasoner|v4-flash/i.test(modelName);
+        const effectiveMaxTokens = isThinkingModel ? Math.max(maxTokens, 4000) : maxTokens;
+      
+      console.log(`[AI Request] Attempt ${attempt}/${maxAttempts} (timeout=${timeoutMs}ms, model=${modelName}, endpoint=${SF_BASE_URL})`);
       const startedAt = Date.now();
-      const response = await axios.post('https://api.siliconflow.com/v1/chat/completions', {
-        model: GOOFISH_AI_MODEL,
+      const body = {
+        model: modelName,
         messages,
         temperature,
-        max_tokens: maxTokens,
-        stream: false,
-        // Disable reasoning for faster responses
-        enable_thinking: false
-      }, {
+        max_tokens: effectiveMaxTokens,
+        stream: false
+      };
+      
+      // Only disable thinking for models that support the flag
+      if (!isThinkingModel) {
+        body.enable_thinking = false;
+      }
+
+      const response = await axios.post(`${SF_BASE_URL}/chat/completions`, body, {
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${apiKey}`
@@ -1334,7 +1347,6 @@ async function callSiliconFlow(messages, temperature = 0.3, maxTokens = 500, opt
         timeout: timeoutMs,
         httpAgent: siliconflowAgent,
         httpsAgent: siliconflowAgent,
-        // Explicitly disable proxy for API calls
         proxy: false
       });
       const elapsed = Date.now() - startedAt;
@@ -1481,27 +1493,7 @@ function filterArabicEnglishOnly(text) {
   return String(text).replace(/[^\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFFa-zA-Z0-9\s\.,،؛:!?()\-_]/g, '').trim();
 }
 
-async function convertChineseToPinyin(text) {
-  if (!text || !SILICONFLOW_API_KEY) return text;
-  // Check if text contains Chinese characters
-  if (!/[\u4e00-\u9fff]/.test(text)) return text;
-  
-  try {
-    const result = await callSiliconFlow([
-      {
-        role: 'system',
-        content: 'You are a Chinese to pinyin converter. Convert Chinese characters to their pinyin romanization. Keep the pinyin in lowercase with spaces between words. Preserve numbers, English letters, and Arabic text exactly as they are. Do not translate - only convert Chinese characters to pinyin.'
-      },
-      {
-        role: 'user',
-        content: `Convert the Chinese characters in this text to pinyin. Keep non-Chinese text unchanged:\n${text}`
-      }
-    ], 0.2, 1000, { timeoutMs: GOOFISH_AI_CALL_TIMEOUT_MS });
-    return result || text;
-  } catch {
-    return text;
-  }
-}
+// convertChineseToPinyin removed — dead code, never called.
 
 function normalizeArabicKeyword(value) {
   return cleanAiText(value)
@@ -2183,18 +2175,6 @@ function detectNewOrOldFromTexts(title, conditionText) {
   const newRegex = /(全新|全新未使用|未使用|未拆封|全新带吊牌|全新带标签|吊牌未拆|brand\s*new)/i;
   if (usedRegex.test(normalized)) return false;
   if (newRegex.test(normalized)) return true;
-  return null;
-}
-
-function detectRealBrandFromTexts(title, conditionText) {
-  const text = `${String(title || '')} ${String(conditionText || '')}`.trim();
-  if (!text) return null;
-  const mixedRegex = /(some\s+are\s+real|partly\s+authentic|partial(?:ly)?\s+authentic|mixed\s+authenticity|部分正品|有真有假|بعضها\s+أصلي|جزء\s+أصلي)/i;
-  if (mixedRegex.test(text.toLowerCase())) return null;
-  const negativeRegex = /(高仿|复刻|仿|a货|同款|平替|替代款|1[:：]\s*1|replica|fake|copy)/i;
-  const positiveRegex = /(正品|专柜正品|官方正品|品牌正品|保真|真品|原装|官方|直营|authentic|genuine|original)/i;
-  if (negativeRegex.test(text)) return false;
-  if (positiveRegex.test(text)) return true;
   return null;
 }
 
@@ -3426,107 +3406,6 @@ async function regenerateNameWithLanguageFilter(title, currentName) {
   }
 }
 
-async function translateFullTitleToArabic(title, fallbackText = '') {
-  const source = String(title || '').trim().slice(0, GOOFISH_AI_TITLE_MAX_CHARS);
-  if (!source || !SILICONFLOW_API_KEY) return fallbackText || source;
-  try {
-    console.log(`[translateFullTitleToArabic] Translating: ${source.substring(0, 30)}...`);
-    const result = await callSiliconFlow([
-      {
-        role: 'system',
-        content: 'You are an Arabic e-commerce expert. Translate the following Chinese product title into a natural Arabic product name.'
-      },
-      {
-        role: 'user',
-        content: `Translate this title to Arabic: ${source}`
-      }
-    ], 0.2, 1000, { timeoutMs: GOOFISH_AI_CALL_TIMEOUT_MS });
-    if (!result) {
-      console.log(`[translateFullTitleToArabic] Circuit breaker or API returned null, using fallback`);
-      return fallbackText || source;
-    }
-    console.log(`[translateFullTitleToArabic] Raw result: ${result.substring(0, 50)}...`);
-    const translated = cleanAiText(sanitizeTranslationText(result));
-    console.log(`[translateFullTitleToArabic] Cleaned: ${translated.substring(0, 30)}...`);
-    if (!translated || isLowQualityTranslationText(translated, 3)) {
-      console.log(`[translateFullTitleToArabic] Translation failed or low quality, using fallback`);
-      return fallbackText || source;
-    }
-    let filtered = filterArabicEnglishOnly(translated);
-    console.log(`[translateFullTitleToArabic] Filtered: ${filtered.substring(0, 30)}...`);
-    return filtered;
-  } catch (err) {
-    console.error(`[translateFullTitleToArabic] Error: ${err.message}`);
-    return fallbackText || source;
-  }
-}
-
-async function translateDetailDescriptionToArabic(title, detailText, fallbackText = '') {
-  const sourceTitle = String(title || '').trim().slice(0, GOOFISH_AI_TITLE_MAX_CHARS);
-  const sourceDetail = String(detailText || '').trim().slice(0, 800);
-  if (!sourceDetail || !SILICONFLOW_API_KEY) return fallbackText || '';
-  
-  const maxRetries = 3;
-  let lastError = null;
-  
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      console.log(`[translateDetailDescriptionToArabic] Attempt ${attempt}/${maxRetries}`);
-      const result = await callSiliconFlow([
-        {
-          role: 'system',
-          content: 'You are an Arabic e-commerce content expert. Analyze the Chinese product details and generate a natural Arabic product description. Extract and present the most important product information in a clear, readable format. Output Arabic ONLY - no Chinese, Korean, Thai, or other languages.'
-        },
-        {
-          role: 'user',
-          content: `Analyze the following Chinese product detail text and generate a natural Arabic product description for an e-commerce listing.
-
-Task:
-- Extract the important product information (material, size, color, features, condition, etc.)
-- Present it in clear, natural Arabic that reads like a real product description
-- Summarize the key points in a concise way
-
-Rules:
-- Keep it factual and natural.
-- Extract and present key product details clearly.
-- Preserve brand names unchanged.
-- CRITICAL: Convert Chinese weight unit "斤" (jin) to kg by dividing by 2. Example: 150斤 = 75 kg, 170斤 = 85 kg.
-- CRITICAL: Do NOT mention any prices, currency symbols, or monetary values in the description. Remove all price information completely.
-- Do not add features not present in source.
-- Output Arabic ONLY - no Chinese, Korean, Thai, or other languages.
-Product title: ${sourceTitle}
-Product details: ${sourceDetail}`
-        }
-      ], 0.2, 300, { timeoutMs: GOOFISH_AI_CALL_TIMEOUT_MS });
-      
-      if (!result) {
-        console.log(`[translateDetailDescriptionToArabic] Attempt ${attempt} returned null (circuit breaker), using fallback`);
-        lastError = new Error('Circuit breaker open');
-        continue;
-      }
-      
-      const translated = cleanDescriptionText(result);
-      if (!translated) {
-        console.log(`[translateDetailDescriptionToArabic] Attempt ${attempt} returned empty`);
-        lastError = new Error('Empty translation');
-        continue;
-      }
-      
-      console.log(`[translateDetailDescriptionToArabic] Attempt ${attempt} succeeded: ${translated.substring(0, 50)}...`);
-      return translated;
-    } catch (err) {
-      lastError = err;
-      console.error(`[translateDetailDescriptionToArabic] Attempt ${attempt} failed: ${err.message}`);
-      if (attempt < maxRetries) {
-        await new Promise(r => setTimeout(r, 1000 * attempt));
-      }
-    }
-  }
-  
-  console.error(`[translateDetailDescriptionToArabic] All ${maxRetries} attempts failed, using fallback`);
-  return fallbackText || '';
-}
-
 async function updateProductTranslatedDescription(productId, descriptionAr) {
   const normalizedDescription = cleanDescriptionText(descriptionAr);
   if (!normalizedDescription) return;
@@ -3550,148 +3429,32 @@ async function updateProductTranslatedDescription(productId, descriptionAr) {
   console.log(`[Desc Update] Product ${productId} - Database update complete`);
 }
 
-async function generateLongDescriptionFromTitle(title, fallbackText = '') {
-  const source = String(title || '').trim().slice(0, GOOFISH_AI_TITLE_MAX_CHARS);
-  if (!source || !SILICONFLOW_API_KEY) return fallbackText || source;
-  try {
-    console.log(`[generateLongDescriptionFromTitle] Summarizing: ${source.substring(0, 30)}...`);
-    const result = await callSiliconFlow([
-      {
-        role: 'system',
-        content: 'You are an Arabic e-commerce expert. Generate a natural Arabic product description based on the Chinese title.'
-      },
-      {
-        role: 'user',
-        content: `Generate an Arabic description for this product: ${source}`
-      }
-    ], 0.2, 2000, { timeoutMs: GOOFISH_AI_CALL_TIMEOUT_MS });
-    if (!result) {
-      console.log(`[generateLongDescriptionFromTitle] API returned null, using fallback`);
-      return fallbackText || source;
-    }
-    console.log(`[generateLongDescriptionFromTitle] Raw result: ${result.substring(0, 80)}...`);
-    const translated = cleanDescriptionText(result);
-    return translated || fallbackText || source;
-  } catch (err) {
-    console.error(`[generateLongDescriptionFromTitle] Error: ${err.message}`);
-    return fallbackText || source;
-  }
-}
-
-async function translateSpecsToArabic(chineseSpecs) {
-  if (!chineseSpecs || !SILICONFLOW_API_KEY) return null;
-  const source = String(chineseSpecs).trim().slice(0, 500);
-  if (!source) return null;
-
-  try {
-    console.log(`[translateSpecsToArabic] Translating specs: ${source.substring(0, 30)}...`);
-    const result = await callSiliconFlow([
-      {
-        role: 'system',
-        content: 'You are an Arabic e-commerce expert. Translate the following Chinese product specifications into a structured Arabic JSON object. Format: {"Key": "Value"}. Arabic ONLY.'
-      },
-      {
-        role: 'user',
-        content: `Translate these specs to Arabic JSON: ${source}`
-      }
-    ], 0.2, 1000, { timeoutMs: GOOFISH_AI_CALL_TIMEOUT_MS });
-
-    if (!result) return null;
-
-    const jsonMatch = result.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      try {
-        const parsed = JSON.parse(jsonMatch[0]);
-        console.log(`[translateSpecsToArabic] Succeeded with ${Object.keys(parsed).length} keys`);
-        return parsed;
-      } catch (e) {
-        console.warn(`[translateSpecsToArabic] Failed to parse JSON: ${e.message}`);
-      }
-    }
-    return { "التفاصيل": result.trim() };
-  } catch (err) {
-    console.error(`[translateSpecsToArabic] Error: ${err.message}`);
-    return null;
-  }
-}
-
 async function generateTitleAndKeywords(title, detailText = '') {
   const fallback = String(title || '').trim().slice(0, GOOFISH_AI_TITLE_MAX_CHARS);
   if (!SILICONFLOW_API_KEY || !fallback) {
-    return { titleAr: fallback, descriptionAr: fallback, keywords: [], translationSucceeded: false };
+    return { titleAr: fallback, descriptionAr: fallback, titleEn: null, keywords: [], translationSucceeded: false };
   }
   try {
-    // If we have detail text, use the detail description function for longer descriptions
-    if (detailText && detailText.length > 20) {
-      // Optimization: run both AI calls in parallel instead of sequentially
-      const [descriptionAr, titleAr] = await Promise.all([
-        translateDetailDescriptionToArabic(title, detailText, fallback),
-        translateFullTitleToArabic(title, fallback)
-      ]);
-      // Use generated content even if quality check fails, as long as it's not empty
-      const finalTitleAr = titleAr && titleAr !== fallback && titleAr.length > 2 ? titleAr : fallback;
-      const finalDescriptionAr = descriptionAr && descriptionAr !== fallback && descriptionAr.length > 5 ? descriptionAr : fallback;
-      const translationSucceeded = (titleAr && titleAr !== fallback) || (descriptionAr && descriptionAr !== fallback);
-      return { titleAr: finalTitleAr, descriptionAr: finalDescriptionAr, keywords: [], translationSucceeded };
-    }
+    console.log(`[generateTitleAndKeywords] Using translateProduct for: ${fallback.substring(0, 30)}...`);
+    const translated = await translateProduct(title, detailText || title);
     
-    // Optimization: single merged AI call for both title translation + description generation
-    console.log(`[generateTitleAndKeywords] Generating title and description in one call for: ${fallback.substring(0, 30)}...`);
-    const mergedResult = await callSiliconFlow([
-      {
-        role: 'system',
-        content: 'You are an Arabic e-commerce expert. Given a Chinese product title, output a JSON object with two fields:\n- "titleAr": a natural Arabic product name (translated from the title)\n- "descriptionAr": a natural Arabic product description (based on the title)\nOutput ONLY valid JSON, no other text. Arabic text only.'
-      },
-      {
-        role: 'user',
-        content: `Translate and describe this product: ${fallback}`
-      }
-    ], 0.2, 2000, { timeoutMs: GOOFISH_AI_CALL_TIMEOUT_MS });
-
-    let titleAr = null;
-    let descriptionAr = null;
-
-    if (mergedResult) {
-      try {
-        const jsonMatch = mergedResult.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          const parsed = JSON.parse(jsonMatch[0]);
-          titleAr = parsed.titleAr ? cleanAiText(sanitizeTranslationText(parsed.titleAr)) : null;
-          descriptionAr = parsed.descriptionAr ? cleanDescriptionText(parsed.descriptionAr) : null;
-        }
-      } catch (e) {
-        console.warn(`[generateTitleAndKeywords] Failed to parse merged JSON, falling back to sequential calls: ${e.message}`);
-      }
+    if (translated) {
+      console.log(`[generateTitleAndKeywords] titleAr=${translated.titleAr?.substring(0, 30)}... titleEn=${translated.titleEn?.substring(0, 30)}...`);
+      
+      return { 
+        titleAr: translated.titleAr, 
+        descriptionAr: translated.descriptionAr || fallback, 
+        titleEn: translated.titleEn,
+        keywords: [], 
+        translationSucceeded: true 
+      };
     }
 
-    // Fallback to sequential calls if merged call failed or produced no usable output
-    if (!titleAr && !descriptionAr) {
-      console.log('[generateTitleAndKeywords] Merged call failed, falling back to sequential calls');
-      [titleAr, descriptionAr] = await Promise.all([
-        translateFullTitleToArabic(title, fallback),
-        generateLongDescriptionFromTitle(title, fallback)
-      ]);
-    } else if (!titleAr) {
-      titleAr = await translateFullTitleToArabic(title, fallback);
-    } else if (!descriptionAr) {
-      descriptionAr = await generateLongDescriptionFromTitle(title, fallback);
-    }
-    
-    console.log(`[generateTitleAndKeywords] titleAr=${titleAr?.substring(0, 30)}... descriptionAr=${descriptionAr?.substring(0, 30)}...`);
-    
-    // Use generated content even if quality check fails, as long as it's not empty
-    const finalTitleAr = titleAr && titleAr !== fallback && titleAr.length > 2 ? titleAr : fallback;
-    const finalDescriptionAr = descriptionAr && descriptionAr !== fallback && descriptionAr.length > 5 ? descriptionAr : fallback;
-    
-    const translationSucceeded = (titleAr && titleAr !== fallback && hasArabic(titleAr))
-      || (descriptionAr && descriptionAr !== fallback && hasArabic(descriptionAr));
-    
-    console.log(`[generateTitleAndKeywords] finalTitleAr=${finalTitleAr?.substring(0, 30)}... finalDescriptionAr=${finalDescriptionAr?.substring(0, 30)}... translationSucceeded=${translationSucceeded}`);
-    
-    return { titleAr: finalTitleAr, descriptionAr: finalDescriptionAr, keywords: [], translationSucceeded };
+    // Fallback if translateProduct fails
+    return { titleAr: fallback, descriptionAr: fallback, titleEn: null, keywords: [], translationSucceeded: false };
   } catch (error) {
     console.error('[AI Debug] generateTitleAndKeywords error:', error.message);
-    return { titleAr: fallback, descriptionAr: fallback, keywords: [], translationSucceeded: false };
+    return { titleAr: fallback, descriptionAr: fallback, titleEn: null, keywords: [], translationSucceeded: false };
   }
 }
 
@@ -3991,9 +3754,9 @@ async function saveProductToDb(item, existingProductId = null) {
     const existing = existingProductId ? { id: existingProductId } : null;
     const goofishItemId = extractGoofishItemId(item.url);
     const metadata = {
-      originalTitle: item.title,
+      originalTitle: item.originalTitle || item.title,
+      originalTitleEnglish: item.titleEn || null,
       translatedDescription: item.descriptionAr || '',
-      isRealBrand: typeof item.realBrand === 'boolean' ? item.realBrand : null,
       goofishItemId: goofishItemId || null,
       source: 'goofish',
       scrapedAt: new Date()
@@ -4012,7 +3775,7 @@ async function saveProductToDb(item, existingProductId = null) {
         await prisma.product.update({
           where: { id: existing.id },
           data: {
-            name: item.titleEn || item.title,
+            name: item.name || item.titleEn || item.title,
             price: priceIQD,
             basePriceIQD,
             image: cleanImageUrl,
@@ -4032,7 +3795,7 @@ async function saveProductToDb(item, existingProductId = null) {
             WHERE "id" = ${existing.id}
           `;
         }
-        console.log(`Updated product: ${item.titleEn || item.title}`);
+        console.log(`Updated product: ${item.name || item.titleEn || item.title}`);
         
         // Generate image embeddings for the updated product
         if (!process.env.GOOFISH_DISABLE_IMAGE_EMBEDDINGS || process.env.GOOFISH_DISABLE_IMAGE_EMBEDDINGS.toLowerCase() !== 'true') {
@@ -4041,7 +3804,7 @@ async function saveProductToDb(item, existingProductId = null) {
             const embeddingResult = await ensureProductImageEmbeddings({
               prisma,
               productId: existing.id,
-              productName: item.titleEn || item.title,
+              productName: item.name || item.titleEn || item.title,
               fallbackImageUrl: cleanImageUrl,
               logger: console
             });
@@ -4064,7 +3827,7 @@ async function saveProductToDb(item, existingProductId = null) {
               UPDATE "Product"
               SET "price" = ${priceIQD},
                   "basePriceIQD" = ${basePriceIQD},
-                  "name" = ${item.titleEn || item.title},
+                  "name" = ${item.name || item.titleEn || item.title},
                   "description" = ${item.descriptionAr || ''},
                   "image" = ${cleanImageUrl},
                   "keywords" = ARRAY[${keywordsSql}],
@@ -4078,7 +3841,7 @@ async function saveProductToDb(item, existingProductId = null) {
               UPDATE "Product"
               SET "price" = ${priceIQD},
                   "basePriceIQD" = ${basePriceIQD},
-                  "name" = ${item.titleEn || item.title},
+                  "name" = ${item.name || item.titleEn || item.title},
                   "description" = ${item.descriptionAr || ''},
                   "image" = ${cleanImageUrl},
                   "keywords" = ARRAY[${keywordsSql}],
@@ -4093,7 +3856,7 @@ async function saveProductToDb(item, existingProductId = null) {
               UPDATE "Product"
               SET "price" = ${priceIQD},
                   "basePriceIQD" = ${basePriceIQD},
-                  "name" = ${item.titleEn || item.title},
+                  "name" = ${item.name || item.titleEn || item.title},
                   "description" = ${item.descriptionAr || ''},
                   "image" = ${cleanImageUrl},
                   "neworold" = ${newOrOldValue},
@@ -4106,7 +3869,7 @@ async function saveProductToDb(item, existingProductId = null) {
               UPDATE "Product"
               SET "price" = ${priceIQD},
                   "basePriceIQD" = ${basePriceIQD},
-                  "name" = ${item.titleEn || item.title},
+                  "name" = ${item.name || item.titleEn || item.title},
                   "description" = ${item.descriptionAr || ''},
                   "image" = ${cleanImageUrl},
                   "aiMetadata" = ${JSON.stringify(metadata)}::jsonb,
@@ -4115,14 +3878,14 @@ async function saveProductToDb(item, existingProductId = null) {
             `;
           }
         }
-        console.log(`Updated product (raw SQL): ${item.titleEn || item.title}`);
+        console.log(`Updated product (raw SQL): ${item.name || item.titleEn || item.title}`);
         return existing.id;
       }
     } else {
       let newProduct;
       try {
         const createData = {
-            name: item.titleEn || item.title,
+            name: item.name || item.titleEn || item.title,
             price: priceIQD,
             basePriceIQD,
             image: cleanImageUrl,
@@ -4152,7 +3915,7 @@ async function saveProductToDb(item, existingProductId = null) {
         }
         console.warn(`Prisma create failed, trying minimal create fallback: ${toErrorText(createError)}`);
         const fallbackCreateData = {
-          name: String(item.titleEn || item.title || '').slice(0, 380),
+          name: String(item.name || item.titleEn || item.title || '').slice(0, 380),
           price: priceIQD,
           basePriceIQD,
           image: cleanImageUrl,
@@ -4211,7 +3974,7 @@ async function saveProductToDb(item, existingProductId = null) {
         }
       }
       if (newProduct?.id) {
-        console.log(`Saved to DB: id=${newProduct.id} title=${item.titleEn || item.title}`);
+        console.log(`Saved to DB: id=${newProduct.id} title=${item.name || item.titleEn || item.title}`);
         
         // Generate image embeddings for the new product
         if (!process.env.GOOFISH_DISABLE_IMAGE_EMBEDDINGS || process.env.GOOFISH_DISABLE_IMAGE_EMBEDDINGS.toLowerCase() !== 'true') {
@@ -4220,7 +3983,7 @@ async function saveProductToDb(item, existingProductId = null) {
             const embeddingResult = await ensureProductImageEmbeddings({
               prisma,
               productId: newProduct.id,
-              productName: item.titleEn || item.title,
+              productName: item.name || item.titleEn || item.title,
               fallbackImageUrl: cleanImageUrl,
               logger: console
             });
@@ -4232,12 +3995,12 @@ async function saveProductToDb(item, existingProductId = null) {
         
         // Category assignment moved to detail phase
       } else {
-        console.log(`Saved to DB: id=unknown title=${item.titleEn || item.title}`);
+        console.log(`Saved to DB: id=unknown title=${item.name || item.titleEn || item.title}`);
       }
       return newProduct?.id || null;
     }
   } catch (e) {
-    console.error(`Failed to save product ${item.titleEn}:`, e.message);
+    console.error(`Failed to save product ${item.name || item.titleEn}:`, e.message);
     // Print stack trace for debugging
     if (e.stack) console.error(e.stack);
     if (isRetryableDbError(e)) {
@@ -4275,7 +4038,6 @@ async function processProductDetailsToJson(page, url, index) {
     isActive: true,
     priceCny: 0,
     newOrOld: null,
-    realBrand: null,
     keywords: []
   };
 
@@ -4384,9 +4146,20 @@ async function processProductDetailsToJson(page, url, index) {
         console.log(`[Detail Phase] Generated Arabic name: ${generated.titleAr?.substring(0, 30)}...`);
         console.log(`[Detail Phase] Generated Arabic description: ${generated.descriptionAr?.substring(0, 50)}...`);
         
+        const badName = isBadTranslation(generated.titleAr);
+        const badDesc = generated.descriptionAr ? isBadTranslation(generated.descriptionAr) : false;
+        if (badName || badDesc) {
+          console.warn(`[Detail Phase] BAD TRANSLATION detected for ${url} — nameBad=${badName} descBad=${badDesc} — skipping product`);
+          detailItem.isActive = false;
+          saveDetailItemToJson(detailItem, detailDataPath);
+          return;
+        }
+        
         detailItem.translatedName = generated.titleAr;
         detailItem.translatedDescription = generated.descriptionAr;
         detailItem.keywords = generated.keywords || [];
+        
+        detailItem.aiMetadata.originalTitleEnglish = generated.titleEn || null;
       }
     } else {
       console.log(`[Detail Phase] Could not extract content from specific div, using fallback extraction`);
@@ -4417,7 +4190,11 @@ async function processProductDetailsToJson(page, url, index) {
       
       if (rawDetailDescription) {
         const fallbackDescription = cleanDescriptionText(String(extractedContent || '').trim());
-        const translatedDetailDescription = await translateDetailDescriptionToArabic(extractedContent || '', rawDetailDescription, fallbackDescription);
+        const retryGenerated = await translateProduct(extractedContent || '', rawDetailDescription);
+        
+        detailItem.aiMetadata.originalTitleEnglish = retryGenerated.titleEn || null;
+
+        const translatedDetailDescription = retryGenerated ? retryGenerated.descriptionAr : fallbackDescription;
         if (translatedDetailDescription && hasArabic(translatedDetailDescription)) {
           detailItem.translatedDescription = translatedDetailDescription;
         }
@@ -4445,31 +4222,9 @@ async function processProductDetailsToJson(page, url, index) {
     });
     
     if (Object.keys(rawSpecsText).length > 0) {
-      console.log(`ℹ️ Found specs for ${url}:`, JSON.stringify(rawSpecsText));
-      detailItem.specs = rawSpecsText;
-      
-      // Translate specs
-      const specsPrompt = Object.entries(rawSpecsText)
-        .map(([key, value]) => `${key}: ${value}`)
-        .join('\n');
-      const translatedSpecs = await callSiliconFlow([
-        {
-          role: 'system',
-          content: 'You are a Chinese to Arabic translator for e-commerce product specifications. Translate BOTH keys and values to Arabic (Iraqi dialect). CRITICAL: Translate ALL keys to meaningful Arabic labels - do NOT keep Chinese keys. Key translations to memorize: 品牌→الماركة, 成色→الحالة, 适用性别→الجنس, 适用季节→الموسم, 尺码→المقاس, 适用人群→الفئة المستهدفة, 材质→المادة, 颜色→اللون. Return ONLY a JSON object with Arabic keys and Arabic values. Do not include any explanation or extra text.'
-        },
-        {
-          role: 'user',
-          content: `Translate these specifications to Arabic:\n${specsPrompt}`
-        }
-      ], 0.2, 300, { timeoutMs: 60000 });
-      
-      try {
-        const parsedSpecs = JSON.parse(translatedSpecs);
-        console.log(`✅ Translated specs for ${url}:`, JSON.stringify(parsedSpecs));
-        detailItem.translatedSpecs = parsedSpecs;
-      } catch {
-        console.warn(`⚠️ Failed to parse translated specs for ${url}`);
-      }
+      // Specs intentionally left empty — spec translation AI calls were disabled
+      // to cut API spend. Raw Chinese specs are not persisted either.
+      console.log(`ℹ️ Found ${Object.keys(rawSpecsText).length} specs for ${url} (translation skipped, leaving empty)`);
     }
 
     // Extract images
@@ -4777,10 +4532,19 @@ async function processProductDetailsAccumulate(page, product, detailProgress = n
           
           if (generated.translationSucceeded) {
             console.log(`[Detail Phase] Generated Arabic name: ${generated.titleAr?.substring(0, 30)}...`);
-            console.log(`[Detail Phase] Generated Arabic description: ${generated.descriptionAr?.substring(0, 50)}...`);
+            
+            const badName = isBadTranslation(generated.titleAr);
+            const badDesc = generated.descriptionAr ? isBadTranslation(generated.descriptionAr) : false;
+            if (badName || badDesc) {
+              console.warn(`[Detail Phase] BAD TRANSLATION detected for Product ${product.id} — nameBad=${badName} descBad=${badDesc} — skipping`);
+              return;
+            }
             
             if (generated.titleAr && hasArabic(generated.titleAr)) {
               accumulatedData.name = generated.titleAr;
+            }
+            if (generated.titleEn) {
+              accumulatedData.titleEn = generated.titleEn;
             }
             
             if (generated.descriptionAr && hasArabic(generated.descriptionAr)) {
@@ -4814,10 +4578,31 @@ async function processProductDetailsAccumulate(page, product, detailProgress = n
             return lines.join(' ');
           }));
           if (rawDetailDescription) {
-            const fallbackDescription = cleanDescriptionText(String(product.name || '').trim());
-            const translatedDetailDescription = await translateDetailDescriptionToArabic(product.name || '', rawDetailDescription, fallbackDescription);
-            if (translatedDetailDescription && hasArabic(translatedDetailDescription)) {
-              accumulatedData.description = translatedDetailDescription;
+            const productNameForTrans = String(product.name || '').trim();
+            const isNameChinese = /[\u4e00-\u9fff]/.test(productNameForTrans);
+            if (!isNameChinese) {
+              // Already-translated name: skip the redundant AI call and reuse the
+              // cleaned Arabic name as the description fallback (saves 1 API call/product).
+              const fallbackDescription = cleanDescriptionText(productNameForTrans);
+              if (fallbackDescription && hasArabic(fallbackDescription)) {
+                accumulatedData.description = fallbackDescription;
+              }
+            } else {
+              // Name still Chinese — pay one API call but capture all 5 fields so
+              // the name-update check below can reuse `generated` instead of calling again.
+              const retryGenerated = await translateProduct(productNameForTrans, rawDetailDescription);
+              if (retryGenerated) {
+                accumulatedData.titleEn = retryGenerated.titleEn || null;
+                const translatedDetailDescription = retryGenerated.descriptionAr;
+                if (translatedDetailDescription && hasArabic(translatedDetailDescription)) {
+                  accumulatedData.description = translatedDetailDescription;
+                }
+                // Expose to the name-update block below so it doesn't re-translate.
+                generated = { ...retryGenerated, keywords: [], translationSucceeded: true };
+              } else {
+                const fallbackDescription = cleanDescriptionText(productNameForTrans);
+                if (fallbackDescription) accumulatedData.description = fallbackDescription;
+              }
             }
           }
         }
@@ -4827,7 +4612,20 @@ async function processProductDetailsAccumulate(page, product, detailProgress = n
         const isProductNameChinese = /[\u4e00-\u9fff]/.test(productName);
         if (isProductNameChinese) {
           console.log(`[Name Update] Product has Chinese name, translating to Arabic: ${productName.substring(0, 30)}...`);
-          const translatedName = await translateFullTitleToArabic(productName, productName);
+          // Reuse the result from generateTitleAndKeywords (which already translated this title)
+          // instead of calling translateProduct again on the same string.
+          let translatedName = null;
+          if (typeof generated !== 'undefined' && generated && generated.titleAr && generated.titleAr !== productName && hasArabic(generated.titleAr)) {
+            translatedName = generated.titleAr;
+            console.log(`[Name Update] Reusing previously generated title (no extra API call)`);
+          } else {
+            const retryGenerated = await translateProduct(productName, productName);
+            if (retryGenerated) {
+              translatedName = retryGenerated.titleAr;
+            } else {
+              translatedName = productName;
+            }
+          }
           if (translatedName && translatedName !== productName && hasArabic(translatedName)) {
             accumulatedData.name = translatedName;
             console.log(`[Name Update] Translated name stored: ${translatedName.substring(0, 30)}...`);
@@ -4848,11 +4646,12 @@ async function processProductDetailsAccumulate(page, product, detailProgress = n
           accumulatedData.categoryId = urlMatch[1];
         }
 
-        // Generate text embedding for product name
-        if (accumulatedData.name) {
+        // Generate text embedding for product name (using English name only, like audit-and-fix)
+        const textToEmbed = accumulatedData.titleEn;
+        if (textToEmbed) {
           try {
-            console.log(`[Text Embedding] Generating text embedding for: "${accumulatedData.name.substring(0, 50)}..."`);
-            const textEmbedding = await embedText(accumulatedData.name);
+            console.log(`[Text Embedding] Generating text embedding for: "${textToEmbed.substring(0, 50)}..."`);
+            const textEmbedding = await embedText(textToEmbed);
             if (Array.isArray(textEmbedding) && textEmbedding.length > 0 && !textEmbedding.every(v => v === 0)) {
               accumulatedData.textEmbedding = textEmbedding;
               console.log(`[Text Embedding] Successfully generated text embedding (${textEmbedding.length} dimensions)`);
@@ -4862,6 +4661,8 @@ async function processProductDetailsAccumulate(page, product, detailProgress = n
           } catch (embedErr) {
             console.warn(`[Text Embedding] Failed to generate text embedding: ${embedErr.message}`);
           }
+        } else {
+          console.warn(`[Text Embedding] Skipping embedding - no English name available`);
         }
 
         // Extract specs
@@ -4955,51 +4756,9 @@ async function processProductDetailsAccumulate(page, product, detailProgress = n
             const extractedSpecs = rawSpecs?.specs || null;
 
             if (extractedSpecs) {
-              console.log(`ℹ️ Found specs for Product ${product.id}:`, JSON.stringify(extractedSpecs));
-        
-              const rawSpecsText = JSON.stringify(extractedSpecs);
-
-              if (SILICONFLOW_API_KEY) {
-                console.log(`ℹ️ Product ${product.id} specs found. Attempting translation...`);
-                try {
-                  const prompt = `You are translating product specifications for an Iraqi e-commerce website. Translate the following JSON from Chinese to Arabic (Iraqi dialect preferred).
-
-CRITICAL RULES:
-- Translate ALL keys to meaningful Arabic labels - THIS IS MANDATORY
-- Translate ALL values to Arabic
-- Keep brand names in ENGLISH if they are English (like Apple, Nike, etc.)
-- Transliterate Chinese brand names to Arabic (like 芬腾 → فينتن)
-- Keep model numbers as-is
-- "适用人群":"成人" must translate to "بالغين" (adults) NOT "ult"
-- Do NOT include Chinese characters in output - NEITHER KEYS NOR VALUES
-- Return ONLY a valid JSON object, no markdown, no explanations
-
-Key translations (memorize these):
-品牌 → الماركة
-成色 → الحالة
-适用性别 → الجنس
-适用季节 → الموسم
-尺码 → المقاس
-适用人群 → الفئة المستهدفة
-材质 → المادة
-颜色 → اللون
-
-Input JSON:
-${JSON.stringify(extractedSpecs)}
-
-Output JSON ONLY (with Arabic keys and Arabic values):`;
-                  const result = await callSiliconFlow([
-                    { role: 'system', content: 'You are a Chinese to Arabic translator for e-commerce product specifications.' },
-                    { role: 'user', content: prompt }
-                  ], 0.2, 300, { timeoutMs: GOOFISH_AI_CALL_TIMEOUT_MS });
-                  
-                  const translatedSpecs = JSON.parse(result.trim());
-                  console.log(`✅ Translated specs for Product ${product.id}:`, JSON.stringify(translatedSpecs));
-                  accumulatedData.specs = translatedSpecs;
-                } catch (specErr) {
-                  console.warn(`⚠️ Failed to translate specs for Product ${product.id}: ${toErrorText(specErr)}`);
-                }
-              }
+              // Specs intentionally left empty — spec translation AI calls were disabled
+              // to cut API spend. Raw Chinese specs are not persisted either.
+              console.log(`ℹ️ Found ${Object.keys(extractedSpecs).length} specs for Product ${product.id} (translation skipped, leaving empty)`);
             }
           }
         }
@@ -5145,9 +4904,9 @@ Output JSON ONLY (with Arabic keys and Arabic values):`;
                   source: "goofish",
                   scrapedAt: new Date().toISOString(),
                   soldCount: accumulatedData.soldCount || null,
-                  isRealBrand: null,
                   goofishItemId: accumulatedData.url.match(/id=(\d+)/)?.[1] || null,
                   originalTitle: product.name,
+                  originalTitleEnglish: accumulatedData.titleEn || null,
                   translatedDescription: accumulatedData.description || null,
                   detailTranslationUpdatedAt: accumulatedData.description ? new Date().toISOString() : null
                 },
@@ -5577,6 +5336,13 @@ async function processProductDetails(page, product, detailProgress = null) {
             console.log(`[Detail Phase] Generated Arabic name: ${generated.titleAr?.substring(0, 30)}...`);
             console.log(`[Detail Phase] Generated Arabic description: ${generated.descriptionAr?.substring(0, 50)}...`);
             
+            const badName = isBadTranslation(generated.titleAr);
+            const badDesc = generated.descriptionAr ? isBadTranslation(generated.descriptionAr) : false;
+            if (badName || badDesc) {
+              console.warn(`[Detail Phase] BAD TRANSLATION detected for Product ${product.id} — nameBad=${badName} descBad=${badDesc} — skipping`);
+              return;
+            }
+            
             // Update product name
             if (generated.titleAr && hasArabic(generated.titleAr)) {
               try {
@@ -5644,8 +5410,19 @@ async function processProductDetails(page, product, detailProgress = null) {
             return lines.join(' ');
           }));
           if (rawDetailDescription) {
-            const fallbackDescription = cleanDescriptionText(String(product.name || '').trim());
-            translatedDetailDescription = await translateDetailDescriptionToArabic(product.name || '', rawDetailDescription, fallbackDescription);
+            const productNameForTrans = String(product.name || '').trim();
+            const isNameChinese = /[\u4e00-\u9fff]/.test(productNameForTrans);
+            if (!isNameChinese) {
+              // Already-translated name: skip redundant AI call, reuse cleaned Arabic name.
+              translatedDetailDescription = cleanDescriptionText(productNameForTrans);
+            } else {
+              const retryGenerated = await translateProduct(productNameForTrans, rawDetailDescription);
+              translatedDetailDescription = retryGenerated ? retryGenerated.descriptionAr : cleanDescriptionText(productNameForTrans);
+              // Expose to the name-update block below so it doesn't re-translate.
+              if (retryGenerated) {
+                generated = { ...retryGenerated, keywords: [], translationSucceeded: true };
+              }
+            }
             if (translatedDetailDescription && hasArabic(translatedDetailDescription)) {
               try {
                 await withRetry(
@@ -5669,7 +5446,20 @@ async function processProductDetails(page, product, detailProgress = null) {
         const isProductNameChinese = /[\u4e00-\u9fff]/.test(productName);
         if (isProductNameChinese) {
           console.log(`[Name Update] Product ${product.id} has Chinese name, translating to Arabic...`);
-          const translatedName = await translateFullTitleToArabic(productName, productName);
+          // Reuse the title that was already translated in this same flow
+          // by generateTitleAndKeywords to avoid a redundant API call.
+          let translatedName = null;
+          if (typeof generated !== 'undefined' && generated && generated.titleAr && generated.titleAr !== productName && hasArabic(generated.titleAr)) {
+            translatedName = generated.titleAr;
+            console.log(`[Name Update] Reusing previously generated title (no extra API call)`);
+          } else {
+            const retryGenerated = await translateProduct(productName, productName);
+            if (retryGenerated) {
+              translatedName = retryGenerated.titleAr;
+            } else {
+              translatedName = productName;
+            }
+          }
           if (translatedName && translatedName !== productName && hasArabic(translatedName)) {
             try {
               await withRetry(
@@ -5805,94 +5595,20 @@ async function processProductDetails(page, product, detailProgress = null) {
           
           const extractedSpecs = rawSpecs?.specs || null;
 
+          // If the product already has translated specs in the DB and the
+          // page extraction returned the same Chinese spec structure, skip
+          // re-translation entirely (this is the common case for Phase 3).
+          const existingSpecs = product.specs;
+          const hasExistingTranslatedSpecs = existingSpecs
+            && typeof existingSpecs === 'object'
+            && !Array.isArray(existingSpecs)
+            && Object.keys(existingSpecs).length > 0
+            && /[\u0600-\u06FF]/.test(JSON.stringify(existingSpecs));
+
           if (extractedSpecs) {
-            console.log(`ℹ️ Found specs for Product ${product.id}:`, JSON.stringify(extractedSpecs));
-        
-            const rawSpecsText = JSON.stringify(extractedSpecs);
-
-            if (SILICONFLOW_API_KEY) {
-              console.log(`ℹ️ Product ${product.id} specs found. Attempting translation...`);
-              try {
-                const prompt = `You are translating product specifications for an Iraqi e-commerce website. Translate the following JSON from Chinese to Arabic (Iraqi dialect preferred).
-
-CRITICAL RULES:
-- Translate ALL keys to meaningful Arabic labels - THIS IS MANDATORY
-- Translate ALL values to Arabic
-- Keep brand names in ENGLISH if they are English (like Apple, Nike, etc.)
-- Transliterate Chinese brand names to Arabic (like 芬腾 → فينتن)
-- Keep model numbers as-is
-- "适用人群":"成人" must translate to "بالغين" (adults) NOT "ult"
-- Do NOT include Chinese characters in output - NEITHER KEYS NOR VALUES
-- Return ONLY a valid JSON object, no markdown, no explanations
-
-Key translations (memorize these):
-品牌 → الماركة
-成色 → الحالة
-适用性别 → الجنس
-适用季节 → الموسم
-尺码 → المقاس
-适用人群 → الفئة المستهدفة
-材质 → المادة
-颜色 → اللون
-
-Examples:
-{"品牌": "苹果"} → {"الماركة": "Apple"}
-{"品牌": "芬腾"} → {"الماركة": "فينتن"}
-{"成色": "全新"} → {"الحالة": "جديد"}
-{"适用人群": "成人"} → {"الفئة المستهدفة": "بالغين"}
-{"连接方式": "蓝牙连接"} → {"نوع الاتصال": "بلوتوث"}
-{"功能": "蓝牙通话"} → {"الوظائف": "مكالمات بلوتوث"}
-
-Input JSON:
-${JSON.stringify(extractedSpecs)}
-
-Output JSON ONLY (with Arabic keys and Arabic values):`;
-                
-                const translatedJsonStr = await callSiliconFlow([{ role: "user", content: prompt }], 0.2, 1000, { timeoutMs: GOOFISH_AI_CALL_TIMEOUT_MS });
-                
-                if (translatedJsonStr) {
-                  const cleanJson = translatedJsonStr.replace(/```json/g, '').replace(/```/g, '').trim();
-                  let translatedSpecs;
-                  try {
-                    translatedSpecs = JSON.parse(cleanJson);
-                  } catch (parseErr) {
-                     console.error(`❌ Failed to parse translated specs JSON for Product ${product.id}:`, parseErr.message);
-                     translatedSpecs = extractedSpecs;
-                  }
-                  
-                  // Validate translation - check if it contains Arabic
-                  const translatedText = JSON.stringify(translatedSpecs);
-                  const hasArabic = /[\u0600-\u06FF]/.test(translatedText);
-                  
-                  if (hasArabic) {
-                    console.log(`✅ Translated specs for Product ${product.id}:`, JSON.stringify(translatedSpecs));
-                    await updateSpecsValue(JSON.stringify(translatedSpecs), `update specs ${product.id}`);
-                  } else {
-                    console.warn(`⚠️ Translation for Product ${product.id} does not contain Arabic. Saving raw specs.`);
-                    await updateSpecsValue(rawSpecsText, `update specs raw ${product.id}`);
-                  }
-                } else {
-                    console.warn(`⚠️ Translation returned empty for Product ${product.id}. Saving raw specs.`);
-                    await updateSpecsValue(rawSpecsText, `update specs raw ${product.id}`);
-                }
-              } catch (err) {
-                const isTimeout = String(err?.message || '').includes('timeout') || String(err?.message || '').includes('timed out');
-                console.error(`❌ Failed to translate specs for Product ${product.id}:`, err.message);
-                // Don't try to save raw specs on timeout to avoid further delays - just skip specs for this product
-                if (!isTimeout) {
-                  try {
-                    await updateSpecsValue(rawSpecsText, `update specs fallback ${product.id}`);
-                  } catch (specFallbackErr) {
-                    console.error(`❌ Failed to save fallback specs for Product ${product.id}: ${toErrorText(specFallbackErr)}`);
-                  }
-                } else {
-                  console.warn(`⚠️ Spec translation timed out for Product ${product.id}. Skipping specs save to avoid blocking.`);
-                }
-              }
-            } else {
-              console.warn(`⚠️ SILICONFLOW_API_KEY missing. Saving raw specs for Product ${product.id}.`);
-              await updateSpecsValue(rawSpecsText, `update specs raw ${product.id}`);
-            }
+            // Specs intentionally left empty — spec translation AI calls were disabled
+            // to cut API spend. Raw Chinese specs are not persisted either.
+            console.log(`ℹ️ Found ${Object.keys(extractedSpecs).length} specs for Product ${product.id} (translation skipped, leaving empty)`);
           }
 
           // Extract prices from description
@@ -6554,7 +6270,6 @@ async function run() {
       const detectedPrice = detectRealPriceFromTitle(item.title, cny);
       if (detectedPrice !== cny && detectedPrice > 0) cny = detectedPrice;
       const newOrOld = detectNewOrOldFromTexts(item.title, item.conditionText);
-      const realBrand = detectRealBrandFromTexts(item.title, item.conditionText);
       // Keep original Chinese title - translation will happen in detail phase
       let titleEn = String(item.title || '').trim();
       let descriptionAr = titleEn;
@@ -6599,78 +6314,110 @@ async function run() {
         descriptionAr = cleanDescriptionText(String(existingProduct?.aiMetadata?.translatedDescription || titleEn).trim()) || titleEn;
         keywords = ensureKeywordList(existingProduct.keywords, titleEn || item.title);
       }
-      // Enable AI translation from search page data - skip detail phase
-      if (SILICONFLOW_API_KEY) {
-        const cachedTranslation = getCachedTranslation(translationCache, item.title);
-        const canUseCachedDescription = cachedTranslation
-          && cachedTranslation.descriptionAr
-          && cachedTranslation.descriptionAr.length >= 24
-          && cachedTranslation.descriptionAr !== cachedTranslation.titleAr
-          && hasArabic(cachedTranslation.descriptionAr);
-        if (canUseCachedDescription) {
-          titleEn = cachedTranslation.titleAr;
-          descriptionAr = cachedTranslation.descriptionAr;
-          keywords = cachedTranslation.keywords;
-        } else {
-          console.log(`[ProcessCollectedLink] Generating title and keywords for itemId=${goofishItemId || 'n/a'}`);
-          const generated = await generateTitleAndKeywords(item.title);
-          console.log(`[ProcessCollectedLink] Generated: translationSucceeded=${generated.translationSucceeded} titleAr=${generated.titleAr?.substring(0, 30)}... descriptionAr=${generated.descriptionAr?.substring(0, 30)}...`);
-          if (GOOFISH_SKIP_ON_TRANSLATION_FAILURE && !generated.translationSucceeded) {
-            console.log(`[ProcessCollectedLink] Translation failed, but continuing with generated content anyway`);
-            titleEn = generated.titleAr || titleEn;
-            descriptionAr = generated.descriptionAr || descriptionAr;
-            keywords = generated.keywords || keywords;
-          } else {
-            titleEn = generated.titleAr;
-            descriptionAr = generated.descriptionAr;
-            keywords = generated.keywords;
-          }
-          if (generated.translationSucceeded) {
-            setCachedTranslation(translationCache, item.title, generated);
-            pendingCacheWrites += 1;
-            if (pendingCacheWrites >= GOOFISH_TRANSLATION_CACHE_FLUSH_EVERY) {
-              saveTranslationCache(translationCache);
-              pendingCacheWrites = 0;
+          // Enable AI translation from search page data - skip detail phase
+          let generated = null;
+          if (SILICONFLOW_API_KEY) {
+            const cachedTranslation = getCachedTranslation(translationCache, item.title);
+            const canUseCachedDescription = cachedTranslation
+              && cachedTranslation.descriptionAr
+              && cachedTranslation.descriptionAr.length >= 24
+              && cachedTranslation.descriptionAr !== cachedTranslation.titleAr
+              && hasArabic(cachedTranslation.descriptionAr);
+            
+            if (canUseCachedDescription) {
+              titleEn = cachedTranslation.titleAr;
+              descriptionAr = cachedTranslation.descriptionAr;
+              keywords = cachedTranslation.keywords;
+              generated = cachedTranslation;
+            } else {
+              console.log(`[ProcessCollectedLink] Generating title and keywords for itemId=${goofishItemId || 'n/a'}`);
+              generated = await generateTitleAndKeywords(item.title);
+              console.log(`[ProcessCollectedLink] Generated: translationSucceeded=${generated.translationSucceeded} titleAr=${generated.titleAr?.substring(0, 30)}... descriptionAr=${generated.descriptionAr?.substring(0, 30)}...`);
+              if (GOOFISH_SKIP_ON_TRANSLATION_FAILURE && !generated.translationSucceeded) {
+                console.log(`[ProcessCollectedLink] Translation failed, but continuing with generated content anyway`);
+                titleEn = generated.titleAr || titleEn;
+                descriptionAr = generated.descriptionAr || descriptionAr;
+                keywords = generated.keywords || keywords;
+              } else {
+              titleEn = generated.titleAr;
+              descriptionAr = generated.descriptionAr;
+              keywords = generated.keywords;
+            }
+            if (generated.translationSucceeded) {
+              const badName = isBadTranslation(generated.titleAr);
+              const badDesc = generated.descriptionAr ? isBadTranslation(generated.descriptionAr) : false;
+              if (badName || badDesc) {
+                console.warn(`[ProcessCollectedLink] BAD TRANSLATION for itemId=${goofishItemId || 'n/a'} — nameBad=${badName} descBad=${badDesc} — skipping product`);
+                return null;
+              }
+              setCachedTranslation(translationCache, item.title, generated);
+              pendingCacheWrites += 1;
+              if (pendingCacheWrites >= GOOFISH_TRANSLATION_CACHE_FLUSH_EVERY) {
+                saveTranslationCache(translationCache);
+                pendingCacheWrites = 0;
+              }
+            }
             }
           }
-        }
-      }
-      titleEn = sanitizeTranslationText(titleEn);
-      descriptionAr = cleanDescriptionText(descriptionAr);
-      
-      // Translate and structure specs
-      let translatedSpecs = null;
-      if (item.conditionText) {
-        translatedSpecs = await translateSpecsToArabic(item.conditionText);
-      }
+          titleEn = sanitizeTranslationText(titleEn);
+          descriptionAr = cleanDescriptionText(descriptionAr);
+          
+          // Specs are intentionally left empty — spec translation AI calls were disabled
+          // to cut API spend. The downstream code treats null/empty specs as no-op.
+          const translatedSpecs = null;
 
-      if (GOOFISH_ENABLE_TRANSLATION_RETRY && SILICONFLOW_API_KEY && (!descriptionAr || descriptionAr === item.title || isChineseTerm(descriptionAr))) {
-        if (isChineseTerm(titleEn)) titleEn = await translateFullTitleToArabic(item.title, item.title);
-        descriptionAr = cleanDescriptionText(await translateFullTitleToArabic(item.title, item.title));
-      }
-    const itemData = {
-      title: item.title || '',
-      titleEn: titleEn || '',
-      descriptionAr: descriptionAr || '',
-      keywords,
-      newOrOld,
-      realBrand,
-      priceCny: cny,
-      image: item.image || '',
-      url: resolvedUrl,
-      specs: translatedSpecs || item.conditionText || '',
-      categoryId: extractCategoryId(resolvedUrl) || null,
-      imageEmbeddings: [], // New field for queue mode
-      textEmbedding: null // Text embedding field
-    };
+          if (GOOFISH_ENABLE_TRANSLATION_RETRY && SILICONFLOW_API_KEY && (!descriptionAr || descriptionAr === item.title || isChineseTerm(descriptionAr))) {
+            // Reuse the title we already produced from generateTitleAndKeywords
+            // instead of re-translating the same string again.
+            if (isChineseTerm(titleEn) && generated && generated.titleAr && generated.titleAr !== titleEn && hasArabic(generated.titleAr)) {
+              titleEn = generated.titleAr;
+            } else if (isChineseTerm(titleEn)) {
+              // Fallback only if we don't have a previously generated title
+              const retryGenerated = await translateProduct(item.title, item.title);
+              if (retryGenerated) {
+                titleEn = retryGenerated.titleAr;
+                if (!generated) generated = retryGenerated;
+              }
+            }
+            // Reuse the description we already produced rather than translating the title again
+            if (generated && generated.descriptionAr && generated.descriptionAr !== item.title && generated.descriptionAr.length > 5) {
+              descriptionAr = generated.descriptionAr;
+            } else if (!descriptionAr || descriptionAr === item.title || isChineseTerm(descriptionAr)) {
+              // Only call AI if the existing description is unusable
+              const retryGenerated = await translateProduct(item.title, item.title);
+              if (retryGenerated) {
+                descriptionAr = retryGenerated.descriptionAr;
+                if (!generated) generated = retryGenerated;
+              }
+            }
+          }
+        const itemData = {
+          title: item.title || '',
+          name: titleEn || item.title || '', // Arabic name
+          titleEn: generated?.titleEn || null, // English name
+          originalTitle: item.title,
+          descriptionAr: descriptionAr || '',
+          keywords,
+          newOrOld,
+          priceCny: cny,
+          image: item.image || '',
+          url: resolvedUrl,
+          specs: translatedSpecs || item.conditionText || '',
+          categoryId: extractCategoryId(resolvedUrl) || null,
+          imageEmbeddings: [], // New field for queue mode
+          textEmbedding: null // Text embedding field
+        };
 
     // Generate image embeddings for the item before saving to queue/DB
-    if (!process.env.GOOFISH_DISABLE_IMAGE_EMBEDDINGS || process.env.GOOFISH_DISABLE_IMAGE_EMBEDDINGS.toLowerCase() !== 'true') {
+    // Only if translation succeeded, otherwise we're searching for raw Chinese text which is useless
+    if ((!process.env.GOOFISH_DISABLE_IMAGE_EMBEDDINGS || process.env.GOOFISH_DISABLE_IMAGE_EMBEDDINGS.toLowerCase() !== 'true') && generated?.translationSucceeded) {
       const cleanImageUrl = (item.image || '').replace(/_\d+x\d+.*$/, '');
       if (cleanImageUrl) {
         try {
           console.log(`[Embedding] Generating image embedding for itemId=${goofishItemId || 'n/a'} before saving...`);
-          const embedding = await embedImage(cleanImageUrl, titleEn || item.title || null);
+          // Use the English or Arabic name for object detection search
+          const detectionSearchTerm = titleEn || item.title || null;
+          const embedding = await embedImage(cleanImageUrl, detectionSearchTerm);
           if (Array.isArray(embedding) && embedding.length > 0 && !embedding.every(v => v === 0)) {
             itemData.imageEmbeddings.push({
               url: cleanImageUrl,
@@ -6683,10 +6430,12 @@ async function run() {
           console.warn(`[Embedding] Failed to generate embedding for itemId=${goofishItemId || 'n/a'}:`, embedErr.message);
         }
       }
+    } else if (!generated?.translationSucceeded) {
+      console.warn(`[Embedding] Skipping image detection for itemId=${goofishItemId || 'n/a'} - translation failed (avoiding raw Chinese search)`);
     }
 
-    // Generate text embedding for product title
-    const textToEmbed = titleEn || item.title || '';
+    // Generate text embedding for product title (using the English title from AI)
+    const textToEmbed = itemData.titleEn;
     if (textToEmbed) {
       try {
         console.log(`[Text Embedding] Generating text embedding for itemId=${goofishItemId || 'n/a'}: "${textToEmbed.substring(0, 50)}..."`);
@@ -6700,6 +6449,8 @@ async function run() {
       } catch (embedErr) {
         console.warn(`[Text Embedding] Failed to generate text embedding for itemId=${goofishItemId || 'n/a'}:`, embedErr.message);
       }
+    } else {
+      console.warn(`[Text Embedding] Skipping embedding for itemId=${goofishItemId || 'n/a'} - no English name available`);
     }
 
     if (OUTPUT_JSON) allItems.push(itemData);
@@ -6711,6 +6462,7 @@ async function run() {
         const saved = await saveToQueue({
           url: resolvedUrl,
           name: titleEn || item.title,
+          titleEn: generated?.titleEn || null,
           originalName: item.title,
           priceCny: cny,
           newOrOld: newOrOld,

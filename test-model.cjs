@@ -1,6 +1,6 @@
 const https = require('https');
 
-const API_KEY = 'sk-crnipdimfvvgrbbxtvmbrshaqtjdmujbvkpuoifcdxkcalwh';
+const API_KEY = 'sk-7b6193a7cfe348c8b3dea6d0c1248482';
 
 function test(model, messages, maxTokens) {
   return new Promise((resolve, reject) => {

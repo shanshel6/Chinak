@@ -10,7 +10,7 @@ dotenv.config({ path: join(__dirname, '../.env') });
 
 async function test() {
   const apiKey = process.env.SILICONFLOW_API_KEY;
-  const model = 'Qwen/Qwen3.5-9B';
+  const model = 'deepseek-ai/DeepSeek-V4-Flash';
   
   console.log(`Testing model: ${model}`);
   console.log(`API Key: ${apiKey ? 'Set' : 'Not set'}`);

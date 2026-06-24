@@ -9,7 +9,10 @@ const config: CapacitorConfig = {
     // For production/physical device testing, we should use the local dist files.
     // In dev mode with 'npx cap run android', the CLI will automatically handle live reload URLs if configured.
     androidScheme: 'http',
-    cleartext: true
+    cleartext: true,
+    // Allow navigation only to the local scheme. This is critical so the WebView
+    // doesn't try to navigate to external hosts and break the model loading flow.
+    allowNavigation: ['http://localhost', 'https://localhost', 'https://huggingface.co']
   },
   plugins: {
     SplashScreen: {
@@ -22,9 +25,6 @@ const config: CapacitorConfig = {
       androidSpinnerStyle: "large",
       spinnerColor: "#2563eb"
     },
-    CapacitorHttp: {
-      enabled: true
-    }
   }
 };
 

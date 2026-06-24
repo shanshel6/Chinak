@@ -1,6 +1,6 @@
 const axios = require('axios');
 
-const API_KEY = 'sk-crnipdimfvvgrbbxtvmbrshaqtjdmujbvkpuoifcdxkcalwh';
+const API_KEY = 'sk-7b6193a7cfe348c8b3dea6d0c1248482';
 
 async function test() {
   // Test 1: Simple hi with enough tokens
@@ -9,7 +9,7 @@ async function test() {
     const r = await axios.post(
       'https://api.siliconflow.com/v1/chat/completions',
       {
-        model: 'Qwen/Qwen3.5-9B',
+        model: 'deepseek-ai/DeepSeek-V4-Flash',
         messages: [{ role: 'user', content: 'hi' }],
         max_tokens: 100,
         temperature: 0.1

@@ -104,7 +104,7 @@ const PROGRESS_PATH = path.join(__dirname, '..', 'scripts', 'assign-categories-p
 
 // Config
 const SILICONFLOW_API_KEY = process.env.SILICONFLOW_API_KEY;
-const SILICONFLOW_MODEL = process.env.SILICONFLOW_MODEL || 'Qwen/Qwen3.5-9B';
+const SILICONFLOW_MODEL = process.env.SILICONFLOW_MODEL || 'deepseek-ai/DeepSeek-V4-Flash';
 const BATCH_SIZE = parseInt(process.env.CATEGORY_BATCH_SIZE || '50', 10);
 const DELAY_MS = parseInt(process.env.CATEGORY_DELAY_MS || '1000', 10);
 const API_TIMEOUT_MS = parseInt(process.env.CATEGORY_API_TIMEOUT_MS || '120000', 10);

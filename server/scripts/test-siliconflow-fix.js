@@ -13,7 +13,7 @@ console.log('Testing SiliconFlow API fixes...\n');
 
 // Get configuration from environment
 const SILICONFLOW_API_KEY = String(process.env.SILICONFLOW_API_KEY || '').trim();
-const GOOFISH_AI_MODEL = String(process.env.GOOFISH_AI_MODEL || 'Qwen/Qwen3.5-9B').trim() || 'Qwen/Qwen3.5-9B';
+const GOOFISH_AI_MODEL = String(process.env.GOOFISH_AI_MODEL || 'deepseek-ai/DeepSeek-V4-Flash').trim() || 'deepseek-ai/DeepSeek-V4-Flash';
 
 console.log('Configuration:');
 console.log(`- SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY ? 'Set (' + SILICONFLOW_API_KEY.length + ' chars)' : 'NOT SET!'}`);
@@ -23,7 +23,7 @@ console.log('');
 
 if (!SILICONFLOW_API_KEY) {
   console.error('ERROR: SILICONFLOW_API_KEY is not set in .env file!');
-  console.error('Please add: SILICONFLOW_API_KEY=sk-mwpajtvsmzpttyzbetmkkgaeydvrgymxfmwavasaacjgztgu');
+  console.error('Please add: SILICONFLOW_API_KEY=sk-7b6193a7cfe348c8b3dea6d0c1248482');
   process.exit(1);
 }
 

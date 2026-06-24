@@ -131,6 +131,7 @@ model Product {
   neworold          Boolean?
 
   imageEmbedding    Unsupported("vector(768)")?
+  textEmbedding     Unsupported("vector(768)")?
   domesticShippingFee Float?
   isAirRestricted   Boolean                @default(false)
   imagesChecked     Boolean?               @default(false) // Changed to optional to handle existing nulls

@@ -12,7 +12,7 @@ import axios from 'axios';
 function callSiliconFlowLLM(messages, { model, temperature = 0.3, maxTokens = 200, timeoutMs = 45000 } = {}) {
   const apiKey = String(process.env.SILICONFLOW_API_KEY || '').trim();
   if (!apiKey) return Promise.resolve(null);
-  const sfModel = model || process.env.SILICONFLOW_MODEL || 'Qwen/Qwen3.5-9B';
+  const sfModel = model || process.env.SILICONFLOW_MODEL || 'deepseek-ai/DeepSeek-V4-Flash';
   return axios.post('https://api.siliconflow.com/v1/chat/completions', {
     model: sfModel,
     messages,
@@ -79,7 +79,7 @@ function extractGoofishCategoryId(url) {
 async function verifyCategoryMatch(productName, categorySlug, categoryNameAr) {
   const apiKey = String(process.env.SILICONFLOW_API_KEY || '').trim();
   if (!apiKey) return true; // no key → trust embedding
-  const sfModel = process.env.SILICONFLOW_MODEL || 'Qwen/Qwen3.5-9B';
+  const sfModel = process.env.SILICONFLOW_MODEL || 'deepseek-ai/DeepSeek-V4-Flash';
   try {
     const text = await callSiliconFlowLLM(
       [{ role: 'user', content: `/no_think\nDoes this product belong to the category "${categorySlug}" (${categoryNameAr})?\nProduct: "${productName}"\nAnswer ONLY "yes" or "no".` }],

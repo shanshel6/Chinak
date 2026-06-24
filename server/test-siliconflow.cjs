@@ -1,8 +1,8 @@
 const axios = require('axios');
 
 async function testSiliconFlow() {
-  const apiKey = 'sk-crnipdimfvvgrbbxtvmbrshaqtjdmujbvkpuoifcdxkcalwh';
-  const model = 'Qwen/Qwen3.5-9B';
+  const apiKey = 'sk-7b6193a7cfe348c8b3dea6d0c1248482';
+  const model = 'deepseek-ai/DeepSeek-V4-Flash';
   
   console.log(`Testing SiliconFlow API with model: ${model}`);
   console.log('API Key:', apiKey.slice(0, 8) + '...' + apiKey.slice(-4));

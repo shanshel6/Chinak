@@ -134,12 +134,15 @@ async function processOne(queued, attempt = 1) {
   // 3. Build metadata blob.
   const metadata = {
     originalTitle: originalTitle || null,
+    originalTitleEnglish: queued.titleEn || null,
     translatedDescription: description || '',
     goofishItemId: itemId || extractGoofishItemId(url) || null,
     source: 'goofish',
     scrapedAt: new Date().toISOString(),
     soldCount: Number.isFinite(Number(soldCount)) ? Number(soldCount) : null,
-    isRealBrand: null
+    isRealBrand: null,
+    isOriginal: typeof queued.isOriginal !== 'undefined' ? queued.isOriginal : null,
+    brandName: queued.brandName || null
   };
 
   // 4. Normalize image list.
