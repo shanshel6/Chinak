@@ -875,6 +875,58 @@ class VisionDownloadManager {
       return;
     }
 
+    // ---- PRIMARY: native download straight to disk -------------------------
+    // Filesystem.downloadFile uses the OS HTTP stack (not the WebView), which
+    // avoids the `fetch()`/XHR "status 0 / Failed to fetch" failures we hit on
+    // Android, and streams the ~89MB model to disk without buffering it in JS.
+    // HuggingFace is the real source for customers; the local dev server
+    // (10.0.2.2) only works when a dev server is running, so we try it last.
+    {
+      const destPath = `models/clip/${file.name}`;
+      const minSize = MIN_FILE_SIZES[file.name] || 1024;
+      const isModel = file.name.endsWith('.onnx');
+      const nativeUrls = isAndroid ? [remoteUrl, localUrl] : [remoteUrl];
+      for (const u of nativeUrls) {
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          try {
+            safeLog(`[native] downloading ${file.name} from ${new URL(u).origin} (attempt ${attempt}/3)`);
+            this.state.currentFile = file.name;
+            this.notify();
+            try { await Filesystem.deleteFile({ path: destPath, directory: Directory.Data }); } catch { /* no stale file */ }
+            await Filesystem.downloadFile({
+              url: u,
+              path: destPath,
+              directory: Directory.Data,
+              recursive: true,
+              headers: {
+                'User-Agent':
+                  'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+              },
+            });
+            const stat = await Filesystem.stat({ path: destPath, directory: Directory.Data });
+            const big = stat.size || 0;
+            const okSize = isModel ? big >= Math.floor(file.approxBytes * 0.995) : big >= minSize;
+            if (!okSize) throw new Error(`downloaded ${file.name} too small (${big} bytes)`);
+
+            this.state.completedFiles[file.name] = true;
+            this.state.bytesDownloaded = Object.entries(this.state.completedFiles).reduce(
+              (acc, [name, done]) => acc + (done ? VISION_FILES.find((f) => f.name === name)?.approxBytes || 0 : 0),
+              0,
+            );
+            this.state.currentFile = null;
+            this.notify();
+            safeLog(`✅ [native] ${file.name} downloaded (${big} bytes) from ${new URL(u).origin}`);
+            return;
+          } catch (e: any) {
+            console.warn(`[VisionDL][native] ${file.name} from ${u} failed: ${e?.message || e}`);
+            try { await Filesystem.deleteFile({ path: destPath, directory: Directory.Data }); } catch { /* ignore */ }
+            if (attempt < 3) await new Promise((r) => setTimeout(r, 1500 * attempt));
+          }
+        }
+      }
+      safeLog(`[native] all native attempts failed for ${file.name}, falling back to fetch/XHR...`);
+    }
+
     // Retry loop for transient fetch failures
     const MAX_RETRIES = 3;
     const CONNECT_TIMEOUT_MS = 60_000;
