@@ -14,8 +14,8 @@ android {
         applicationId "com.chinak.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 107
-        versionName "1.1.07"
+        versionCode 109
+        versionName "1.1.09"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
 
