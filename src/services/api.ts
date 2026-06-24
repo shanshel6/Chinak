@@ -2,7 +2,7 @@ import { useMaintenanceStore } from '../store/useMaintenanceStore';
 import { localProductService } from './localProductService';
 import { embedImage, embedImageCrop, embedText } from './clipService';
 // import { normalizeArabicSearchTerm } from '../data/arabicSearchNormalization';
-// import { translateArabicToEnglish } from './translationService';
+import { translateArabicToEnglish } from './translationService';
 
 // #region debug-point search-debug-reporter
 const DEBUG_SEARCH_REPORTER = (event: string, data: any) => {
@@ -983,15 +983,24 @@ export async function searchProducts(query: string, page = 1, limit = 20, maxPri
   DEBUG_SEARCH_REPORTER('search-entry', { query, page, limit, maxPrice, condition });
   // #endregion debug-point search-entry
 
-  // iOS search: uses server-side fallback if client CLIP fails (WebAssembly issues)
-  // TEMP: DISABLED
   const normalizedArabicQuery = query;
 
-  // TEMP: DISABLE TRANSLATION - USE RAW QUERY
-  const englishQuery = query.trim();
-  console.log('[API Search] NO TRANSLATION - Using raw query:', englishQuery);
-  DEBUG_SEARCH_REPORTER('after-translation-skip', { englishQuery, translationMethod: 'none' });
-  const translationMethod = 'none';
+  // Step 1: Translate Arabic → English ON-DEVICE (Google Translate online, with
+  // MyMemory + curated-dictionary fallbacks). Product text embeddings were built
+  // from English product names, so we must embed the English query — not Arabic.
+  let englishQuery = query.trim();
+  let translationMethod = 'none';
+  try {
+    const t = await translateArabicToEnglish(query.trim());
+    if (t?.text && t.text.trim()) {
+      englishQuery = t.text.trim();
+      translationMethod = t.method || 'unknown';
+    }
+    console.log(`[API Search] Translated "${query}" -> "${englishQuery}" (method: ${translationMethod})`);
+  } catch (translateError: any) {
+    console.warn('[API Search] Translation failed, using raw query:', translateError?.message || translateError);
+  }
+  DEBUG_SEARCH_REPORTER('after-translation', { original: query, englishQuery, translationMethod });
 
   // Generate the CLIP text embedding ON-DEVICE using the bundled CLIP ViT-B/32
   // model (the same model used to embed the products). The server NO LONGER
