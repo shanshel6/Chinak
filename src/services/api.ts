@@ -993,64 +993,23 @@ export async function searchProducts(query: string, page = 1, limit = 20, maxPri
   DEBUG_SEARCH_REPORTER('after-translation-skip', { englishQuery, translationMethod: 'none' });
   const translationMethod = 'none';
 
-  // Step 3: Try to generate CLIP text embedding (on-device)
-  // Uses the bundled CLIP ViT-B/32 text model (same model used to embed products)
-  let embedding: number[] | null = null;
-  // Run text embedding ON-DEVICE using the bundled CLIP ViT-B/32 model.
-  // Only fall back to the server if on-device embedding throws.
-  let useServerFallback = false;
-
+  // Generate the CLIP text embedding ON-DEVICE using the bundled CLIP ViT-B/32
+  // model (the same model used to embed the products). The server NO LONGER
+  // generates embeddings — it only matches a vector we send it — so there is
+  // NO server-side fallback. If on-device embedding fails, surface a clear error.
+  let embedding: number[];
   try {
-    console.log('[API Search] Attempting to generate client-side embedding...');
+    console.log('[API Search] Generating client-side (on-device) embedding...');
     embedding = await embedText(englishQuery);
     console.log('[API Search] Generated CLIP embedding (first 10 values):', embedding.slice(0, 10));
     console.log('[API Search] Embedding length:', embedding.length);
     DEBUG_SEARCH_REPORTER('client-embedding-generated', { length: embedding.length, first10: embedding.slice(0, 10) });
   } catch (embedError: any) {
-    console.warn('[API Search] Client-side CLIP embedding failed, falling back to server:', embedError?.message || embedError);
-    console.warn('[API Search] Error stack:', embedError?.stack);
-    useServerFallback = true;
+    console.error('[API Search] On-device CLIP embedding failed:', embedError?.message || embedError);
+    console.error('[API Search] Error stack:', embedError?.stack);
     DEBUG_SEARCH_REPORTER('client-embedding-failed', { error: String(embedError?.message || embedError) });
-  }
-
-  if (useServerFallback || !embedding) {
-    // Fallback: use server-side endpoint that generates embedding
-    console.log('[API Search] Using server-side embedding fallback for query:', englishQuery);
-    DEBUG_SEARCH_REPORTER('using-server-fallback', { englishQuery, page, limit });
-    try {
-      const params = new URLSearchParams({
-        search: englishQuery,
-        page: String(page),
-        limit: String(limit)
-      });
-      const fullUrl = `/products/search-by-photo?${params.toString()}`;
-      DEBUG_SEARCH_REPORTER('sending-server-fallback-request', { fullUrl, params: { search: englishQuery, page, limit } });
-      const response = await request(fullUrl, { skipCache: true });
-
-      DEBUG_SEARCH_REPORTER('server-fallback-response', {
-        productCount: response?.products?.length || 0,
-        productIds: response?.products?.map((p: any) => p.id) || [],
-        total: response?.total,
-        engine: response?.engine,
-        hasResponse: !!response,
-        responseKeys: Object.keys(response || {})
-      });
-
-      return {
-        products: Array.isArray(response?.products) ? response.products : [],
-        total: Number(response?.total || 0),
-        hasMore: Boolean(response?.hasMore),
-        engine: response?.engine || 'clip-server-fallback',
-        translatedQuery: englishQuery,
-        normalizedQuery: normalizedArabicQuery,
-        translationMethod,
-        serverFallback: true
-      };
-    } catch (fallbackError: any) {
-      console.error('[API Search] Server fallback also failed:', fallbackError);
-      DEBUG_SEARCH_REPORTER('server-fallback-failed', { error: String(fallbackError?.message || fallbackError) });
-      throw new Error(fallbackError?.message || 'فشل البحث');
-    }
+    // No server fallback: embedding must happen on-device.
+    throw new Error('تعذّر تجهيز البحث على الجهاز. حاول مرة أخرى بعد قليل.');
   }
 
   // Step 4: Send embedding to backend
