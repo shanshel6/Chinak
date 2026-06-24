@@ -893,16 +893,25 @@ class VisionDownloadManager {
             this.state.currentFile = file.name;
             this.notify();
             try { await Filesystem.deleteFile({ path: destPath, directory: Directory.Data }); } catch { /* no stale file */ }
-            await Filesystem.downloadFile({
-              url: u,
-              path: destPath,
-              directory: Directory.Data,
-              recursive: true,
-              headers: {
-                'User-Agent':
-                  'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
-              },
-            });
+            // Filesystem.downloadFile has no built-in timeout, so a stalled
+            // network can hang it forever ("loading forever"). Race it against
+            // a timeout so a stall throws and we retry / fall back instead.
+            const dlTimeoutMs = isModel ? 240000 : 30000;
+            await Promise.race([
+              Filesystem.downloadFile({
+                url: u,
+                path: destPath,
+                directory: Directory.Data,
+                recursive: true,
+                headers: {
+                  'User-Agent':
+                    'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+                },
+              }),
+              new Promise((_resolve, reject) =>
+                setTimeout(() => reject(new Error(`native download timed out after ${dlTimeoutMs}ms`)), dlTimeoutMs),
+              ),
+            ]);
             const stat = await Filesystem.stat({ path: destPath, directory: Directory.Data });
             const big = stat.size || 0;
             const okSize = isModel ? big >= Math.floor(file.approxBytes * 0.995) : big >= minSize;
