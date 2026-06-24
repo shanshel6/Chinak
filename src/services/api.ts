@@ -4,6 +4,24 @@ import { embedImage, embedImageCrop, embedText } from './clipService';
 // import { normalizeArabicSearchTerm } from '../data/arabicSearchNormalization';
 // import { translateArabicToEnglish } from './translationService';
 
+// #region debug-point search-debug-reporter
+const DEBUG_SEARCH_REPORTER = (event: string, data: any) => {
+  try {
+    fetch('http://192.168.2.150:7890/event', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sessionId: 'english-search-async',
+        hypothesisId: 'search-flow',
+        event,
+        data,
+        ts: Date.now()
+      })
+    }).catch(() => {});
+  } catch {}
+};
+// #endregion debug-point search-debug-reporter
+
 export const getBaseDomain = () => {
   const hostname = window.location.hostname;
   const isPrivateIp = (value: string) => /^(10|192\.168|172\.(1[6-9]|2\d|3[0-1]))\./.test(value);
@@ -961,6 +979,10 @@ export interface CategorySuggestion {
 }
 
 export async function searchProducts(query: string, page = 1, limit = 20, maxPrice?: number, condition?: 'new' | 'used') {
+  // #region debug-point search-entry
+  DEBUG_SEARCH_REPORTER('search-entry', { query, page, limit, maxPrice, condition });
+  // #endregion debug-point search-entry
+
   // iOS search: uses server-side fallback if client CLIP fails (WebAssembly issues)
   // TEMP: DISABLED
   const normalizedArabicQuery = query;
@@ -968,6 +990,7 @@ export async function searchProducts(query: string, page = 1, limit = 20, maxPri
   // TEMP: DISABLE TRANSLATION - USE RAW QUERY
   const englishQuery = query.trim();
   console.log('[API Search] NO TRANSLATION - Using raw query:', englishQuery);
+  DEBUG_SEARCH_REPORTER('after-translation-skip', { englishQuery, translationMethod: 'none' });
   const translationMethod = 'none';
 
   // Step 3: Try to generate TinyCLIP text embedding (on-device)
@@ -980,22 +1003,36 @@ export async function searchProducts(query: string, page = 1, limit = 20, maxPri
     embedding = await embedText(englishQuery);
     console.log('[API Search] Generated TinyCLIP embedding (first 10 values):', embedding.slice(0, 10));
     console.log('[API Search] Embedding length:', embedding.length);
+    DEBUG_SEARCH_REPORTER('client-embedding-generated', { length: embedding.length, first10: embedding.slice(0, 10) });
   } catch (embedError: any) {
     console.warn('[API Search] Client-side TinyCLIP embedding failed, falling back to server:', embedError?.message || embedError);
     console.warn('[API Search] Error stack:', embedError?.stack);
     useServerFallback = true;
+    DEBUG_SEARCH_REPORTER('client-embedding-failed', { error: String(embedError?.message || embedError) });
   }
 
   if (useServerFallback || !embedding) {
     // Fallback: use server-side endpoint that generates embedding
     console.log('[API Search] Using server-side embedding fallback for query:', englishQuery);
+    DEBUG_SEARCH_REPORTER('using-server-fallback', { englishQuery, page, limit });
     try {
       const params = new URLSearchParams({
         search: englishQuery,
         page: String(page),
         limit: String(limit)
       });
-      const response = await request(`/products/search-by-photo?${params.toString()}`, { skipCache: true });
+      const fullUrl = `/products/search-by-photo?${params.toString()}`;
+      DEBUG_SEARCH_REPORTER('sending-server-fallback-request', { fullUrl, params: { search: englishQuery, page, limit } });
+      const response = await request(fullUrl, { skipCache: true });
+
+      DEBUG_SEARCH_REPORTER('server-fallback-response', {
+        productCount: response?.products?.length || 0,
+        productIds: response?.products?.map((p: any) => p.id) || [],
+        total: response?.total,
+        engine: response?.engine,
+        hasResponse: !!response,
+        responseKeys: Object.keys(response || {})
+      });
 
       return {
         products: Array.isArray(response?.products) ? response.products : [],
@@ -1009,6 +1046,7 @@ export async function searchProducts(query: string, page = 1, limit = 20, maxPri
       };
     } catch (fallbackError: any) {
       console.error('[API Search] Server fallback also failed:', fallbackError);
+      DEBUG_SEARCH_REPORTER('server-fallback-failed', { error: String(fallbackError?.message || fallbackError) });
       throw new Error(fallbackError?.message || 'فشل البحث');
     }
   }

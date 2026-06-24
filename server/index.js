@@ -4448,6 +4448,15 @@ app.get('/api/tools/rapid/item-detail', async (req, res) => {
    * Returns products ordered from most similar to least similar.
    */
   app.get('/api/products/search-by-photo', async (req, res) => {
+    // #region debug-point search-by-photo-entry
+    const dbgRunId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    console.log(`\n========== [Photo Search ${dbgRunId}] ENTRY ==========`);
+    console.log(`[Photo Search ${dbgRunId}] raw req.query:`, JSON.stringify(req.query));
+    console.log(`[Photo Search ${dbgRunId}] search param:`, String(req.query.search || '').trim());
+    console.log(`[Photo Search ${dbgRunId}] page:`, parseInt(req.query.page) || 1);
+    console.log(`[Photo Search ${dbgRunId}] limit:`, parseInt(req.query.limit) || 20);
+    // #endregion debug-point search-by-photo-entry
+
     const query = String(req.query.search || '').trim();
     if (!query) {
       return res.status(400).json({ error: 'Missing required query parameter: search' });
@@ -4464,8 +4473,20 @@ app.get('/api/tools/rapid/item-detail', async (req, res) => {
         throw new Error('Failed to generate embedding');
       }
 
+      // #region debug-point search-by-photo-after-embed
+      console.log(`[Photo Search ${dbgRunId}] Server-generated embedding length: ${embedding.length}`);
+      console.log(`[Photo Search ${dbgRunId}] Server-generated embedding first 5:`, embedding.slice(0, 5));
+      // #endregion debug-point search-by-photo-after-embed
+
       // 2️⃣ Search products by TEXT-vector similarity (the query was text)
       const matches = await searchProductsByTextVector(prisma, embedding, limit, offset);
+      console.log(`[Photo Search ${dbgRunId}] Vector matches count: ${matches?.length || 0}`);
+      console.log(`[Photo Search ${dbgRunId}] Vector matches IDs:`, (matches || []).map(m => m.id));
+      console.log(`[Photo Search ${dbgRunId}] TARGET 277401 in matches:`, (matches || []).some(m => m.id === 277401));
+      if (matches && matches[0]) {
+        console.log(`[Photo Search ${dbgRunId}] First match ID: ${matches[0].id}, similarity: ${matches[0].similarity}`);
+      }
+
 
       if (!matches || matches.length === 0) {
         return res.json({ products: [], total: 0, page, totalPages: 0, engine: 'vector-text' });
@@ -4517,6 +4538,17 @@ app.get('/api/tools/rapid/item-detail', async (req, res) => {
         };
       }).filter(Boolean);
 
+      // #region debug-point search-by-photo-final-result
+      const productIdInMatches = matches.map(m => m.id);
+      const productIdsInResult = resultProducts.map(p => p.id);
+      console.log(`[Photo Search ${dbgRunId}] DB-loaded products count: ${products.length}`);
+      console.log(`[Photo Search ${dbgRunId}] DB-loaded products IDs:`, products.map(p => p.id));
+      console.log(`[Photo Search ${dbgRunId}] Final result count: ${resultProducts.length}`);
+      console.log(`[Photo Search ${dbgRunId}] Final result IDs:`, productIdsInResult);
+      console.log(`[Photo Search ${dbgRunId}] TARGET 277401 in final result:`, productIdsInResult.includes(277401));
+      console.log(`========== [Photo Search ${dbgRunId}] END ==========\n`);
+      // #endregion debug-point search-by-photo-final-result
+
       res.json({
         products: resultProducts,
         total: resultProducts.length,
@@ -4526,6 +4558,10 @@ app.get('/api/tools/rapid/item-detail', async (req, res) => {
       });
     } catch (error) {
       console.error('[Photo Search] Error:', error);
+      console.error(`[Photo Search ${dbgRunId}] STACK:`, error?.stack);
+      // #region debug-point search-by-photo-error
+      console.error(`[Photo Search ${dbgRunId}] ERROR: ${error?.message || error}`);
+      // #endregion debug-point search-by-photo-error
       res.status(500).json({ error: 'Failed to perform photo embedding search', details: error.message });
     }
   });
