@@ -321,10 +321,21 @@ class VisionDownloadManager {
           const info = await this.fileSizeInfo(file.name);
           safeLog(`File ${file.name} size info:`, info);
           if (info !== null && info > 0) {
-            // Validate: file must be at least 80% of expected size
-            // This catches corrupted/stale partial files from failed downloads
-            if (info < file.approxBytes * 0.8) {
-              console.warn(`[VisionDL] File ${file.name} is too small (${info} bytes, expected ~${file.approxBytes}), deleting and re-downloading`);
+            // Validate file size before trusting it as "complete".
+            //
+            // The big ONNX model MUST be essentially complete: a truncated
+            // download (e.g. a network error mid-transfer) still leaves a large
+            // partial file, but loading it fails with "protobuf parsing failed /
+            // Can't create a session". approxBytes for the model is the real
+            // Content-Length, so require >= 99.5% of it. Config files are tiny
+            // and their approxBytes is only a rough estimate, so just require a
+            // small non-trivial minimum.
+            const isModel = file.name.endsWith('.onnx');
+            const minBytes = isModel
+              ? Math.floor(file.approxBytes * 0.995)
+              : (MIN_FILE_SIZES[file.name] ?? 100);
+            if (info < minBytes) {
+              console.warn(`[VisionDL] File ${file.name} incomplete (${info} bytes, need >= ${minBytes}), deleting and re-downloading`);
               try {
                 await Filesystem.deleteFile({
                   path: `models/clip/${file.name}`,
