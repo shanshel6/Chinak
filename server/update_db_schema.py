@@ -12,7 +12,7 @@ if not DATABASE_URL:
     print("Error: DATABASE_URL not found in environment variables!")
     sys.exit(1)
 
-print("Updating database schema for TinyCLIP embeddings...")
+print("Updating database schema for CLIP embeddings...")
 
 try:
     # Connect to database

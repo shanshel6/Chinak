@@ -130,8 +130,8 @@ model Product {
   generated_options Json?                  // New field for generated options
   neworold          Boolean?
 
-  imageEmbedding    Unsupported("vector(768)")?
-  textEmbedding     Unsupported("vector(768)")?
+  imageEmbedding    Unsupported("vector(512)")?
+  textEmbedding     Unsupported("vector(512)")?
   domesticShippingFee Float?
   isAirRestricted   Boolean                @default(false)
   imagesChecked     Boolean?               @default(false) // Changed to optional to handle existing nulls

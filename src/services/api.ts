@@ -993,19 +993,21 @@ export async function searchProducts(query: string, page = 1, limit = 20, maxPri
   DEBUG_SEARCH_REPORTER('after-translation-skip', { englishQuery, translationMethod: 'none' });
   const translationMethod = 'none';
 
-  // Step 3: Try to generate TinyCLIP text embedding (on-device)
-  // TinyCLIP is a small (~50MB) model that works well on mobile devices
+  // Step 3: Try to generate CLIP text embedding (on-device)
+  // Uses the bundled CLIP ViT-B/32 text model (same model used to embed products)
   let embedding: number[] | null = null;
-  let useServerFallback = true; // TEMP: FORCE SERVER FALLBACK
+  // Run text embedding ON-DEVICE using the bundled CLIP ViT-B/32 model.
+  // Only fall back to the server if on-device embedding throws.
+  let useServerFallback = false;
 
   try {
     console.log('[API Search] Attempting to generate client-side embedding...');
     embedding = await embedText(englishQuery);
-    console.log('[API Search] Generated TinyCLIP embedding (first 10 values):', embedding.slice(0, 10));
+    console.log('[API Search] Generated CLIP embedding (first 10 values):', embedding.slice(0, 10));
     console.log('[API Search] Embedding length:', embedding.length);
     DEBUG_SEARCH_REPORTER('client-embedding-generated', { length: embedding.length, first10: embedding.slice(0, 10) });
   } catch (embedError: any) {
-    console.warn('[API Search] Client-side TinyCLIP embedding failed, falling back to server:', embedError?.message || embedError);
+    console.warn('[API Search] Client-side CLIP embedding failed, falling back to server:', embedError?.message || embedError);
     console.warn('[API Search] Error stack:', embedError?.stack);
     useServerFallback = true;
     DEBUG_SEARCH_REPORTER('client-embedding-failed', { error: String(embedError?.message || embedError) });

@@ -20,7 +20,7 @@ The client is caching search results with `skipCache: false` by default. When th
 The Arabic-to-English translation might be timing out or failing on the client side, especially on slower mobile networks, causing fallback to server-side search.
 
 ### H3: Client-side embedding generation failure on Android
-The TinyCLIP WebAssembly model might be failing to load or generate embeddings on the Android device, causing automatic fallback to server-side search.
+The CLIP WebAssembly model might be failing to load or generate embeddings on the Android device, causing automatic fallback to server-side search.
 
 ### H4: Different server instance being hit
 The Android app might be connecting to a different server instance than the diagnostic test, possibly with different data or configuration.
