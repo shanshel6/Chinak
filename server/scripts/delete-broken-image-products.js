@@ -1,324 +1,323 @@
-#!/usr/bin/env node
-
 /**
- * Script to delete products with broken images (404 Not Found)
- * 
- * Logic:
- * 1. Check all product images
- * 2. If an image returns 404, mark it as broken
- * 3. If ALL images for a product are broken, delete the product
- * 4. If SOME images are broken but others are OK, keep the product (just bad images)
+ * delete-broken-image-products.js
+ *
+ * Scans every product's image URLs, checks each DISTINCT url only once (many
+ * products can share the same url), and finds products whose images are ALL
+ * broken (HTTP 404/410 — e.g. deleted alicdn images that return a 49-byte gif
+ * placeholder). Those products are deleted from the database.
+ *
+ * SAFETY:
+ *   - DRY RUN by default. Pass --apply to actually delete.
+ *   - A url only counts as "broken" on a definitive 404/410. Timeouts, 403,
+ *     429, 5xx and network errors are "uncertain" and NEVER cause deletion.
+ *   - A product is deleted only if it has >=1 image url and EVERY url is broken.
+ *   - Products with order history are SKIPPED (to protect orders) unless you
+ *     pass --include-ordered.
+ *   - Deletion removes child rows in a transaction (cart/wishlist/reviews/
+ *     options/variants) then the product (ProductImage + UserInteraction
+ *     cascade automatically).
+ *   - A JSON report is written next to this script.
+ *
+ * USAGE:
+ *   node server/scripts/delete-broken-image-products.js                 # dry run
+ *   node server/scripts/delete-broken-image-products.js --apply         # delete
+ *   node server/scripts/delete-broken-image-products.js --apply --concurrency=40
+ *   node server/scripts/delete-broken-image-products.js --apply --include-ordered
+ *   node server/scripts/delete-broken-image-products.js --limit=2000     # test subset
+ *
+ * Requires DATABASE_URL in the environment (see run_delete_broken_images.ps1).
  */
 
+import https from 'node:https';
+import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import prisma from '../prismaClient.js';
-import axios from 'axios';
 
-// Configuration
-const BATCH_SIZE = 100;
-const MAX_CONCURRENT_REQUESTS = 10;
-const REQUEST_TIMEOUT = 10000; // 10 seconds
-const RETRY_ATTEMPTS = 2;
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-// Statistics
-let stats = {
-  totalProducts: 0,
-  productsChecked: 0,
-  productsWithBrokenImages: 0,
-  productsDeleted: 0,
-  imagesChecked: 0,
-  brokenImages: 0,
-  errors: 0
+// ---- args ----
+const args = process.argv.slice(2);
+const hasFlag = (name) => args.includes(`--${name}`);
+const getOpt = (name, def) => {
+  const hit = args.find((a) => a.startsWith(`--${name}=`));
+  return hit ? hit.split('=').slice(1).join('=') : def;
 };
 
-// Cache for image URLs we've already checked
-const imageCache = new Map();
+const APPLY = hasFlag('apply');
+const INCLUDE_ORDERED = hasFlag('include-ordered');
+const DELETE_NO_IMAGES = hasFlag('delete-no-images'); // also delete products that have zero image urls
+const CONCURRENCY = Math.max(1, parseInt(getOpt('concurrency', '20'), 10) || 20);
+const LIMIT = parseInt(getOpt('limit', '0'), 10) || 0; // 0 = all
+const TIMEOUT_MS = Math.max(3000, parseInt(getOpt('timeout', '15000'), 10) || 15000);
+const RETRIES = Math.max(0, parseInt(getOpt('retries', '2'), 10));
 
-async function testImageUrl(url) {
-  // Check cache first
-  if (imageCache.has(url)) {
-    return imageCache.get(url);
-  }
-  
-  let attempts = 0;
-  
-  while (attempts < RETRY_ATTEMPTS) {
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+const normalizeUrl = (raw) => {
+  if (typeof raw !== 'string') return null;
+  let u = raw.trim();
+  if (!u) return null;
+  if (u.startsWith('//')) u = `https:${u}`;
+  if (!/^https?:\/\//i.test(u)) return null; // skip non-http (data:, file:, junk)
+  return u;
+};
+
+/**
+ * Returns 'ok' | 'broken' | 'unknown'.
+ *  ok      -> 2xx (image exists)
+ *  broken  -> definitive 404 / 410
+ *  unknown -> anything else (403/429/5xx/timeout/network) — never deleted
+ */
+function probeOnce(rawUrl, redirectsLeft = 5) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (v) => { if (!settled) { settled = true; resolve(v); } };
+
+    let urlObj;
     try {
-      const response = await axios.head(url, {
-        timeout: REQUEST_TIMEOUT,
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-          'Accept': 'image/*'
-        },
-        validateStatus: (status) => status < 500 // Don't throw for 404, 403, etc.
-      });
-      
-      const result = {
-        status: response.status,
-        ok: response.status === 200,
-        contentType: response.headers['content-type'] || 'unknown',
-        contentLength: response.headers['content-length'] || 'unknown'
-      };
-      
-      // Cache the result
-      imageCache.set(url, result);
-      return result;
-      
-    } catch (error) {
-      attempts++;
-      
-      if (attempts === RETRY_ATTEMPTS) {
-        // Final attempt failed
-        const result = {
-          status: error.response?.status || 0,
-          ok: false,
-          error: error.message,
-          contentType: 'unknown',
-          contentLength: 'unknown'
-        };
-        
-        imageCache.set(url, result);
-        return result;
-      }
-      
-      // Wait before retry
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      urlObj = new URL(rawUrl);
+    } catch {
+      return done('unknown');
     }
-  }
+    const lib = urlObj.protocol === 'http:' ? http : https;
+
+    const req = lib.request(
+      urlObj,
+      {
+        method: 'GET',
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          Accept: 'image/avif,image/webp,image/*,*/*;q=0.8',
+          Range: 'bytes=0-0',
+        },
+        timeout: TIMEOUT_MS,
+      },
+      (res) => {
+        const status = res.statusCode || 0;
+        // Follow redirects
+        if ([301, 302, 303, 307, 308].includes(status) && res.headers.location && redirectsLeft > 0) {
+          res.destroy();
+          let next;
+          try {
+            next = new URL(res.headers.location, urlObj).toString();
+          } catch {
+            return done('unknown');
+          }
+          return probeOnce(next, redirectsLeft - 1).then(done);
+        }
+        res.destroy(); // we only need the status line, not the body
+        if (status >= 200 && status < 300) return done('ok');
+        if (status === 404 || status === 410) return done('broken');
+        return done('unknown');
+      }
+    );
+    req.on('error', () => done('unknown'));
+    req.on('timeout', () => { req.destroy(); done('unknown'); });
+    req.end();
+  });
 }
 
-async function processProductsBatch(offset, limit, dryRun = true) {
-  console.log(`\n📦 Processing batch ${offset + 1} to ${offset + limit}...`);
-  
-  const products = await prisma.product.findMany({
-    where: {
-      isActive: true,
-      status: 'PUBLISHED'
-    },
-    include: {
-      images: {
-        select: { 
-          id: true, 
-          url: true,
-          order: true
-        },
-        orderBy: { order: 'asc' }
-      }
-    },
-    skip: offset,
-    take: limit,
-    orderBy: { id: 'asc' }
+async function checkUrl(rawUrl) {
+  for (let attempt = 0; attempt <= RETRIES; attempt++) {
+    const r = await probeOnce(rawUrl);
+    if (r === 'ok' || r === 'broken') return r; // definitive
+    if (attempt < RETRIES) await sleep(500 * (attempt + 1)); // back off on 'unknown'
+  }
+  return 'unknown';
+}
+
+// Simple concurrency pool over an array of items.
+async function pool(items, concurrency, worker, onProgress) {
+  let i = 0;
+  let done = 0;
+  const runners = new Array(Math.min(concurrency, items.length)).fill(0).map(async () => {
+    while (i < items.length) {
+      const idx = i++;
+      await worker(items[idx], idx);
+      done++;
+      if (onProgress && done % 500 === 0) onProgress(done, items.length);
+    }
   });
-  
-  console.log(`   Found ${products.length} products in this batch`);
-  
-  const productsToDelete = [];
-  
-  for (const product of products) {
-    stats.productsChecked++;
-    
-    if (product.images.length === 0) {
-      // Product has no images at all
-      console.log(`   Product ${product.id}: No images found`);
-      productsToDelete.push({
-        id: product.id,
-        name: product.name,
-        reason: 'No images',
-        brokenImages: 0,
-        totalImages: 0
-      });
-      continue;
-    }
-    
-    // Test each image
-    let brokenImageCount = 0;
-    const imageResults = [];
-    
-    for (const image of product.images) {
-      stats.imagesChecked++;
-      
-      console.log(`   Testing image ${image.id} for product ${product.id}...`);
-      const result = await testImageUrl(image.url);
-      
-      imageResults.push({
-        id: image.id,
-        url: image.url,
-        status: result.status,
-        ok: result.ok
-      });
-      
-      if (!result.ok) {
-        brokenImageCount++;
-        stats.brokenImages++;
-      }
-    }
-    
-    // If ALL images are broken, mark for deletion
-    if (brokenImageCount === product.images.length && product.images.length > 0) {
-      console.log(`   Product ${product.id}: ALL images broken (${brokenImageCount}/${product.images.length})`);
-      productsToDelete.push({
-        id: product.id,
-        name: product.name,
-        reason: `All images broken (${brokenImageCount} images)`,
-        brokenImages: brokenImageCount,
-        totalImages: product.images.length,
-        imageResults: imageResults
-      });
-      stats.productsWithBrokenImages++;
-    } else if (brokenImageCount > 0) {
-      // Some images broken, but not all
-      console.log(`   Product ${product.id}: ${brokenImageCount} broken images (keeping product)`);
-      stats.productsWithBrokenImages++;
-    }
-    
-    // Update progress
-    if (stats.productsChecked % 10 === 0) {
-      const percent = ((stats.productsChecked / stats.totalProducts) * 100).toFixed(1);
-      console.log(`   Progress: ${stats.productsChecked}/${stats.totalProducts} (${percent}%)`);
-    }
-  }
-  
-  // Delete products if not dry run
-  if (!dryRun && productsToDelete.length > 0) {
-    console.log(`\n🗑️  Deleting ${productsToDelete.length} products...`);
-    
-    for (const product of productsToDelete) {
-      try {
-        console.log(`   Deleting product ${product.id}: ${product.name.substring(0, 50)}...`);
-        
-        await prisma.product.delete({
-          where: { id: product.id }
-        });
-        
-        stats.productsDeleted++;
-        console.log(`   ✅ Deleted successfully`);
-        
-      } catch (error) {
-        console.error(`   ❌ Failed to delete product ${product.id}:`, error.message);
-        stats.errors++;
-      }
-    }
-  }
-  
-  return productsToDelete;
+  await Promise.all(runners);
 }
 
 async function main() {
-  console.log('=== Delete Products with Broken Images ===\n');
-  
-  // Parse command line arguments
-  const args = process.argv.slice(2);
-  const dryRun = !args.includes('--delete');
-  const batchSize = parseInt(args.find(arg => arg.startsWith('--batch='))?.split('=')[1]) || BATCH_SIZE;
-  
-  console.log(`Mode: ${dryRun ? 'DRY RUN (no deletion)' : 'DELETE MODE'}`);
-  console.log(`Batch size: ${batchSize}`);
-  console.log('');
-  
-  try {
-    // Get total count
-    stats.totalProducts = await prisma.product.count({
-      where: {
-        isActive: true,
-        status: 'PUBLISHED'
-      }
-    });
-    
-    console.log(`Total active products: ${stats.totalProducts.toLocaleString()}`);
-    console.log(`Starting scan...\n`);
-    
-    let offset = 0;
-    let allProductsToDelete = [];
-    
-    while (offset < stats.totalProducts) {
-      const productsToDelete = await processProductsBatch(offset, batchSize, dryRun);
-      allProductsToDelete.push(...productsToDelete);
-      
-      offset += batchSize;
-      
-      // Small delay to avoid overwhelming
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-    
-    // Summary
-    console.log('\n' + '='.repeat(60));
-    console.log('📊 FINAL SUMMARY');
-    console.log('='.repeat(60));
-    console.log('');
-    
-    console.log(`Products checked: ${stats.productsChecked.toLocaleString()}`);
-    console.log(`Images checked: ${stats.imagesChecked.toLocaleString()}`);
-    console.log(`Broken images found: ${stats.brokenImages.toLocaleString()}`);
-    console.log(`Products with broken images: ${stats.productsWithBrokenImages.toLocaleString()}`);
-    console.log(`Products to delete: ${allProductsToDelete.length.toLocaleString()}`);
-    
-    if (dryRun) {
-      console.log(`Products actually deleted: 0 (dry run)`);
-    } else {
-      console.log(`Products actually deleted: ${stats.productsDeleted.toLocaleString()}`);
-    }
-    
-    console.log(`Errors: ${stats.errors}`);
-    
-    // Show sample of products to delete
-    if (allProductsToDelete.length > 0) {
-      console.log('\n📋 Sample of products to delete:');
-      const sampleSize = Math.min(5, allProductsToDelete.length);
-      
-      for (let i = 0; i < sampleSize; i++) {
-        const p = allProductsToDelete[i];
-        console.log(`\n${i + 1}. Product ${p.id}: ${p.name.substring(0, 60)}...`);
-        console.log(`   Reason: ${p.reason}`);
-        
-        if (p.imageResults && p.imageResults.length > 0) {
-          console.log(`   Image status:`);
-          p.imageResults.forEach(img => {
-            console.log(`     - Image ${img.id}: ${img.status} ${img.ok ? '✅' : '❌'}`);
-          });
-        }
-      }
-      
-      if (allProductsToDelete.length > sampleSize) {
-        console.log(`\n... and ${allProductsToDelete.length - sampleSize} more products.`);
-      }
-    }
-    
-    // Recommendations
-    console.log('\n' + '='.repeat(60));
-    console.log('💡 RECOMMENDATIONS');
-    console.log('='.repeat(60));
-    
-    if (dryRun && allProductsToDelete.length > 0) {
-      console.log('\nTo delete these products, run:');
-      console.log('  node scripts/delete-broken-image-products.js --delete');
-      console.log('\nOr use the batch file:');
-      console.log('  cleanup-broken-images.bat --delete');
-    }
-    
-    if (stats.brokenImages > 0) {
-      console.log('\nConsider implementing:');
-      console.log('1. Image validation during product import');
-      console.log('2. Periodic image health checks');
-      console.log('3. Fallback images for broken links');
-      console.log('4. CDN monitoring for image hosting');
-    }
-    
-    console.log('\n✅ Script completed successfully!');
-    
-  } catch (error) {
-    console.error('\n❌ Script failed:', error);
-    stats.errors++;
-  } finally {
-    await prisma.$disconnect();
-    
-    // Save stats to file
-    const fs = await import('fs');
-    const statsFile = `broken-images-stats-${Date.now()}.json`;
-    fs.writeFileSync(statsFile, JSON.stringify(stats, null, 2));
-    console.log(`\n📊 Statistics saved to: ${statsFile}`);
+  console.log('==========================================================');
+  console.log(' Broken-image product cleanup');
+  console.log(`  mode:             ${APPLY ? 'APPLY (will delete)' : 'DRY RUN (no changes)'}`);
+  console.log(`  concurrency:      ${CONCURRENCY}`);
+  console.log(`  include-ordered:  ${INCLUDE_ORDERED}`);
+  console.log(`  delete-no-images: ${DELETE_NO_IMAGES}`);
+  console.log(`  product limit:    ${LIMIT || 'all'}`);
+  console.log('==========================================================\n');
+
+  // 1) Load products + their image urls.
+  console.log('[1/4] Loading products and image urls from the database...');
+  const productRows = await prisma.$queryRawUnsafe(
+    `SELECT id, image FROM "Product"${LIMIT ? ` ORDER BY id LIMIT ${LIMIT}` : ''}`
+  );
+  const idSet = new Set(productRows.map((p) => Number(p.id)));
+  const imageRows = await prisma.$queryRawUnsafe(`SELECT "productId", url FROM "ProductImage"`);
+
+  // product id -> Set of normalized urls
+  const productUrls = new Map();
+  const ensure = (id) => {
+    if (!productUrls.has(id)) productUrls.set(id, new Set());
+    return productUrls.get(id);
+  };
+  for (const p of productRows) {
+    const u = normalizeUrl(p.image);
+    const set = ensure(Number(p.id));
+    if (u) set.add(u);
   }
+  for (const row of imageRows) {
+    const id = Number(row.productId);
+    if (!idSet.has(id)) continue; // respects --limit
+    const u = normalizeUrl(row.url);
+    if (u) ensure(id).add(u);
+  }
+
+  // 2) Build the DISTINCT url set (each url checked once).
+  const distinctUrls = new Set();
+  for (const set of productUrls.values()) for (const u of set) distinctUrls.add(u);
+  const urlList = [...distinctUrls];
+  const totalRefs = [...productUrls.values()].reduce((a, s) => a + s.size, 0);
+  console.log(
+    `      ${productRows.length} products, ${urlList.length} distinct urls ` +
+      `(${totalRefs} total references -> ${totalRefs - urlList.length} duplicate checks avoided)\n`
+  );
+
+  // 3) Check each distinct url once.
+  console.log('[2/4] Checking image urls over HTTP (404/410 = broken)...');
+  const urlStatus = new Map();
+  let okCount = 0;
+  let brokenCount = 0;
+  let unknownCount = 0;
+  await pool(
+    urlList,
+    CONCURRENCY,
+    async (u) => {
+      const s = await checkUrl(u);
+      urlStatus.set(u, s);
+      if (s === 'ok') okCount++;
+      else if (s === 'broken') brokenCount++;
+      else unknownCount++;
+    },
+    (done, total) => console.log(`      checked ${done}/${total} urls (ok:${okCount} broken:${brokenCount} uncertain:${unknownCount})`)
+  );
+  console.log(`      urls -> ok: ${okCount}, broken: ${brokenCount}, uncertain: ${unknownCount}\n`);
+
+  // 4) Classify products.
+  console.log('[3/4] Classifying products...');
+  const allBroken = []; // every url broken
+  const noImages = []; // zero usable urls
+  const uncertain = []; // no ok url, but not all broken (has unknowns)
+  for (const p of productRows) {
+    const id = Number(p.id);
+    const urls = [...(productUrls.get(id) || [])];
+    if (urls.length === 0) {
+      noImages.push(id);
+      continue;
+    }
+    const statuses = urls.map((u) => urlStatus.get(u));
+    if (statuses.every((s) => s === 'broken')) allBroken.push(id);
+    else if (statuses.some((s) => s === 'ok')) { /* healthy: keep */ }
+    else uncertain.push(id); // mix of broken + unknown, or all unknown -> keep, recheck later
+  }
+  const healthy = productRows.length - allBroken.length - noImages.length - uncertain.length;
+  console.log(`      all-broken:        ${allBroken.length}`);
+  console.log(`      no-images:         ${noImages.length}`);
+  console.log(`      uncertain (kept):  ${uncertain.length}`);
+  console.log(`      healthy (kept):    ${healthy}\n`);
+
+  const toDelete = [...allBroken];
+  if (DELETE_NO_IMAGES) toDelete.push(...noImages);
+
+  // 5) Delete (or report).
+  const deleted = [];
+  const skippedOrdered = [];
+  const failed = [];
+
+  console.log(`[4/4] ${APPLY ? 'Deleting' : 'Would delete'} ${toDelete.length} products...`);
+  for (const id of toDelete) {
+    const orders = await prisma.orderItem.count({ where: { productId: id } });
+    if (orders > 0 && !INCLUDE_ORDERED) {
+      skippedOrdered.push({ id, orders });
+      console.log(`      SKIP   #${id} — has ${orders} order item(s) (use --include-ordered to force)`);
+      continue;
+    }
+
+    if (!APPLY) {
+      console.log(`      DELETE #${id}${orders > 0 ? ` (+${orders} order items)` : ''}`);
+      deleted.push(id);
+      continue;
+    }
+
+    try {
+      await prisma.$transaction(async (tx) => {
+        await tx.cartItem.deleteMany({ where: { productId: id } });
+        await tx.wishlistItem.deleteMany({ where: { productId: id } });
+        await tx.review.deleteMany({ where: { productId: id } });
+        if (INCLUDE_ORDERED) await tx.orderItem.deleteMany({ where: { productId: id } });
+        await tx.productOption.deleteMany({ where: { productId: id } });
+        await tx.productVariant.deleteMany({ where: { productId: id } });
+        // Product.delete cascades ProductImage + UserInteraction (onDelete: Cascade)
+        await tx.product.delete({ where: { id } });
+      });
+      deleted.push(id);
+      console.log(`      DELETED #${id}`);
+    } catch (err) {
+      failed.push({ id, error: err?.message || String(err) });
+      console.warn(`      FAILED  #${id}: ${err?.message || err}`);
+    }
+  }
+
+  // 6) Report.
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const reportPath = path.join(__dirname, `broken-image-report-${stamp}.json`);
+  const report = {
+    generatedAt: new Date().toISOString(),
+    mode: APPLY ? 'apply' : 'dry-run',
+    options: { concurrency: CONCURRENCY, includeOrdered: INCLUDE_ORDERED, deleteNoImages: DELETE_NO_IMAGES, limit: LIMIT },
+    totals: {
+      productsScanned: productRows.length,
+      distinctUrls: urlList.length,
+      urlOk: okCount,
+      urlBroken: brokenCount,
+      urlUncertain: unknownCount,
+      allBroken: allBroken.length,
+      noImages: noImages.length,
+      uncertain: uncertain.length,
+      deleted: deleted.length,
+      skippedOrdered: skippedOrdered.length,
+      failed: failed.length,
+    },
+    allBrokenIds: allBroken,
+    noImageIds: noImages,
+    uncertainIds: uncertain,
+    deletedIds: deleted,
+    skippedOrdered,
+    failed,
+  };
+  fs.writeFileSync(reportPath, JSON.stringify(report, null, 2));
+
+  console.log('\n==========================================================');
+  console.log(` ${APPLY ? 'Deleted' : 'Would delete'}: ${deleted.length} products`);
+  if (skippedOrdered.length) console.log(` Skipped (have orders): ${skippedOrdered.length}`);
+  if (failed.length) console.log(` Failed: ${failed.length}`);
+  console.log(` Report: ${reportPath}`);
+  if (!APPLY) console.log(' DRY RUN — nothing deleted. Re-run with --apply to delete.');
+  console.log('==========================================================');
+
+  await prisma.$disconnect();
 }
 
-// Run the script
-main().catch(console.error);
-
-export default main;
+main().catch(async (err) => {
+  console.error('[delete-broken-image-products] FATAL:', err);
+  try { await prisma.$disconnect(); } catch {}
+  process.exit(1);
+});

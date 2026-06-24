@@ -129,3 +129,7 @@ ers*safe_rm_aliases*
 *safe_rm_aliases*
 vite.config.ts.timestamp-*.mjs
 OllamaSetup.exe
+
+# Broken-image cleanup reports (generated)
+server/scripts/broken-image-report-*.json
+server/broken-images-stats-*.json
