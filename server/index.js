@@ -35,7 +35,7 @@ import { searchProductsByImageVector, searchProductsByHybridVector, searchProduc
 import { pickStratifiedPage } from './services/searchBucketingService.js';
 import { scrapeGoofishProductImages } from './services/goofishScrapeService.js';
 // Category-name embedding service removed: no MiniLM query embedding on the backend.
-import { ensureVisionModels } from './services/visionModelService.js';
+// Vision model download removed from the backend — handled on-device by the app.
 import multer from 'multer';
 
 // Setup multer for memory storage (for image uploads)
@@ -12537,8 +12537,8 @@ console.log('[Perf] ENABLE_SEARCH_PERF_LOGS =', ENABLE_SEARCH_PERF_LOGS, `(raw: 
 // Category-name embedding (MiniLM) has been removed from the backend; the
 // category vector cache is no longer synced or used.
 
-// Ensure vision models are cached locally for Android emulator access
-ensureVisionModels().catch((err) => console.error('[VisionModel] Startup check failed:', err.message));
+// Vision model is downloaded ON-DEVICE by the app (visionDownloadManager).
+// The server does not download or host the vision model.
 
 const server = httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`Server is running on port ${PORT} (accessible from network)`);
