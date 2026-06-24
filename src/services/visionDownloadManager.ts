@@ -253,6 +253,11 @@ class VisionDownloadManager {
   private hydrated = false;
   private hydratedPromise: Promise<void> | null = null;
   private retryTimeoutId: number | null = null;
+  // Promise for a download actually running in THIS app session. A persisted
+  // status of 'downloading' can be stale (app killed mid-download), so we must
+  // track the real in-process run separately to avoid a "stuck downloading"
+  // deadlock where startDownload() refuses to start because of stale state.
+  private activeDownload: Promise<void> | null = null;
 
   /**
    * Read state from disk + Preferences.
@@ -546,16 +551,22 @@ class VisionDownloadManager {
    */
   startDownload(): Promise<void> {
     safeLog('startDownload called, current status:', this.state.status);
-    if (this.state.status === 'downloading') {
-      safeLog('Download already in progress, returning');
-      return Promise.resolve();
+    // Only short-circuit if a download is genuinely running in THIS session.
+    if (this.activeDownload) {
+      safeLog('Download already in progress (in-process), returning existing promise');
+      return this.activeDownload;
     }
     if (this.state.status === 'ready') {
       safeLog('Download already complete, returning');
       return Promise.resolve();
     }
+    // A persisted 'downloading' status may be stale (app was killed mid-run),
+    // so we do NOT treat it as an active download — start a fresh run.
     safeLog('Starting new download');
-    return this.runDownload();
+    this.activeDownload = this.runDownload().finally(() => {
+      this.activeDownload = null;
+    });
+    return this.activeDownload;
   }
 
   /**
@@ -621,8 +632,8 @@ class VisionDownloadManager {
 
     safeLog(`Starting background retry for ${filesToRetry.length} file(s):`, filesToRetry);
 
-    // Don't start if already downloading
-    if (this.state.status === 'downloading') {
+    // Don't start if a download is genuinely running in this session
+    if (this.activeDownload) {
       safeLog('Download already in progress, skipping background retry');
       return;
     }
