@@ -1383,12 +1383,7 @@ app.use(cors({
 // server/scripts/download-vision-models.mjs. This allows the Android
 // app to download the model files from the local server instead of
 // huggingface.co, which often fails in the Android WebView.
-import { createReadStream, statSync, existsSync } from 'fs';
-import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
-
-const __dirname_server = dirname(fileURLToPath(import.meta.url));
-const VISION_MODELS_DIR = join(__dirname_server, '..', 'public', 'vision-models');
+const VISION_MODELS_DIR = path.join(__dirname, '..', 'public', 'vision-models');
 
 app.get('/api/vision-models/:filename', (req, res) => {
   const filename = req.params.filename;
@@ -1398,14 +1393,14 @@ app.get('/api/vision-models/:filename', (req, res) => {
     return res.status(400).json({ error: 'Invalid filename' });
   }
   
-  const filePath = join(VISION_MODELS_DIR, filename);
+  const filePath = path.join(VISION_MODELS_DIR, filename);
   
-  if (!existsSync(filePath)) {
+  if (!fs.existsSync(filePath)) {
     console.error(`[VisionModel] File not found: ${filePath}`);
     return res.status(404).json({ error: 'Model file not found on server. Run: node server/scripts/download-vision-models.mjs' });
   }
   
-  const stat = statSync(filePath);
+  const stat = fs.statSync(filePath);
   const fileSize = stat.size;
   const range = req.headers.range;
   
@@ -1441,14 +1436,14 @@ app.get('/api/vision-models/:filename', (req, res) => {
       'Content-Length': chunkSize,
       'Content-Type': contentType,
     });
-    createReadStream(filePath, { start, end }).pipe(res);
+    fs.createReadStream(filePath, { start, end }).pipe(res);
   } else {
     res.set({
       'Content-Length': fileSize,
       'Content-Type': contentType,
       'Accept-Ranges': 'bytes',
     });
-    createReadStream(filePath).pipe(res);
+    fs.createReadStream(filePath).pipe(res);
   }
 });
 
