@@ -1026,6 +1026,10 @@ export async function searchProducts(query: string, page = 1, limit = 20, maxPri
     const requestBody = {
       embedding, // The server expects "embedding" param, not "vector"!
       type: 'text', // <-- tell the server to compare against textEmbedding
+      // Raw Arabic query so the server can run the hybrid lexical+CLIP ranker
+      // (term-coverage on the Arabic name fused with the vector). Without this
+      // the server falls back to pure CLIP vector search.
+      query: normalizedArabicQuery,
       page,
       limit,
       maxPrice,

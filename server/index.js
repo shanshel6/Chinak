@@ -31,7 +31,7 @@ import { buildCategoryIndex } from './services/categoryService.js';
 import { calculateOrderShipping, calculateProductShipping, getAdjustedPrice } from './services/shippingService.js';
 import { setupLinkCheckerCron, checkAllProductLinks } from './services/linkCheckerService.js';
 import { analyzeImageObjects, warmupClipService } from './services/clipService.js';
-import { searchProductsByImageVector, searchProductsByHybridVector, searchProductsByTextVector, sanitizeProductImageUrl } from './services/productImageVectorService.js';
+import { searchProductsByImageVector, searchProductsByHybridVector, searchProductsByTextVector, searchHybridText, sanitizeProductImageUrl } from './services/productImageVectorService.js';
 import { pickStratifiedPage } from './services/searchBucketingService.js';
 import { scrapeGoofishProductImages } from './services/goofishScrapeService.js';
 // Category-name embedding service removed: no MiniLM query embedding on the backend.
@@ -5228,9 +5228,21 @@ app.post('/api/search/embedding', async (req, res) => {
     console.log(`[CLIP Client] Received pre-generated ${isTextQuery ? 'TEXT' : 'IMAGE'} vector. Querying similar products...`);
     console.log(`[CLIP Client] Vector type received: "${vectorType}", isTextQuery: ${isTextQuery}`);
 
-    const matches = isTextQuery
-      ? await searchProductsByTextVector(prisma, embedding, limit + 1, offset)
-      : await searchProductsByImageVector(prisma, embedding, limit + 1, offset);
+    // Raw Arabic query string (the device sends it alongside the CLIP vector).
+    // When present on a text search, run the HYBRID ranker: lexical term-coverage
+    // on the Arabic name fused (RRF) with the CLIP vector, so literal multi-word
+    // matches surface first and CLIP acts as a synonym recall backup.
+    const rawQuery = typeof req.body?.query === 'string' ? req.body.query.trim() : '';
+
+    let matches;
+    if (isTextQuery && rawQuery) {
+      console.log(`[CLIP Client] Hybrid text search for query: "${rawQuery}"`);
+      matches = await searchHybridText(prisma, embedding, rawQuery, limit + 1, offset);
+    } else if (isTextQuery) {
+      matches = await searchProductsByTextVector(prisma, embedding, limit + 1, offset);
+    } else {
+      matches = await searchProductsByImageVector(prisma, embedding, limit + 1, offset);
+    }
     const visibleMatches = matches.slice(0, limit);
     const hasMore = matches.length > limit;
     const ids = visibleMatches.map((match) => match.id).filter((id) => Number.isFinite(id));

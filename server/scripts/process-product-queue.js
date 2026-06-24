@@ -3,6 +3,7 @@ import { dirname, join } from 'path';
 import fs from 'fs/promises';
 import { PrismaClient } from '@prisma/client';
 import dotenv from 'dotenv';
+import { normalizeArabic } from '../services/arabicNormalize.js';
 
 // Helper function to check if text is more than 50% Chinese characters
 function isMostlyChinese(text) {
@@ -608,7 +609,20 @@ async function processProductFile(filePath, goofishMappings, categories, process
         
         // Insert product to database
         const createdProduct = await insertProduct(productData, goofishMappings, categories);
-        
+
+        // Populate nameNormalized for hybrid lexical search (column managed via
+        // raw SQL, not Prisma schema). Keep it in sync with the product name.
+        try {
+          const nameNormalized = normalizeArabic(productData.name);
+          await prisma.$executeRawUnsafe(
+            `UPDATE "Product" SET "nameNormalized" = $1 WHERE "id" = $2`,
+            nameNormalized,
+            createdProduct.id
+          );
+        } catch (normErr) {
+          console.warn(`[Queue] Failed to set nameNormalized for ${createdProduct.id}: ${toErrorText(normErr)}`);
+        }
+
         // Verify product exists
         try {
           const verification = await Promise.race([

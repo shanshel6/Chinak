@@ -112,6 +112,10 @@ model Category {
 model Product {
   id                Int                    @id @default(autoincrement())
   name              String
+  // Normalized (diacritic/hamza-folded, ASCII-digit) copy of `name` used by the
+  // hybrid lexical search. Populated via raw SQL (see services/arabicNormalize.js
+  // and scripts/migrate-search-hybrid.mjs); backed by a pg_trgm GIN index.
+  nameNormalized    String?
   description       String?
   keywords          String[]               @default([])
   price             Float

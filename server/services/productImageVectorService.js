@@ -1,4 +1,5 @@
 import { embedImage, embedText } from './clipService.js';
+import { normalizeArabic, normalizedTerms } from './arabicNormalize.js';
 
 export const MAX_PRODUCT_IMAGE_EMBEDDINGS = Math.max(
   1,
@@ -218,6 +219,140 @@ export async function searchProductsByTextVector(prisma, vector, limit = 20, off
         similarity: Number(row.similarity),
       }))
     : [];
+}
+
+/**
+ * Lexical search over Product.nameNormalized.
+ *
+ * Ranks by TERM COVERAGE: a product whose normalized name contains all of the
+ * query terms outranks one that contains only some. An exact-phrase match gets
+ * an extra boost. Trigram similarity is the tiebreaker (handles typos / fuzzy
+ * forms). Requires the `pg_trgm` extension and `Product.nameNormalized` column
+ * (see scripts/migrate-search-hybrid.mjs).
+ *
+ * Returns rows ordered best-first with { id, coverage, lexSim }.
+ */
+export async function searchProductsByLexical(prisma, queryAr, limit = 100, offset = 0) {
+  const terms = normalizedTerms(queryAr);
+  if (terms.length === 0) return [];
+  const phrase = normalizeArabic(queryAr);
+  const safeLimit = Math.min(500, Math.max(1, Number.parseInt(String(limit), 10) || 100));
+  const safeOffset = Math.max(0, Number.parseInt(String(offset), 10) || 0);
+
+  // $1 = phrase, $2..$(n+1) = terms, then limit, offset
+  const params = [phrase, ...terms, safeLimit, safeOffset];
+  const limitParam = `$${terms.length + 2}`;
+  const offsetParam = `$${terms.length + 3}`;
+
+  // coverage = number of query terms present as substrings of the name.
+  const coverageExpr = terms
+    .map((_, i) => `(CASE WHEN p."nameNormalized" LIKE ('%' || $${i + 2} || '%') THEN 1 ELSE 0 END)`)
+    .join(' + ');
+  // A product is a candidate if it contains at least one term.
+  const anyTermExpr = terms
+    .map((_, i) => `p."nameNormalized" LIKE ('%' || $${i + 2} || '%')`)
+    .join(' OR ');
+
+  const rows = await prisma.$queryRawUnsafe(
+    `
+      SELECT
+        p.id,
+        NULL::int AS "matchedImageId",
+        p.image AS "matchedImageUrl",
+        0 AS "matchedImageOrder",
+        (${coverageExpr}) AS coverage,
+        (CASE WHEN p."nameNormalized" LIKE ('%' || $1 || '%') THEN 1 ELSE 0 END) AS phrase_hit,
+        similarity(p."nameNormalized", $1) AS lex_sim
+      FROM "Product" p
+      WHERE p."nameNormalized" IS NOT NULL
+        AND p."status" = 'PUBLISHED'
+        AND p."isActive" = true
+        AND (${anyTermExpr})
+      ORDER BY phrase_hit DESC, coverage DESC, lex_sim DESC, p.id ASC
+      LIMIT ${limitParam}
+      OFFSET ${offsetParam}
+    `,
+    ...params
+  );
+
+  return Array.isArray(rows)
+    ? rows.map((row) => ({
+        id: Number(row.id),
+        matchedImageId: null,
+        matchedImageUrl: row.matchedImageUrl || null,
+        matchedImageOrder: 0,
+        coverage: Number(row.coverage) + Number(row.phrase_hit || 0),
+        lexSim: Number(row.lex_sim),
+      }))
+    : [];
+}
+
+/**
+ * Hybrid text search: lexical (term coverage on the Arabic name) fused with the
+ * CLIP text-embedding vector search via Reciprocal Rank Fusion.
+ *
+ * Ranking contract:
+ *   1. Literal multi-word matches win — higher term coverage always ranks first.
+ *   2. Within the same coverage, RRF blends lexical + semantic rank.
+ *   3. Pure-semantic (synonym) hits — coverage 0 — appear only AFTER literal
+ *      matches, as a recall backup. CLIP is never a filter.
+ *
+ * Both halves keep the status=PUBLISHED + isActive guard.
+ */
+export async function searchHybridText(prisma, vector, queryAr, limit = 20, offset = 0) {
+  const safeLimit = Math.min(100, Math.max(1, Number.parseInt(String(limit), 10) || 20));
+  const safeOffset = Math.max(0, Number.parseInt(String(offset), 10) || 0);
+  const poolSize = Math.min(500, safeOffset + safeLimit + 100);
+  const K = 60; // RRF damping constant
+
+  const [lexHits, vecHits] = await Promise.all([
+    searchProductsByLexical(prisma, queryAr, poolSize, 0),
+    Array.isArray(vector) && vector.length
+      ? searchProductsByTextVector(prisma, vector, poolSize, 0)
+      : Promise.resolve([]),
+  ]);
+
+  const merged = new Map();
+  const ensure = (id) => {
+    if (!merged.has(id)) {
+      merged.set(id, {
+        id,
+        coverage: 0,
+        rrf: 0,
+        similarity: 0,
+        matchedImageId: null,
+        matchedImageUrl: null,
+        matchedImageOrder: null,
+      });
+    }
+    return merged.get(id);
+  };
+
+  lexHits.forEach((hit, rank) => {
+    const e = ensure(hit.id);
+    e.coverage = Math.max(e.coverage, hit.coverage);
+    e.rrf += 1 / (K + rank + 1);
+    if (!e.matchedImageUrl) e.matchedImageUrl = hit.matchedImageUrl;
+    if (e.similarity === 0) e.similarity = hit.lexSim;
+  });
+
+  vecHits.forEach((hit, rank) => {
+    const e = ensure(hit.id);
+    e.rrf += 1 / (K + rank + 1);
+    // Prefer the semantic similarity score for display when present.
+    e.similarity = hit.similarity;
+    e.matchedImageId = hit.matchedImageId ?? e.matchedImageId;
+    if (hit.matchedImageUrl) e.matchedImageUrl = hit.matchedImageUrl;
+    e.matchedImageOrder = hit.matchedImageOrder ?? e.matchedImageOrder;
+  });
+
+  const ordered = Array.from(merged.values()).sort((a, b) => {
+    if (b.coverage !== a.coverage) return b.coverage - a.coverage; // literal matches first
+    if (b.rrf !== a.rrf) return b.rrf - a.rrf;
+    return a.id - b.id;
+  });
+
+  return ordered.slice(safeOffset, safeOffset + safeLimit);
 }
 
 /**
