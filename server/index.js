@@ -29,7 +29,7 @@ import { buildCategoryIndex } from './services/categoryService.js';
 import { calculateOrderShipping, calculateProductShipping, getAdjustedPrice } from './services/shippingService.js';
 import { setupLinkCheckerCron, checkAllProductLinks } from './services/linkCheckerService.js';
 import { embedImage, analyzeImageObjects, embedImageCrop, embedImageRaw, warmupClipService } from './services/clipService.js';
-import { ensureProductImageEmbeddings, searchProductsByImageVector, searchProductsByHybridVector, sanitizeProductImageUrl } from './services/productImageVectorService.js';
+import { ensureProductImageEmbeddings, searchProductsByImageVector, searchProductsByHybridVector, searchProductsByTextVector, sanitizeProductImageUrl } from './services/productImageVectorService.js';
 import { pickStratifiedPage } from './services/searchBucketingService.js';
 import { scrapeGoofishProductImages } from './services/goofishScrapeService.js';
 import { loadCategoryVectors, searchByEmbedding, hasCachedVectors, syncDBVectorsToCache, searchByEmbeddingDB } from './services/categoryEmbeddingService.js';
