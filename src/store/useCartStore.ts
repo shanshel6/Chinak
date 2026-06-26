@@ -155,10 +155,12 @@ export const useCartStore = create<CartState>()(
               );
 
               if (localMatch && localMatch.lastUpdated && (Date.now() - localMatch.lastUpdated < 5000)) {
-                return { ...serverItem, ...localMatch, id: serverItem.id, quantity: 1 }; // Force quantity 1
+                // Prefer the recent optimistic local state (incl. its quantity)
+                // so a just-changed quantity isn't clobbered by a slower server read.
+                return { ...serverItem, ...localMatch, id: serverItem.id };
               }
-              
-              return { ...serverItem, quantity: 1 }; // Force quantity 1
+
+              return { ...serverItem }; // trust the server quantity
             });
 
             // Add purely local items (id starts with local-) that aren't in server items yet
@@ -203,31 +205,22 @@ export const useCartStore = create<CartState>()(
         });
 
         if (existingItem) {
-          // Force quantity to 1
-          if (existingItem.quantity !== 1) {
-             set({
-               items: items.map(item => 
-                 item.id === existingItem.id 
-                   ? { ...item, quantity: 1, lastUpdated: Date.now(), notes }
-                   : item
-               )
-             });
-             try {
-               if (typeof existingItem.id === 'string' && existingItem.id.startsWith('local-')) {
-                  // ...
-               } else {
-                 updateCartItem(existingItem.id, 1, notes).catch(() => {});
-               }
-             } catch (_e) {}
-          } else {
-             set({
-               items: items.map(item => 
-                 item.id === existingItem.id 
-                   ? { ...item, lastUpdated: Date.now(), notes }
-                   : item
-               )
-             });
-          }
+          // Item already in cart: increase its quantity by the amount added.
+          const newQuantity = (existingItem.quantity || 1) + (quantity || 1);
+          set({
+            items: items.map(item =>
+              item.id === existingItem.id
+                ? { ...item, quantity: newQuantity, lastUpdated: Date.now(), notes }
+                : item
+            )
+          });
+          try {
+            // Local-only items haven't been persisted yet; the in-flight
+            // addToCart will create them and the next sync reconciles quantity.
+            if (!(typeof existingItem.id === 'string' && existingItem.id.startsWith('local-'))) {
+              updateCartItem(existingItem.id, newQuantity, notes).catch(() => {});
+            }
+          } catch (_e) {}
         } else if (productInfo) {
           const tempId = `local-${Date.now()}`;
           const newItem: CartItem = {
@@ -235,7 +228,7 @@ export const useCartStore = create<CartState>()(
             productId,
             variantId,
             selectedOptions: sOptions,
-            quantity: 1, // Force quantity to 1
+            quantity: quantity || 1,
             shippingMethod,
             product: {
               id: productInfo.id,
@@ -275,9 +268,9 @@ export const useCartStore = create<CartState>()(
       },
 
       updateQuantity: async (itemId, quantity) => {
-         // Force quantity to 1 (disable quantity updates > 1)
-         quantity = 1;
-         
+         // Clamp to a sane minimum of 1.
+         quantity = Math.max(1, Math.floor(Number(quantity) || 1));
+
          const { items } = get();
          
          set({

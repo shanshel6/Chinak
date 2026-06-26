@@ -9,7 +9,7 @@ import { calculateInclusivePrice } from '../utils/shipping';
 
 import { useCheckoutStore } from '../store/useCheckoutStore';
 
-import { AlertCircle, ShoppingCart, ArrowLeft, RefreshCw, Heart, Trash2, Tag, X, ArrowRight, CheckCheck, Truck } from 'lucide-react';
+import { AlertCircle, ShoppingCart, ArrowLeft, RefreshCw, Heart, Trash2, Tag, X, ArrowRight, CheckCheck, Truck, Minus, Plus } from 'lucide-react';
 
 import { fetchCoupons } from '../services/api';
 
@@ -26,6 +26,7 @@ const Cart: React.FC = () => {
   const error = useCartStore((state) => state.error);
   const removeItem = useCartStore((state) => state.removeItem);
   const removeItems = useCartStore((state) => state.removeItems);
+  const updateQuantity = useCartStore((state) => state.updateQuantity);
   const fetchCart = useCartStore((state) => state.fetchCart);
   const fetchRates = useCartStore((state) => state.fetchRates);
   const subtotal = useCartStore((state) => state.getSubtotal(activeTab)); // Filtered by tab
@@ -177,7 +178,7 @@ const Cart: React.FC = () => {
               <div className="w-2 h-2 rounded-full bg-primary animate-bounce [animation-delay:-0.15s]"></div>
               <div className="w-2 h-2 rounded-full bg-primary animate-bounce"></div>
             </div>
-            <p className="text-sm font-bold text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 animate-pulse">جاري تحضير طلبك...</p>
+            <p className="text-sm font-bold text-slate-500 dark:text-slate-400 animate-pulse">جاري تحضير طلبك...</p>
           </div>
         </div>
       </div>
@@ -189,7 +190,7 @@ const Cart: React.FC = () => {
       <div className="relative flex min-h-screen w-full flex-col bg-background-light dark:bg-background-dark items-center justify-center p-4 text-text-primary-light dark:text-text-primary-dark font-display antialiased pt-safe" dir="rtl">
         <AlertCircle size={80} className="text-red-500 mb-4" />
         <h2 className="text-xl font-bold mb-2">عذراً، حدث خطأ</h2>
-        <p className="text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 text-center mb-8">{error}</p>
+        <p className="text-slate-500 dark:text-slate-400 text-center mb-8">{error}</p>
         <button 
           onClick={() => fetchCart()}
           className="px-8 py-3 bg-primary text-white rounded-xl font-bold active:scale-95 transition-transform"
@@ -217,7 +218,7 @@ const Cart: React.FC = () => {
           <ShoppingCart size={48} />
         </div>
         <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-2">سلتك فارغة</h2>
-        <p className="text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 mb-8 max-w-[280px]">
+        <p className="text-slate-500 dark:text-slate-400 mb-8 max-w-[280px]">
           يبدو أنك لم تضف أي منتجات إلى سلتك بعد. ابدأ بالتسوق الآن واكتشف عروضنا المميزة!
         </p>
         <button
@@ -268,7 +269,7 @@ const Cart: React.FC = () => {
                   className={`size-11 rounded-2xl shadow-sm flex items-center justify-center transition-all border ${
                     selectedItems.length > 0 
                       ? 'bg-red-500 text-white border-red-500 active:scale-95' 
-                      : 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 border-slate-200 dark:border-white/5 opacity-50'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 border-slate-200 dark:border-white/5 opacity-50'
                   }`}
                 >
                   <Trash2 size={20} />
@@ -287,7 +288,7 @@ const Cart: React.FC = () => {
                   className="size-11 rounded-2xl bg-white dark:bg-slate-800 shadow-sm flex items-center justify-center text-slate-600 dark:text-slate-300 active:scale-95 transition-all border border-slate-100 dark:border-white/5"
                   title="تحديد منتجات للحذف"
                 >
-                  <Trash2 size={20} className="text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400" />
+                  <Trash2 size={20} className="text-slate-500 dark:text-slate-400" />
                 </button>
                 <button 
                   onClick={handleRefresh}
@@ -316,7 +317,7 @@ const Cart: React.FC = () => {
             className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-2xl font-bold text-sm relative z-10 transition-colors duration-200 ${
               activeTab === 'air' 
                 ? 'text-slate-900 dark:text-white' 
-                : 'text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300'
+                : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300'
             }`}
           >
             <span className="text-lg leading-none">✈️</span>
@@ -335,14 +336,14 @@ const Cart: React.FC = () => {
             className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-2xl font-bold text-sm relative z-10 transition-colors duration-200 ${
               activeTab === 'sea' 
                 ? 'text-slate-900 dark:text-white' 
-                : 'text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300'
+                : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300'
             }`}
           >
             <span className="text-lg leading-none">🚢</span>
             <span>شحن بحري</span>
             {seaCount > 0 && (
               <span className={`text-[10px] px-1.5 py-0.5 rounded-full transition-colors ${
-                activeTab === 'sea' ? 'bg-primary/10 text-primary' : 'bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400'
+                activeTab === 'sea' ? 'bg-primary/10 text-primary' : 'bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-400'
               }`}>
                 {seaCount}
               </span>
@@ -416,14 +417,14 @@ const Cart: React.FC = () => {
                             const rawCombination = item.selectedOptions || item.variant?.combination;
                             if (!rawCombination) return null;
                             return (
-                              <span className="text-[9px] bg-slate-200/50 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700/50">
+                              <span className="text-[9px] bg-slate-200/50 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700/50">
                                 {String(rawCombination)}
                               </span>
                             );
                           }
 
                           return Object.entries(combination).map(([key, value]) => (
-                            <span key={key} className="text-[9px] bg-slate-200/50 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700/50">
+                            <span key={key} className="text-[9px] bg-slate-200/50 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700/50">
                               {key}: {String(value)}
                             </span>
                           ));
@@ -431,7 +432,7 @@ const Cart: React.FC = () => {
                           const rawCombination = item.selectedOptions || item.variant?.combination;
                           if (!rawCombination) return null;
                           return (
-                            <span className="text-[9px] bg-slate-200/50 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700/50">
+                            <span className="text-[9px] bg-slate-200/50 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700/50">
                               {String(rawCombination)}
                             </span>
                           );
@@ -459,7 +460,7 @@ const Cart: React.FC = () => {
                     );
                   })()}
                   <div className="flex items-center gap-1 mt-1">
-                    <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400">طريقة الشحن:</span>
+                    <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500">طريقة الشحن:</span>
                     <span className="text-[10px] font-black text-primary bg-primary/5 px-1.5 py-0.5 rounded">
                       {item.shippingMethod === 'air' ? '✈️ شحن جوي' : '🚢 شحن بحري'}
                     </span>
@@ -468,24 +469,53 @@ const Cart: React.FC = () => {
                 {!isSelectMode && (
                   <div className="flex items-center justify-between mt-2">
                     <div className="flex items-center gap-2">
-                      <button 
+                      <button
                         onClick={(e) => {
                           e.stopPropagation();
                           handleSaveForLater(item.id, item.product);
                         }}
                         className="w-10 h-10 rounded-xl bg-slate-50 dark:bg-slate-800/50 flex items-center justify-center transition-colors"
                         title="حفظ لوقت لاحق"
+                        aria-label="حفظ لوقت لاحق"
                       >
-                        <Heart size={20} className={isProductInWishlist(item.product.id) ? 'fill-red-500 text-red-500' : 'text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400'} />
+                        <Heart size={20} className={isProductInWishlist(item.product.id) ? 'fill-red-500 text-red-500' : 'text-slate-400 dark:text-slate-500'} />
                       </button>
-                      <button 
+                      <button
                         onClick={(e) => {
                           e.stopPropagation();
                           handleRemove(item.id);
                         }}
                         className="w-10 h-10 rounded-xl bg-red-50 dark:bg-red-900/20 flex items-center justify-center text-red-500 transition-colors"
+                        aria-label="حذف من السلة"
                       >
                         <Trash2 size={20} />
+                      </button>
+                    </div>
+                    {/* Quantity stepper */}
+                    <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-700/50 rounded-xl p-1">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          updateQuantity(item.id, item.quantity - 1);
+                        }}
+                        disabled={item.quantity <= 1}
+                        className="w-9 h-9 rounded-lg bg-white dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-300 shadow-sm disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 transition-all"
+                        aria-label="إنقاص الكمية"
+                      >
+                        <Minus size={16} />
+                      </button>
+                      <span className="min-w-[2ch] text-center text-sm font-black text-slate-800 dark:text-slate-100 tabular-nums" aria-live="polite">
+                        {item.quantity}
+                      </span>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          updateQuantity(item.id, item.quantity + 1);
+                        }}
+                        className="w-9 h-9 rounded-lg bg-white dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-300 shadow-sm active:scale-95 transition-all"
+                        aria-label="زيادة الكمية"
+                      >
+                        <Plus size={16} />
                       </button>
                     </div>
                   </div>
@@ -517,7 +547,7 @@ const Cart: React.FC = () => {
           
           <div className="flex flex-col gap-3">
               <div className="flex justify-between text-sm">
-                <span className="text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400">المجموع الفرعي</span>
+                <span className="text-slate-500 dark:text-slate-400">المجموع الفرعي</span>
                 <span className="font-bold">{subtotal.toLocaleString()} د.ع</span>
               </div>
 
@@ -548,14 +578,14 @@ const Cart: React.FC = () => {
               )}
 
               <div className="flex justify-between text-sm items-center">
-                <span className="text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400">التوصيل الدولي</span>
-                <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-700/50 px-2 py-1 rounded-lg">
+                <span className="text-slate-500 dark:text-slate-400">التوصيل الدولي</span>
+                <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-700/50 px-2 py-1 rounded-lg">
                   سيتم إرسال التكلفة عبر الواتساب خلال ساعة
                 </span>
               </div>
 
               <div className="flex justify-between text-sm items-center">
-                <span className="text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400">التوصيل المحلي</span>
+                <span className="text-slate-500 dark:text-slate-400">التوصيل المحلي</span>
                 <div className="flex items-center gap-1.5 bg-green-500/10 text-green-600 px-2 py-0.5 rounded-lg text-[10px] font-black uppercase tracking-wider">
                   <CheckCheck size={14} />
                   <span>مجاني</span>
@@ -609,10 +639,10 @@ const Cart: React.FC = () => {
         {/* Checkout Action Area */}
         <div className="p-4 border-t border-slate-100 dark:border-slate-800 flex items-center gap-4">
             <div className="flex flex-col">
-                <span className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 font-medium">الإجمالي</span>
+                <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">الإجمالي</span>
                 <span className="text-xl font-black text-slate-900 dark:text-white leading-tight">
                     {total.toLocaleString()} 
-                    <span className="text-xs font-bold text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 mr-1">د.ع</span>
+                    <span className="text-xs font-bold text-slate-400 dark:text-slate-500 mr-1">د.ع</span>
                 </span>
             </div>
             
@@ -621,7 +651,7 @@ const Cart: React.FC = () => {
               disabled={isUnderThreshold || isSyncing}
               className={`flex-1 h-12 rounded-xl font-bold text-sm shadow-lg flex items-center justify-center gap-2 transition-all ${
                 isUnderThreshold || isSyncing
-                  ? 'bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 cursor-not-allowed' 
+                  ? 'bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-500 cursor-not-allowed' 
                   : 'bg-primary text-white hover:bg-primary/90 active:scale-[0.98] shadow-primary/25'
               }`}
             >
