@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { ShoppingCart, RefreshCw, ShoppingBag } from 'lucide-react';
 import { fetchSettings } from '../../services/api';
 
@@ -48,7 +49,9 @@ const AddToCartBar: React.FC<AddToCartBarProps> = ({
   };
 
   if (!isActive) {
-    return (
+    // Portal to <body> so `position: fixed` stays pinned to the viewport and
+    // isn't offset by the page's <PageTransition> transform during animation.
+    return createPortal(
       <div className="fixed bottom-0 left-0 right-0 z-[99998] w-full bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 px-4 pt-3 pb-[calc(env(safe-area-inset-bottom)+12px)] shadow-[0_-10px_40px_rgba(0,0,0,0.1)]">
         <div className="flex items-center gap-4 h-[64px]">
           {/* WhatsApp Button */}
@@ -77,11 +80,12 @@ const AddToCartBar: React.FC<AddToCartBarProps> = ({
             </div>
           </button>
         </div>
-      </div>
+      </div>,
+      document.body
     );
   }
 
-  return (
+  return createPortal(
     <div className="fixed bottom-0 left-0 right-0 z-[99998] w-full bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 px-4 pt-3 pb-[calc(env(safe-area-inset-bottom)+12px)] shadow-[0_-10px_40px_rgba(0,0,0,0.1)]">
       <div className="flex items-center gap-4 h-[64px]">
         {/* WhatsApp Button */}
@@ -150,7 +154,8 @@ const AddToCartBar: React.FC<AddToCartBarProps> = ({
           </button>
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };
 

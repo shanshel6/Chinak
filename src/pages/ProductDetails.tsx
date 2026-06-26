@@ -139,59 +139,6 @@ const ProductDetails: React.FC = () => {
     }
   }, [product, selectedOptions]);
 
-  const displaySpecs = useMemo(() => {
-    if (!product) return [];
-    
-    // If we have a dedicated description field, return it first if specs are empty
-    // But actually, the user said "product descriptions and features are stored in specs col"
-    // So we should prioritize parsing specs correctly.
-    
-    const specs: any[] = [];
-    // Parse specs if it's a string (JSON) or use as is if array
-    if (product.specs) {
-      if (Array.isArray(product.specs)) {
-        specs.push(...product.specs);
-      } else if (typeof product.specs === 'string') {
-        try {
-          // Check if it's a JSON string
-          if (product.specs.trim().startsWith('{') || product.specs.trim().startsWith('[')) {
-             const parsed = JSON.parse(product.specs);
-             if (Array.isArray(parsed)) specs.push(...parsed);
-             else Object.entries(parsed).forEach(([k, v]) => specs.push({ name: k, value: String(v) }));
-          } else {
-             // Treat as plain text description if not JSON
-             // But ProductDescription expects an array or object for 'specs' prop to be treated as specs
-             // If it's just a string, we might want to return it as a description-like object?
-             // Or maybe ProductDescription handles string specs? Yes it does.
-             // But here we are returning an array.
-             // Let's just split by newlines if it looks like key-value pairs
-             if (product.specs.includes(':')) {
-                product.specs.split('\n').forEach(line => {
-                  const parts = line.split(':');
-                  if (parts.length >= 2) {
-                    specs.push({ name: parts[0].trim(), value: parts.slice(1).join(':').trim() });
-                  } else if (line.trim()) {
-                    specs.push({ name: '', value: line.trim() });
-                  }
-                });
-             } else {
-                // Just a plain string description
-                specs.push({ name: '', value: product.specs });
-             }
-          }
-        } catch (e) {
-           // Fallback for failed JSON parse -> treat as string
-           if (typeof product.specs === 'string') {
-              specs.push({ name: '', value: product.specs });
-           }
-        }
-      } else if (typeof product.specs === 'object') {
-        Object.entries(product.specs).forEach(([k, v]) => specs.push({ name: k, value: String(v) }));
-      }
-    }
-    return specs;
-  }, [product]);
-
   const descriptionFromMetadata = useMemo(() => {
     if (!product) return '';
     const rawMeta = (product as any).aiMetadata;
