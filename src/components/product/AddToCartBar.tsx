@@ -6,6 +6,7 @@ import { fetchSettings } from '../../services/api';
 interface AddToCartBarProps {
   price: number;
   productId: string | number;
+  productImage?: string;
   onAddToCart: () => void;
   isAdding: boolean;
   isAdded?: boolean;
@@ -16,6 +17,7 @@ interface AddToCartBarProps {
 const AddToCartBar: React.FC<AddToCartBarProps> = ({
   price,
   productId,
+  productImage,
   onAddToCart,
   isAdding,
   isAdded,
@@ -44,7 +46,8 @@ const AddToCartBar: React.FC<AddToCartBarProps> = ({
     const whatsappNumber = socialLinks.whatsapp || '+8613223001309';
     // Clean the number (remove any non-digit characters)
     const cleanNumber = whatsappNumber.replace(/\D/g, '');
-    const message = encodeURIComponent(`مرحباً، أود الاستفسار عن هذا المنتج: ${productId}`);
+    const imageLink = productImage ? `\n\nرابط صورة المنتج: ${productImage}` : '';
+    const message = encodeURIComponent(`مرحباً، أود الاستفسار عن هذا المنتج: ${productId}${imageLink}`);
     window.open(`https://wa.me/${cleanNumber}?text=${message}`, '_blank');
   };
 

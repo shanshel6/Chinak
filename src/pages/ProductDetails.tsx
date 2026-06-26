@@ -872,6 +872,7 @@ const ProductDetails: React.FC = () => {
         <AddToCartBar 
             price={inclusivePrice}
             productId={product.id}
+            productImage={product.image}
             onAddToCart={handleAddToCart}
             isAdding={isAdding}
             isAdded={isAdded}
