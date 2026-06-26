@@ -113,10 +113,15 @@ const ScrollToTop = () => {
         lastSavedRef.current = saved;
         const tryRestore = (attempt: number) => {
           window.scrollTo(0, saved);
-          // If the document isn't tall enough yet (because content is
-          // still loading from the API), the browser will clamp scrollY
-          // to 0. Retry a few times until the page has rendered enough.
-          if (attempt < 12) {
+          // If the document isn't tall enough yet, the browser clamps
+          // scrollY to 0. Retry until the page has rendered enough.
+          //
+          // The retry window must outlast the route exit animation: with
+          // <AnimatePresence mode="wait"> the returning page doesn't mount
+          // until the product page finishes animating out (~300-500ms), so
+          // a short budget would give up before the cached feed is on screen
+          // and leave the user at the top. ~60 frames (~1s) covers it.
+          if (attempt < 60) {
             const { scrollHeight, clientHeight } = getScrollMetrics();
             const scrollable = scrollHeight - clientHeight;
             if (scrollable < saved) {

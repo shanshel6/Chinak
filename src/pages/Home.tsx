@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { fetchProducts, fetchSettings } from '../services/api';
 import { useAuthStore } from '../store/useAuthStore';
 import { normalizeWishlistProductId, useWishlistStore } from '../store/useWishlistStore';
+import { usePageCacheStore } from '../store/usePageCacheStore';
 import Skeleton from '../components/Skeleton';
 import { useTranslation } from 'react-i18next';
 import ProductCard from '../components/home/ProductCard';
@@ -20,8 +21,17 @@ const Home: React.FC = () => {
   const wishlistItems = useWishlistStore((state) => state.items);
   const toggleWishlist = useWishlistStore((state) => state.toggleWishlist);
 
-  const [products, setProducts] = useState<Product[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Session-only feed cache. On back-navigation from a product page the
+  // component remounts (AnimatePresence keys routes by pathname), so without
+  // this the feed would refetch page 1 and show a different set of products.
+  // We hydrate the previous feed synchronously so the first render already
+  // shows it; <ScrollToTop> then restores the exact scroll position on POP.
+  const getHomeData = usePageCacheStore((s) => s.getHomeData);
+  const setHomeData = usePageCacheStore((s) => s.setHomeData);
+  const initialHomeCache = useRef(getHomeData()).current;
+
+  const [products, setProducts] = useState<Product[]>(initialHomeCache?.products ?? []);
+  const [loading, setLoading] = useState(!initialHomeCache);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [storeSettings, setStoreSettings] = useState<any>({
@@ -34,9 +44,9 @@ const Home: React.FC = () => {
   const [visionPromptOpen, setVisionPromptOpen] = useState(false);
   const pendingPhotoActionRef = useRef<null | (() => void)>(null);
 
-  const [hasMore, setHasMore] = useState(true);
-  const pageRef = useRef(1);
-  const productsRef = useRef<Product[]>([]);
+  const [hasMore, setHasMore] = useState(initialHomeCache?.hasMore ?? true);
+  const pageRef = useRef(initialHomeCache?.page ?? 1);
+  const productsRef = useRef<Product[]>(initialHomeCache?.products ?? []);
   const observer = useRef<IntersectionObserver | null>(null);
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
 
@@ -105,7 +115,12 @@ const Home: React.FC = () => {
   }, [normalizeProductId, t]);
 
   useEffect(() => {
-    loadData(1, true);
+    // Skip the initial fetch when we restored the feed from the session
+    // cache (back-navigation) — otherwise page 1 would reload and replace
+    // the products the user was looking at.
+    if (!initialHomeCache) {
+      loadData(1, true);
+    }
     // Fetch store settings to get WhatsApp number
     const getStoreSettings = async () => {
       try {
@@ -141,6 +156,13 @@ const Home: React.FC = () => {
   useEffect(() => {
     productsRef.current = products;
   }, [products]);
+
+  // Keep the session feed cache in sync as the user scrolls / loads more,
+  // so returning from a product page restores the exact same list + page.
+  useEffect(() => {
+    if (loading || products.length === 0) return;
+    setHomeData({ products, page: pageRef.current, hasMore });
+  }, [products, hasMore, loading, setHomeData]);
 
   useEffect(() => {
     if (loading || loadingMore || !hasMore) return;

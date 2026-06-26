@@ -2,17 +2,23 @@ import { create } from 'zustand';
 import type { Product } from '../types/product';
 
 // =====================================================================
-// SEARCH CACHING IS DISABLED.
+// SESSION-ONLY PAGE CACHE (in-memory).
 //
-// We were hitting a bug where stale cached results were being served for
-// Arabic queries whose translation had been cached at a moment when the
-// AI translator was failing (it would echo the Arabic back, CLIP would
-// embed raw Arabic, and the user would see random products forever).
+// Caches the Home feed and search results for the current app session so
+// that navigating into a product and pressing "back" restores the exact
+// list (and, via <ScrollToTop>, the exact scroll position) instead of
+// refetching and showing a different set of products.
 //
-// Rather than try to make the cache "smart enough" to know when it's
-// stale, we just turn it off. Every search now hits the network fresh.
-// If perf becomes a concern later we can revisit with a much smaller
-// in-memory LRU and a strict TTL, but right now correctness > speed.
+// IMPORTANT: this cache lives in memory ONLY. It is intentionally NOT
+// persisted to localStorage. A previous version persisted search results
+// to localStorage and served stale results for Arabic queries whose
+// translation had been cached while the AI translator was failing (it
+// echoed the Arabic back, CLIP embedded raw Arabic, and the user saw
+// random products forever — across app restarts). Keeping the cache
+// in-memory means every fresh app launch starts clean, so that class of
+// staleness cannot survive a restart. Within a session, an explicit new
+// search always re-fetches (SearchResults only reads the cache on the
+// first render / back navigation, never on an explicit submit).
 // =====================================================================
 
 interface SearchCacheEntry {
@@ -24,19 +30,39 @@ interface SearchCacheEntry {
   price: string | null;
 }
 
+interface HomeCacheEntry {
+  products: Product[];
+  page: number;
+  hasMore: boolean;
+  scrollPos: number;
+}
+
 interface PageCacheState {
   homeScrollPos: number;
   homeCategoryId: string;
   setHomeScrollPos: (pos: number) => void;
+
+  // Home feed cache (session-only).
+  homeCache: HomeCacheEntry | null;
+  setHomeData: (entry: Omit<HomeCacheEntry, 'scrollPos'> & { scrollPos?: number }) => void;
+  getHomeData: () => HomeCacheEntry | undefined;
+
   clearCache: () => void;
+
+  // Search results cache (session-only), keyed by the trimmed query.
   searchCache: Record<string, SearchCacheEntry>;
   setSearchData: (key: string, entry: Omit<SearchCacheEntry, 'scrollPos'> & { scrollPos?: number }) => void;
   setSearchScrollPos: (key: string, pos: number) => void;
   getSearchData: (key: string) => SearchCacheEntry | undefined;
 }
 
-// Best-effort wipe of every old prefix so we don't leave dead entries
-// around in localStorage. Safe to run multiple times.
+// Keep at most this many distinct search queries cached so the in-memory
+// map can't grow without bound over a long session.
+const MAX_SEARCH_ENTRIES = 25;
+
+// Best-effort wipe of every old localStorage prefix so we don't leave dead
+// entries around from the previous persisted-cache implementation. Safe to
+// run multiple times.
 function wipeLegacySearchCache(): void {
   try {
     Object.keys(localStorage).forEach((key) => {
@@ -52,31 +78,71 @@ function wipeLegacySearchCache(): void {
 }
 wipeLegacySearchCache();
 
-export const usePageCacheStore = create<PageCacheState>(() => ({
+export const usePageCacheStore = create<PageCacheState>((set, get) => ({
   homeScrollPos: 0,
   homeCategoryId: 'all',
 
-  setHomeScrollPos: () => {
-    /* no-op while search caching is disabled */
+  setHomeScrollPos: (pos: number) => {
+    set({ homeScrollPos: pos });
   },
+
+  homeCache: null,
+
+  setHomeData: (entry) => {
+    const prev = get().homeCache;
+    set({
+      homeCache: {
+        products: entry.products,
+        page: entry.page,
+        hasMore: entry.hasMore,
+        // Preserve a previously stored scroll position unless a new one is
+        // explicitly provided.
+        scrollPos: entry.scrollPos ?? prev?.scrollPos ?? 0,
+      },
+    });
+  },
+
+  getHomeData: () => get().homeCache ?? undefined,
 
   clearCache: () => {
     wipeLegacySearchCache();
+    set({ searchCache: {}, homeCache: null, homeScrollPos: 0 });
   },
 
   searchCache: {},
 
-  // Disabled: do not write search results to localStorage.
-  setSearchData: () => {
-    /* no-op */
+  setSearchData: (key, entry) => {
+    if (!key) return;
+    const searchCache = { ...get().searchCache };
+    const prev = searchCache[key];
+    searchCache[key] = {
+      results: entry.results,
+      page: entry.page,
+      hasMore: entry.hasMore,
+      condition: entry.condition,
+      price: entry.price,
+      scrollPos: entry.scrollPos ?? prev?.scrollPos ?? 0,
+    };
+
+    // Enforce a soft cap (drop the oldest inserted keys first).
+    const keys = Object.keys(searchCache);
+    if (keys.length > MAX_SEARCH_ENTRIES) {
+      for (const stale of keys.slice(0, keys.length - MAX_SEARCH_ENTRIES)) {
+        delete searchCache[stale];
+      }
+    }
+
+    set({ searchCache });
   },
 
-  // Disabled: do not persist scroll positions for cached searches.
-  setSearchScrollPos: () => {
-    /* no-op */
+  setSearchScrollPos: (key, pos) => {
+    if (!key) return;
+    const searchCache = { ...get().searchCache };
+    const prev = searchCache[key];
+    if (!prev) return;
+    searchCache[key] = { ...prev, scrollPos: pos };
+    set({ searchCache });
   },
 
-  // Disabled: always return undefined so the caller falls through to the
-  // live network request.
-  getSearchData: () => undefined,
+  getSearchData: (key) => (key ? get().searchCache[key] : undefined),
 }));
