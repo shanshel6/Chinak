@@ -57,6 +57,7 @@ import { performCacheMaintenance } from './services/api';
 import { warmupClipService } from './services/clipService';
 import { visionDownloadManager, safeLog, safeClipLog } from './services/visionDownloadManager';
 
+import packageJson from '../package.json';
 import { App as CapApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import type { PluginListenerHandle } from '@capacitor/core';
@@ -346,7 +347,7 @@ function App() {
   // Update check state
   const [showUpdate, setShowUpdate] = useState(false);
   const [updateUrl, setUpdateUrl] = useState('');
-  const CURRENT_VERSION = '1.1.00'; // keep in sync with package.json
+  const CURRENT_VERSION = packageJson.version; // single source of truth
 
   useEffect(() => {
     const initializeApp = async () => {

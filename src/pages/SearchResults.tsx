@@ -107,6 +107,10 @@ const SearchResults: React.FC = () => {
   
   const inputRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  // Defer hiding the recent-search list on blur so a tap on a recent chip
+  // still registers (some touch WebViews blur the input on touchstart, before
+  // the chip's click fires).
+  const blurHideTimeoutRef = useRef<number | null>(null);
   const activeQueryRef = useRef(activeQuery);
   const pageRef = useRef(page);
   const loadingRef = useRef(loading);
@@ -268,7 +272,12 @@ const SearchResults: React.FC = () => {
 
     const handleMouseMove = (e: MouseEvent | TouchEvent) => {
       if (!imageOriginalSize || detectedObjects.length === 0) return;
-      
+
+      // Stop the WebView from scrolling/zooming the page while the user is
+      // dragging or resizing the crop box. The listener is registered with
+      // { passive: false } below specifically so this preventDefault works.
+      if ('touches' in e && e.cancelable) e.preventDefault();
+
       const el = cropBoxRef.current?.parentElement;
       if (!el) return;
 
@@ -339,6 +348,20 @@ const SearchResults: React.FC = () => {
       window.removeEventListener('touchend', handleMouseUp);
     };
   }, [isDragging, isResizing, dragStart, imageOriginalSize, initialBox, detectedObjects]);
+
+  // Lock the underlying page scroll while the crop popup is open so a drag
+  // that slips past the box edge doesn't scroll the page behind it.
+  useEffect(() => {
+    if (!showImagePopup) return;
+    const prevBodyOverflow = document.body.style.overflow;
+    const prevHtmlOverscroll = document.documentElement.style.overscrollBehavior;
+    document.body.style.overflow = 'hidden';
+    document.documentElement.style.overscrollBehavior = 'none';
+    return () => {
+      document.body.style.overflow = prevBodyOverflow;
+      document.documentElement.style.overscrollBehavior = prevHtmlOverscroll;
+    };
+  }, [showImagePopup]);
 
   const handlePointerDown = (e: React.MouseEvent | React.TouchEvent, action: string) => {
     e.stopPropagation();
@@ -767,6 +790,7 @@ const SearchResults: React.FC = () => {
           <button
             type="button"
             onClick={() => navigate(-1)}
+            aria-label="رجوع"
             className="size-10 rounded-xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-300"
           >
             <ArrowRight size={18} />
@@ -788,19 +812,29 @@ const SearchResults: React.FC = () => {
               }
             }}
           >
-            {isImageSearch ? <Camera size={16} className="text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400" /> : <Search size={16} className="text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400" />}
+            {isImageSearch ? <Camera size={16} className="text-slate-500 dark:text-slate-400" /> : <Search size={16} className="text-slate-500 dark:text-slate-400" />}
             <input
               ref={inputRef}
               value={queryInput}
               onChange={(event) => setQueryInput(event.target.value)}
               onFocus={() => {
+                if (blurHideTimeoutRef.current) {
+                  clearTimeout(blurHideTimeoutRef.current);
+                  blurHideTimeoutRef.current = null;
+                }
                 setIsInputFocused(true);
                 // If we're in image search mode and user focuses, clear it
                 if (isImageSearch) {
                   clearImageSearch();
                 }
               }}
-              onBlur={() => setIsInputFocused(false)}
+              onBlur={() => {
+                if (blurHideTimeoutRef.current) clearTimeout(blurHideTimeoutRef.current);
+                blurHideTimeoutRef.current = window.setTimeout(() => {
+                  setIsInputFocused(false);
+                  blurHideTimeoutRef.current = null;
+                }, 200);
+              }}
               onKeyDown={(event) => {
                 if (event.key === 'Enter') {
                   event.preventDefault();
@@ -808,7 +842,7 @@ const SearchResults: React.FC = () => {
                 }
               }}
               placeholder="ابحث عن منتج..."
-              className="flex-1 bg-transparent outline-none text-sm font-semibold text-slate-900 dark:text-white placeholder:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400"
+              className="flex-1 bg-transparent outline-none text-sm font-semibold text-slate-900 dark:text-white placeholder:text-slate-400 dark:text-slate-500"
             />
             {queryInput && (
               <button
@@ -821,7 +855,7 @@ const SearchResults: React.FC = () => {
                   setQueryInput('');
                   if (inputRef.current) inputRef.current.focus();
                 }}
-                className="p-1 text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                className="p-1 text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200"
               >
                 <X size={14} />
               </button>
@@ -917,7 +951,7 @@ const SearchResults: React.FC = () => {
                     setShowImagePopup(false);
                     clearImageSearch();
                   }} 
-                  className="text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:hover:text-white p-2 rounded-full bg-slate-100 dark:bg-slate-800"
+                  className="text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white p-2 rounded-full bg-slate-100 dark:bg-slate-800"
                 >
                   <X size={24} />
                 </button>
@@ -932,7 +966,7 @@ const SearchResults: React.FC = () => {
                     <div className="size-1.5 rounded-full bg-primary animate-bounce [animation-delay:-0.15s]"></div>
                     <div className="size-1.5 rounded-full bg-primary animate-bounce"></div>
                   </div>
-                  <p className="text-sm font-bold text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 animate-pulse">
+                  <p className="text-sm font-bold text-slate-500 dark:text-slate-400 animate-pulse">
                     جاري تحليل الصورة...
                   </p>
                 </div>
@@ -953,7 +987,7 @@ const SearchResults: React.FC = () => {
                        handleObjectSelection(null);
                     }
                   }} 
-                  className="text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:hover:text-white p-2 rounded-full bg-slate-100 dark:bg-slate-800"
+                  className="text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white p-2 rounded-full bg-slate-100 dark:bg-slate-800"
                 >
                   <X size={24} />
                 </button>
@@ -1002,37 +1036,43 @@ const SearchResults: React.FC = () => {
                        onClick={() => !isManual && handleObjectSelection(obj.box)}
                        onMouseDown={(e) => isManual && handlePointerDown(e, 'drag')}
                        onTouchStart={(e) => isManual && handlePointerDown(e, 'drag')}
-                       className={`absolute border-[3px] border-primary transition-colors flex items-center justify-center rounded-sm ${isManual ? '' : 'bg-primary/10 cursor-pointer hover:bg-primary/30'}`}
+                       className={`absolute border-[3px] border-primary transition-colors flex items-center justify-center rounded-sm ${isManual ? 'cursor-move' : 'bg-primary/10 cursor-pointer hover:bg-primary/30'}`}
                        style={{
                          left: `${left}%`,
                          top: `${top}%`,
                          width: `${width}%`,
-                         height: `${height}%`
+                         height: `${height}%`,
+                         ...(isManual ? { touchAction: 'none', WebkitUserSelect: 'none', userSelect: 'none' } : {})
                        }}
                      >
                        {isManual && (
                          <>
-                           {/* Resize handles */}
-                           <div 
-                             className="absolute -right-1.5 -top-1.5 size-3 bg-white rounded-full border border-primary"
-                             onMouseDown={(e) => handlePointerDown(e, 'ne')}
-                             onTouchStart={(e) => handlePointerDown(e, 'ne')}
-                           />
-                           <div 
-                             className="absolute -left-1.5 -top-1.5 size-3 bg-white rounded-full border border-primary"
-                             onMouseDown={(e) => handlePointerDown(e, 'nw')}
-                             onTouchStart={(e) => handlePointerDown(e, 'nw')}
-                           />
-                           <div 
-                             className="absolute -right-1.5 -bottom-1.5 size-3 bg-white rounded-full border border-primary"
-                             onMouseDown={(e) => handlePointerDown(e, 'se')}
-                             onTouchStart={(e) => handlePointerDown(e, 'se')}
-                           />
-                           <div 
-                             className="absolute -left-1.5 -bottom-1.5 size-3 bg-white rounded-full border border-primary"
-                             onMouseDown={(e) => handlePointerDown(e, 'sw')}
-                             onTouchStart={(e) => handlePointerDown(e, 'sw')}
-                           />
+                           {/* Resize handles. Each handle is a large (40px) transparent
+                               touch target centred on the corner, with a small visible
+                               dot inside — easy to grab on a phone. touchAction:'none'
+                               stops the WebView from scrolling/zooming when grabbed. */}
+                           {([
+                             // Corners (resize two sides at once)
+                             { pos: 'ne', cls: '-right-5 -top-5', cursor: 'nesw-resize' },
+                             { pos: 'nw', cls: '-left-5 -top-5', cursor: 'nwse-resize' },
+                             { pos: 'se', cls: '-right-5 -bottom-5', cursor: 'nwse-resize' },
+                             { pos: 'sw', cls: '-left-5 -bottom-5', cursor: 'nesw-resize' },
+                             // Edge midpoints (resize one side) — easier to grab
+                             { pos: 'n', cls: '-top-5 left-1/2 -translate-x-1/2', cursor: 'ns-resize' },
+                             { pos: 's', cls: '-bottom-5 left-1/2 -translate-x-1/2', cursor: 'ns-resize' },
+                             { pos: 'e', cls: '-right-5 top-1/2 -translate-y-1/2', cursor: 'ew-resize' },
+                             { pos: 'w', cls: '-left-5 top-1/2 -translate-y-1/2', cursor: 'ew-resize' },
+                           ] as const).map(({ pos, cls, cursor }) => (
+                             <div
+                               key={pos}
+                               className={`absolute ${cls} w-10 h-10 flex items-center justify-center`}
+                               style={{ touchAction: 'none', cursor }}
+                               onMouseDown={(e) => handlePointerDown(e, pos)}
+                               onTouchStart={(e) => handlePointerDown(e, pos)}
+                             >
+                               <span className="size-5 bg-white rounded-full border-2 border-primary shadow-md pointer-events-none" />
+                             </div>
+                           ))}
                          </>
                        )}
                      </div>
@@ -1063,22 +1103,29 @@ const SearchResults: React.FC = () => {
         <div className="bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800 max-h-[40vh] overflow-y-auto">
           {filteredRecentTerms.length > 0 && (
             <div className="px-4 pt-4 pb-2">
-              <h3 className="text-xs font-bold text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 mb-2">بحث حديث</h3>
+              <h3 className="text-xs font-bold text-slate-400 dark:text-slate-500 mb-2">بحث حديث</h3>
               <div className="flex flex-wrap gap-2">
-                {filteredRecentTerms.map((term, idx) => (
-                  <button
-                    key={idx}
-                    onClick={() => {
-                      const normalizedTerm = normalizeArabicSearchTerm(term);
-                      setQueryInput(normalizedTerm);
-                      // Trigger search by calling submitSearch
-                      submitSearchWithTerm(normalizedTerm);
-                    }}
-                    className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-xs font-semibold rounded-full"
-                  >
-                    {term}
-                  </button>
-                ))}
+                {filteredRecentTerms.map((term, idx) => {
+                  const runRecentSearch = () => {
+                    const normalizedTerm = normalizeArabicSearchTerm(term);
+                    setQueryInput(normalizedTerm);
+                    submitSearchWithTerm(normalizedTerm);
+                  };
+                  return (
+                    <button
+                      key={idx}
+                      // Prevent the input from blurring on press — otherwise the
+                      // recent-search list (rendered only while the input is
+                      // focused) unmounts before onClick fires, so the tap never
+                      // triggers a search.
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={runRecentSearch}
+                      className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-xs font-semibold rounded-full"
+                    >
+                      {term}
+                    </button>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -1098,7 +1145,7 @@ const SearchResults: React.FC = () => {
               <div className="size-3 rounded-full bg-primary animate-bounce [animation-delay:-0.15s]"></div>
               <div className="size-3 rounded-full bg-primary animate-bounce"></div>
             </div>
-            <p className="text-sm font-bold text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 animate-pulse">
+            <p className="text-sm font-bold text-slate-500 dark:text-slate-400 animate-pulse">
               جاري البحث...
             </p>
           </div>
@@ -1123,7 +1170,7 @@ const SearchResults: React.FC = () => {
             </div>
             <div>
               <p className="text-sm font-bold text-slate-900 dark:text-white mb-1">حصل خطأ</p>
-              <p className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400">{error}</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400">{error}</p>
             </div>
             <button
               type="button"
@@ -1137,7 +1184,7 @@ const SearchResults: React.FC = () => {
       ) : results.length > 0 ? (
         <>
           <div className="px-4 pb-4">
-            <p className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 font-medium mt-1 mb-3">
+            <p className="text-xs text-slate-500 dark:text-slate-400 font-medium mt-1 mb-3">
               {hasMore ? `+${results.length} منتجات` : `${results.length} منتجات`}
             </p>
             
@@ -1177,24 +1224,24 @@ const SearchResults: React.FC = () => {
         !activeQuery.trim() && !isImageSearch ? (
           <div className="px-4 py-12">
             <div className="flex flex-col items-center justify-center gap-3 text-center">
-              <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400">
+              <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-400 dark:text-slate-500">
                 <Search size={24} />
               </div>
               <div>
                 <p className="text-sm font-bold text-slate-900 dark:text-white mb-1">ابحث عن منتجات</p>
-                <p className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400">اكتب ما تبحث عنه أو اختر صورة للبحث</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">اكتب ما تبحث عنه أو اختر صورة للبحث</p>
               </div>
             </div>
           </div>
         ) : (
           <div className="px-4 py-12">
             <div className="flex flex-col items-center justify-center gap-3 text-center">
-              <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400">
+              <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-400 dark:text-slate-500">
                 <Search size={24} />
               </div>
               <div>
                 <p className="text-sm font-bold text-slate-900 dark:text-white mb-1">لم نجد نتائج</p>
-                <p className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400">حاول استخدام كلمات بحث أخرى</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">حاول استخدام كلمات بحث أخرى</p>
               </div>
             </div>
           </div>

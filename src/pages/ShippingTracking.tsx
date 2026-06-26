@@ -29,8 +29,8 @@ import { useNotificationStore } from '../store/useNotificationStore';
 import { useToastStore } from '../store/useToastStore';
 import { useTranslation } from 'react-i18next';
 import { socket, connectSocket } from '../services/socket';
-import { jsPDF } from 'jspdf';
-import html2canvas from 'html2canvas';
+// jsPDF and html2canvas are heavy (~600 KB combined). They're loaded lazily
+// inside handleDownloadPDF so they don't bloat the page's initial bundle.
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
 
@@ -281,7 +281,13 @@ const ShippingTracking: React.FC = () => {
     try {
       showToast('جاري تجهيز الفاتورة...', 'info');
       const element = invoiceRef.current;
-      
+
+      // Lazy-load the heavy PDF libraries only when the user actually exports.
+      const [{ jsPDF }, html2canvas] = await Promise.all([
+        import('jspdf'),
+        import('html2canvas').then((m) => m.default),
+      ]);
+
       const canvas = await html2canvas(element, {
         scale: 2,
         useCORS: true,

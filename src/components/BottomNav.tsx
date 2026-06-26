@@ -36,9 +36,11 @@ const BottomNav: React.FC<BottomNavProps> = ({ className = '' }) => {
           const Icon = item.icon;
           
           return (
-            <button 
+            <button
               key={item.id}
               onClick={() => navigate(item.path)}
+              aria-current={active ? 'page' : undefined}
+              aria-label={item.badge && item.badge > 0 ? `${item.label} (${item.badge})` : item.label}
               className="relative flex flex-1 flex-col items-center justify-center gap-1 h-full w-full active:scale-95 transition-transform duration-200"
             >
               <div className="relative">

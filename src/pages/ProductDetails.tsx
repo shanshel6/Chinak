@@ -746,7 +746,7 @@ const ProductDetails: React.FC = () => {
               <div className="w-2 h-2 rounded-full bg-primary animate-bounce [animation-delay:-0.15s]"></div>
               <div className="w-2 h-2 rounded-full bg-primary animate-bounce"></div>
             </div>
-            <p className="text-sm font-bold text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 animate-pulse">جاري تحضير طلبك...</p>
+            <p className="text-sm font-bold text-slate-500 dark:text-slate-400 animate-pulse">جاري تحضير طلبك...</p>
           </div>
         </div>
       </div>
@@ -756,11 +756,11 @@ const ProductDetails: React.FC = () => {
   if (error || !product) {
     return (
       <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden bg-background-light dark:bg-background-dark items-center justify-center p-6 text-center rtl pt-safe" dir="rtl">
-        <div className="w-24 h-24 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center mb-6 text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400">
+        <div className="w-24 h-24 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center mb-6 text-slate-400 dark:text-slate-500">
           {error ? <AlertCircle size={48} /> : <Package size={48} />}
         </div>
         <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-2">{error ? 'خطأ في التحميل' : 'المنتج غير موجود'}</h2>
-        <p className="mt-2 text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400">{error || 'عذراً، لم نتمكن من العثور على المنتج الذي تبحث عنه.'}</p>
+        <p className="mt-2 text-slate-500 dark:text-slate-400">{error || 'عذراً، لم نتمكن من العثور على المنتج الذي تبحث عنه.'}</p>
         <div className="flex gap-4 mt-6">
           <button onClick={() => navigate('/')} className="px-6 py-2 border border-primary text-primary rounded-lg font-bold">العودة للرئيسية</button>
           {error && <button onClick={() => window.location.reload()} className="px-6 py-2 bg-primary text-white rounded-lg font-bold">إعادة المحاولة</button>}
@@ -812,7 +812,7 @@ const ProductDetails: React.FC = () => {
                     </div>
                     <button 
                       onClick={() => setShowNotification(false)}
-                      className="flex-shrink-0 size-8 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
+                      className="flex-shrink-0 size-8 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
                       aria-label="إغلاق الإشعار"
                     >
                       <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -920,13 +920,13 @@ const ProductDetails: React.FC = () => {
                   }`}
                 >
                   <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors ${
-                    shippingMethod === 'air' ? 'bg-primary text-white' : 'bg-slate-100 dark:bg-slate-700 text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400'
+                    shippingMethod === 'air' ? 'bg-primary text-white' : 'bg-slate-100 dark:bg-slate-700 text-slate-400 dark:text-slate-500'
                   }`}>
                     <Plane size={20} className={shippingMethod === 'air' ? 'animate-pulse' : ''} strokeWidth={2.5} />
                   </div>
                   <div className="flex flex-col items-start gap-0.5">
                     <span className={`text-sm font-black ${shippingMethod === 'air' ? 'text-primary' : 'text-slate-600 dark:text-slate-300'}`}>شحن جوي</span>
-                    <span className="text-[10px] font-medium text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400">10-20 يوم</span>
+                    <span className="text-[10px] font-medium text-slate-400 dark:text-slate-500">10-20 يوم</span>
                   </div>
                   {shippingMethod === 'air' && (
                     <div className="absolute left-3 top-1/2 -translate-y-1/2 w-2 h-2 bg-primary rounded-full shadow-[0_0_8px_rgba(var(--primary-rgb),0.6)]"></div>
@@ -947,13 +947,13 @@ const ProductDetails: React.FC = () => {
                   }`}
                 >
                   <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors ${
-                    shippingMethod === 'sea' ? 'bg-primary text-white' : 'bg-slate-100 dark:bg-slate-700 text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400'
+                    shippingMethod === 'sea' ? 'bg-primary text-white' : 'bg-slate-100 dark:bg-slate-700 text-slate-400 dark:text-slate-500'
                   }`}>
                     <Ship size={20} strokeWidth={2.5} />
                   </div>
                   <div className="flex flex-col items-start gap-0.5">
                     <span className={`text-sm font-black ${shippingMethod === 'sea' ? 'text-primary' : 'text-slate-600 dark:text-slate-300'}`}>شحن بحري</span>
-                    <span className="text-[10px] font-medium text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400">شهرين تقريباً</span>
+                    <span className="text-[10px] font-medium text-slate-400 dark:text-slate-500">شهرين تقريباً</span>
                   </div>
                   {shippingMethod === 'sea' && (
                     <div className="absolute left-3 top-1/2 -translate-y-1/2 w-2 h-2 bg-primary rounded-full shadow-[0_0_8px_rgba(var(--primary-rgb),0.6)]"></div>
