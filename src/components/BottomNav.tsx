@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useCartStore } from '../store/useCartStore';
 import { Home, ShoppingBag, ShoppingCart, User, Heart } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { haptics } from '../utils/haptics';
 
 interface BottomNavProps {
   className?: string;
@@ -38,12 +39,20 @@ const BottomNav: React.FC<BottomNavProps> = ({ className = '' }) => {
           return (
             <button
               key={item.id}
-              onClick={() => navigate(item.path)}
+              onClick={() => { haptics.light(); navigate(item.path); }}
               aria-current={active ? 'page' : undefined}
               aria-label={item.badge && item.badge > 0 ? `${item.label} (${item.badge})` : item.label}
               className="relative flex flex-1 flex-col items-center justify-center gap-1 h-full w-full active:scale-95 transition-transform duration-200"
             >
-              <div className="relative">
+              {/* Sliding active-tab pill — animates between tabs via shared layoutId */}
+              {active && (
+                <motion.span
+                  layoutId="bottomNavActivePill"
+                  className="absolute top-1.5 inset-x-0 mx-auto h-8 w-12 rounded-full bg-primary/10 dark:bg-primary/20"
+                  transition={{ type: 'spring', stiffness: 400, damping: 32 }}
+                />
+              )}
+              <div className="relative z-10">
                 <Icon 
                   size={24} 
                   strokeWidth={active ? 2.5 : 2} 

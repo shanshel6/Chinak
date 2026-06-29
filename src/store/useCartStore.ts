@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { fetchCart, updateCartItem, removeFromCart, addToCart, fetchSettings } from '../services/api';
 import { calculateInclusivePrice } from '../utils/shipping';
+import { haptics } from '../utils/haptics';
 import type { ShippingRates } from '../types/shipping';
 import type { Product } from '../types/product';
 
@@ -187,6 +188,8 @@ export const useCartStore = create<CartState>()(
       },
 
       addItem: async (productId, quantity = 1, variantId, productInfo, selectedOptions, shippingMethod = 'air', notes) => {
+        // Satisfying tactile confirmation on add-to-cart (no-op on web).
+        haptics.medium();
         const { items } = get();
         const sOptions = typeof selectedOptions === 'object' && selectedOptions !== null 
           ? JSON.stringify(selectedOptions) 

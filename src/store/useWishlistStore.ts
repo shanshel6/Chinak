@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { Product } from '../types/product';
 import { addToWishlist, fetchWishlist, removeFromWishlist } from '../services/api';
+import { haptics } from '../utils/haptics';
 
 interface WishlistItem {
   id: number | string;
@@ -80,6 +81,8 @@ export const useWishlistStore = create<WishlistState>()(
       },
 
       toggleWishlist: async (productId: number | string, productInfo?: any) => {
+        // Light tactile tap on favorite toggle (no-op on web).
+        haptics.light();
         const { items } = get();
         const normalizedProductId = normalizeWishlistProductId(productId);
         if (!normalizedProductId) return;

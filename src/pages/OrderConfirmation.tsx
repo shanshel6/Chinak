@@ -2,6 +2,8 @@ import React, { useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useNotificationStore } from '../store/useNotificationStore';
 import LazyImage from '../components/LazyImage';
+import Confetti from '../components/Confetti';
+import { haptics } from '../utils/haptics';
 
 import { X, CheckCircle2, Truck, Headset } from 'lucide-react';
 
@@ -20,6 +22,8 @@ const OrderConfirmation: React.FC = () => {
 
   useEffect(() => {
     if (order?.id) {
+      // Celebratory success buzz when the order lands (no-op on web).
+      haptics.success();
       addLocalNotification({
         type: 'order',
         icon: 'check_circle',
@@ -36,6 +40,8 @@ const OrderConfirmation: React.FC = () => {
 
   return (
     <div className="relative flex min-h-screen w-full flex-col bg-background-light dark:bg-background-dark shadow-2xl font-display text-slate-900 dark:text-white antialiased selection:bg-primary/30 rtl pb-safe" dir="rtl">
+      {/* One-shot celebration when an order was just placed */}
+      {order?.id && <Confetti />}
       {/* TopAppBar */}
       <div className="sticky top-0 z-50 bg-background-light/90 dark:bg-background-dark/90 backdrop-blur-md border-b border-slate-100 dark:border-slate-800 pt-safe">
         <div className="flex items-center px-4 py-3 justify-between">
