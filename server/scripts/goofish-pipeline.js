@@ -41,6 +41,7 @@ async function saveToQueue(accumulatedData) {
       url: accumulatedData.url,
       name: accumulatedData.name,
       titleEn: accumulatedData.titleEn || null,
+      titleEnSimple: accumulatedData.titleEnSimple || null,
       originalTitle: accumulatedData.originalName || null,
       priceCny: accumulatedData.priceCny,
       newOrOld: accumulatedData.newOrOld,
@@ -3432,29 +3433,30 @@ async function updateProductTranslatedDescription(productId, descriptionAr) {
 async function generateTitleAndKeywords(title, detailText = '') {
   const fallback = String(title || '').trim().slice(0, GOOFISH_AI_TITLE_MAX_CHARS);
   if (!SILICONFLOW_API_KEY || !fallback) {
-    return { titleAr: fallback, descriptionAr: fallback, titleEn: null, keywords: [], translationSucceeded: false };
+    return { titleAr: fallback, descriptionAr: fallback, titleEn: null, titleEnSimple: null, keywords: [], translationSucceeded: false };
   }
   try {
     console.log(`[generateTitleAndKeywords] Using translateProduct for: ${fallback.substring(0, 30)}...`);
     const translated = await translateProduct(title, detailText || title);
-    
+
     if (translated) {
-      console.log(`[generateTitleAndKeywords] titleAr=${translated.titleAr?.substring(0, 30)}... titleEn=${translated.titleEn?.substring(0, 30)}...`);
-      
-      return { 
-        titleAr: translated.titleAr, 
-        descriptionAr: translated.descriptionAr || fallback, 
+      console.log(`[generateTitleAndKeywords] titleAr=${translated.titleAr?.substring(0, 30)}... titleEn=${translated.titleEn?.substring(0, 30)}... titleEnSimple=${translated.titleEnSimple?.substring(0, 30)}...`);
+
+      return {
+        titleAr: translated.titleAr,
+        descriptionAr: translated.descriptionAr || fallback,
         titleEn: translated.titleEn,
-        keywords: [], 
-        translationSucceeded: true 
+        titleEnSimple: translated.titleEnSimple || null,
+        keywords: [],
+        translationSucceeded: true
       };
     }
 
     // Fallback if translateProduct fails
-    return { titleAr: fallback, descriptionAr: fallback, titleEn: null, keywords: [], translationSucceeded: false };
+    return { titleAr: fallback, descriptionAr: fallback, titleEn: null, titleEnSimple: null, keywords: [], translationSucceeded: false };
   } catch (error) {
     console.error('[AI Debug] generateTitleAndKeywords error:', error.message);
-    return { titleAr: fallback, descriptionAr: fallback, titleEn: null, keywords: [], translationSucceeded: false };
+    return { titleAr: fallback, descriptionAr: fallback, titleEn: null, titleEnSimple: null, keywords: [], translationSucceeded: false };
   }
 }
 
@@ -4546,6 +4548,9 @@ async function processProductDetailsAccumulate(page, product, detailProgress = n
             if (generated.titleEn) {
               accumulatedData.titleEn = generated.titleEn;
             }
+            if (generated.titleEnSimple) {
+              accumulatedData.titleEnSimple = generated.titleEnSimple;
+            }
             
             if (generated.descriptionAr && hasArabic(generated.descriptionAr)) {
               accumulatedData.description = generated.descriptionAr;
@@ -4593,6 +4598,7 @@ async function processProductDetailsAccumulate(page, product, detailProgress = n
               const retryGenerated = await translateProduct(productNameForTrans, rawDetailDescription);
               if (retryGenerated) {
                 accumulatedData.titleEn = retryGenerated.titleEn || null;
+                accumulatedData.titleEnSimple = retryGenerated.titleEnSimple || null;
                 const translatedDetailDescription = retryGenerated.descriptionAr;
                 if (translatedDetailDescription && hasArabic(translatedDetailDescription)) {
                   accumulatedData.description = translatedDetailDescription;
@@ -4646,8 +4652,10 @@ async function processProductDetailsAccumulate(page, product, detailProgress = n
           accumulatedData.categoryId = urlMatch[1];
         }
 
-        // Generate text embedding for product name (using English name only, like audit-and-fix)
-        const textToEmbed = accumulatedData.titleEn;
+        // Generate text embedding from the CLEAN English noun phrase (e.g.
+        // "electric water heater") to keep the vector free of model-number/spec
+        // noise. Fall back to the full English title only if it's missing.
+        const textToEmbed = accumulatedData.titleEnSimple || accumulatedData.titleEn;
         if (textToEmbed) {
           try {
             console.log(`[Text Embedding] Generating text embedding for: "${textToEmbed.substring(0, 50)}..."`);
@@ -6395,6 +6403,7 @@ async function run() {
           title: item.title || '',
           name: titleEn || item.title || '', // Arabic name
           titleEn: generated?.titleEn || null, // English name
+          titleEnSimple: generated?.titleEnSimple || null, // clean noun phrase for embedding
           originalTitle: item.title,
           descriptionAr: descriptionAr || '',
           keywords,
@@ -6407,6 +6416,15 @@ async function run() {
           imageEmbeddings: [], // New field for queue mode
           textEmbedding: null // Text embedding field
         };
+
+    // The search text embedding is built from the English name (titleEnSimple /
+    // titleEn). If the model produced no English at all (translation failed),
+    // skip the product rather than save an unsearchable row with a null English
+    // name and no text embedding.
+    if (!itemData.titleEn && !itemData.titleEnSimple) {
+      console.warn(`[ProcessCollectedLink] Skipping itemId=${goofishItemId || 'n/a'} - no English name; cannot build text embedding`);
+      return null;
+    }
 
     // Generate image embeddings for the item before saving to queue/DB
     // Only if translation succeeded, otherwise we're searching for raw Chinese text which is useless
@@ -6434,8 +6452,10 @@ async function run() {
       console.warn(`[Embedding] Skipping image detection for itemId=${goofishItemId || 'n/a'} - translation failed (avoiding raw Chinese search)`);
     }
 
-    // Generate text embedding for product title (using the English title from AI)
-    const textToEmbed = itemData.titleEn;
+    // Generate text embedding from the CLEAN English noun phrase (e.g.
+    // "electric water heater") to keep the vector free of model-number/spec
+    // noise. Fall back to the full English title only if it's missing.
+    const textToEmbed = itemData.titleEnSimple || itemData.titleEn;
     if (textToEmbed) {
       try {
         console.log(`[Text Embedding] Generating text embedding for itemId=${goofishItemId || 'n/a'}: "${textToEmbed.substring(0, 50)}..."`);
@@ -6463,6 +6483,7 @@ async function run() {
           url: resolvedUrl,
           name: titleEn || item.title,
           titleEn: generated?.titleEn || null,
+          titleEnSimple: generated?.titleEnSimple || null,
           originalName: item.title,
           priceCny: cny,
           newOrOld: newOrOld,

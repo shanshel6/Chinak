@@ -53,8 +53,75 @@ const CONCURRENCY = Math.max(1, parseInt(getOpt('concurrency', '20'), 10) || 20)
 const LIMIT = parseInt(getOpt('limit', '0'), 10) || 0; // 0 = all
 const TIMEOUT_MS = Math.max(3000, parseInt(getOpt('timeout', '15000'), 10) || 15000);
 const RETRIES = Math.max(0, parseInt(getOpt('retries', '2'), 10));
+const FRESH = hasFlag('fresh'); // ignore any saved checkpoint and start over
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// ---- resumable progress checkpoint ----
+// The slow part of this job is probing thousands of image URLs over HTTP. If the
+// process dies (e.g. the DB connection drops during the delete phase), we don't
+// want to re-probe everything. We persist DEFINITIVE url results (ok/broken) and
+// the ids already deleted, then reload them on the next run. 'unknown' results
+// are transient and intentionally NOT cached (they get re-checked).
+const PROGRESS_PATH = path.join(__dirname, 'delete-broken-progress.json');
+
+function loadProgress() {
+  if (FRESH) {
+    try { fs.unlinkSync(PROGRESS_PATH); } catch {}
+    return { urlStatus: new Map(), deletedIds: new Set() };
+  }
+  try {
+    const raw = JSON.parse(fs.readFileSync(PROGRESS_PATH, 'utf8'));
+    return {
+      urlStatus: new Map(Object.entries(raw.urlStatus || {})),
+      deletedIds: new Set((raw.deletedIds || []).map(Number)),
+    };
+  } catch {
+    return { urlStatus: new Map(), deletedIds: new Set() };
+  }
+}
+
+function saveProgress(urlStatus, deletedIds) {
+  const obj = {};
+  for (const [u, s] of urlStatus) if (s === 'ok' || s === 'broken') obj[u] = s;
+  const payload = { savedAt: new Date().toISOString(), urlStatus: obj, deletedIds: [...deletedIds] };
+  const tmp = `${PROGRESS_PATH}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(payload));
+  fs.renameSync(tmp, PROGRESS_PATH); // atomic swap so a crash mid-write can't corrupt it
+}
+
+function clearProgress() {
+  try { fs.unlinkSync(PROGRESS_PATH); } catch {}
+}
+
+// ---- DB resilience: retry + reconnect on transient connection loss ----
+const DB_MAX_RETRIES = Math.max(1, parseInt(getOpt('db-retries', '15'), 10) || 15);
+
+function isRetryableDbError(err) {
+  const msg = String(err?.message || err || '');
+  const code = String(err?.code || '');
+  return /can't reach database server|connection pool|timed out|connection closed|server has closed the connection|engine is not yet connected|response from the engine was empty|terminating connection|connection terminated|ECONNRESET|ETIMEDOUT|EPIPE|socket hang up/i.test(msg)
+    || ['P1001', 'P1002', 'P1008', 'P1017', 'P2024', 'P2028'].includes(code);
+}
+
+// Run a DB operation, transparently reconnecting and retrying if the connection
+// drops. Non-connection errors (and exhausted retries) are re-thrown.
+async function withDbRetry(fn, label) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (!isRetryableDbError(err) || attempt >= DB_MAX_RETRIES) throw err;
+      const waitMs = Math.min(30000, 1000 * attempt);
+      console.warn(`      [db] ${label} — connection issue: ${err?.message || err}`);
+      console.warn(`      [db] reconnecting (attempt ${attempt}/${DB_MAX_RETRIES}, waiting ${waitMs}ms)...`);
+      try { await prisma.$disconnect(); } catch {}
+      await sleep(waitMs);
+      try { await prisma.$connect(); console.log('      [db] reconnected.'); }
+      catch (e) { console.warn(`      [db] reconnect attempt failed: ${e?.message || e}`); }
+    }
+  }
+}
 
 const normalizeUrl = (raw) => {
   if (typeof raw !== 'string') return null;
@@ -157,11 +224,15 @@ async function main() {
 
   // 1) Load products + their image urls.
   console.log('[1/4] Loading products and image urls from the database...');
-  const productRows = await prisma.$queryRawUnsafe(
-    `SELECT id, image FROM "Product"${LIMIT ? ` ORDER BY id LIMIT ${LIMIT}` : ''}`
+  const productRows = await withDbRetry(
+    () => prisma.$queryRawUnsafe(`SELECT id, image FROM "Product"${LIMIT ? ` ORDER BY id LIMIT ${LIMIT}` : ''}`),
+    'loading products'
   );
   const idSet = new Set(productRows.map((p) => Number(p.id)));
-  const imageRows = await prisma.$queryRawUnsafe(`SELECT "productId", url FROM "ProductImage"`);
+  const imageRows = await withDbRetry(
+    () => prisma.$queryRawUnsafe(`SELECT "productId", url FROM "ProductImage"`),
+    'loading product images'
+  );
 
   // product id -> Set of normalized urls
   const productUrls = new Map();
@@ -191,24 +262,45 @@ async function main() {
       `(${totalRefs} total references -> ${totalRefs - urlList.length} duplicate checks avoided)\n`
   );
 
-  // 3) Check each distinct url once.
+  // 3) Check each distinct url once (resuming any results from a prior run).
   console.log('[2/4] Checking image urls over HTTP (404/410 = broken)...');
+  const { urlStatus: cachedStatus, deletedIds } = loadProgress();
   const urlStatus = new Map();
   let okCount = 0;
   let brokenCount = 0;
   let unknownCount = 0;
+  // Pre-load definitive results saved by a previous (interrupted) run.
+  for (const u of distinctUrls) {
+    const s = cachedStatus.get(u);
+    if (s === 'ok' || s === 'broken') {
+      urlStatus.set(u, s);
+      if (s === 'ok') okCount++; else brokenCount++;
+    }
+  }
+  if (urlStatus.size) {
+    console.log(`      resumed ${urlStatus.size} url result(s) from checkpoint — re-checking only the remaining ${urlList.length - urlStatus.size}`);
+  }
+
+  let checkedSinceFlush = 0;
   await pool(
     urlList,
     CONCURRENCY,
     async (u) => {
+      if (urlStatus.has(u)) return; // already known from the checkpoint
       const s = await checkUrl(u);
       urlStatus.set(u, s);
       if (s === 'ok') okCount++;
       else if (s === 'broken') brokenCount++;
       else unknownCount++;
+      // Persist periodically so a crash loses at most ~1000 url checks.
+      if ((s === 'ok' || s === 'broken') && ++checkedSinceFlush >= 1000) {
+        saveProgress(urlStatus, deletedIds);
+        checkedSinceFlush = 0;
+      }
     },
     (done, total) => console.log(`      checked ${done}/${total} urls (ok:${okCount} broken:${brokenCount} uncertain:${unknownCount})`)
   );
+  saveProgress(urlStatus, deletedIds); // flush before the (DB-touching) delete phase
   console.log(`      urls -> ok: ${okCount}, broken: ${brokenCount}, uncertain: ${unknownCount}\n`);
 
   // 4) Classify products.
@@ -243,8 +335,12 @@ async function main() {
   const failed = [];
 
   console.log(`[4/4] ${APPLY ? 'Deleting' : 'Would delete'} ${toDelete.length} products...`);
+  if (APPLY && deletedIds.size) console.log(`      (skipping ${deletedIds.size} already deleted in a prior run)`);
+  let deletedSinceFlush = 0;
   for (const id of toDelete) {
-    const orders = await prisma.orderItem.count({ where: { productId: id } });
+    if (deletedIds.has(id)) { deleted.push(id); continue; } // already deleted before the interruption
+
+    const orders = await withDbRetry(() => prisma.orderItem.count({ where: { productId: id } }), `counting orders for #${id}`);
     if (orders > 0 && !INCLUDE_ORDERED) {
       skippedOrdered.push({ id, orders });
       console.log(`      SKIP   #${id} — has ${orders} order item(s) (use --include-ordered to force)`);
@@ -258,7 +354,7 @@ async function main() {
     }
 
     try {
-      await prisma.$transaction(async (tx) => {
+      await withDbRetry(() => prisma.$transaction(async (tx) => {
         await tx.cartItem.deleteMany({ where: { productId: id } });
         await tx.wishlistItem.deleteMany({ where: { productId: id } });
         await tx.review.deleteMany({ where: { productId: id } });
@@ -267,14 +363,18 @@ async function main() {
         await tx.productVariant.deleteMany({ where: { productId: id } });
         // Product.delete cascades ProductImage + UserInteraction (onDelete: Cascade)
         await tx.product.delete({ where: { id } });
-      });
+      }), `deleting #${id}`);
+      deletedIds.add(id);
       deleted.push(id);
       console.log(`      DELETED #${id}`);
+      // Checkpoint every 50 deletions so a DB drop resumes near where it stopped.
+      if (++deletedSinceFlush >= 50) { saveProgress(urlStatus, deletedIds); deletedSinceFlush = 0; }
     } catch (err) {
       failed.push({ id, error: err?.message || String(err) });
       console.warn(`      FAILED  #${id}: ${err?.message || err}`);
     }
   }
+  if (APPLY) saveProgress(urlStatus, deletedIds); // flush the final batch of deletions
 
   // 6) Report.
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -312,6 +412,11 @@ async function main() {
   console.log(` Report: ${reportPath}`);
   if (!APPLY) console.log(' DRY RUN — nothing deleted. Re-run with --apply to delete.');
   console.log('==========================================================');
+
+  // Run finished cleanly — drop the checkpoint so the next run starts fresh.
+  // (If the process had died mid-run, this line wouldn't be reached and the
+  //  checkpoint would remain for the next run to resume from.)
+  clearProgress();
 
   await prisma.$disconnect();
 }

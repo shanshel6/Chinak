@@ -16,6 +16,12 @@ rem   run_delete_broken_images.bat
 rem   run_delete_broken_images.bat --apply
 rem   run_delete_broken_images.bat --apply --concurrency=40
 rem   run_delete_broken_images.bat --limit=5000
+rem
+rem RESUMABLE: progress is checkpointed to server\scripts\delete-broken-progress.json.
+rem If it stops (e.g. DB connection drops), just run the SAME command again and it
+rem resumes — already-checked URLs and already-deleted products are skipped.
+rem The checkpoint is auto-deleted when a run finishes. Pass --fresh to ignore it
+rem and start over from scratch.
 
 echo Mode: DRY RUN unless you pass --apply
 echo Running: node server\scripts\delete-broken-image-products.js %*

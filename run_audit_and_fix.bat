@@ -71,8 +71,8 @@ REM ============================================================
 
 set NODE_ENV=development
 set "DATABASE_URL=postgresql://postgres:DsizocMPoAaTQyhDhiMQxzxQKnnbfjqQ@trolley.proxy.rlwy.net:57322/railway?sslmode=require&connection_limit=3&pool_timeout=20&connect_timeout=120&keepalives=1&keepalives_idle=30&keepalives_interval=10&keepalives_count=3"
-set SILICONFLOW_API_KEY=sk-zdegdgqtzfiozbqiifmjolfoaxaucxwmpqsdynwrxcdessee
-set SILICONFLOW_MODEL=deepseek-ai/DeepSeek-V4-Flash
+set SILICONFLOW_API_KEY=sk-rvifroqhufvtwusmgitecntbnmtxecafomfdrxunpooowdcp
+set SILICONFLOW_MODEL=google/gemma-4-26B-A4B-it
 
 echo(
 echo  Settings:

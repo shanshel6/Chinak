@@ -51,11 +51,10 @@ set GOOFISH_DB_RECOVER_WAIT_MS=8000
 set GOOFISH_DB_RECOVER_PING_TIMEOUT_MS=12000
 set GOOFISH_DB_RECOVER_MAX_CYCLES_PER_OP=1
 set GOOFISH_AI_CALL_TIMEOUT_MS=30000
-set GOOFISH_AI_RETRY_MAX_ATTEMPTS=10
-set SILICONFLOW_API_KEY=sk-zdegdgqtzfiozbqiifmjolfoaxaucxwmpqsdynwrxcdessee
-set SILICONFLOW_MODEL=deepseek-ai/DeepSeek-V4-Flash
-set GOOFISH_AI_MODEL=deepseek-ai/DeepSeek-V4-Flash
-set GOOFISH_AI_SECOND_PASS_DESCRIPTION=true
+set GOOFISH_AI_RETRY_MAX_ATTEMPTS=3
+set SILICONFLOW_API_KEY=sk-doxxvlokqygzlqizrhjpyznsofxuzyzbpdflbzvhzlltbnez
+set SILICONFLOW_MODEL=google/gemma-4-26B-A4B-it
+set GOOFISH_AI_MODEL=google/gemma-4-26B-A4B-it
 set GOOFISH_ENABLE_TRANSLATION_RETRY=false
 set GOOFISH_SKIP_ON_TRANSLATION_FAILURE=true
 rem Only reset terms on the first run (when progress file doesn't exist)

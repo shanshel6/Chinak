@@ -1175,10 +1175,12 @@ async function processProduct(p) {
   }
 
   // ---- Step 2: Already-good Arabic branch (NO DeepSeek AI) ----
-  // The only thing that matters is p.name. If it looks like a real Arabic
-  // product name, use the free Google path. If it doesn't (Chinese, broken,
-  // garbage, too short, etc.), fall through to Step 3 and call DeepSeek.
-  const nameIsGood = isGoodArabicName(p.name);
+  // FORCED: treat ALL products as bad name so every product goes through the
+  // DeepSeek AI translation branch below (Step 3+). That branch calls the AI to
+  // translate, produces the Arabic name + English name, and builds the text
+  // embedding from the ENGLISH name only. The free-Google good-name shortcut is
+  // intentionally disabled here.
+  const nameIsGood = false;
 
   if (nameIsGood) {
     // We translate p.name (Arabic) -> English via the free Google endpoint.
@@ -1252,23 +1254,15 @@ async function processProduct(p) {
     return { kind: 'good_fixed' };
   }
 
-  // ---- Step 3: Determine the ORIGINAL Chinese title to translate from ----
-  let chineseTitle = null;
-  let chineseDesc = null;
+  // ---- Step 3: Determine the ORIGINAL title to translate from ----
+  // ALWAYS translate from aiMetadata.originalTitle — never from p.name.
+  let chineseTitle = p.aiMetadata?.originalTitle || null;
+  let chineseDesc = p.description;
 
-  if (hasChineseChars(p.name)) {
-    chineseTitle = p.name;
-    chineseDesc = p.description;
-  } else if (p.aiMetadata?.originalTitle && hasChineseChars(p.aiMetadata.originalTitle)) {
-    chineseTitle = p.aiMetadata.originalTitle;
-    chineseDesc = p.description;
-  } else {
-    if (p.aiMetadata?.originalTitleEnglish || p.aiMetadata?.translatedDescription) {
-      return { kind: 'already_done' };
-    }
+  if (!chineseTitle) {
     stats.failed++;
-    console.log(`  ❌  Product #${p.id} SKIPPED — no Chinese name found`);
-    return { kind: 'skipped_no_chinese' };
+    console.log(`  ❌  Product #${p.id} SKIPPED — no aiMetadata.originalTitle to translate from`);
+    return { kind: 'skipped_no_original_title' };
   }
 
   // ---- Step 4: Translate from Chinese ----
@@ -1280,11 +1274,15 @@ async function processProduct(p) {
       return { kind: 'failed' };
     }
 
-    // ---- Step 5: Generate embedding from ENGLISH title only ----
+    // ---- Step 5: Generate embedding from the CLEAN English noun phrase ----
+    // Embed from titleEnSimple (e.g. "electric water heater") to keep the
+    // semantic vector free of model-number/spec noise. Fall back to the full
+    // English title only if the simple phrase is missing.
+    const textToEmbed = translated.titleEnSimple || translated.titleEn;
     let newEmbedding = null;
-    if (translated.titleEn) {
+    if (textToEmbed) {
       try {
-        newEmbedding = await embedText(translated.titleEn);
+        newEmbedding = await embedText(textToEmbed);
         if (!Array.isArray(newEmbedding) || newEmbedding.length === 0 || newEmbedding.every((v) => v === 0)) {
           newEmbedding = null;
           stats.embedFailed++;
@@ -1297,7 +1295,8 @@ async function processProduct(p) {
     const metadataPatch = {
       originalTitle: chineseTitle,
       translatedDescription: translated.descriptionAr || p.description || null,
-      originalTitleEnglish: translated.titleEn || null
+      originalTitleEnglish: translated.titleEn || null,
+      embeddingText: textToEmbed || null
     };
     const vectorLiteral = newEmbedding ? vectorToSqlLiteral(newEmbedding) : null;
     // We only enter the DeepSeek branch when the Arabic name is bad (or
@@ -1316,6 +1315,20 @@ async function processProduct(p) {
     console.log(`  ✅  Product #${p.id} [bad-name] | AR: "${finalArabicName}" | EN: "${translated.titleEn || '—'}" | Embedding: ${vectorLiteral ? '✓' : '✗'}`);
     return { kind: 'ok' };
   } catch (err) {
+    // OUT OF CREDIT → stop the whole run. Continuing would skip every remaining
+    // product and leave it untranslated (in Chinese), while the progress pointer
+    // marched past them so --resume could never come back. Save the last
+    // fully-processed id and exit so a top-up / new key can resume exactly here.
+    if (err?.isOutOfCredit) {
+      console.error(`\n 🛑 FATAL: SiliconFlow API out of credit / insufficient balance.`);
+      console.error(`    ${err.message}`);
+      console.error(`    Stopping so products are NOT left untranslated (Chinese).`);
+      console.error(`    Last fully-processed product: #${lastProcessedId}.`);
+      console.error(`    Top up or set a new SILICONFLOW_API_KEY, then re-run with --resume.\n`);
+      saveProgress(lastProcessedId, stats.processed);
+      releaseLock();
+      process.exit(1);
+    }
     stats.failed++;
     console.error(`  ❌  Product #${p.id} unexpected error: ${err.message}`);
     return { kind: 'error', id: p.id, error: err.message };

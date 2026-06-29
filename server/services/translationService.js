@@ -37,6 +37,10 @@ const IS_V4_THINKING_MODEL = /DeepSeek-V4|DeepSeek-R1|reasoner|v4-flash/i.test(S
 // Detect them so we can omit the flag and rely on the regex JSON extractor.
 const REJECTS_JSON_MODE = /DeepSeek-V4|DeepSeek-R1|reasoner/i.test(SILICONFLOW_MODEL);
 const BASE_URL = IS_DEEPSEEK_KEY ? 'https://api.deepseek.com/v1/chat/completions' : `${SILICONFLOW_BASE_URL}/chat/completions`;
+// Print the active translation model once at startup so the pipeline log makes
+// it obvious which model is really in use (a running process keeps the env it
+// launched with — a .bat edit only applies after restart).
+console.log(`[Translation] model=${SILICONFLOW_MODEL} | thinking=${IS_V4_THINKING_MODEL} | jsonMode=${!REJECTS_JSON_MODE} | endpoint=${BASE_URL}`);
 
 const AI_MIN_INTERVAL_MS = 1000;
 const AI_MAX_TOKENS = 800;
@@ -47,6 +51,27 @@ let lastAiCallAt = 0;
 let consecutiveFailures = 0;
 let consecutiveEmptyResponses = 0;
 let circuitOpenUntil = 0;
+
+/**
+ * Detect SiliconFlow / DeepSeek "out of credit / insufficient balance" errors.
+ * These are FATAL for a batch job: if we keep going, every remaining product is
+ * skipped and left in its original Chinese. Callers should stop instead.
+ * Plain rate-limits (RPM/TPM) are NOT treated as out-of-credit.
+ */
+function isOutOfCreditError(status, message, data) {
+  if (status === 402) return true; // Payment Required
+  let hay = String(message || '').toLowerCase();
+  try { if (data) hay += ' ' + JSON.stringify(data).toLowerCase(); } catch {}
+  if (/rate limit|requests per|\brpm\b|\btpm\b|too many requests/.test(hay)) return false;
+  const needles = [
+    'insufficient balance', 'insufficient_quota', 'insufficient funds',
+    'not enough balance', 'balance is insufficient', 'no balance',
+    'account balance', 'out of credit', 'no credit', 'arrears',
+    'payment required', 'please recharge', 'top up', 'top-up',
+    '余额不足', '余额', '欠费', '账户余额', '充值'
+  ];
+  return needles.some((n) => hay.includes(n));
+}
 
 /**
  * Call SiliconFlow API with V4-Flash specific optimizations
@@ -120,9 +145,18 @@ async function callSiliconFlow(messages, maxTokens = AI_MAX_TOKENS) {
       consecutiveEmptyResponses = 0;
       return content;
     } catch (err) {
-      consecutiveFailures++;
-      const errMsg = err?.response?.data?.error?.message || err?.message || 'unknown error';
+      const errMsg = err?.response?.data?.error?.message || err?.response?.data?.message || err?.message || 'unknown error';
       const errStatus = err?.response?.status || 'no-status';
+      // OUT OF CREDIT → fatal. Do NOT retry and do NOT return null (a null looks
+      // like an ordinary per-product failure, so the caller would skip the
+      // product and leave it in Chinese). Throw a tagged error so batch scripts
+      // can stop cleanly and save a correct resume point.
+      if (isOutOfCreditError(errStatus, errMsg, err?.response?.data)) {
+        const fatal = new Error(`OUT_OF_CREDIT (HTTP ${errStatus}): ${errMsg}`);
+        fatal.isOutOfCredit = true;
+        throw fatal;
+      }
+      consecutiveFailures++;
       if (consecutiveFailures >= 8) {
         circuitOpenUntil = Date.now() + 60_000;
         console.warn(`[AI] Circuit breaker opened (60s) after 8 failures — HTTP ${errStatus}: ${errMsg}`);
@@ -180,15 +214,23 @@ export async function translateProduct(chineseName, chineseDescription) {
   const sourceDesc = String(chineseDescription || chineseName || '').trim().slice(0, 800);
   if (!sourceName && !sourceDesc) return null;
 
+  // Show which model is doing the translation (both the pipeline and the audit
+  // script route through here, so this one line covers both).
+  console.log(`[Translation] model=${SILICONFLOW_MODEL} → translating: ${sourceName.slice(0, 45)}`);
+
   const messages = [
     {
       role: 'system',
       content:
         'You are an e-commerce translation assistant. ' +
-        'Given the product info below (originally in Chinese), produce a JSON object with THREE fields:\n' +
+        'Given the product info below (originally in Chinese), produce a JSON object with FOUR fields:\n' +
         '  "titleAr"  — Arabic product name, max 8 words\n' +
         '  "descriptionAr" — Arabic product description, max 2 sentences\n' +
         '  "titleEn"  — English product name, max 8 words\n' +
+        '  "titleEnSimple" — a SHORT, CLEAN, GENERIC English noun phrase naming what the product IS, ' +
+        '2-4 words, suitable for semantic search. ' +
+        'NO brand names, NO model numbers, NO sizes, NO wattage, NO specs, NO punctuation. ' +
+        'Examples: "electric water heater", "wireless bluetooth earbuds", "stainless steel water bottle", "cotton t-shirt".\n' +
         'Output ONLY valid JSON. No other text. Skip all preamble and reasoning.'
     },
     {
@@ -200,8 +242,10 @@ export async function translateProduct(chineseName, chineseDescription) {
     }
   ];
 
-  // Use 4000 tokens for V4-Flash models to avoid truncation of reasoning
-  const maxTokensForCall = IS_V4_THINKING_MODEL ? 4000 : 800;
+  // Reasoning models (V4-Flash etc.) need huge budgets for their discarded
+  // "thinking"; non-reasoning models (DeepSeek-V3) emit only the JSON answer
+  // (~100-130 tokens), so cap tightly to bound worst-case output cost.
+  const maxTokensForCall = IS_V4_THINKING_MODEL ? 4000 : 400;
   const result = await callSiliconFlow(messages, maxTokensForCall);
   if (!result) return null;
 
@@ -219,11 +263,21 @@ export async function translateProduct(chineseName, chineseDescription) {
 
     const titleAr = String(parsed.titleAr || '').trim().slice(0, HARD_TITLE_MAX_CHARS);
     const descriptionAr = String(parsed.descriptionAr || '').trim().slice(0, 1500) || null;
-    const titleEn = String(parsed.titleEn || '').trim().slice(0, HARD_TITLE_MAX_CHARS) || null;
+    let titleEn = String(parsed.titleEn || '').trim().slice(0, HARD_TITLE_MAX_CHARS) || null;
+    // Clean generic English noun phrase used ONLY for the text embedding
+    // (e.g. "electric water heater"). Falls back to titleEn if the model
+    // omitted it.
+    let titleEnSimple = String(parsed.titleEnSimple || '').trim().slice(0, HARD_TITLE_MAX_CHARS) || null;
+
+    // The English name drives the search text embedding, so it must NOT be null
+    // when the model produced any English. If the model returned only one of the
+    // two English fields, cross-fill the other from it.
+    if (!titleEn && titleEnSimple) titleEn = titleEnSimple;
+    if (!titleEnSimple && titleEn) titleEnSimple = titleEn;
 
     if (!titleAr) return null;
 
-    return { titleAr, descriptionAr, titleEn };
+    return { titleAr, descriptionAr, titleEn, titleEnSimple };
   } catch (e) {
     console.error(`  [AI] JSON parse failed: ${e.message}`);
     return null;

@@ -2,6 +2,13 @@ import fs from 'fs';
 try { fs.writeFileSync('./server_start.log', 'STARTING ' + new Date().toISOString() + '\n'); } catch (e) {}
 process.on('uncaughtException', (err) => {
   try { fs.appendFileSync('./server_crash.log', `ERROR: ${err.message}\n${err.stack}\n`); } catch (e) {}
+  console.error('[FATAL] uncaughtException:', err?.message);
+});
+// Log unhandled promise rejections instead of letting them crash silently.
+process.on('unhandledRejection', (reason) => {
+  const msg = reason instanceof Error ? `${reason.message}\n${reason.stack}` : String(reason);
+  try { fs.appendFileSync('./server_crash.log', `UNHANDLED_REJECTION: ${msg}\n`); } catch (e) {}
+  console.error('[FATAL] unhandledRejection:', reason?.message || reason);
 });
 
 import dns from 'node:dns';
@@ -10,6 +17,8 @@ dns.setDefaultResultOrder('ipv4first');
 import { randomUUID } from 'node:crypto';
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
 import pkg from '@prisma/client';
 import jwt from 'jsonwebtoken';
@@ -1046,14 +1055,88 @@ const productVariantSelect = {
 };
 
 // Server start - Build Trigger: 2026-01-26 22:00
+// ---------------------------------------------------------------------------
+// Required-environment validation. Fail loudly at startup instead of silently
+// using insecure defaults or crashing mid-request. Only the two truly essential
+// secrets are hard-required; everything else degrades gracefully.
+// ---------------------------------------------------------------------------
+{
+  const REQUIRED_ENV = ['DATABASE_URL', 'JWT_SECRET'];
+  const missing = REQUIRED_ENV.filter((k) => !String(process.env[k] || '').trim());
+  if (missing.length) {
+    console.error('\n[FATAL] Missing required environment variable(s): ' + missing.join(', '));
+    console.error('        Set them in server/.env (local) or the host env (Railway) before starting.');
+    console.error('        The server will not start without them.\n');
+    process.exit(1);
+  }
+}
+
 const app = express();
 app.set('etag', false);
+// Behind Railway's proxy: trust the first proxy hop so rate-limiting and req.ip
+// see the real client address (not the proxy's).
+app.set('trust proxy', 1);
 app.get('/health', (req, res) => res.status(200).send('OK'));
 console.log('-------------------------------------------');
 console.log('--- UPDATED VARIANT LOGIC LOADED (v4 - FINAL FIX) ---');
 console.log('--- STRICTLY NO CURRENCY CONVERSION ---');
 console.log('-------------------------------------------');
 const httpServer = createServer(app);
+
+// ---------------------------------------------------------------------------
+// Security hardening: helmet headers, a shared CORS allowlist, and rate limits.
+// ---------------------------------------------------------------------------
+// helmet: keep it permissive enough not to break the served SPA or cross-origin
+// image loading (the mobile WebView fetches /uploads images from this origin).
+app.use(helmet({
+  contentSecurityPolicy: false,           // SPA + inline assets — don't break them
+  crossOriginEmbedderPolicy: false,
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+}));
+
+// CORS allowlist. The customer app (androidScheme 'http') and admin app
+// (androidScheme 'https') run in Capacitor WebViews whose Origin is
+// http(s)://localhost; iOS uses capacitor://localhost. Native fetches send no
+// Origin at all. Additional browser origins can be added via ALLOWED_ORIGINS
+// (comma-separated) or FRONTEND_URL.
+const IS_PROD = String(process.env.NODE_ENV || '').toLowerCase() === 'production';
+const ALLOWED_ORIGINS = new Set([
+  'http://localhost',
+  'https://localhost',
+  'capacitor://localhost',
+  'ionic://localhost',
+]);
+for (const o of String(process.env.ALLOWED_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean)) {
+  ALLOWED_ORIGINS.add(o);
+}
+if (process.env.FRONTEND_URL) ALLOWED_ORIGINS.add(String(process.env.FRONTEND_URL).trim().replace(/\/$/, ''));
+// Dev-only prefixes (live-reload, emulator host, LAN device testing).
+const DEV_ORIGIN_PREFIXES = ['http://localhost:', 'https://localhost:', 'http://127.0.0.1', 'http://10.0.2.2', 'http://192.168.'];
+function isOriginAllowed(origin) {
+  if (!origin) return true;                       // native app / curl / server-to-server
+  if (ALLOWED_ORIGINS.has(origin)) return true;
+  if (!IS_PROD) {                                 // be permissive in dev / on-device testing
+    if (DEV_ORIGIN_PREFIXES.some((p) => origin.startsWith(p))) return true;
+    if (origin.includes('ngrok')) return true;
+  }
+  return false;
+}
+
+// Rate limiters. Generous on normal browsing; strict on auth and the paid SMS path.
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,                                       // per IP / 15 min across all /api/auth
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests. Please try again in a few minutes.' },
+});
+const otpLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,                                        // per IP / 15 min — guards the paid OTPIQ SMS
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many verification requests. Please try again later.' },
+});
 
 // Health check endpoint for Render/Deployment
 app.get('/api/health', async (req, res) => {
@@ -1111,8 +1194,9 @@ prisma.$connect()
 
 const io = new Server(httpServer, {
   cors: {
-    origin: "*",
-    methods: ["GET", "POST"]
+    origin: (origin, callback) => callback(null, isOriginAllowed(origin)),
+    methods: ["GET", "POST"],
+    credentials: true
   }
 });
 
@@ -1178,7 +1262,8 @@ io.on('connection', (socket) => {
 });
 
 const PORT = 5001; // Forced to 5001 for Android Emulator compatibility (10.0.2.2:5001)
-const JWT_SECRET = process.env.JWT_SECRET || 'c2hhbnNoYWw2Ni1teS1zaG9wLWJhY2tlbmQtc2VjcmV0LTIwMjY=';
+// Required and validated at startup (see REQUIRED_ENV check). No insecure fallback.
+const JWT_SECRET = process.env.JWT_SECRET;
 
 // --- Normalization Helpers ---
 const normalizePhone = (phone) => {
@@ -1312,18 +1397,11 @@ const forgotPasswordTemplate = (otp) => `
 
 app.use(cors({
   origin: function (origin, callback) {
-    // Allow all origins in development
-    if (!origin || 
-        origin.startsWith('http://localhost') || 
-        origin.startsWith('https://localhost') || 
-        origin.startsWith('http://127.0.0.1') || 
-        origin.startsWith('http://10.0.2.2') ||  // Android emulator host
-        origin.includes('ngrok-free.dev') || 
-        origin.startsWith('http://192.168.')) {
+    if (isOriginAllowed(origin)) {
       callback(null, true);
     } else {
-      // For production, you should be more specific, but for now we allow to debug
-      callback(null, true);
+      console.warn(`[CORS] Blocked disallowed origin: ${origin}`);
+      callback(null, false);
     }
   },
   credentials: true,
@@ -1443,6 +1521,9 @@ if (!fs.existsSync(uploadsPath)) {
   fs.mkdirSync(uploadsPath, { recursive: true });
 }
 app.use('/uploads', express.static(uploadsPath));
+
+// Rate-limit all auth endpoints (brute-force protection on login/signup/reset).
+app.use('/api/auth', authLimiter);
 
 // --- Authentication Middleware ---
 const authenticateToken = async (req, res, next) => {
@@ -1878,7 +1959,7 @@ app.post('/api/auth/phone-reset-password', async (req, res) => {
   }
 });
 
-app.post('/api/auth/send-otp', async (req, res) => {
+app.post('/api/auth/send-otp', otpLimiter, async (req, res) => {
   const phone = normalizePhone(req.body.phone);
   const { name, isResetPassword } = req.body;
   if (!phone) return res.status(400).json({ error: 'Phone number is required' });
@@ -1991,10 +2072,10 @@ app.post('/api/auth/send-otp', async (req, res) => {
         "provider": "whatsapp-sms", 
         "verificationCode": otpCode 
       }, { 
-        headers: { 
-          'Authorization': 'Bearer sk_live_f891c78edd44691d580e53a95f9e8d138df94c3c', 
-          'Content-Type': 'application/json' 
-        } 
+        headers: {
+          'Authorization': `Bearer ${process.env.OTPIQ_API_KEY || ''}`,
+          'Content-Type': 'application/json'
+        }
       });
       console.log('OTPIQ Response:', otpiqResponse.data);
     } catch (otpiqError) {
@@ -12542,6 +12623,17 @@ app.get('/*any', (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// Global error handler. MUST be registered after all routes. Logs the real
+// error server-side and returns a generic body so stack traces never leak.
+// ---------------------------------------------------------------------------
+app.use((err, req, res, next) => {
+  console.error(`[Error] ${req.method} ${req.originalUrl}:`, err?.message);
+  if (res.headersSent) return next(err);
+  const status = err?.statusCode || err?.status || 500;
+  res.status(status).json({ error: status === 503 ? (err.message || 'Server is busy.') : 'Internal server error' });
+});
+
 setupLinkCheckerCron();
 
 console.log('Attempting to start server on port:', process.env.PORT || 5001);
@@ -12559,4 +12651,23 @@ const server = httpServer.listen(PORT, '0.0.0.0', () => {
 server.on('error', (e) => {
   console.error('SERVER LISTEN ERROR:', e);
 });
+
+// Graceful shutdown: drain HTTP connections and close the DB pool on
+// SIGTERM/SIGINT (Railway sends SIGTERM on redeploy) so deploys don't drop
+// in-flight requests or leak connections.
+let shuttingDown = false;
+const gracefulShutdown = (signal) => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[Shutdown] ${signal} received — closing server...`);
+  server.close(async () => {
+    try { await prisma.$disconnect(); } catch (e) {}
+    console.log('[Shutdown] Closed cleanly.');
+    process.exit(0);
+  });
+  // Force-exit if connections don't drain in time.
+  setTimeout(() => process.exit(0), 10000).unref();
+};
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 

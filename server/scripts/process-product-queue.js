@@ -140,7 +140,7 @@ async function callSiliconFlowForCategory(prompt, maxRetries = 3) {
               { role: 'system', content: 'You are a helpful assistant that categorizes products. Always respond with valid JSON only.' },
               { role: 'user', content: prompt }
             ],
-            max_tokens: 500,
+            max_tokens: 200,
             temperature: 0.3
           })
         }),
