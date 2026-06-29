@@ -39,10 +39,14 @@ import { processProductAI, processProductEmbedding, hybridSearch, estimateProduc
 import { buildCategoryIndex } from './services/categoryService.js';
 import { calculateOrderShipping, calculateProductShipping, getAdjustedPrice } from './services/shippingService.js';
 import { setupLinkCheckerCron, checkAllProductLinks } from './services/linkCheckerService.js';
-import { analyzeImageObjects, warmupClipService } from './services/clipService.js';
+// NOTE: clipService (@xenova/transformers + onnxruntime-node) and
+// goofishScrapeService (puppeteer/Chromium) are intentionally NOT imported here.
+// They pulled a browser engine + ML inference stack into the always-on API
+// process (~hundreds of MB of resident RAM on Railway) for two on-demand
+// endpoints we no longer use. Those endpoints are now disabled below. The libs
+// remain in package.json only for the LOCAL scraping/translation pipeline.
 import { searchProductsByImageVector, searchProductsByHybridVector, searchProductsByTextVector, searchHybridText, sanitizeProductImageUrl } from './services/productImageVectorService.js';
 import { pickStratifiedPage } from './services/searchBucketingService.js';
-import { scrapeGoofishProductImages } from './services/goofishScrapeService.js';
 // Category-name embedding service removed: no MiniLM query embedding on the backend.
 // Vision model download removed from the backend — handled on-device by the app.
 import multer from 'multer';
@@ -92,9 +96,8 @@ const createTaskQueue = (maxQueued = 1) => {
   };
 };
 
-const runClipTask = createTaskQueue(Math.max(1, Number.parseInt(String(process.env.CLIP_MAX_QUEUE || ''), 10) || 1));
-const scrapeProductImagesQueue = createTaskQueue(Math.max(1, Number.parseInt(String(process.env.SCRAPE_PRODUCT_IMAGES_MAX_QUEUE || ''), 10) || 1));
-const ENABLE_CLIP_WARMUP = ['true', '1', 'yes', 'on'].includes(String(process.env.ENABLE_CLIP_WARMUP || '').trim().toLowerCase());
+// runClipTask / scrapeProductImagesQueue / ENABLE_CLIP_WARMUP removed along with
+// the on-device-CLIP and on-demand-scrape endpoints (see disabled handlers below).
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -127,11 +130,6 @@ if (fs.existsSync(envPath)) {
   console.error('.env file NOT found at:', envPath);
 }
 
-if (ENABLE_CLIP_WARMUP) {
-  warmupClipService().catch(() => {});
-} else {
-  console.log('[CLIP] Warmup disabled (set ENABLE_CLIP_WARMUP=true to enable)');
-}
 
 // --- Global Helpers ---
 
@@ -5637,32 +5635,14 @@ app.post('/api/translate/arabic-to-english', async (req, res) => {
   }
 });
 
-app.post('/api/search/analyze-image', upload.single('image'), async (req, res) => {
-  try {
-    let input;
-    if (req.file) {
-      input = req.file.buffer;
-    } else if (req.body.imageUrl) {
-      input = req.body.imageUrl;
-    } else if (req.body.imageBase64) {
-      const raw = String(req.body.imageBase64 || '');
-      const commaIndex = raw.indexOf(',');
-      const base64Data = commaIndex >= 0 ? raw.slice(commaIndex + 1) : raw;
-      if (!base64Data) return res.status(400).json({ error: 'Invalid imageBase64' });
-      if (base64Data.length > MAX_IMAGE_BASE64_CHARS) {
-        return res.status(413).json({ error: 'Image too large' });
-      }
-      input = Buffer.from(base64Data, 'base64');
-    } else {
-      return res.status(400).json({ error: 'No image provided' });
-    }
-
-    const objects = await runClipTask(() => analyzeImageObjects(input));
-    res.json({ objects });
-  } catch (error) {
-    console.error('Analyze image error:', error);
-    res.status(500).json({ error: 'Failed to analyze image' });
-  }
+app.post('/api/search/analyze-image', async (req, res) => {
+  // Server-side CLIP object analysis has been removed to keep the API process
+  // lightweight (it pulled @xenova/transformers + onnxruntime into RAM). Image
+  // analysis/embeddings happen on-device; POST the vector to /api/search/embedding.
+  return res.status(410).json({
+    error: 'Server-side image analysis has been removed. Analyze/embed on-device, then POST the vector to /api/search/embedding.',
+    engine: 'deprecated'
+  });
 });
 
 app.post('/api/search/image-crop', upload.single('image'), async (req, res) => {
@@ -8767,72 +8747,14 @@ app.get('/api/products/:id', async (req, res) => {
 });
 
 app.post('/api/products/:id/scrape-images', async (req, res) => {
-  const productId = safeParseId(req.params.id);
-  if (!productId) return res.status(400).json({ error: 'Invalid product ID' });
-
-  try {
-    const product = await prisma.product.findUnique({
-      where: { id: productId },
-      select: { id: true, purchaseUrl: true, image: true }
-    });
-
-    if (!product) {
-      return res.status(404).json({ error: 'Product not found' });
-    }
-
-    if (!product.purchaseUrl) {
-      return res.status(400).json({ error: 'Product has no purchase URL to scrape' });
-    }
-
-    const scrapedUrls = await scrapeProductImagesQueue(async () => {
-      return scrapeGoofishProductImages(product.purchaseUrl, { maxImages: 8, timeoutMs: 120000 });
-    });
-
-    const sanitizedUrls = [...new Set((scrapedUrls || []).map(sanitizeProductImageUrl).filter(Boolean))];
-    if (sanitizedUrls.length === 0) {
-      return res.status(404).json({ error: 'No valid images were found during scrape' });
-    }
-
-    const existingImages = await prisma.productImage.findMany({
-      where: { productId },
-      select: { url: true }
-    });
-    const existingSet = new Set(existingImages.map((img) => sanitizeProductImageUrl(img.url)).filter(Boolean));
-    const newUrls = sanitizedUrls.filter((url) => !existingSet.has(url));
-
-    await prisma.$transaction(async (tx) => {
-      if (!product.image && newUrls.length > 0) {
-        await tx.product.update({
-          where: { id: productId },
-          data: { image: newUrls[0] }
-        });
-      }
-
-      if (newUrls.length > 0) {
-        await tx.productImage.createMany({
-          data: newUrls.map((url, index) => ({
-            productId,
-            url,
-            order: existingImages.length + index,
-            type: 'GALLERY'
-          }))
-        });
-      }
-    });
-
-    return res.json({
-      success: true,
-      scraped: sanitizedUrls,
-      added: newUrls,
-      updated: newUrls.length > 0
-    });
-  } catch (error) {
-    console.error('Error scraping product images:', error);
-    if (error?.statusCode === 503) {
-      return res.status(503).json({ error: error.message || 'Server is busy' });
-    }
-    res.status(500).json({ error: 'Failed to scrape product images' });
-  }
+  // On-demand image scraping has been removed from the API. It launched headless
+  // Chromium (puppeteer) inside the always-on server, which is heavy and the
+  // reason Chromium was bundled. Product images are populated by the local
+  // scraping pipeline instead.
+  return res.status(410).json({
+    error: 'On-demand image scraping has been removed from the server. Images are populated by the offline pipeline.',
+    engine: 'deprecated'
+  });
 });
 
 // Check if user has purchased a product

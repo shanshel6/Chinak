@@ -1,4 +1,7 @@
-import { embedImage, embedText } from './clipService.js';
+// clipService (@xenova/transformers + onnxruntime-node) is imported LAZILY,
+// inside ensureProductImageEmbeddings only, so it never loads in the always-on
+// API server (which only searches on supplied vectors). Only the local pipeline
+// calls that path, where the lazy import resolves normally.
 import { normalizeArabic, normalizedTerms } from './arabicNormalize.js';
 
 export const MAX_PRODUCT_IMAGE_EMBEDDINGS = Math.max(
@@ -88,6 +91,7 @@ export async function ensureProductImageEmbeddings({
   }
 
   try {
+    const { embedImage } = await import('./clipService.js');
     const embedding = await embedImage(imageUrl, productName || null);
     if (!Array.isArray(embedding) || embedding.length === 0 || embedding.every((value) => value === 0)) {
       logger.warn?.(`[Image Embedding] Empty/zero embedding for Product ${productId}`);
