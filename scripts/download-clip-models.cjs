@@ -24,11 +24,12 @@ const FILES = [
   'onnx/text_model_quantized.onnx',
 ];
 
-// ONNX WASM files for offline support
+// ONNX WASM files for offline support.
+// Only the non-SIMD, single-threaded runtime is ever loaded at runtime
+// (clipService sets simd=false, numThreads=1), so we bundle ONLY this one.
+// The SIMD/threaded variants were ~28 MB of dead weight in the app bundle.
 const WASM_FILES = [
-  'ort-wasm-simd.wasm',
   'ort-wasm.wasm',
-  'ort-wasm-threaded.wasm',
 ];
 
 const WASM_URL_BASE = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.1/dist/';
@@ -118,6 +119,17 @@ async function main() {
       if (!FILES.includes(`onnx/${file}`)) {
         console.log(`🧹 Removing old model file: onnx/${file}`);
         try { fs.unlinkSync(path.join(onnxDir, file)); } catch (e) {}
+      }
+    }
+  }
+
+  // Clean up stale WASM runtimes (e.g. the SIMD/threaded variants we no longer
+  // bundle) so they don't bloat the app or get re-shipped.
+  if (fs.existsSync(OUTPUT_DIR)) {
+    for (const file of fs.readdirSync(OUTPUT_DIR)) {
+      if (file.endsWith('.wasm') && !WASM_FILES.includes(file)) {
+        console.log(`🧹 Removing stale WASM file: ${file}`);
+        try { fs.unlinkSync(path.join(OUTPUT_DIR, file)); } catch (e) {}
       }
     }
   }

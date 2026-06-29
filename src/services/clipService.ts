@@ -50,15 +50,12 @@ env.localModelPath = `${window.location.origin}/models/`;
  */
 const wasmBaseUrl = getModelsBaseUrl();
 const wasmUrl = `${wasmBaseUrl}ort-wasm.wasm`;
-const wasmSimdUrl = `${wasmBaseUrl}ort-wasm-simd.wasm`;
-const wasmThreadedUrl = `${wasmBaseUrl}ort-wasm-threaded.wasm`;
-const wasmSimdThreadedUrl = `${wasmBaseUrl}ort-wasm-simd-threaded.wasm`;
 
+// Only the non-SIMD, single-threaded runtime is ever loaded (simd=false,
+// numThreads=1 above), so we ship and map only ort-wasm.wasm. The SIMD/threaded
+// variants were ~28 MB of dead weight in the app bundle.
 env.backends.onnx.wasm.wasmPaths = {
     'ort-wasm.wasm': wasmUrl,
-    'ort-wasm-simd.wasm': wasmSimdUrl,
-    'ort-wasm-threaded.wasm': wasmThreadedUrl,
-    'ort-wasm-simd-threaded.wasm': wasmSimdThreadedUrl,
 };
 
 /**
@@ -142,9 +139,6 @@ export async function checkModelFilesExist(): Promise<{
         { name: 'preprocessor_config.json', url: `${baseUrl}preprocessor_config.json` },
         { name: 'text_model_quantized.onnx', url: `${baseUrl}onnx/text_model_quantized.onnx` },
         { name: 'ort-wasm.wasm', url: `${baseUrl}ort-wasm.wasm` },
-        { name: 'ort-wasm-simd.wasm', url: `${baseUrl}ort-wasm-simd.wasm` },
-        { name: 'ort-wasm-threaded.wasm', url: `${baseUrl}ort-wasm-threaded.wasm` },
-        { name: 'ort-wasm-simd-threaded.wasm', url: `${baseUrl}ort-wasm-simd-threaded.wasm` },
     ];
 
     const results = await Promise.all(
