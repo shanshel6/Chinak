@@ -1,7 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { Receipt, Eye, Send, FileText, Calendar, User, Phone, Clock, Search, RefreshCw } from 'lucide-react';
 import { Order } from '../types';
+import SendQuotationWhatsAppButton, { QuotationLike } from './SendQuotationWhatsAppButton';
+
+// Must match the key QuotationManager persists to.
+const QUOTATIONS_STORAGE_KEY = 'admin_local_quotations';
 
 interface InvoicesViewProps {
   orders: Order[];
@@ -13,9 +17,22 @@ interface InvoicesViewProps {
 
 const INVOICE_STATUSES = ['AWAITING_PAYMENT', 'PREPARING', 'SHIPPED', 'ARRIVED_IRAQ', 'DELIVERED'];
 
-const InvoicesView: React.FC<InvoicesViewProps> = ({ orders, getStatusConfig, onOpenOrder, onSendInvoice }) => {
+const InvoicesView: React.FC<InvoicesViewProps> = ({ orders, getStatusConfig, onOpenOrder, onSendInvoice, settings }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
+  // Quotations that were marked PAID become invoices and show up here too.
+  const [paidQuotations, setPaidQuotations] = useState<QuotationLike[]>([]);
+
+  const loadPaidQuotations = () => {
+    try {
+      const raw = sessionStorage.getItem(QUOTATIONS_STORAGE_KEY);
+      const all = raw ? JSON.parse(raw) : [];
+      setPaidQuotations(Array.isArray(all) ? all.filter((q: any) => q?.status === 'PAID') : []);
+    } catch {
+      setPaidQuotations([]);
+    }
+  };
+  useEffect(() => { loadPaidQuotations(); }, []);
 
   const invoiceableOrders = orders.filter((o) => INVOICE_STATUSES.includes(o.status));
 
@@ -41,6 +58,78 @@ const InvoicesView: React.FC<InvoicesViewProps> = ({ orders, getStatusConfig, on
           جميع الطلبات القابلة للفوترة - إرسال الفاتورة للعميل عبر واتساب
         </p>
       </div>
+
+      {/* Paid quotations -> invoices */}
+      {paidQuotations.length > 0 && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-black text-slate-700 flex items-center gap-2">
+              <FileText size={16} className="text-green-600" />
+              فواتير عروض الأسعار المدفوعة
+              <span className="bg-green-600 text-white px-2 py-0.5 rounded-full text-[10px] font-black">
+                {paidQuotations.length}
+              </span>
+            </h3>
+            <button
+              onClick={loadPaidQuotations}
+              className="text-slate-400 hover:text-blue-600 p-1.5 rounded-lg transition-colors"
+              title="تحديث"
+            >
+              <RefreshCw size={16} />
+            </button>
+          </div>
+          {paidQuotations.map((q) => (
+            <div
+              key={q.quotationNumber}
+              className="bg-white rounded-3xl shadow-sm border border-green-100 overflow-hidden p-5"
+            >
+              <div className="flex items-start justify-between mb-4 gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap mb-2">
+                    <Receipt className="text-green-600" size={18} />
+                    <span className="text-base font-black text-slate-900">{q.quotationNumber}</span>
+                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black border bg-green-100 text-green-700 border-green-200">
+                      مدفوع
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-3 text-xs font-bold text-slate-400 flex-wrap">
+                    <div className="flex items-center gap-1.5">
+                      <Calendar size={13} />
+                      {new Date(q.createdAt).toLocaleDateString('ar-IQ')}
+                    </div>
+                    {q.customerName && (
+                      <div className="flex items-center gap-1.5">
+                        <User size={13} />
+                        {q.customerName}
+                      </div>
+                    )}
+                    {q.customerPhone && (
+                      <div className="flex items-center gap-1.5" dir="ltr">
+                        <Phone size={13} />
+                        {q.customerPhone}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="text-right shrink-0">
+                  <div className="text-lg font-black text-green-600">
+                    {Number(q.total).toLocaleString()} د.ع
+                  </div>
+                  <div className="text-[10px] font-bold text-slate-400 uppercase">
+                    {q.items?.length || 0} منتج
+                  </div>
+                </div>
+              </div>
+              <SendQuotationWhatsAppButton
+                quotation={q}
+                settings={settings}
+                mode="invoice"
+                label="إرسال الفاتورة عبر واتساب"
+              />
+            </div>
+          ))}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div className="relative">

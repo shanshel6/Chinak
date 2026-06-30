@@ -327,8 +327,8 @@ ${itemsList}
       try {
         await Share.share({
           title: `Quotation ${q.quotationNumber}`,
-          text: `رقم العميل: ${phone}\n\n${message}`,
-          url: pdfUri,
+          text: message,
+          files: [pdfUri],
           dialogTitle: 'ارسال عرض السعر عبر واتساب'
         });
         return;
@@ -483,15 +483,24 @@ ${itemsList}
                   )}
 
                   <div className="flex gap-2 flex-wrap">
+                    {q.customerPhone && (
+                      <button
+                        onClick={() => handleSendWhatsApp(q)}
+                        disabled={isGeneratingPDF}
+                        className="flex-1 min-w-[160px] bg-green-500 text-white hover:bg-green-600 font-black py-2.5 rounded-xl transition-all flex items-center justify-center gap-2 text-xs disabled:opacity-50"
+                      >
+                        <Send size={16} /> {isGeneratingPDF ? 'جاري التجهيز...' : 'إرسال PDF عبر واتساب'}
+                      </button>
+                    )}
                     <button
                       onClick={() => setViewingQuotation(q)}
-                      className="flex-1 min-w-[120px] bg-slate-50 text-slate-600 hover:bg-slate-100 font-black py-2.5 rounded-xl transition-all flex items-center justify-center gap-2 text-xs"
+                      className="flex-1 min-w-[100px] bg-slate-50 text-slate-600 hover:bg-slate-100 font-black py-2.5 rounded-xl transition-all flex items-center justify-center gap-2 text-xs"
                     >
                       <Eye size={16} /> عرض
                     </button>
                     <button
                       onClick={() => openEdit(q)}
-                      className="flex-1 min-w-[120px] bg-blue-50 text-blue-600 hover:bg-blue-100 font-black py-2.5 rounded-xl transition-all flex items-center justify-center gap-2 text-xs"
+                      className="flex-1 min-w-[100px] bg-blue-50 text-blue-600 hover:bg-blue-100 font-black py-2.5 rounded-xl transition-all flex items-center justify-center gap-2 text-xs"
                     >
                       تعديل
                     </button>
